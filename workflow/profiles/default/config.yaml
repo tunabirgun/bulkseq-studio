@@ -1,0 +1,10 @@
+# Workflow profile auto-discovered by Snakemake (searched at
+# workflow/profiles/default/ relative to the Snakefile when no
+# --workflow-profile is passed). latency-wait is raised well above the 5s
+# default so post-job output-file visibility latency on /mnt/c (NTFS via 9P)
+# does not trigger spurious "missing output" failures. `reason:` is omitted
+# because Snakemake 9 removed it as a standalone setting (it is now only a
+# value of --quiet) and including it aborts the run.
+printshellcmds: true
+rerun-incomplete: true
+latency-wait: 30

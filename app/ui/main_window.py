@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QGridLayout,
+    QGroupBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -48,7 +49,11 @@ from app.core.reference_manager import load_reference_catalog, md5sum, validate_
 from app.core.resources import detect_system, recommend_profile
 from app.core.runtime_estimator import estimate_runtime
 from app.core.sanity_checks import write_check
-from app.core.snakemake_runner import SnakemakeRunner, build_snakemake_command
+from app.core.snakemake_runner import (
+    SnakemakeRunner,
+    _new_run_tag,
+    build_snakemake_command,
+)
 from app.core.timing import write_timing_summary
 from app.core.paths import data_path
 from app.ui.metadata_editor import MetadataTable
@@ -64,7 +69,12 @@ class RunnerThread(QThread):
         self.runner = runner
 
     def run(self) -> None:
-        process = self.runner.start()
+        try:
+            process = self.runner.start()
+        except OSError as exc:
+            self.line.emit(f"Failed to launch run: {exc}")
+            self.finished_with_code.emit(1)
+            return
         assert process.stdout is not None
         for line in process.stdout:
             self.line.emit(line.rstrip())
@@ -81,6 +91,12 @@ class MainWindow(QMainWindow):
         self.runner_thread: RunnerThread | None = None
         self.runner: SnakemakeRunner | None = None
         self.readiness_dialog: ReadinessDialog | None = None
+        self._run_active = False
+        self._run_mode: str | None = None
+        self._stop_in_progress = False
+        self._recovery_offered = False
+        self.run_action_buttons: dict[str, QPushButton] = {}
+        self.stop_button: QPushButton | None = None
 
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
@@ -418,13 +434,16 @@ class MainWindow(QMainWindow):
         for text, mode in [("Dry Run", "dry-run"), ("Start Run", "run"), ("Resume", "resume"), ("Unlock", "unlock")]:
             button = QPushButton(text)
             button.clicked.connect(lambda _checked=False, m=mode: self._start_snakemake(m))
+            self.run_action_buttons[mode] = button
             buttons.addWidget(button)
         self.use_wsl = QCheckBox("Use WSL2")
         self.use_wsl.setChecked(True)
         buttons.addWidget(self.use_wsl)
         actions = QHBoxLayout()
         stop = QPushButton("Stop")
+        stop.setEnabled(False)
         stop.clicked.connect(self._stop_run)
+        self.stop_button = stop
         open_folder = QPushButton("Open Project Folder")
         open_folder.clicked.connect(self._open_folder)
         open_report = QPushButton("Open MultiQC Report")
@@ -438,6 +457,7 @@ class MainWindow(QMainWindow):
         self.elapsed_timer.timeout.connect(self._tick_elapsed)
         self._run_start = 0.0
         self.command_text = QLineEdit()
+        self.status_label = QLabel("Idle")
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         progress_row = QHBoxLayout()
@@ -446,10 +466,26 @@ class MainWindow(QMainWindow):
         layout.addLayout(buttons)
         layout.addLayout(actions)
         layout.addLayout(progress_row)
+        layout.addWidget(self.status_label)
         layout.addWidget(QLabel("Command"))
         layout.addWidget(self.command_text)
         layout.addWidget(self.log_text)
         self.tabs.addTab(page, "Run Monitor")
+
+    def _set_run_status(self, text: str, color: str | None = None) -> None:
+        self.status_label.setText(text)
+        self.status_label.setStyleSheet(f"color: {color}; font-weight: 600;" if color else "")
+
+    def _set_running_ui(self, active: bool) -> None:
+        # Only run/resume hold a live process; dry-run/unlock are short-lived but
+        # still gate Start to avoid concurrent snakemake against one directory.
+        self._run_active = active
+        for button in self.run_action_buttons.values():
+            button.setEnabled(not active)
+        if self.stop_button is not None:
+            self.stop_button.setEnabled(active)
+        if active:
+            self.progress.setStyleSheet("")
 
     def _tick_elapsed(self) -> None:
         import time
@@ -464,17 +500,66 @@ class MainWindow(QMainWindow):
             done, total = int(match.group(1)), int(match.group(2))
             if total:
                 self.progress.setValue(int(done / total * 100))
+        # Detect a stale lock / incomplete-output state and offer auto-recovery
+        # once per run so a killed-WSL orphan does not wedge every later start.
+        if not self._recovery_offered and re.search(
+            r"LockException|IncompleteFilesException|Directory cannot be locked|incomplete", line
+        ):
+            self._recovery_offered = True
+            QTimer.singleShot(0, self._offer_auto_recovery)
+
+    def _offer_auto_recovery(self) -> None:
+        reply = QMessageBox.question(
+            self,
+            APP_NAME,
+            "The working directory is locked or has incomplete outputs (usually a "
+            "previous run that was stopped). Unlock it and resume with "
+            "--rerun-incomplete now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        # Ensure the wedged run is fully gone before unlocking/resuming.
+        self._stop_run(announce=False)
+        if self.runner is not None and self.config is not None:
+            self.runner.unlock(self.config)
+        self.log_text.append("Auto-recovery: unlocked directory, resuming with --rerun-incomplete.")
+        QTimer.singleShot(200, lambda: self._start_snakemake("recover"))
 
     def _on_run_finished(self, code: int) -> None:
         self.elapsed_timer.stop()
+        was_stop = self._stop_in_progress
+        self._set_running_ui(False)
+        self._stop_in_progress = False
+        self._run_mode = None
+        if was_stop:
+            self.progress.setStyleSheet("")
+            self._set_run_status("Stopped", "#B26A00")
+            self.log_text.append("Run stopped.")
+            return
         if code == 0:
             self.progress.setValue(100)
+            self.progress.setStyleSheet("")
+            self._set_run_status("Completed", "#2E7D32")
+        else:
+            # Non-zero: do not imply success. Red bar, red status, keep partial %.
+            self.progress.setStyleSheet("QProgressBar::chunk { background-color: #C0392B; }")
+            self._set_run_status(f"Failed (exit code {code})", "#C0392B")
         self.log_text.append(f"Process finished with exit code {code}")
 
-    def _stop_run(self) -> None:
-        if self.runner is not None:
-            self.runner.stop()
-            self.log_text.append("Stop requested.")
+    def _stop_run(self, _checked: bool = False, announce: bool = True) -> None:
+        if self.runner is None or self._stop_in_progress:
+            return
+        self._stop_in_progress = True
+        if self.stop_button is not None:
+            self.stop_button.setEnabled(False)
+        if announce:
+            self.log_text.append("Stopping run and releasing WSL processes...")
+            self._set_run_status("Stopping...", "#B26A00")
+        # Kills the whole WSL process tree (not just the wsl.exe relay) and reaps
+        # the local handle; _on_run_finished then resets state for the next run.
+        self.runner.stop()
 
     def _open_folder(self) -> None:
         if self.project_root is not None:
@@ -531,7 +616,86 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.output_table)
         layout.addWidget(QLabel("Figures"))
         layout.addWidget(self.gallery_area)
+        layout.addWidget(self._build_figure_style_group())
         self.tabs.addTab(page, "Outputs")
+
+    def _build_figure_style_group(self) -> QGroupBox:
+        # Style controls for the DESeq2 figures; written to config.figures_style
+        # and consumed by workflow/scripts/make_figures.R.
+        group = QGroupBox("Figure Style")
+        form = QFormLayout(group)
+        self.fig_palette = QComboBox()
+        self.fig_palette.addItems(["Blue-Red", "Viridis", "Greyscale"])
+        self.fig_point_size = QDoubleSpinBox()
+        self.fig_point_size.setRange(0.1, 12.0)
+        self.fig_point_size.setSingleStep(0.1)
+        self.fig_point_size.setDecimals(1)
+        self.fig_point_size.setValue(2.5)
+        self.fig_base_font = QSpinBox()
+        self.fig_base_font.setRange(4, 48)
+        self.fig_base_font.setValue(12)
+        self.fig_font_family = QLineEdit()
+        self.fig_font_family.setPlaceholderText("ggplot default (leave blank)")
+        self.fig_label_bold = QCheckBox("Bold axis tick labels")
+        self.fig_title_bold = QCheckBox("Bold axis titles")
+        self.fig_volcano_top = QSpinBox()
+        self.fig_volcano_top.setRange(0, 200)
+        self.fig_volcano_top.setValue(15)
+        self.fig_heatmap_top = QSpinBox()
+        self.fig_heatmap_top.setRange(1, 500)
+        self.fig_heatmap_top.setValue(30)
+        self.fig_pca_ntop = QSpinBox()
+        self.fig_pca_ntop.setRange(10, 50000)
+        self.fig_pca_ntop.setValue(500)
+        self.fig_width = QDoubleSpinBox()
+        self.fig_width.setRange(1.0, 30.0)
+        self.fig_width.setSingleStep(0.5)
+        self.fig_width.setDecimals(1)
+        self.fig_width.setValue(6.0)
+        self.fig_height = QDoubleSpinBox()
+        self.fig_height.setRange(1.0, 30.0)
+        self.fig_height.setSingleStep(0.5)
+        self.fig_height.setDecimals(1)
+        self.fig_height.setValue(5.0)
+        self.fig_dpi = QSpinBox()
+        self.fig_dpi.setRange(72, 1200)
+        self.fig_dpi.setValue(300)
+        save_style = QPushButton("Save figure style")
+        save_style.clicked.connect(self._save_figure_style)
+        form.addRow("Palette", self.fig_palette)
+        form.addRow("Point size", self.fig_point_size)
+        form.addRow("Base font size", self.fig_base_font)
+        form.addRow("Font family", self.fig_font_family)
+        form.addRow(self.fig_label_bold)
+        form.addRow(self.fig_title_bold)
+        form.addRow("Volcano top-N labels", self.fig_volcano_top)
+        form.addRow("Heatmap top-N genes", self.fig_heatmap_top)
+        form.addRow("PCA n-top genes", self.fig_pca_ntop)
+        form.addRow("Width (in)", self.fig_width)
+        form.addRow("Height (in)", self.fig_height)
+        form.addRow("DPI (PNG)", self.fig_dpi)
+        form.addRow(save_style)
+        return group
+
+    def _save_figure_style(self) -> None:
+        if self.config is None or self.project_root is None:
+            QMessageBox.warning(self, APP_NAME, "Create or open a project first.")
+            return
+        style = self.config.figures_style
+        style.palette = self.fig_palette.currentText()  # type: ignore[assignment]
+        style.point_size = self.fig_point_size.value()
+        style.base_font_size = self.fig_base_font.value()
+        style.font_family = self.fig_font_family.text().strip()
+        style.label_bold = self.fig_label_bold.isChecked()
+        style.title_bold = self.fig_title_bold.isChecked()
+        style.volcano_top_n = self.fig_volcano_top.value()
+        style.heatmap_top_n = self.fig_heatmap_top.value()
+        style.pca_ntop = self.fig_pca_ntop.value()
+        style.width_in = self.fig_width.value()
+        style.height_in = self.fig_height.value()
+        style.dpi = self.fig_dpi.value()
+        self.manager.save_config(self.project_root, self.config)
+        QMessageBox.information(self, APP_NAME, "Figure style saved. Re-run the figures step to apply it.")
 
     def _open_subpath(self, relative: str) -> None:
         if self.project_root is not None:
@@ -586,22 +750,52 @@ class MainWindow(QMainWindow):
         self.readiness_dialog.show()
 
     def _create_project(self) -> None:
-        messages = validate_working_directory(Path(self.workdir.text()))
-        root = self.manager.create_project(self.project_name.text(), Path(self.workdir.text()))
+        name = self.project_name.text().strip()
+        if not name:
+            QMessageBox.warning(self, APP_NAME, "Enter a project name before creating a project.")
+            return
+        workdir = Path(self.workdir.text().strip() or str(Path.home() / "BulkSeqProjects"))
+        messages = validate_working_directory(workdir, use_wsl=self.use_wsl.isChecked())
+        if any(m.get("status") == "FAIL" for m in messages):
+            self.project_status.setPlainText(
+                "Cannot create project here:\n" + self._format_workdir_messages(messages)
+            )
+            QMessageBox.warning(self, APP_NAME, self._format_workdir_messages(messages))
+            return
+        try:
+            root = self.manager.create_project(name, workdir)
+        except (OSError, ValueError) as exc:
+            self.project_status.setPlainText(f"Project creation failed: {exc}")
+            QMessageBox.critical(self, APP_NAME, f"Project creation failed:\n{exc}")
+            return
         self._load_project(root)
-        self.project_status.setPlainText(f"Created {root}\n" + self._format_messages(messages))
+        self.project_status.setPlainText(
+            f"Created {root}\n" + self._format_workdir_messages(messages)
+        )
 
     def _create_benchmark_project(self) -> None:
-        messages = validate_working_directory(Path(self.workdir.text()))
+        workdir = Path(self.workdir.text().strip() or str(Path.home() / "BulkSeqProjects"))
+        messages = validate_working_directory(workdir, use_wsl=self.use_wsl.isChecked())
+        if any(m.get("status") == "FAIL" for m in messages):
+            self.project_status.setPlainText(
+                "Cannot create benchmark project here:\n" + self._format_workdir_messages(messages)
+            )
+            QMessageBox.warning(self, APP_NAME, self._format_workdir_messages(messages))
+            return
         catalog = load_benchmark_catalog()
         benchmark_id = str(catalog[0]["id"])
-        root = create_benchmark_project(benchmark_id, Path(self.workdir.text()), self.project_name.text() or benchmark_id)
+        try:
+            root = create_benchmark_project(benchmark_id, workdir, self.project_name.text() or benchmark_id)
+        except (OSError, ValueError) as exc:
+            self.project_status.setPlainText(f"Benchmark project creation failed: {exc}")
+            QMessageBox.critical(self, APP_NAME, f"Benchmark project creation failed:\n{exc}")
+            return
         self._load_project(root)
         self.project_status.setPlainText(
             f"Created benchmark project: {root}\n"
             f"Dataset: {catalog[0]['name']}\n"
             f"Accessions: {', '.join(sample['original_accession'] for sample in catalog[0]['samples'])}\n"
-            + self._format_messages(messages)
+            + self._format_workdir_messages(messages)
         )
 
     def _open_project(self) -> None:
@@ -610,8 +804,24 @@ class MainWindow(QMainWindow):
             self._load_project(Path(directory))
 
     def _load_project(self, root: Path) -> None:
+        # Validate before mutating state so opening a non-project folder cannot
+        # leave self.project_root pointing at an invalid directory.
+        config_path = root / "config" / "config.yaml"
+        if not config_path.exists():
+            QMessageBox.warning(
+                self, APP_NAME,
+                f"Not a BulkSeq Studio project (missing config/config.yaml):\n{root}",
+            )
+            self.project_status.setPlainText(f"Not a project folder: {root}")
+            return
+        try:
+            config = self.manager.load_config(root)
+        except Exception as exc:  # malformed or unreadable config.yaml
+            QMessageBox.critical(self, APP_NAME, f"Could not read project config:\n{exc}")
+            self.project_status.setPlainText(f"Failed to open project: {exc}")
+            return
         self.project_root = root
-        self.config = self.manager.load_config(root)
+        self.config = config
         self._populate_widgets_from_config()
         samples = root / "config" / "samples.tsv"
         if samples.exists():
@@ -647,6 +857,19 @@ class MainWindow(QMainWindow):
         self.profile.setCurrentText(self.config.resources.profile)
         self.cores.setValue(self.config.resources.total_threads)
         self.ram.setValue(self.config.resources.total_memory_gb)
+        fig = self.config.figures_style
+        self.fig_palette.setCurrentText(fig.palette)
+        self.fig_point_size.setValue(fig.point_size)
+        self.fig_base_font.setValue(fig.base_font_size)
+        self.fig_font_family.setText(fig.font_family)
+        self.fig_label_bold.setChecked(fig.label_bold)
+        self.fig_title_bold.setChecked(fig.title_bold)
+        self.fig_volcano_top.setValue(fig.volcano_top_n)
+        self.fig_heatmap_top.setValue(fig.heatmap_top_n)
+        self.fig_pca_ntop.setValue(fig.pca_ntop)
+        self.fig_width.setValue(fig.width_in)
+        self.fig_height.setValue(fig.height_in)
+        self.fig_dpi.setValue(fig.dpi)
         organism = self.config.reference.organism_name
         for i in range(self.reference_list.count()):
             if self.reference_list.item(i).text().startswith(f"{organism} "):
@@ -811,7 +1034,7 @@ class MainWindow(QMainWindow):
         self.manager.save_config(self.project_root, self.config)
 
     def _estimate_runtime(self) -> None:
-        if self.config is None:
+        if not self._require_project() or self.config is None:
             return
         df = self.metadata_table.to_dataframe()
         estimate = estimate_runtime(self.config, df)
@@ -874,11 +1097,25 @@ class MainWindow(QMainWindow):
     def _start_snakemake(self, mode: str) -> None:
         if self.config is None or self.project_root is None:
             return
-        if mode in ("run", "resume") and not self._run_gate_ok():
+        # Guard double-starts: one snakemake per directory at a time.
+        if self._run_active or (self.runner is not None and self.runner.is_running()):
+            self.log_text.append("A run is already active. Stop it before starting another.")
             return
+        if mode in ("run", "resume", "recover") and not self._run_gate_ok():
+            return
+        # Persist the in-memory metadata table so the run uses current edits;
+        # Snakemake reads config/samples.tsv from disk, not the GUI table.
+        save_metadata(self.metadata_table.to_dataframe(), self.project_root / "config" / "samples.tsv")
         self._save_workflow_settings()
         self._save_resources()
-        command = build_snakemake_command(self.project_root, self.config, mode=mode, use_wsl=self.use_wsl.isChecked())
+        run_tag = _new_run_tag() if self.use_wsl.isChecked() else None
+        command = build_snakemake_command(
+            self.project_root,
+            self.config,
+            mode=mode,
+            use_wsl=self.use_wsl.isChecked(),
+            run_tag=run_tag,
+        )
         self.command_text.setText(command.display)
         if not self.use_wsl.isChecked() and shutil.which("snakemake") is None:
             self.log_text.append("Snakemake is not available on PATH. Command was constructed but not started.")
@@ -894,15 +1131,24 @@ class MainWindow(QMainWindow):
         self.runner_thread = RunnerThread(self.runner)
         self.runner_thread.line.connect(self._on_run_line)
         self.runner_thread.finished_with_code.connect(self._on_run_finished)
-        if mode in ("run", "resume"):
+        self._run_mode = mode
+        self._recovery_offered = False
+        self._stop_in_progress = False
+        self._set_running_ui(True)
+        if mode in ("run", "resume", "recover"):
             self.progress.setValue(0)
+            self.progress.setStyleSheet("")
+            self._set_run_status("Running...", "#2C6FB6")
             self._run_start = time.monotonic()
             self.elapsed_timer.start(1000)
+        else:
+            self._set_run_status("Running..." if mode == "dry-run" else "Unlocking...", "#2C6FB6")
         self.runner_thread.start()
 
     def _generate_reports(self) -> None:
-        if self.project_root is None:
+        if not self._require_project():
             return
+        assert self.project_root is not None
         reports = self.project_root / "results" / "reports"
         # If a real pipeline run already produced reports, display those; otherwise
         # generate the lightweight GUI-side summaries.
@@ -929,3 +1175,11 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _format_messages(messages: list[dict[str, str]]) -> str:
         return "\n".join(f"{m.get('status')}: {m.get('message')}" for m in messages)
+
+    @staticmethod
+    def _format_workdir_messages(messages: list[dict[str, str]]) -> str:
+        # Surface FAIL/WARNING/REVIEW_REQUIRED (incl. the /mnt/c WSL note) above
+        # PASS lines so the user sees actionable guidance first.
+        order = {"FAIL": 0, "REVIEW_REQUIRED": 1, "WARNING": 2, "PASS": 3}
+        ordered = sorted(messages, key=lambda m: order.get(m.get("status", ""), 4))
+        return "\n".join(f"{m.get('status')}: {m.get('message')}" for m in ordered)

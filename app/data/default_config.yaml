@@ -79,6 +79,19 @@ gene_sets:
   custom_gene_sets: null
   functional_annotation_table: null
   background_gene_list: null
+figures_style:
+  palette: Blue-Red
+  point_size: 2.5
+  base_font_size: 12
+  font_family: ""
+  label_bold: false
+  title_bold: false
+  volcano_top_n: 15
+  heatmap_top_n: 30
+  pca_ntop: 500
+  width_in: 6.0
+  height_in: 5.0
+  dpi: 300
 resources:
   profile: balanced
   total_threads: 4

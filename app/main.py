@@ -7,11 +7,13 @@ from PySide6.QtWidgets import QApplication
 
 from app.constants import APP_NAME
 from app.ui.main_window import MainWindow
+from app.ui.theme import apply_theme
 
 
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    apply_theme(app)
     window = MainWindow()
     window.resize(1280, 820)
     window.show()

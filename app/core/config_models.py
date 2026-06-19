@@ -119,6 +119,36 @@ class GeneSetsConfig(BaseModel):
     background_gene_list: str | None = None
 
 
+class FigureConfig(BaseModel):
+    # Visual style applied to all DESeq2 figures (workflow/scripts/make_figures.R).
+    palette: Literal["Blue-Red", "Viridis", "Greyscale"] = "Blue-Red"
+    point_size: float = 2.5
+    base_font_size: int = 12
+    font_family: str = ""
+    label_bold: bool = False
+    title_bold: bool = False
+    volcano_top_n: int = 15
+    heatmap_top_n: int = 30
+    pca_ntop: int = 500
+    width_in: float = 6.0
+    height_in: float = 5.0
+    dpi: int = 300
+
+    @field_validator("point_size", "width_in", "height_in")
+    @classmethod
+    def positive_float(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("Figure dimensions and point size must be positive.")
+        return value
+
+    @field_validator("base_font_size", "dpi", "volcano_top_n", "heatmap_top_n", "pca_ntop")
+    @classmethod
+    def positive_int(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("Figure counts, font size, and dpi must be positive integers.")
+        return value
+
+
 class ResourcesConfig(BaseModel):
     profile: Literal["low", "balanced", "high", "custom"] = "balanced"
     total_threads: int = 4
@@ -166,6 +196,7 @@ class AppConfig(BaseModel):
     featurecounts: FeatureCountsConfig = Field(default_factory=FeatureCountsConfig)
     deseq2: Deseq2Config = Field(default_factory=Deseq2Config)
     gene_sets: GeneSetsConfig = Field(default_factory=GeneSetsConfig)
+    figures_style: FigureConfig = Field(default_factory=FigureConfig)
     resources: ResourcesConfig = Field(default_factory=ResourcesConfig)
     rule_threads: RuleThreads = Field(default_factory=RuleThreads)
     rule_memory_gb: RuleMemoryGb = Field(default_factory=RuleMemoryGb)

@@ -1,4 +1,3 @@
 printshellcmds: true
-reason: true
 rerun-incomplete: true
 latency-wait: 30

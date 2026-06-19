@@ -26,6 +26,7 @@ rule featurecounts:
     shell:
         "S=$(cat {input.strand}); "
         "featureCounts -a {input.gtf} -o {output.counts} -T {threads} "
+        "--tmpDir {resources.tmpdir} "
         "{params.paired} -t {params.feature} -g {params.attribute} -s $S -Q 10 "
         "{input.bams} > {log} 2>&1"
 
