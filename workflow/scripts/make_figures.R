@@ -84,10 +84,23 @@ save_grid <- function(gtable, png_path, svg_path, w = fig_w, h = fig_h) {
   grid::grid.newpage(); grid::grid.draw(gtable); dev.off()
 }
 
+# ---- Grouping factor (from the DESeq2 contrast; falls back safely) ----------
+group_var <- "condition"
+de_cfg <- tryCatch(snakemake@config[["deseq2"]], error = function(e) NULL)
+if (is.list(de_cfg)) {
+  cons <- de_cfg[["contrasts"]]
+  if (is.list(cons) && length(cons) >= 1 && !is.null(cons[[1]][["factor"]])) {
+    group_var <- as.character(cons[[1]][["factor"]])
+  }
+}
+if (!(group_var %in% colnames(colData(dds)))) group_var <- colnames(colData(dds))[1]
+
 # ---- PCA --------------------------------------------------------------------
-pca <- plotPCA(vsd, intgroup = "condition", ntop = pca_ntop, returnData = TRUE)
+# plotPCA adds a generic "group" column for whatever intgroup is, so the plot
+# code stays independent of the factor's name.
+pca <- plotPCA(vsd, intgroup = group_var, ntop = pca_ntop, returnData = TRUE)
 pv <- round(100 * attr(pca, "percentVar"))
-p_pca <- ggplot(pca, aes(PC1, PC2, colour = condition)) +
+p_pca <- ggplot(pca, aes(PC1, PC2, colour = group)) +
   geom_point(size = point_size, alpha = 0.9) +
   geom_text_repel(aes(label = name), size = 3, seed = 1, show.legend = FALSE) +
   scale_colour_manual(values = pal_spec$discrete) +
@@ -98,7 +111,7 @@ save_gg(p_pca, out[["pca_png"]], out[["pca_svg"]])
 # ---- Sample-distance heatmap -----------------------------------------------
 sampleDists <- dist(t(assay(vsd)), method = "euclidean")
 mat <- as.matrix(sampleDists)
-rownames(mat) <- colnames(mat) <- paste(vsd$condition, colnames(vsd), sep = " | ")
+rownames(mat) <- colnames(mat) <- paste(colData(vsd)[[group_var]], colnames(vsd), sep = " | ")
 cols <- pal_spec$diverging(255)
 ph <- pheatmap(mat, clustering_distance_rows = sampleDists,
                clustering_distance_cols = sampleDists,
@@ -149,7 +162,7 @@ n_top <- min(heatmap_top, nrow(res))
 top <- head(order(res$padj), n_top)
 hm <- assay(vsd)[top, , drop = FALSE]
 hm <- t(scale(t(hm)))
-ann <- as.data.frame(colData(dds)[, "condition", drop = FALSE])
+ann <- as.data.frame(colData(dds)[, group_var, drop = FALSE])
 ph2 <- pheatmap(hm, scale = "none", annotation_col = ann, show_rownames = TRUE,
                 clustering_method = "ward.D2",
                 color = pal_spec$ramp(255),

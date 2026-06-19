@@ -24,6 +24,19 @@ writeLines("", out[["go"]])
 writeLines("", out[["gsea"]])
 summary_lines <- c("Functional enrichment summary", "=============================", "")
 
+# No OrgDb mapping for this organism (e.g. most fungi/bacteria): skip cleanly
+# rather than risk running against the wrong species' database.
+if (is.null(orgdb_name) || !nzchar(orgdb_name)) {
+  writeLines(c(summary_lines,
+               "Skipped: no Bioconductor OrgDb is mapped for this organism.",
+               "Enrichment supports human, mouse, fly, worm, zebrafish, yeast, Arabidopsis",
+               "(install the matching org.*.db package to enable it)."),
+             out[["summary"]])
+  write_check(out[["check"]], "PASS",
+              "Enrichment skipped: no OrgDb mapped for this organism (gene-level DE is unaffected).")
+  sink(type = "message"); close(log_con); quit(save = "no", status = 0)
+}
+
 result <- tryCatch({
   suppressMessages({
     library(clusterProfiler)

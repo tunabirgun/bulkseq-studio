@@ -32,10 +32,11 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QTabWidget,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtGui import QDesktopServices, QPixmap
+from PySide6.QtGui import QDesktopServices, QFontDatabase, QPixmap
 from PySide6.QtCore import Qt, QUrl
 
 from app.constants import APP_NAME
@@ -56,6 +57,7 @@ from app.core.snakemake_runner import (
 )
 from app.core.timing import write_timing_summary
 from app.core.paths import data_path
+from app.ui.image_viewer import ImageViewer
 from app.ui.metadata_editor import MetadataTable
 from app.ui.readiness_dialog import ReadinessDialog
 
@@ -82,6 +84,8 @@ class RunnerThread(QThread):
 
 
 class MainWindow(QMainWindow):
+    FONT_DEFAULT_LABEL = "(ggplot default)"
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(APP_NAME)
@@ -340,22 +344,22 @@ class MainWindow(QMainWindow):
         self.alpha.setValue(0.05)
         save = QPushButton("Save Workflow Settings")
         save.clicked.connect(self._save_workflow_settings)
-        layout.addRow("Aligner", self.aligner)
-        layout.addRow("Quantifier", self.quantifier)
+        layout.addRow(self._info_label("Aligner", "Read aligner. STAR is the fully implemented route; HISAT2/Salmon are scaffolded."), self.aligner)
+        layout.addRow(self._info_label("Quantifier", "How aligned reads are summarised to gene counts. featureCounts is the implemented route."), self.quantifier)
         layout.addRow("fastp trimming", self.trim)
-        layout.addRow("fastp quality (-q)", self.fastp_q)
-        layout.addRow("fastp min length (-l)", self.fastp_len)
-        layout.addRow("fastp poly-G (-g)", self.trim_poly_g)
+        layout.addRow(self._info_label("fastp quality (-q)", "Minimum acceptable per-base Phred quality. Bases below this count as low quality. fastp default 15."), self.fastp_q)
+        layout.addRow(self._info_label("fastp min length (-l)", "Reads shorter than this (after trimming) are discarded. Protocol default 36."), self.fastp_len)
+        layout.addRow(self._info_label("fastp poly-G (-g)", "Trim poly-G tails, an artefact of 2-colour chemistry (NextSeq/NovaSeq). Leave off for HiSeq/MiSeq."), self.trim_poly_g)
         layout.addRow("rRNA filtering", self.rrna)
         layout.addRow("Enrichment", self.enrichment)
         layout.addRow("Figures", self.figures)
-        layout.addRow("DESeq2 design", self.design)
+        layout.addRow(self._info_label("DESeq2 design", "R model formula. The last term is the effect of interest; put known batch effects before it, e.g. '~ batch + condition'."), self.design)
         layout.addRow(refresh)
-        layout.addRow("Contrast factor", self.contrast_factor)
-        layout.addRow("Numerator (treated)", self.numerator)
-        layout.addRow("Denominator (reference)", self.denominator)
-        layout.addRow("Reference level", self.reference_level)
-        layout.addRow("Alpha (FDR)", self.alpha)
+        layout.addRow(self._info_label("Contrast factor", "The metadata column compared in the differential test (usually 'condition')."), self.contrast_factor)
+        layout.addRow(self._info_label("Numerator (treated)", "The group whose change is measured. log2 fold change is numerator relative to denominator."), self.numerator)
+        layout.addRow(self._info_label("Denominator (reference)", "The baseline group. Positive log2 fold change = higher in the numerator than this."), self.denominator)
+        layout.addRow(self._info_label("Reference level", "The factor's baseline level (normally the same as the denominator); DESeq2 releveled to this."), self.reference_level)
+        layout.addRow(self._info_label("Alpha (FDR)", "Significance threshold on the Benjamini-Hochberg adjusted p-value (false discovery rate). Default 0.05."), self.alpha)
         layout.addRow(QLabel("featureCounts strandedness is auto-inferred per protocol."))
         layout.addRow(save)
         self.tabs.addTab(page, "Workflow Settings")
@@ -595,29 +599,58 @@ class MainWindow(QMainWindow):
         )
         load = QPushButton("Load table preview")
         load.clicked.connect(self._load_output_table)
-        gallery = QPushButton("Refresh figure gallery")
-        gallery.clicked.connect(self._refresh_gallery)
         open_results = QPushButton("Open results folder")
         open_results.clicked.connect(lambda: self._open_subpath("results"))
         controls.addWidget(self.output_table_pick)
         controls.addWidget(load)
-        controls.addWidget(gallery)
         controls.addWidget(open_results)
         self.output_table = QTableWidget()
         self.output_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.gallery_area = QScrollArea()
-        self.gallery_area.setWidgetResizable(True)
-        self.gallery_inner = QWidget()
-        self.gallery_layout = QHBoxLayout(self.gallery_inner)
-        self.gallery_area.setWidget(self.gallery_inner)
-        self.gallery_area.setMinimumHeight(240)
+        self.output_table.setMaximumHeight(220)
+
+        # Figure viewer: pick a figure, then zoom (wheel) / pan (drag) / fit.
+        fig_controls = QHBoxLayout()
+        self.figure_pick = QComboBox()
+        self.figure_pick.currentTextChanged.connect(self._show_selected_figure)
+        refresh_figs = QPushButton("Refresh figures")
+        refresh_figs.clicked.connect(self._refresh_gallery)
+        fit_btn = QPushButton("Fit")
+        fit_btn.clicked.connect(lambda: self.figure_viewer.fit())
+        actual_btn = QPushButton("100%")
+        actual_btn.clicked.connect(lambda: self.figure_viewer.actual_size())
+        fig_controls.addWidget(QLabel("Figure:"))
+        fig_controls.addWidget(self.figure_pick, 1)
+        fig_controls.addWidget(refresh_figs)
+        fig_controls.addWidget(fit_btn)
+        fig_controls.addWidget(actual_btn)
+        self.figure_viewer = ImageViewer()
+
         layout.addLayout(controls)
         layout.addWidget(QLabel("Table preview (first 200 rows)"))
         layout.addWidget(self.output_table)
-        layout.addWidget(QLabel("Figures"))
-        layout.addWidget(self.gallery_area)
+        layout.addWidget(QLabel("Figures — scroll to zoom, drag to pan"))
+        layout.addLayout(fig_controls)
+        layout.addWidget(self.figure_viewer, 1)
         layout.addWidget(self._build_figure_style_group())
         self.tabs.addTab(page, "Outputs")
+
+    def _info_label(self, text: str, help_text: str) -> QWidget:
+        # A form-row label with a small info button that explains a complex
+        # parameter (tooltip on hover, full text on click).
+        holder = QWidget()
+        row = QHBoxLayout(holder)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+        row.addWidget(QLabel(text))
+        info = QToolButton()
+        info.setText("ⓘ")  # circled small i
+        info.setAutoRaise(True)
+        info.setCursor(Qt.CursorShape.PointingHandCursor)
+        info.setToolTip(help_text)
+        info.clicked.connect(lambda: QMessageBox.information(self, text, help_text))
+        row.addWidget(info)
+        row.addStretch(1)
+        return holder
 
     def _build_figure_style_group(self) -> QGroupBox:
         # Style controls for the DESeq2 figures; written to config.figures_style
@@ -634,8 +667,13 @@ class MainWindow(QMainWindow):
         self.fig_base_font = QSpinBox()
         self.fig_base_font.setRange(4, 48)
         self.fig_base_font.setValue(12)
-        self.fig_font_family = QLineEdit()
-        self.fig_font_family.setPlaceholderText("ggplot default (leave blank)")
+        # Font family as a dropdown of installed fonts (editable so a font only
+        # present in the WSL R environment can still be typed). The first entry
+        # means "ggplot default" and maps to an empty value.
+        self.fig_font_family = QComboBox()
+        self.fig_font_family.setEditable(True)
+        self.fig_font_family.addItem(self.FONT_DEFAULT_LABEL)
+        self.fig_font_family.addItems(QFontDatabase.families())
         self.fig_label_bold = QCheckBox("Bold axis tick labels")
         self.fig_title_bold = QCheckBox("Bold axis titles")
         self.fig_volcano_top = QSpinBox()
@@ -662,18 +700,18 @@ class MainWindow(QMainWindow):
         self.fig_dpi.setValue(300)
         save_style = QPushButton("Save figure style")
         save_style.clicked.connect(self._save_figure_style)
-        form.addRow("Palette", self.fig_palette)
-        form.addRow("Point size", self.fig_point_size)
-        form.addRow("Base font size", self.fig_base_font)
-        form.addRow("Font family", self.fig_font_family)
+        form.addRow(self._info_label("Palette", "Colour scheme for all figures. Blue-Red is diverging; Viridis is colour-blind friendly; Greyscale prints well in mono."), self.fig_palette)
+        form.addRow(self._info_label("Point size", "Dot size in PCA/volcano scatter plots (ggplot2 size units)."), self.fig_point_size)
+        form.addRow(self._info_label("Base font size", "Base text size for all figures (ggplot2 theme base_size, points)."), self.fig_base_font)
+        form.addRow(self._info_label("Font family", "Font for figure text. Leave as default unless the font is also available in the WSL R environment."), self.fig_font_family)
         form.addRow(self.fig_label_bold)
         form.addRow(self.fig_title_bold)
-        form.addRow("Volcano top-N labels", self.fig_volcano_top)
-        form.addRow("Heatmap top-N genes", self.fig_heatmap_top)
-        form.addRow("PCA n-top genes", self.fig_pca_ntop)
-        form.addRow("Width (in)", self.fig_width)
-        form.addRow("Height (in)", self.fig_height)
-        form.addRow("DPI (PNG)", self.fig_dpi)
+        form.addRow(self._info_label("Volcano top-N labels", "How many of the most significant genes to label on the volcano plot. 0 = none."), self.fig_volcano_top)
+        form.addRow(self._info_label("Heatmap top-N genes", "Number of top genes (by adjusted p) shown in the top-DEG heatmap."), self.fig_heatmap_top)
+        form.addRow(self._info_label("PCA n-top genes", "Number of most-variable genes used to compute the PCA. Protocol default 500."), self.fig_pca_ntop)
+        form.addRow(self._info_label("Width (in)", "Saved figure width in inches (PNG and SVG)."), self.fig_width)
+        form.addRow(self._info_label("Height (in)", "Saved figure height in inches (PNG and SVG)."), self.fig_height)
+        form.addRow(self._info_label("DPI (PNG)", "Resolution for the raster PNG export. SVG is vector and unaffected. 300 is publication quality."), self.fig_dpi)
         form.addRow(save_style)
         return group
 
@@ -685,7 +723,8 @@ class MainWindow(QMainWindow):
         style.palette = self.fig_palette.currentText()  # type: ignore[assignment]
         style.point_size = self.fig_point_size.value()
         style.base_font_size = self.fig_base_font.value()
-        style.font_family = self.fig_font_family.text().strip()
+        font = self.fig_font_family.currentText().strip()
+        style.font_family = "" if font == self.FONT_DEFAULT_LABEL else font
         style.label_bold = self.fig_label_bold.isChecked()
         style.title_bold = self.fig_title_bold.isChecked()
         style.volcano_top_n = self.fig_volcano_top.value()
@@ -723,22 +762,25 @@ class MainWindow(QMainWindow):
                 self.output_table.setItem(r, c, QTableWidgetItem(str(df.iat[r, c])))
 
     def _refresh_gallery(self) -> None:
-        while self.gallery_layout.count():
-            item = self.gallery_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        if self.project_root is None:
+        self.figure_pick.blockSignals(True)
+        self.figure_pick.clear()
+        figures = []
+        if self.project_root is not None:
+            figures = sorted((self.project_root / "results" / "figures").glob("*.png"))
+        self.figure_pick.addItems([f.name for f in figures])
+        self.figure_pick.blockSignals(False)
+        if figures:
+            self.figure_pick.setCurrentIndex(0)
+            self._show_selected_figure(figures[0].name)
+        else:
+            self.figure_viewer.clear()
+
+    def _show_selected_figure(self, name: str) -> None:
+        if not name or self.project_root is None:
             return
-        figures = sorted((self.project_root / "results" / "figures").glob("*.png"))
-        if not figures:
-            self.gallery_layout.addWidget(QLabel("No figures yet. Run the pipeline."))
-            return
-        for fig in figures:
-            label = QLabel()
-            pixmap = QPixmap(str(fig)).scaledToHeight(200, Qt.SmoothTransformation)
-            label.setPixmap(pixmap)
-            label.setToolTip(fig.name)
-            self.gallery_layout.addWidget(label)
+        path = self.project_root / "results" / "figures" / name
+        if path.exists():
+            self.figure_viewer.set_image(path)
 
     def _browse_workdir(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "Working directory", self.workdir.text())
@@ -861,7 +903,7 @@ class MainWindow(QMainWindow):
         self.fig_palette.setCurrentText(fig.palette)
         self.fig_point_size.setValue(fig.point_size)
         self.fig_base_font.setValue(fig.base_font_size)
-        self.fig_font_family.setText(fig.font_family)
+        self.fig_font_family.setCurrentText(fig.font_family or self.FONT_DEFAULT_LABEL)
         self.fig_label_bold.setChecked(fig.label_bold)
         self.fig_title_bold.setChecked(fig.title_bold)
         self.fig_volcano_top.setValue(fig.volcano_top_n)
@@ -985,12 +1027,35 @@ class MainWindow(QMainWindow):
         if row < 0 or row >= len(catalog) or self.config is None or self.project_root is None:
             return
         entry = catalog[row]
-        self.config.reference.mode = "preset"
-        self.config.reference.organism_name = str(entry["organism_name"])
-        self.config.reference.strain = str(entry.get("strain") or "")
-        self.config.reference.genome_size_category = str(entry.get("genome_size_category") or "custom")
+        ref = self.config.reference
+        ref.mode = "preset"
+        ref.organism_name = str(entry["organism_name"])
+        ref.strain = str(entry.get("strain") or "")
+        ref.genome_size_category = str(entry.get("genome_size_category") or "custom")
+        ref.source = str(entry.get("source") or "")
+        ref.release = str(entry.get("release") or "")
+        ref.package_id = str(entry.get("assembly_accession") or "")
+        gtf_url = entry.get("annotation_gtf_url")
+        fasta_url = entry.get("genome_fasta_url")
+        if fasta_url and gtf_url:
+            # Wire the verified download URLs + canonical local paths so the
+            # pipeline fetches and indexes this reference automatically.
+            ref.genome_fasta_url = str(fasta_url)
+            ref.annotation_gtf_url = str(gtf_url)
+            ref.genome_fasta = "references/genome.fa"
+            ref.annotation_file = "references/annotation.gtf"
+            ref.annotation_format = "gtf"
+            note = "Reference selected; the pipeline will download and index it on run."
+        else:
+            ref.genome_fasta_url = None
+            ref.annotation_gtf_url = None
+            note = (
+                "This preset has no ready GTF (see notes). Use the Custom Reference "
+                "section below to supply your own genome FASTA + annotation."
+            )
         self.manager.save_config(self.project_root, self.config)
-        self.reference_details.setPlainText("\n".join(f"{k}: {v}" for k, v in entry.items()))
+        details = "\n".join(f"{k}: {v}" for k, v in entry.items())
+        self.reference_details.setPlainText(f"{note}\n\nAssembly: {entry.get('assembly_accession')} ({entry.get('assembly_name')})  release: {entry.get('release')}\n\n{details}")
 
     def _save_workflow_settings(self) -> None:
         if self.config is None or self.project_root is None:

@@ -194,19 +194,8 @@ QComboBox::drop-down {
     border-bottom-right-radius: 6px;
 }
 
-QComboBox::down-arrow {
-    image: none;
-    width: 0px;
-    height: 0px;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 6px solid #6B7785;
-    margin-right: 2px;
-}
-
-QComboBox::down-arrow:disabled {
-    border-top: 6px solid #B6C2CF;
-}
+/* The combo arrow is drawn by the Fusion style (set in apply_theme); overriding
+   its image here produced an empty square on some Qt builds. */
 
 QComboBox QAbstractItemView {
     background-color: #FFFFFF;
@@ -242,23 +231,8 @@ QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
     background-color: #E4EBF3;
 }
 
-QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
-    image: none;
-    width: 0px;
-    height: 0px;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-bottom: 5px solid #6B7785;
-}
-
-QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
-    image: none;
-    width: 0px;
-    height: 0px;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 5px solid #6B7785;
-}
+/* Spin arrows are left to the Fusion style (set in apply_theme) so they render
+   as crisp native triangles rather than CSS-border boxes. */
 
 /* ---- Group boxes (cards) ---- */
 QGroupBox {
@@ -461,7 +435,16 @@ QToolTip {
 
 
 def apply_theme(app: QApplication) -> None:
-    """Apply the BulkSeq Studio light theme: base font plus the global style sheet."""
+    """Apply the BulkSeq Studio light theme: Fusion style, base font, style sheet.
+
+    Fusion renders combo/spin sub-control arrows as crisp native triangles and
+    is consistent across platforms, avoiding the empty-square arrows that the
+    native Windows style showed under a heavy style sheet.
+    """
+    try:
+        app.setStyle("Fusion")
+    except Exception:
+        pass
     font = QFont(BASE_FONT_FAMILY, BASE_FONT_POINT_SIZE)
     app.setFont(font)
     app.setStyleSheet(APP_QSS)

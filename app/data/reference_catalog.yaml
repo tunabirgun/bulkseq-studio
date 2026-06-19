@@ -1,397 +1,402 @@
+# Curated reference catalog. URLs are verified against the live Ensembl /
+# NCBI RefSeq FTP listings. Vertebrate/fly/worm/yeast models use Ensembl
+# release-111; fungi, plants and bacteria use NCBI RefSeq (uniform, stable,
+# always ships a GTF). The pipeline downloads genome_fasta_url + annotation_gtf_url
+# and builds the STAR index automatically when a preset is selected.
 references:
   - organism_name: Homo sapiens
     scientific_name: Homo sapiens
     strain: GRCh38
     taxon_id: 9606
-    source: placeholder
-    assembly_accession: placeholder
+    source: Ensembl
+    assembly_accession: GCA_000001405
     assembly_name: GRCh38
-    annotation_source: GENCODE
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Fill URLs from Ensembl/GENCODE/NCBI before production use.
-    recommended_aligner_settings: STAR defaults; use sufficient RAM.
+    annotation_source: Ensembl
+    genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
+    annotation_gtf_url: https://ftp.ensembl.org/pub/release-111/gtf/homo_sapiens/Homo_sapiens.GRCh38.111.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: "111"
+    date: "2024-01"
+    notes: Uses primary_assembly (not toplevel) to avoid alt/patch contig RAM bloat. STAR index needs ~30 GB RAM.
+    recommended_aligner_settings: STAR defaults; build from primary_assembly; ample RAM.
     genome_size_category: mammalian
   - organism_name: Mus musculus
     scientific_name: Mus musculus
     strain: GRCm39
     taxon_id: 10090
-    source: placeholder
-    assembly_accession: placeholder
+    source: Ensembl
+    assembly_accession: GCA_000001635
     assembly_name: GRCm39
-    annotation_source: GENCODE
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Fill URLs from Ensembl/GENCODE/NCBI before production use.
-    recommended_aligner_settings: STAR defaults; use sufficient RAM.
+    annotation_source: Ensembl
+    genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/mus_musculus/dna/Mus_musculus.GRCm39.dna.primary_assembly.fa.gz
+    annotation_gtf_url: https://ftp.ensembl.org/pub/release-111/gtf/mus_musculus/Mus_musculus.GRCm39.111.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: "111"
+    date: "2024-01"
+    notes: Uses primary_assembly. STAR index needs ~25-30 GB RAM.
+    recommended_aligner_settings: STAR defaults; ample RAM.
     genome_size_category: mammalian
   - organism_name: Saccharomyces cerevisiae
     scientific_name: Saccharomyces cerevisiae
     strain: S288C
     taxon_id: 4932
-    source: placeholder
-    assembly_accession: placeholder
-    assembly_name: R64
-    annotation_source: SGD/EnsemblFungi
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Yeast-sized genome; STAR index can use smaller genomeSAindexNbases.
-    recommended_aligner_settings: genomeSAindexNbases auto/small genome.
+    source: Ensembl
+    assembly_accession: GCA_000146045.2
+    assembly_name: R64-1-1
+    annotation_source: Ensembl
+    genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/saccharomyces_cerevisiae/dna/Saccharomyces_cerevisiae.R64-1-1.dna.toplevel.fa.gz
+    annotation_gtf_url: https://ftp.ensembl.org/pub/release-111/gtf/saccharomyces_cerevisiae/Saccharomyces_cerevisiae.R64-1-1.111.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: "111"
+    date: "2024-01"
+    notes: Small genome (~12 Mb); STAR genomeSAindexNbases is reduced automatically.
+    recommended_aligner_settings: STAR with small-genome SA index.
     genome_size_category: yeast
   - organism_name: Schizosaccharomyces pombe
     scientific_name: Schizosaccharomyces pombe
     strain: 972h-
     taxon_id: 4896
-    source: placeholder
-    assembly_accession: placeholder
+    source: NCBI RefSeq
+    assembly_accession: GCF_000002945.1
     assembly_name: ASM294v2
-    annotation_source: PomBase/EnsemblFungi
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Placeholder entry.
-    recommended_aligner_settings: genomeSAindexNbases auto/small genome.
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/002/945/GCF_000002945.1_ASM294v2/GCF_000002945.1_ASM294v2_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/002/945/GCF_000002945.1_ASM294v2/GCF_000002945.1_ASM294v2_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq ASM294v2
+    date: null
+    notes: Small genome; STAR small-genome SA index applied automatically.
+    recommended_aligner_settings: STAR with small-genome SA index.
     genome_size_category: yeast
   - organism_name: Fusarium graminearum PH-1
     scientific_name: Fusarium graminearum
     strain: PH-1
     taxon_id: 5518
-    source: placeholder
-    assembly_accession: placeholder
-    assembly_name: PH-1
-    annotation_source: EnsemblFungi/NCBI
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Core Fusarium preset requested by the project spec.
+    source: NCBI RefSeq
+    assembly_accession: GCF_000240135.3
+    assembly_name: ASM24013v3
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/240/135/GCF_000240135.3_ASM24013v3/GCF_000240135.3_ASM24013v3_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/240/135/GCF_000240135.3_ASM24013v3/GCF_000240135.3_ASM24013v3_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq ASM24013v3
+    date: null
+    notes: Reference Fusarium genome (~36 Mb). Matches the assembly used in the protocol.
     recommended_aligner_settings: fungal genome; STAR or HISAT2.
     genome_size_category: fungal
   - organism_name: Fusarium culmorum
     scientific_name: Fusarium culmorum
-    strain: placeholder
-    taxon_id: 5507
-    source: placeholder
-    assembly_accession: placeholder
-    assembly_name: placeholder
-    annotation_source: placeholder
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Placeholder entry; update with chosen strain/release.
-    recommended_aligner_settings: fungal genome; STAR or HISAT2.
+    strain: UK99
+    taxon_id: 5516
+    source: GenBank (no RefSeq)
+    assembly_accession: GCA_900074845.1
+    assembly_name: FCUK99
+    annotation_source: none (GenBank assembly ships GFF, not GTF)
+    genome_fasta_url: null
+    annotation_gtf_url: null
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: null
+    date: null
+    notes: No NCBI RefSeq assembly exists, so no ready GTF. Use the Custom Reference tab with your own FASTA + GTF (e.g. convert a GenBank/GFF annotation).
+    recommended_aligner_settings: fungal genome; supply a custom GTF.
     genome_size_category: fungal
   - organism_name: Fusarium oxysporum
-    scientific_name: Fusarium oxysporum
-    strain: placeholder
-    taxon_id: 5507
-    source: placeholder
-    assembly_accession: placeholder
-    assembly_name: placeholder
-    annotation_source: placeholder
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Placeholder entry; update with forma specialis/strain.
+    scientific_name: Fusarium oxysporum f. sp. lycopersici
+    strain: "4287"
+    taxon_id: 426428
+    source: NCBI RefSeq
+    assembly_accession: GCF_000149955.1
+    assembly_name: ASM14995v2
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/149/955/GCF_000149955.1_ASM14995v2/GCF_000149955.1_ASM14995v2_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/149/955/GCF_000149955.1_ASM14995v2/GCF_000149955.1_ASM14995v2_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq ASM14995v2
+    date: null
+    notes: Formae speciales differ; this is the lycopersici 4287 reference. Swap via the Custom Reference tab if you need another f. sp.
     recommended_aligner_settings: fungal genome; STAR or HISAT2.
     genome_size_category: fungal
   - organism_name: Fusarium pseudograminearum
     scientific_name: Fusarium pseudograminearum
-    strain: placeholder
-    taxon_id: 115659
-    source: placeholder
-    assembly_accession: placeholder
-    assembly_name: placeholder
-    annotation_source: placeholder
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Placeholder entry.
+    strain: CS3096
+    taxon_id: 1028729
+    source: NCBI RefSeq
+    assembly_accession: GCF_000303195.2
+    assembly_name: FP7
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/303/195/GCF_000303195.2_FP7/GCF_000303195.2_FP7_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/303/195/GCF_000303195.2_FP7/GCF_000303195.2_FP7_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq FP7
+    date: null
+    notes: Crown-rot pathogen reference.
+    recommended_aligner_settings: fungal genome; STAR or HISAT2.
+    genome_size_category: fungal
+  - organism_name: Fusarium verticillioides
+    scientific_name: Fusarium verticillioides
+    strain: "7600"
+    taxon_id: 334819
+    source: NCBI RefSeq
+    assembly_accession: GCF_000149555.1
+    assembly_name: ASM14955v1
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/149/555/GCF_000149555.1_ASM14955v1/GCF_000149555.1_ASM14955v1_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/149/555/GCF_000149555.1_ASM14955v1/GCF_000149555.1_ASM14955v1_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq ASM14955v1
+    date: null
+    notes: Maize pathogen reference.
     recommended_aligner_settings: fungal genome; STAR or HISAT2.
     genome_size_category: fungal
   - organism_name: Arabidopsis thaliana
     scientific_name: Arabidopsis thaliana
-    strain: TAIR10
+    strain: Col-0
     taxon_id: 3702
-    source: placeholder
-    assembly_accession: placeholder
-    assembly_name: TAIR10
-    annotation_source: TAIR/EnsemblPlants
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Placeholder entry.
-    recommended_aligner_settings: plant genome.
+    source: NCBI RefSeq
+    assembly_accession: GCF_000001735.4
+    assembly_name: TAIR10.1
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/735/GCF_000001735.4_TAIR10.1/GCF_000001735.4_TAIR10.1_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/735/GCF_000001735.4_TAIR10.1/GCF_000001735.4_TAIR10.1_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq TAIR10.1
+    date: null
+    notes: Model plant; small genome (~120 Mb).
+    recommended_aligner_settings: plant genome; STAR defaults.
     genome_size_category: plant
   - organism_name: Drosophila melanogaster
     scientific_name: Drosophila melanogaster
     strain: BDGP6
     taxon_id: 7227
-    source: placeholder
-    assembly_accession: placeholder
-    assembly_name: BDGP6
-    annotation_source: FlyBase/EnsemblMetazoa
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Placeholder entry.
+    source: Ensembl
+    assembly_accession: GCA_000001215.4
+    assembly_name: BDGP6.46
+    annotation_source: Ensembl
+    genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/drosophila_melanogaster/dna/Drosophila_melanogaster.BDGP6.46.dna.toplevel.fa.gz
+    annotation_gtf_url: https://ftp.ensembl.org/pub/release-111/gtf/drosophila_melanogaster/Drosophila_melanogaster.BDGP6.46.111.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: "111"
+    date: "2024-01"
+    notes: Used by the bundled pasilla benchmark; validated end-to-end.
     recommended_aligner_settings: STAR defaults.
-    genome_size_category: custom
+    genome_size_category: insect
   - organism_name: Caenorhabditis elegans
     scientific_name: Caenorhabditis elegans
     strain: WBcel235
     taxon_id: 6239
-    source: placeholder
-    assembly_accession: placeholder
+    source: Ensembl
+    assembly_accession: GCA_000002985.3
     assembly_name: WBcel235
-    annotation_source: WormBase/EnsemblMetazoa
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Placeholder entry.
+    annotation_source: Ensembl
+    genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/caenorhabditis_elegans/dna/Caenorhabditis_elegans.WBcel235.dna.toplevel.fa.gz
+    annotation_gtf_url: https://ftp.ensembl.org/pub/release-111/gtf/caenorhabditis_elegans/Caenorhabditis_elegans.WBcel235.111.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: "111"
+    date: "2024-01"
+    notes: Small genome (~100 Mb).
     recommended_aligner_settings: STAR defaults.
-    genome_size_category: custom
+    genome_size_category: insect
   - organism_name: Danio rerio
     scientific_name: Danio rerio
     strain: GRCz11
     taxon_id: 7955
-    source: placeholder
-    assembly_accession: placeholder
+    source: Ensembl
+    assembly_accession: GCA_000002035.4
     assembly_name: GRCz11
     annotation_source: Ensembl
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Placeholder entry.
-    recommended_aligner_settings: vertebrate genome; use sufficient RAM.
+    genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/danio_rerio/dna/Danio_rerio.GRCz11.dna.primary_assembly.fa.gz
+    annotation_gtf_url: https://ftp.ensembl.org/pub/release-111/gtf/danio_rerio/Danio_rerio.GRCz11.111.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: "111"
+    date: "2024-01"
+    notes: Uses primary_assembly. Vertebrate genome (~1.4 Gb); ample RAM for the STAR index.
+    recommended_aligner_settings: STAR defaults; ample RAM.
     genome_size_category: mammalian
   - organism_name: Candida albicans
     scientific_name: Candida albicans
     strain: SC5314
-    taxon_id: 5476
-    source: placeholder
-    assembly_accession: placeholder
-    assembly_name: SC5314
-    annotation_source: Candida Genome Database
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Placeholder entry.
+    taxon_id: 237561
+    source: NCBI RefSeq
+    assembly_accession: GCF_000182965.3
+    assembly_name: ASM18296v3
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/182/965/GCF_000182965.3_ASM18296v3/GCF_000182965.3_ASM18296v3_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/182/965/GCF_000182965.3_ASM18296v3/GCF_000182965.3_ASM18296v3_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq ASM18296v3
+    date: null
+    notes: Note CTG-clade non-standard codon usage for protein-level work (not relevant to gene-level counting).
     recommended_aligner_settings: yeast/fungal genome.
     genome_size_category: yeast
   - organism_name: Neurospora crassa
     scientific_name: Neurospora crassa
     strain: OR74A
-    taxon_id: 5141
-    source: placeholder
-    assembly_accession: placeholder
-    assembly_name: placeholder
-    annotation_source: FungiDB/EnsemblFungi
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Placeholder entry.
+    taxon_id: 367110
+    source: NCBI RefSeq
+    assembly_accession: GCF_000182925.2
+    assembly_name: NC12
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/182/925/GCF_000182925.2_NC12/GCF_000182925.2_NC12_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/182/925/GCF_000182925.2_NC12/GCF_000182925.2_NC12_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq NC12
+    date: null
+    notes: Filamentous fungus reference.
     recommended_aligner_settings: fungal genome.
     genome_size_category: fungal
   - organism_name: Aspergillus nidulans
     scientific_name: Aspergillus nidulans
     strain: FGSC A4
-    taxon_id: 162425
-    source: placeholder
-    assembly_accession: placeholder
-    assembly_name: placeholder
-    annotation_source: FungiDB/EnsemblFungi
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Placeholder entry.
+    taxon_id: 227321
+    source: NCBI RefSeq
+    assembly_accession: GCF_000011425.1
+    assembly_name: ASM1142v1
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/011/425/GCF_000011425.1_ASM1142v1/GCF_000011425.1_ASM1142v1_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/011/425/GCF_000011425.1_ASM1142v1/GCF_000011425.1_ASM1142v1_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq ASM1142v1
+    date: null
+    notes: Model Aspergillus.
     recommended_aligner_settings: fungal genome.
     genome_size_category: fungal
   - organism_name: Aspergillus fumigatus
     scientific_name: Aspergillus fumigatus
     strain: Af293
-    taxon_id: 746128
-    source: placeholder
-    assembly_accession: placeholder
-    assembly_name: placeholder
-    annotation_source: FungiDB/EnsemblFungi
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Placeholder entry.
+    taxon_id: 330879
+    source: NCBI RefSeq
+    assembly_accession: GCF_000002655.1
+    assembly_name: ASM265v1
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/002/655/GCF_000002655.1_ASM265v1/GCF_000002655.1_ASM265v1_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/002/655/GCF_000002655.1_ASM265v1/GCF_000002655.1_ASM265v1_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq ASM265v1
+    date: null
+    notes: Human pathogen reference.
     recommended_aligner_settings: fungal genome.
     genome_size_category: fungal
   - organism_name: Cryptococcus neoformans
-    scientific_name: Cryptococcus neoformans
+    scientific_name: Cryptococcus neoformans var. grubii
     strain: H99
-    taxon_id: 5207
-    source: placeholder
-    assembly_accession: placeholder
-    assembly_name: placeholder
-    annotation_source: FungiDB/EnsemblFungi
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Placeholder entry.
-    recommended_aligner_settings: fungal genome.
-    genome_size_category: fungal
-  - organism_name: Fusarium verticillioides
-    scientific_name: Fusarium verticillioides
-    strain: placeholder
-    taxon_id: 117187
-    source: placeholder
-    assembly_accession: placeholder
-    assembly_name: placeholder
-    annotation_source: placeholder
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Placeholder entry.
+    taxon_id: 235443
+    source: NCBI RefSeq
+    assembly_accession: GCF_000149245.1
+    assembly_name: CNA3
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/149/245/GCF_000149245.1_CNA3/GCF_000149245.1_CNA3_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/149/245/GCF_000149245.1_CNA3/GCF_000149245.1_CNA3_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq CNA3
+    date: null
+    notes: var. grubii H99 type-strain reference.
     recommended_aligner_settings: fungal genome.
     genome_size_category: fungal
   - organism_name: Botrytis cinerea
     scientific_name: Botrytis cinerea
     strain: B05.10
-    taxon_id: 40559
-    source: placeholder
-    assembly_accession: placeholder
-    assembly_name: placeholder
-    annotation_source: EnsemblFungi/NCBI
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Placeholder entry.
+    taxon_id: 332648
+    source: NCBI RefSeq
+    assembly_accession: GCF_000143535.2
+    assembly_name: ASM14353v4
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/143/535/GCF_000143535.2_ASM14353v4/GCF_000143535.2_ASM14353v4_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/143/535/GCF_000143535.2_ASM14353v4/GCF_000143535.2_ASM14353v4_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq ASM14353v4
+    date: null
+    notes: Grey-mould pathogen reference.
     recommended_aligner_settings: fungal genome.
     genome_size_category: fungal
   - organism_name: Magnaporthe oryzae
     scientific_name: Magnaporthe oryzae
     strain: 70-15
-    taxon_id: 318829
-    source: placeholder
-    assembly_accession: placeholder
-    assembly_name: placeholder
-    annotation_source: EnsemblFungi/NCBI
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Placeholder entry.
+    taxon_id: 242507
+    source: NCBI RefSeq
+    assembly_accession: GCF_000002495.2
+    assembly_name: MG8
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/002/495/GCF_000002495.2_MG8/GCF_000002495.2_MG8_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/002/495/GCF_000002495.2_MG8/GCF_000002495.2_MG8_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq MG8
+    date: null
+    notes: Rice blast pathogen reference.
     recommended_aligner_settings: fungal genome.
     genome_size_category: fungal
   - organism_name: Escherichia coli K-12 MG1655
     scientific_name: Escherichia coli
     strain: K-12 MG1655
     taxon_id: 511145
-    source: placeholder
-    assembly_accession: placeholder
+    source: NCBI RefSeq
+    assembly_accession: GCF_000005845.2
     assembly_name: ASM584v2
-    annotation_source: RefSeq/EnsemblBacteria
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Bacterial expression experiments may need different strandedness and feature settings.
-    recommended_aligner_settings: small genome; consider HISAT2/STAR with small-index settings.
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/005/845/GCF_000005845.2_ASM584v2/GCF_000005845.2_ASM584v2_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/005/845/GCF_000005845.2_ASM584v2/GCF_000005845.2_ASM584v2_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq ASM584v2
+    date: null
+    notes: Bacterial RNA-seq is unstranded by library; set strandedness accordingly and expect operon-dense annotation.
+    recommended_aligner_settings: small genome; STAR/HISAT2 with small-index settings.
     genome_size_category: bacterial
   - organism_name: Bacillus subtilis 168
     scientific_name: Bacillus subtilis
-    strain: 168
+    strain: "168"
     taxon_id: 224308
-    source: placeholder
-    assembly_accession: placeholder
+    source: NCBI RefSeq
+    assembly_accession: GCF_000009045.1
     assembly_name: ASM904v1
-    annotation_source: RefSeq/EnsemblBacteria
-    genome_fasta_url: TODO
-    annotation_gtf_url: TODO
-    annotation_gff3_url: TODO
-    transcriptome_fasta_url: TODO
-    protein_fasta_url: TODO
-    release: TODO
-    date: TODO
-    notes: Bacterial expression experiments may need different strandedness and feature settings.
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/009/045/GCF_000009045.1_ASM904v1/GCF_000009045.1_ASM904v1_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/009/045/GCF_000009045.1_ASM904v1/GCF_000009045.1_ASM904v1_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq ASM904v1
+    date: null
+    notes: Bacterial expression; set strandedness/feature settings as appropriate.
     recommended_aligner_settings: small genome.
     genome_size_category: bacterial

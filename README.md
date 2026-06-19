@@ -62,20 +62,13 @@ The solved environment is recorded in `workflow/envs/bulkseq.lock.yaml`.
 
 ## Launch
 
+End users install via the packaged installer (`installer_output\BulkSeqStudio-Setup-0.1.0.exe`,
+built with `scripts\build_release.ps1` — see `BUILD.md`) and launch from the Start Menu.
+
+For development, run from source:
+
 ```powershell
 python -m app.main
-```
-
-Or from PowerShell in the repository:
-
-```powershell
-.\launch_bulkseq_studio.ps1
-```
-
-For double-click launching on Windows, use:
-
-```text
-Launch BulkSeq Studio.bat
 ```
 
 If installed as a package, the GUI and benchmark helper are also available as:
