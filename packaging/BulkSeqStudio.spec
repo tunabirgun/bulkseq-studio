@@ -21,8 +21,10 @@ def collect(directory):
 
 
 datas = []
-for d in ("app/data", "workflow", "scripts", "examples"):
+for d in ("app/data", "app/assets", "workflow", "scripts", "examples"):
     datas += collect(d)
+
+ICON = os.path.join(ROOT, "app", "assets", "icons", "bulkseq.ico")
 
 a = Analysis(
     [os.path.join(ROOT, "app", "main.py")],
@@ -45,6 +47,7 @@ exe = EXE(
     name="BulkSeqStudio",
     console=False,
     disable_windowed_traceback=False,
+    icon=ICON,
 )
 
 coll = COLLECT(
