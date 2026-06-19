@@ -1,6 +1,15 @@
 # STAR alignment to a sorted BAM, indexing, and strandedness inference
 # (protocol sections 6.9, 6.11).
 
+# STAR read-filtering knobs. Defaults equal STAR's own defaults, so leaving them
+# unset reproduces stock STAR behaviour; set them in config['star'] to tighten
+# mapping (e.g. ENCODE long-RNA uses multimap_nmax=20, mismatch_nover=0.04).
+_STAR = config.get("star", {})
+_STAR_MULTIMAP = _STAR.get("multimap_nmax", 10)               # STAR default 10
+_STAR_MISMATCH_NOVER = _STAR.get("mismatch_nover_read_lmax", 1.0)  # STAR default 1.0 (off)
+_STAR_TWOPASS = "Basic" if _STAR.get("twopass_mode", False) else "None"  # STAR default None
+_STAR_EXTRA = _STAR.get("extra", "")
+
 
 rule star_align:
     input:
@@ -14,6 +23,11 @@ rule star_align:
         rule_threads("star_align", 8)
     resources:
         mem_mb=rule_mem_mb("star_align", 24),
+    params:
+        multimap=_STAR_MULTIMAP,
+        mismatch_nover=_STAR_MISMATCH_NOVER,
+        twopass=_STAR_TWOPASS,
+        extra=_STAR_EXTRA,
     benchmark:
         "benchmarks/star_align_{sample}.tsv"
     log:
@@ -27,6 +41,9 @@ rule star_align:
         "--readFilesIn {input.fastqs} --readFilesCommand zcat "
         "--outSAMtype BAM SortedByCoordinate --quantMode GeneCounts "
         "--runThreadN {threads} "
+        "--outFilterMultimapNmax {params.multimap} "
+        "--outFilterMismatchNoverReadLmax {params.mismatch_nover} "
+        "--twopassMode {params.twopass} {params.extra} "
         "--outTmpDir {resources.tmpdir}/star_{wildcards.sample} "
         "--outFileNamePrefix results/aligned/{wildcards.sample}_ > {log} 2>&1"
 

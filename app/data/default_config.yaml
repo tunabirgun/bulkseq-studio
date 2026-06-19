@@ -55,6 +55,11 @@ star:
   sjdb_overhang: auto
   genomeSAindexNbases: auto
   twopass_mode: false
+  # Read filters default to STAR's own defaults; raise for ENCODE long-RNA
+  # (multimap_nmax: 20, mismatch_nover_read_lmax: 0.04).
+  multimap_nmax: 10
+  mismatch_nover_read_lmax: 1.0
+  extra: ""
   outSAMtype: BAM SortedByCoordinate
   quantMode: GeneCounts
 featurecounts:
@@ -73,6 +78,7 @@ deseq2:
       denominator: control
   alpha: 0.05
   lfc_threshold: 1.0
+  min_count: 10
   lfc_shrinkage: true
   shrinkage_method: apeglm
 gene_sets:

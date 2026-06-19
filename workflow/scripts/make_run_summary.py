@@ -1,12 +1,33 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 from datetime import datetime
 from pathlib import Path
 
 import yaml
+
+
+def env_lock_md5() -> str | None:
+    # md5 of the pinned conda lock that defines the analysis environment.
+    lock = Path(__file__).resolve().parent.parent / "envs" / "bulkseq.lock.yaml"
+    if not lock.exists():
+        return None
+    return hashlib.md5(lock.read_bytes()).hexdigest()
+
+
+def workflow_git_commit() -> str | None:
+    # Source commit when run from a checkout; None in a packaged build (no .git).
+    try:
+        out = subprocess.run(["git", "-C", str(Path(__file__).resolve().parent),
+                              "rev-parse", "HEAD"], capture_output=True, text=True,
+                             timeout=10, check=False)
+        sha = out.stdout.strip()
+        return sha or None
+    except Exception:
+        return None
 
 
 TOOLS = {
@@ -83,6 +104,8 @@ def main() -> int:
         "run_date": datetime.now().isoformat(timespec="seconds"),
         "app_version": project.get("app_version"),
         "workflow_version": project.get("workflow_version"),
+        "workflow_git_commit": workflow_git_commit(),
+        "environment_lock_md5": env_lock_md5(),
         "snakemake_version": versions.get("snakemake"),
         "project": project,
         "input": config.get("input", {}),
@@ -116,6 +139,8 @@ def render_text(p: dict) -> str:
               f"Working directory: {p['project'].get('working_directory')}",
               f"Run date: {p['run_date']}",
               f"App version: {p['app_version']}    Workflow version: {p['workflow_version']}",
+              f"Workflow commit: {p.get('workflow_git_commit') or 'n/a (packaged build)'}",
+              f"Environment lock md5: {p.get('environment_lock_md5') or 'n/a'}",
               f"Snakemake: {p['snakemake_version']}", ""]
     ref = p["reference"]
     lines += ["Reference", "---------",

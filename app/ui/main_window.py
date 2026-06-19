@@ -1003,12 +1003,17 @@ class MainWindow(QMainWindow):
 
     def _design_variables(self) -> list[str]:
         # Parse a DESeq2 design formula (e.g. "~ batch + condition") into the
-        # metadata columns it references, so missing design columns are flagged.
+        # metadata columns it references, plus the contrast factor, so missing
+        # columns are flagged in Sanity Checks before DESeq2 runs.
         if self.config is None:
             return []
         formula = self.config.deseq2.design_formula.split("~", 1)[-1]
         tokens = re.split(r"[+*:]", formula)
-        return [t.strip() for t in tokens if t.strip()]
+        variables = [t.strip() for t in tokens if t.strip()]
+        for contrast in self.config.deseq2.contrasts:
+            if contrast.factor and contrast.factor not in variables:
+                variables.append(contrast.factor)
+        return variables
 
     def _select_fastqs(self) -> None:
         if not self._require_project():

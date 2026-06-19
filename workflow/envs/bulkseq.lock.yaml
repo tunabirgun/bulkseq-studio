@@ -445,11 +445,11 @@ dependencies:
   - zipp=4.1.0=pyhcf101f3_0
   - zlib-ng=2.3.3=hceb46e0_1
   - zstd=1.5.7=hb78ec9c_6
+  # numpy and pandas are pinned by conda above (2.4.6 / 3.0.3); the pip section
+  # lists only packages not provided by conda, to avoid a downgrade conflict.
   - pip:
     - lxml==6.0.2
     - mappy==2.30
-    - numpy==2.4.3
-    - pandas==3.0.1
     - python-dateutil==2.9.0.post0
     - python-docx==1.2.0
 

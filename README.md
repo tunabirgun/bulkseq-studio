@@ -33,7 +33,7 @@ Bioinformatics execution is expected under WSL2/Linux or an existing conda/mamba
 
 On startup, BulkSeq Studio runs a readiness check. It can install missing Python GUI/core packages from `requirements.txt`, open an Administrator PowerShell setup for WSL2, and install a WSL bioinformatics environment.
 
-Use **Install/Repair Core WSL Env** first. It installs micromamba plus Snakemake, SRA tools, FastQC, MultiQC, fastp, STAR, HISAT2, Salmon, featureCounts/subread, samtools, SortMeRNA, BBMap, pandas, and PyYAML. Use **Install Full R/DESeq2 Stack** afterward to add R/Bioconductor packages.
+Use **Install/Repair Core WSL Env** first. It installs micromamba plus Snakemake, SRA download tooling, FastQC, MultiQC, fastp, STAR, featureCounts/subread, samtools, pandas, and PyYAML — the tools the default STAR → featureCounts → DESeq2 route uses. Use **Install Full R/DESeq2 Stack** afterward to add the R/Bioconductor packages (DESeq2, apeglm, clusterProfiler, and dependencies). Alternative aligners/quantifiers (HISAT2, Salmon) are defined in `workflow/envs/` and pulled per-rule only if selected; they are not part of the core install.
 
 The app does not run as Administrator during normal use. Only the WSL enable/install action asks for elevation because Windows requires it.
 

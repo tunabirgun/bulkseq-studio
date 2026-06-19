@@ -78,6 +78,11 @@ class StarConfig(BaseModel):
     sjdb_overhang: str | int = "auto"
     genomeSAindexNbases: str | int = "auto"
     twopass_mode: bool = False
+    # Read filters. Defaults equal STAR's own defaults (stock behaviour); tighten
+    # for ENCODE long-RNA with multimap_nmax=20 and mismatch_nover_read_lmax=0.04.
+    multimap_nmax: int = 10
+    mismatch_nover_read_lmax: float = 1.0
+    extra: str = ""
     outSAMtype: str = "BAM SortedByCoordinate"
     quantMode: str = "GeneCounts"
 
@@ -109,8 +114,23 @@ class Deseq2Config(BaseModel):
     contrasts: list[Contrast] = Field(default_factory=lambda: [Contrast()])
     alpha: float = 0.05
     lfc_threshold: float = 1.0
+    min_count: int = 10
     lfc_shrinkage: bool = True
     shrinkage_method: str = "apeglm"
+
+    @field_validator("lfc_threshold")
+    @classmethod
+    def nonneg_lfc(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("deseq2.lfc_threshold must be >= 0 (0 disables the fold-change filter).")
+        return value
+
+    @field_validator("alpha")
+    @classmethod
+    def valid_alpha(cls, value: float) -> float:
+        if not 0 < value < 1:
+            raise ValueError("deseq2.alpha must be between 0 and 1.")
+        return value
 
 
 class GeneSetsConfig(BaseModel):

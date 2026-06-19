@@ -30,7 +30,20 @@ if (is.list(de_cfg)) {
 }
 if (!(group_var %in% colnames(colData(dds)))) group_var <- colnames(colData(dds))[1]
 
-goi <- readLines(snakemake@input[["genes"]], warn = FALSE)
+# Defensive: the rule is only defined when a gene list exists, but guard anyway
+# so an empty/missing input writes graceful outputs instead of crashing.
+genes_path <- snakemake@input[["genes"]]
+if (length(genes_path) < 1 || !nzchar(genes_path[[1]]) || !file.exists(genes_path[[1]])) {
+  writeLines("No gene list supplied (gene_sets.custom_gene_list).", out[["report"]])
+  empty <- ggplot() + annotate("text", x = 0, y = 0, label = "No genes of interest supplied") + theme_void()
+  ggsave(out[["heatmap_png"]], empty, width = 7, height = 5, dpi = 300)
+  ggsave(out[["heatmap_svg"]], empty, width = 7, height = 5)
+  ggsave(out[["expr_png"]], empty, width = 7, height = 5, dpi = 300)
+  ggsave(out[["expr_svg"]], empty, width = 7, height = 5)
+  writeLines("gene,note", out[["csv"]])
+  sink(type = "message"); close(log_con); quit(save = "no", status = 0)
+}
+goi <- readLines(genes_path[[1]], warn = FALSE)
 goi <- trimws(goi)
 goi <- goi[nzchar(goi) & !startsWith(goi, "#")]
 goi <- sub("\\..*$", "", goi)

@@ -29,6 +29,7 @@ rule deseq2:
         denominator=_CONTRAST.get("denominator", ""),
         alpha=_DE.get("alpha", 0.05),
         lfc_threshold=_DE.get("lfc_threshold", 1.0),
+        min_count=_DE.get("min_count", 10),
         shrink=_DE.get("shrinkage_method", "apeglm"),
     benchmark:
         "benchmarks/deseq2.tsv"

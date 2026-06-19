@@ -5,6 +5,9 @@ suppressMessages({
   library(DESeq2)
 })
 
+# Reproducibility: seed any stochastic step (e.g. the ashr shrinkage fallback).
+set.seed(42)
+
 log_con <- file(snakemake@log[[1]], open = "wt")
 sink(log_con, type = "message")
 
@@ -19,6 +22,13 @@ denominator <- snakemake@params[["denominator"]]
 alpha <- as.numeric(snakemake@params[["alpha"]])
 lfc_thr <- as.numeric(snakemake@params[["lfc_threshold"]])
 shrink_type <- snakemake@params[["shrink"]]
+min_count <- tryCatch(as.integer(snakemake@params[["min_count"]]), error = function(e) NA_integer_)
+if (length(min_count) != 1 || is.na(min_count) || min_count < 0) min_count <- 10L
+
+# Effect-size threshold: >= 0 is valid (0 means no fold-change filter).
+if (is.na(lfc_thr) || lfc_thr < 0) {
+  stop("deseq2.lfc_threshold must be a number >= 0 (0 disables the fold-change filter).")
+}
 
 write_check <- function(path, name, status, messages) {
   esc <- function(s) gsub('"', '\\\\"', s)
@@ -44,6 +54,11 @@ samples <- read.delim(samples_file, stringsAsFactors = FALSE)
 rownames(samples) <- samples$sample_id
 coldata <- samples[colnames(cts), , drop = FALSE]
 stopifnot(all(rownames(coldata) == colnames(cts)))
+# Guard: the contrast factor must be a real column in the sample sheet.
+if (!nzchar(con_factor) || !(con_factor %in% colnames(coldata))) {
+  stop(sprintf("Contrast factor '%s' is not a column in the sample sheet (columns: %s).",
+               con_factor, paste(colnames(coldata), collapse = ", ")))
+}
 coldata[[con_factor]] <- factor(coldata[[con_factor]])
 
 design_checks <- list()
@@ -67,18 +82,36 @@ write_check(snakemake@output[["design_check"]], "08_metadata_design_qc",
 dds <- DESeqDataSetFromMatrix(countData = cts, colData = coldata,
                               design = as.formula(design_formula))
 smallest_group <- min(table(coldata[[con_factor]]))
-keep <- rowSums(counts(dds) >= 10) >= smallest_group
+# Prefilter: keep genes with >= min_count reads in at least the smallest group
+# (default 10; a light, recommended DESeq2 prefilter).
+keep <- rowSums(counts(dds) >= min_count) >= smallest_group
 dds <- dds[keep, ]
 if (nzchar(ref_level) && ref_factor %in% colnames(coldata)) {
   dds[[ref_factor]] <- relevel(factor(dds[[ref_factor]]), ref = ref_level)
 }
 dds <- DESeq(dds)
 
+# Guard: contrast levels must be set, distinct, and present in the factor.
+.lv <- levels(coldata[[con_factor]])
+if (!nzchar(numerator) || !nzchar(denominator)) {
+  stop("Contrast numerator and denominator must both be set.")
+}
+if (identical(numerator, denominator)) {
+  stop("Contrast numerator and denominator must differ.")
+}
+if (!(numerator %in% .lv) || !(denominator %in% .lv)) {
+  stop(sprintf("Contrast levels '%s'/'%s' not found in factor '%s' (levels: %s).",
+               numerator, denominator, con_factor, paste(.lv, collapse = ", ")))
+}
 res <- results(dds, contrast = c(con_factor, numerator, denominator), alpha = alpha)
 coef_name <- paste0(con_factor, "_", numerator, "_vs_", denominator)
 resLFC <- tryCatch(
   lfcShrink(dds, coef = coef_name, type = shrink_type),
-  error = function(e) lfcShrink(dds, contrast = c(con_factor, numerator, denominator), type = "ashr"))
+  error = function(e) {
+    warning(sprintf("lfcShrink type='%s' failed (%s); falling back to ashr.",
+                    shrink_type, conditionMessage(e)))
+    lfcShrink(dds, contrast = c(con_factor, numerator, denominator), type = "ashr")
+  })
 
 vsd <- tryCatch(vst(dds, blind = FALSE), error = function(e) rlog(dds, blind = FALSE))
 

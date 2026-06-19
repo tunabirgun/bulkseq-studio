@@ -14,7 +14,13 @@ configfile: "config/config.yaml"
 samples_df = pd.read_csv(config["input"]["samples"], sep="\t", dtype=str).fillna("")
 samples_df = samples_df.set_index("sample_id", drop=False)
 SAMPLES = samples_df["sample_id"].tolist()
-FIRST_SAMPLE = SAMPLES[0] if SAMPLES else None
+# Fail fast on an empty sample sheet rather than crashing deep in a rule.
+if not SAMPLES:
+    raise ValueError(
+        f"Sample sheet '{config['input']['samples']}' has no sample rows. "
+        "Add at least one sample (Input Data tab) before running."
+    )
+FIRST_SAMPLE = SAMPLES[0]
 
 # Constrain {sample} to known IDs so paired (..._1.trim) and single (...trim)
 # trimmed filenames parse unambiguously.
