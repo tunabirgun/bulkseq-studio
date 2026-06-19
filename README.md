@@ -4,20 +4,22 @@ BulkSeq Studio is a Windows-native PySide6 project manager for reproducible, ref
 
 The scaffold follows the attached protocol, "Bulk Transcriptomics: From Raw SRA Reads to Differential Expression, Functional Enrichment, and Figures": FASTQ/SRA input, FastQC/MultiQC, fastp, optional rRNA removal, STAR alignment, featureCounts, DESeq2, enrichment, figures, sanity checks, provenance, and timing reports.
 
-## Current Prototype
+## Current State
 
 Implemented:
 
 - PySide6 GUI shell with project, input, metadata, reference, workflow, resource, runtime, sanity, run monitor, and report tabs.
-- Project folder creation with manifest/config/sample files.
+- Project folder creation with manifest/config/sample files (and a bundled `default_config.yaml` for the provenance diff).
 - FASTQ pairing detection and editable metadata table.
-- Metadata/config/reference/resource validation helpers.
+- Metadata/config/reference/resource validation helpers; design-formula variable checks.
 - Reference catalog and custom reference manifest/checksum scaffolding.
-- Snakemake command builder and non-blocking runner.
-- Modular Snakemake workflow scaffold with benchmark directives.
-- Report generators for run summary, timing summary, sanity checks, and software versions.
-- Tests for metadata detection/validation, config generation, reference validation, resources, and runtime estimation.
+- Snakemake command builder (runs via `micromamba run -n bulkseq` under WSL) and non-blocking runner.
+- **A real, runnable paired-end pipeline**: ENA FASTQ download, FastQC/MultiQC, fastp, STAR index (genome-size-aware) and alignment, strandedness inference, featureCounts, DESeq2 (shrinkage, VST), and PCA/MA/volcano/sample-distance/top-DEG figures (PNG + SVG). Validated end-to-end on the pasilla subset.
+- Report generators for run summary (with a default-vs-used parameter diff), timing summary, sanity checks, software versions, and R `sessionInfo`.
+- Tests for metadata detection/validation, config generation/round-trip, reference validation, resources, runtime estimation, provenance diff, WSL path translation, and the WSL command builder.
 - Curated pasilla paired-end subset benchmark project template under `examples/benchmarks/pasilla_paired_subset`.
+
+The STAR -> featureCounts -> DESeq2 -> figures route is fully implemented. HISAT2, Salmon/tximport, SortMeRNA, BBMap, htseq-count, edgeR/limma-voom, and single-end handling remain scaffolding/TODOs.
 
 ## Install
 
@@ -47,14 +49,16 @@ If the WSL bioinformatics package setup is unclear, inspect:
 scripts\logs\wsl_bioenv_install.log
 ```
 
-Manual WSL/conda setup sketch:
+Manual WSL/micromamba setup sketch (what the installer does):
 
 ```bash
-conda env create -f workflow/envs/rnaseq.yaml
-conda env create -f workflow/envs/r_deseq2.yaml
-conda activate bulkseq-rnaseq
-conda install -c bioconda -c conda-forge snakemake
+# core CLI tools (STAR route)
+micromamba create -y -n bulkseq -f workflow/envs/bulkseq_core.yaml
+# add the R/Bioconductor stack for DESeq2, enrichment, figures
+micromamba env update -y -n bulkseq -f workflow/envs/bulkseq_full.yaml
 ```
+
+The solved environment is recorded in `workflow/envs/bulkseq.lock.yaml`.
 
 ## Launch
 
@@ -100,11 +104,7 @@ python -m app.benchmark_cli list
 python -m app.benchmark_cli create --benchmark pasilla_paired_subset --workdir C:\BulkSeqBenchmarks --name pasilla_paired_subset --validate
 ```
 
-Inside the created project, benchmark FASTQs can be downloaded from the ENA URLs recorded in `config/samples.tsv`:
-
-```bash
-snakemake --snakefile workflow/Snakefile download_ena_fastqs --cores 2 --configfile config/config.yaml
-```
+The pipeline downloads the benchmark FASTQs (from the ENA URLs in `config/samples.tsv`) and the Ensembl reference automatically as part of the run. For best I/O performance, stage the project under the WSL home filesystem (`~/`) rather than `/mnt/c` before running.
 
 ## Snakemake From Terminal
 
@@ -117,8 +117,11 @@ snakemake --cores 8 --resources mem_mb=24000 --use-conda --configfile config/con
 
 ## TODO
 
-- Replace placeholder reference URLs in `app/data/reference_catalog.yaml`.
-- Add deeper Snakemake rules for HISAT2, Salmon/tximport, SortMeRNA, BBMap repair, htseq-count, goseq, and UMAP.
-- Expand R scripts from robust placeholders into full DESeq2/enrichment/figure pipelines.
-- Add WSL path translation tests for edge cases.
+- Replace placeholder reference URLs in `app/data/reference_catalog.yaml` (the pasilla benchmark already uses real Ensembl URLs via `benchmark_datasets.yaml`).
+- Add Snakemake rules for HISAT2, Salmon/tximport, SortMeRNA, BBMap repair, htseq-count, goseq, and UMAP; add single-end branching.
+- Add organism-specific enrichment config (OrgDb/keytype/KEGG) in the GUI for non-Drosophila projects.
+- Build out the Reference Manager (custom import/validate/build-index + lock enforcement), per-rule resource editing, metadata column/paste/export ops, and the sanity phase-gate approval UI.
+- Add runtime history calibration (`runtime_profiles.json`).
 - Add persisted app-level reference installation database.
+
+See `PLAN.md` for the full remediation roadmap and phase status.
