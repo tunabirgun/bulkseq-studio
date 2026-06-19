@@ -17,6 +17,7 @@ con_factor <- snakemake@params[["contrast_factor"]]
 numerator <- snakemake@params[["numerator"]]
 denominator <- snakemake@params[["denominator"]]
 alpha <- as.numeric(snakemake@params[["alpha"]])
+lfc_thr <- as.numeric(snakemake@params[["lfc_threshold"]])
 shrink_type <- snakemake@params[["shrink"]]
 
 write_check <- function(path, name, status, messages) {
@@ -90,9 +91,20 @@ write.csv(as.data.frame(counts(dds, normalized = TRUE)), snakemake@output[["norm
 saveRDS(list(dds = dds, res = res, resLFC = resLFC, vsd = vsd),
         snakemake@output[["rds"]])
 
-n_sig <- sum(res$padj < alpha, na.rm = TRUE)
+# Up- and down-regulated sets: padj < alpha AND a raw-LFC effect-size cut
+# (protocol: threshold on padj + res$log2FoldChange, not the shrunken values).
+sig <- !is.na(res_out$padj) & res_out$padj < alpha
+up <- res_out[sig & !is.na(res_out$log2FoldChange) & res_out$log2FoldChange >= lfc_thr, ]
+down <- res_out[sig & !is.na(res_out$log2FoldChange) & res_out$log2FoldChange <= -lfc_thr, ]
+up <- up[order(-up$log2FoldChange), ]
+down <- down[order(down$log2FoldChange), ]
+write.csv(up, snakemake@output[["up"]], row.names = FALSE)
+write.csv(down, snakemake@output[["down"]], row.names = FALSE)
+
+n_sig <- sum(sig)
 deseq_checks <- list(list(status = if (n_sig > 0) "PASS" else "REVIEW_REQUIRED",
-                          message = sprintf("%d genes significant at padj < %.3g (%s).", n_sig, alpha, coef_name)))
+                          message = sprintf("%d genes padj < %.3g (%s); %d up / %d down at |log2FC| >= %.2g.",
+                                            n_sig, alpha, coef_name, nrow(up), nrow(down), lfc_thr)))
 write_check(snakemake@output[["deseq_check"]], "09_deseq2_qc",
             if (n_sig > 0) "PASS" else "REVIEW_REQUIRED", deseq_checks)
 

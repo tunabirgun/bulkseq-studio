@@ -342,6 +342,11 @@ class MainWindow(QMainWindow):
         self.alpha.setSingleStep(0.01)
         self.alpha.setDecimals(4)
         self.alpha.setValue(0.05)
+        self.lfc_threshold = QDoubleSpinBox()
+        self.lfc_threshold.setRange(0.0, 10.0)
+        self.lfc_threshold.setSingleStep(0.25)
+        self.lfc_threshold.setDecimals(2)
+        self.lfc_threshold.setValue(1.0)
         save = QPushButton("Save Workflow Settings")
         save.clicked.connect(self._save_workflow_settings)
         layout.addRow(self._info_label("Aligner", "Read aligner. STAR is the fully implemented route; HISAT2/Salmon are scaffolded."), self.aligner)
@@ -359,7 +364,8 @@ class MainWindow(QMainWindow):
         layout.addRow(self._info_label("Numerator (treated)", "The group whose change is measured. log2 fold change is numerator relative to denominator."), self.numerator)
         layout.addRow(self._info_label("Denominator (reference)", "The baseline group. Positive log2 fold change = higher in the numerator than this."), self.denominator)
         layout.addRow(self._info_label("Reference level", "The factor's baseline level (normally the same as the denominator); DESeq2 releveled to this."), self.reference_level)
-        layout.addRow(self._info_label("Alpha (FDR)", "Significance threshold on the Benjamini-Hochberg adjusted p-value (false discovery rate). Default 0.05."), self.alpha)
+        layout.addRow(self._info_label("Alpha (padj/FDR)", "Significance threshold on the Benjamini-Hochberg adjusted p-value (false discovery rate). Default 0.05."), self.alpha)
+        layout.addRow(self._info_label("log2FC threshold", "Minimum absolute log2 fold change for a gene to count as up/down-regulated. |log2FC| >= this AND padj < alpha. Default 1.0 (a 2-fold change)."), self.lfc_threshold)
         layout.addRow(QLabel("featureCounts strandedness is auto-inferred per protocol."))
         layout.addRow(save)
         self.tabs.addTab(page, "Workflow Settings")
@@ -887,6 +893,7 @@ class MainWindow(QMainWindow):
         self.trim_poly_g.setChecked(self.config.fastp.trim_poly_g)
         self.design.setText(self.config.deseq2.design_formula)
         self.alpha.setValue(self.config.deseq2.alpha)
+        self.lfc_threshold.setValue(self.config.deseq2.lfc_threshold)
         self._refresh_conditions()
         contrast = self.config.deseq2.contrasts[0] if self.config.deseq2.contrasts else None
         if contrast:
@@ -1071,6 +1078,7 @@ class MainWindow(QMainWindow):
         self.config.fastp.trim_poly_g = self.trim_poly_g.isChecked()
         self.config.deseq2.design_formula = self.design.text()
         self.config.deseq2.alpha = self.alpha.value()
+        self.config.deseq2.lfc_threshold = self.lfc_threshold.value()
         factor = self.contrast_factor.text().strip() or "condition"
         if self.reference_level.currentText().strip():
             self.config.deseq2.reference_level = {factor: self.reference_level.currentText().strip()}

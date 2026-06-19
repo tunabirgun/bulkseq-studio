@@ -108,6 +108,7 @@ class Deseq2Config(BaseModel):
     reference_level: dict[str, str] = Field(default_factory=lambda: {"condition": "control"})
     contrasts: list[Contrast] = Field(default_factory=lambda: [Contrast()])
     alpha: float = 0.05
+    lfc_threshold: float = 1.0
     lfc_shrinkage: bool = True
     shrinkage_method: str = "apeglm"
 

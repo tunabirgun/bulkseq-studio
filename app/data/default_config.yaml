@@ -72,6 +72,7 @@ deseq2:
       numerator: treated
       denominator: control
   alpha: 0.05
+  lfc_threshold: 1.0
   lfc_shrinkage: true
   shrinkage_method: apeglm
 gene_sets:

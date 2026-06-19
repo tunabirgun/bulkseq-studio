@@ -13,6 +13,8 @@ rule deseq2:
         samples=config["input"]["samples"],
     output:
         results="results/deseq2/deseq2_results.csv",
+        up="results/deseq2/upregulated_genes.csv",
+        down="results/deseq2/downregulated_genes.csv",
         rds="results/deseq2/deseq2_objects.rds",
         normalized="results/deseq2/normalized_counts.csv",
         session="results/reports/sessionInfo.txt",
@@ -26,6 +28,7 @@ rule deseq2:
         numerator=_CONTRAST.get("numerator", ""),
         denominator=_CONTRAST.get("denominator", ""),
         alpha=_DE.get("alpha", 0.05),
+        lfc_threshold=_DE.get("lfc_threshold", 1.0),
         shrink=_DE.get("shrinkage_method", "apeglm"),
     benchmark:
         "benchmarks/deseq2.tsv"

@@ -95,6 +95,14 @@ if (is.list(de_cfg)) {
 }
 if (!(group_var %in% colnames(colData(dds)))) group_var <- colnames(colData(dds))[1]
 
+# Significance thresholds from config (used by MA + volcano).
+num_cfg <- function(key, default) {
+  v <- tryCatch(as.numeric(de_cfg[[key]]), error = function(e) default)
+  if (length(v) != 1 || is.na(v)) default else v
+}
+alpha_thr <- if (is.list(de_cfg)) num_cfg("alpha", 0.05) else 0.05
+lfc_thr <- if (is.list(de_cfg)) num_cfg("lfc_threshold", 1) else 1
+
 # ---- PCA --------------------------------------------------------------------
 # plotPCA adds a generic "group" column for whatever intgroup is, so the plot
 # code stays independent of the factor's name.
@@ -124,12 +132,13 @@ save_grid(ph$gtable, out[["dist_png"]], out[["dist_svg"]])
 ma_point <- max(0.3, point_size * 0.4)
 ma <- as.data.frame(resLFC)
 ma <- ma[!is.na(ma$padj), ]
-ma$sig <- ma$padj < 0.05
+ma$sig <- ma$padj < alpha_thr
 p_ma <- ggplot(ma, aes(baseMean, log2FoldChange, colour = sig)) +
   geom_point(size = ma_point, alpha = 0.6) +
   geom_hline(yintercept = 0, colour = "grey40") +
   scale_x_log10() +
-  scale_colour_manual(values = c("FALSE" = "grey75", "TRUE" = pal_spec$discrete[1]), name = "padj < 0.05") +
+  scale_colour_manual(values = c("FALSE" = "grey75", "TRUE" = pal_spec$discrete[1]),
+                      name = sprintf("padj < %.3g", alpha_thr)) +
   labs(x = "mean of normalised counts", y = "log2 fold change") +
   style_theme(theme_bw)
 save_gg(p_ma, out[["ma_png"]], out[["ma_svg"]])
@@ -140,15 +149,15 @@ vol$gene <- rownames(vol)
 vol <- vol[!is.na(vol$padj), ]
 vol$neglog10padj <- -log10(vol$padj)
 vol$direction <- "n.s."
-vol$direction[vol$padj < 0.05 & vol$log2FoldChange >= 1] <- "Up"
-vol$direction[vol$padj < 0.05 & vol$log2FoldChange <= -1] <- "Down"
+vol$direction[vol$padj < alpha_thr & vol$log2FoldChange >= lfc_thr] <- "Up"
+vol$direction[vol$padj < alpha_thr & vol$log2FoldChange <= -lfc_thr] <- "Down"
 lab <- vol[vol$direction != "n.s.", ]
 lab <- head(lab[order(lab$padj), ], volcano_top)
 pal <- c(Up = pal_spec$discrete[2], Down = pal_spec$discrete[1], "n.s." = "grey80")
 shp <- c(Up = 17, Down = 16, "n.s." = 16)
 p_vol <- ggplot(vol, aes(log2FoldChange, neglog10padj)) +
-  geom_vline(xintercept = c(-1, 1), linetype = "dashed", colour = "grey60", linewidth = 0.3) +
-  geom_hline(yintercept = -log10(0.05), linetype = "dashed", colour = "grey60", linewidth = 0.3) +
+  geom_vline(xintercept = c(-lfc_thr, lfc_thr), linetype = "dashed", colour = "grey60", linewidth = 0.3) +
+  geom_hline(yintercept = -log10(alpha_thr), linetype = "dashed", colour = "grey60", linewidth = 0.3) +
   geom_point(aes(colour = direction, shape = direction), size = point_size, alpha = 0.8) +
   geom_text_repel(data = lab, aes(label = gene), size = 3, seed = 42, max.overlaps = Inf) +
   scale_colour_manual(values = pal, name = NULL) +

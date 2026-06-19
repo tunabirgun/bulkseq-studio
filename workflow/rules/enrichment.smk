@@ -22,9 +22,13 @@ _ENR = config.get("enrichment", {})
 rule enrichment:
     input:
         results="results/deseq2/deseq2_results.csv",
+        up="results/deseq2/upregulated_genes.csv",
+        down="results/deseq2/downregulated_genes.csv",
     output:
         summary="results/enrichment/enrichment_summary.txt",
-        go="results/enrichment/go_ora.csv",
+        go="results/enrichment/go_ora_all.csv",
+        go_up="results/enrichment/go_ora_up.csv",
+        go_down="results/enrichment/go_ora_down.csv",
         gsea="results/enrichment/gsea.csv",
         check="checks/10_enrichment_qc.json",
     params:

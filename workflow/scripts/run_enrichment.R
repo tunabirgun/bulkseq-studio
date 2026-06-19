@@ -6,6 +6,8 @@ log_con <- file(snakemake@log[[1]], open = "wt")
 sink(log_con, type = "message")
 
 results_file <- snakemake@input[["results"]]
+up_file <- snakemake@input[["up"]]
+down_file <- snakemake@input[["down"]]
 orgdb_name <- snakemake@params[["orgdb"]]
 keytype <- snakemake@params[["keytype"]]
 kegg_org <- snakemake@params[["kegg"]]
@@ -21,6 +23,8 @@ write_check <- function(path, status, message) {
 
 # Always create the output files first so the rule succeeds even on failure.
 writeLines("", out[["go"]])
+writeLines("", out[["go_up"]])
+writeLines("", out[["go_down"]])
 writeLines("", out[["gsea"]])
 summary_lines <- c("Functional enrichment summary", "=============================", "")
 
@@ -48,19 +52,38 @@ result <- tryCatch({
   res <- res[!is.na(res$padj), ]
   ids <- sub("\\..*$", "", res$gene_id)  # strip version suffix if any
   map <- bitr(ids, fromType = keytype, toType = "ENTREZID", OrgDb = orgdb)
+  res$base_id <- ids
   res$ENTREZID <- map$ENTREZID[match(ids, map[[keytype]])]
   res <- res[!is.na(res$ENTREZID), ]
   res <- res[!duplicated(res$ENTREZID), ]
   universe <- unique(res$ENTREZID)
-  sig <- res$ENTREZID[res$padj < alpha & abs(res$log2FoldChange) > 1]
 
-  ego <- enrichGO(gene = sig, universe = universe, OrgDb = orgdb,
-                  keyType = "ENTREZID", ont = "BP", pAdjustMethod = "BH",
-                  pvalueCutoff = 0.05, qvalueCutoff = 0.20, readable = TRUE)
-  if (!is.null(ego) && nrow(as.data.frame(ego)) > 0) {
-    write.csv(as.data.frame(ego), out[["go"]], row.names = FALSE)
+  # Map a gene_id list (from the deseq2 up/down CSVs) to ENTREZ via res.
+  to_entrez <- function(path) {
+    if (!file.exists(path)) return(character(0))
+    df <- tryCatch(read.csv(path, stringsAsFactors = FALSE), error = function(e) NULL)
+    if (is.null(df) || !"gene_id" %in% names(df) || nrow(df) == 0) return(character(0))
+    base <- sub("\\..*$", "", df$gene_id)
+    unique(res$ENTREZID[match(base, res$base_id)])
   }
-  n_go <- if (is.null(ego)) 0 else nrow(as.data.frame(ego))
+  run_ora <- function(genes, path) {
+    genes <- genes[!is.na(genes)]
+    if (length(genes) < 1) return(0)
+    ego <- tryCatch(enrichGO(gene = genes, universe = universe, OrgDb = orgdb,
+                    keyType = "ENTREZID", ont = "BP", pAdjustMethod = "BH",
+                    pvalueCutoff = 0.05, qvalueCutoff = 0.20, readable = TRUE),
+                    error = function(e) NULL)
+    n <- if (is.null(ego)) 0 else nrow(as.data.frame(ego))
+    if (n > 0) write.csv(as.data.frame(ego), path, row.names = FALSE)
+    n
+  }
+
+  up_e <- to_entrez(up_file)
+  down_e <- to_entrez(down_file)
+  all_sig <- unique(c(up_e, down_e))
+  n_all <- run_ora(all_sig, out[["go"]])
+  n_up <- run_ora(up_e, out[["go_up"]])
+  n_down <- run_ora(down_e, out[["go_down"]])
 
   gene_list <- res$log2FoldChange
   names(gene_list) <- res$ENTREZID
@@ -77,12 +100,14 @@ result <- tryCatch({
   }
 
   summary_lines <<- c(summary_lines,
-    sprintf("Significant genes tested: %d (universe %d)", length(sig), length(universe)),
-    sprintf("Enriched GO BP terms (ORA): %d", n_go),
-    sprintf("GSEA GO BP gene sets: %d", n_gsea))
-  list(status = if (length(sig) >= 5) "PASS" else "REVIEW_REQUIRED",
-       message = sprintf("Enrichment complete: %d ORA terms, %d GSEA sets from %d significant genes.",
-                         n_go, n_gsea, length(sig)))
+    sprintf("Universe (tested genes): %d", length(universe)),
+    sprintf("Up-regulated: %d genes, %d GO BP terms (ORA)", length(up_e), n_up),
+    sprintf("Down-regulated: %d genes, %d GO BP terms (ORA)", length(down_e), n_down),
+    sprintf("Combined significant: %d genes, %d GO BP terms", length(all_sig), n_all),
+    sprintf("GSEA GO BP gene sets (directional, full ranked list): %d", n_gsea))
+  list(status = if (length(all_sig) >= 5) "PASS" else "REVIEW_REQUIRED",
+       message = sprintf("Enrichment: up=%d terms, down=%d terms, combined=%d terms, GSEA=%d sets (%d up / %d down genes).",
+                         n_up, n_down, n_all, n_gsea, length(up_e), length(down_e)))
 }, error = function(e) {
   summary_lines <<- c(summary_lines, paste("Enrichment failed:", conditionMessage(e)))
   list(status = "REVIEW_REQUIRED",
