@@ -21,14 +21,17 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtGui import QDesktopServices
-from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices, QPixmap
+from PySide6.QtCore import Qt, QUrl
 
 from app.constants import APP_NAME
 from app.core.benchmark_datasets import create_benchmark_project, load_benchmark_catalog
@@ -87,6 +90,7 @@ class MainWindow(QMainWindow):
         self._build_sanity_tab()
         self._build_run_tab()
         self._build_reports_tab()
+        self._build_outputs_tab()
         if os.environ.get("BULKSEQ_SKIP_READINESS_DIALOG") != "1":
             QTimer.singleShot(500, self.show_readiness_dialog)
 
@@ -363,6 +367,82 @@ class MainWindow(QMainWindow):
         layout.addWidget(generate)
         layout.addWidget(self.report_text)
         self.tabs.addTab(page, "Reports")
+
+    def _build_outputs_tab(self) -> None:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        controls = QHBoxLayout()
+        self.output_table_pick = QComboBox()
+        self.output_table_pick.addItems(
+            ["results/counts/counts.txt", "results/deseq2/deseq2_results.csv", "results/deseq2/normalized_counts.csv"]
+        )
+        load = QPushButton("Load table preview")
+        load.clicked.connect(self._load_output_table)
+        gallery = QPushButton("Refresh figure gallery")
+        gallery.clicked.connect(self._refresh_gallery)
+        open_results = QPushButton("Open results folder")
+        open_results.clicked.connect(lambda: self._open_subpath("results"))
+        controls.addWidget(self.output_table_pick)
+        controls.addWidget(load)
+        controls.addWidget(gallery)
+        controls.addWidget(open_results)
+        self.output_table = QTableWidget()
+        self.output_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.gallery_area = QScrollArea()
+        self.gallery_area.setWidgetResizable(True)
+        self.gallery_inner = QWidget()
+        self.gallery_layout = QHBoxLayout(self.gallery_inner)
+        self.gallery_area.setWidget(self.gallery_inner)
+        self.gallery_area.setMinimumHeight(240)
+        layout.addLayout(controls)
+        layout.addWidget(QLabel("Table preview (first 200 rows)"))
+        layout.addWidget(self.output_table)
+        layout.addWidget(QLabel("Figures"))
+        layout.addWidget(self.gallery_area)
+        self.tabs.addTab(page, "Outputs")
+
+    def _open_subpath(self, relative: str) -> None:
+        if self.project_root is not None:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.project_root / relative)))
+
+    def _load_output_table(self) -> None:
+        if not self._require_project():
+            return
+        assert self.project_root is not None
+        path = self.project_root / self.output_table_pick.currentText()
+        if not path.exists():
+            self.output_table.setRowCount(0)
+            self.output_table.setColumnCount(1)
+            self.output_table.setHorizontalHeaderLabels(["info"])
+            self.output_table.setRowCount(1)
+            self.output_table.setItem(0, 0, QTableWidgetItem(f"Not found yet: {path.name} (run the pipeline first)"))
+            return
+        sep = "," if path.suffix == ".csv" else "\t"
+        df = pd.read_csv(path, sep=sep, comment="#", dtype=str, nrows=200).fillna("")
+        self.output_table.setColumnCount(len(df.columns))
+        self.output_table.setHorizontalHeaderLabels([str(c) for c in df.columns])
+        self.output_table.setRowCount(len(df))
+        for r in range(len(df)):
+            for c in range(len(df.columns)):
+                self.output_table.setItem(r, c, QTableWidgetItem(str(df.iat[r, c])))
+
+    def _refresh_gallery(self) -> None:
+        while self.gallery_layout.count():
+            item = self.gallery_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        if self.project_root is None:
+            return
+        figures = sorted((self.project_root / "results" / "figures").glob("*.png"))
+        if not figures:
+            self.gallery_layout.addWidget(QLabel("No figures yet. Run the pipeline."))
+            return
+        for fig in figures:
+            label = QLabel()
+            pixmap = QPixmap(str(fig)).scaledToHeight(200, Qt.SmoothTransformation)
+            label.setPixmap(pixmap)
+            label.setToolTip(fig.name)
+            self.gallery_layout.addWidget(label)
 
     def _browse_workdir(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "Working directory", self.workdir.text())
