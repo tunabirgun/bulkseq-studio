@@ -111,6 +111,10 @@ def final_targets():
             targets.append(f"results/figures/{fig}.svg")
     if WF.get("enrichment", True):
         targets.append("results/enrichment/enrichment_summary.txt")
+    if config.get("gene_sets", {}).get("custom_gene_list"):
+        targets.append("results/figures/goi_heatmap.png")
+        targets.append("results/figures/goi_expression.png")
+        targets.append("results/genes_of_interest/goi_report.txt")
     return targets
 
 

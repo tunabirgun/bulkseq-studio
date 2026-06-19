@@ -22,3 +22,27 @@ rule figures:
         "logs/figures.log",
     script:
         "../scripts/make_figures.R"
+
+
+# Genes-of-interest: focused heatmap + per-gene expression across conditions.
+# Only active when a custom gene list is configured (gene_sets.custom_gene_list).
+_GOI = config.get("gene_sets", {}).get("custom_gene_list")
+
+
+rule genes_of_interest:
+    input:
+        rds="results/deseq2/deseq2_objects.rds",
+        genes=_GOI if _GOI else [],
+    output:
+        heatmap_png="results/figures/goi_heatmap.png",
+        heatmap_svg="results/figures/goi_heatmap.svg",
+        expr_png="results/figures/goi_expression.png",
+        expr_svg="results/figures/goi_expression.svg",
+        csv="results/genes_of_interest/goi_normalized_counts.csv",
+        report="results/genes_of_interest/goi_report.txt",
+    benchmark:
+        "benchmarks/genes_of_interest.tsv"
+    log:
+        "logs/genes_of_interest.log",
+    script:
+        "../scripts/make_goi.R"

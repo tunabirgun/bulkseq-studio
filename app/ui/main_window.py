@@ -10,6 +10,7 @@ import pandas as pd
 import yaml
 from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -48,6 +49,7 @@ from app.core.project import ProjectManager, validate_working_directory
 from app.core.provenance import write_run_summary
 from app.core.reference_manager import load_reference_catalog, md5sum, validate_reference
 from app.core.resources import detect_system, recommend_profile
+from app.core.sra_metadata import fetch_ena_metadata, metadata_to_samples
 from app.core.runtime_estimator import estimate_runtime
 from app.core.sanity_checks import write_check
 from app.core.snakemake_runner import (
@@ -149,19 +151,58 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         self.sra_box = QTextEdit()
-        self.sra_box.setPlaceholderText("Paste SRR accessions, one per line")
-        save_sra = QPushButton("Save SRA Accessions")
+        self.sra_box.setPlaceholderText("Paste SRR/ERR/DRR runs, or an SRP/PRJNA/GSE study accession, one per line")
+        buttons = QHBoxLayout()
+        fetch_meta = QPushButton("Fetch metadata && build samples")
+        fetch_meta.clicked.connect(self._fetch_sra_metadata)
+        save_sra = QPushButton("Save accessions only")
         save_sra.clicked.connect(self._save_sra)
         pick_fastq = QPushButton("Select FASTQ Files")
         pick_fastq.clicked.connect(self._select_fastqs)
+        for b in (fetch_meta, save_sra, pick_fastq):
+            buttons.addWidget(b)
         self.input_preview = QTextEdit()
         self.input_preview.setReadOnly(True)
-        layout.addWidget(QLabel("SRA accessions"))
+        layout.addWidget(QLabel("SRA / ENA accessions"))
         layout.addWidget(self.sra_box)
-        layout.addWidget(save_sra)
-        layout.addWidget(pick_fastq)
+        layout.addLayout(buttons)
+        layout.addWidget(QLabel("Fetched from the ENA Portal API: layout, FASTQ URLs, read counts. Condition is set to 'unknown' for you to edit in the Metadata tab."))
         layout.addWidget(self.input_preview)
         self.tabs.addTab(page, "Input Data")
+
+    def _fetch_sra_metadata(self) -> None:
+        if not self._require_project():
+            return
+        assert self.project_root is not None
+        accessions = [line.strip() for line in self.sra_box.toPlainText().splitlines() if line.strip()]
+        if not accessions:
+            QMessageBox.warning(self, APP_NAME, "Paste at least one accession first.")
+            return
+        self.input_preview.setPlainText("Querying ENA…")
+        QApplication.processEvents()
+        try:
+            meta = fetch_ena_metadata(accessions)
+        except Exception as exc:  # network/parse errors
+            QMessageBox.warning(self, APP_NAME, f"ENA query failed: {exc}")
+            return
+        samples = metadata_to_samples(meta)
+        if samples.empty:
+            self.input_preview.setPlainText("No runs found for those accessions.")
+            return
+        save_metadata(samples, self.project_root / "config" / "samples.auto_generated.tsv")
+        save_metadata(samples, self.project_root / "config" / "samples.tsv")
+        (self.project_root / "config" / "sra_accessions.txt").write_text("\n".join(accessions) + "\n", encoding="utf-8")
+        self.metadata_table.load_dataframe(samples)
+        if self.config is not None:
+            self.config.input.type = "sra"
+            layouts = set(samples["layout"])
+            self.config.input.layout = layouts.pop() if len(layouts) == 1 else "mixed"  # type: ignore[assignment]
+            self.manager.save_config(self.project_root, self.config)
+        self.tabs.setCurrentIndex(self.tabs.indexOf(self.metadata_table.parentWidget()))
+        self.input_preview.setPlainText(
+            f"Built {len(samples)} sample(s). Set conditions in the Metadata tab, then run.\n\n"
+            + samples[["sample_id", "layout", "read_count", "organism"]].to_string(index=False)
+        )
 
     def _save_sra(self) -> None:
         if not self._require_project():
@@ -638,7 +679,37 @@ class MainWindow(QMainWindow):
         layout.addLayout(fig_controls)
         layout.addWidget(self.figure_viewer, 1)
         layout.addWidget(self._build_figure_style_group())
+        layout.addWidget(self._build_goi_group())
         self.tabs.addTab(page, "Outputs")
+
+    def _build_goi_group(self) -> QGroupBox:
+        group = QGroupBox("Genes of Interest")
+        v = QVBoxLayout(group)
+        v.addWidget(QLabel("Paste gene IDs (one per line) matching the count matrix (e.g. FBgn..., RefSeq locus tags, or symbols present in the GTF). On the next run, a focused z-scored heatmap and per-condition expression plots are produced."))
+        self.goi_box = QTextEdit()
+        self.goi_box.setPlaceholderText("One gene ID per line")
+        self.goi_box.setMaximumHeight(120)
+        save = QPushButton("Save genes of interest")
+        save.clicked.connect(self._save_goi)
+        v.addWidget(self.goi_box)
+        v.addWidget(save)
+        return group
+
+    def _save_goi(self) -> None:
+        if not self._require_project() or self.config is None:
+            return
+        assert self.project_root is not None
+        genes = [g.strip() for g in self.goi_box.toPlainText().splitlines() if g.strip()]
+        if not genes:
+            self.config.gene_sets.custom_gene_list = None
+            self.manager.save_config(self.project_root, self.config)
+            QMessageBox.information(self, APP_NAME, "Genes of interest cleared.")
+            return
+        path = self.project_root / "config" / "genes_of_interest.txt"
+        path.write_text("\n".join(genes) + "\n", encoding="utf-8")
+        self.config.gene_sets.custom_gene_list = "config/genes_of_interest.txt"
+        self.manager.save_config(self.project_root, self.config)
+        QMessageBox.information(self, APP_NAME, f"Saved {len(genes)} gene(s). Re-run to produce the genes-of-interest heatmap and expression plots.")
 
     def _info_label(self, text: str, help_text: str) -> QWidget:
         # A form-row label with a small info button that explains a complex
@@ -919,6 +990,11 @@ class MainWindow(QMainWindow):
         self.fig_width.setValue(fig.width_in)
         self.fig_height.setValue(fig.height_in)
         self.fig_dpi.setValue(fig.dpi)
+        goi_path = self.config.gene_sets.custom_gene_list
+        if goi_path and self.project_root is not None and (self.project_root / goi_path).exists():
+            self.goi_box.setPlainText((self.project_root / goi_path).read_text(encoding="utf-8").strip())
+        else:
+            self.goi_box.clear()
         organism = self.config.reference.organism_name
         for i in range(self.reference_list.count()):
             if self.reference_list.item(i).text().startswith(f"{organism} "):
