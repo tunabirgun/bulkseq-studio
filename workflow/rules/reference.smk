@@ -67,7 +67,8 @@ rule read_length:
     output:
         "results/qc/read_length.txt",
     shell:
-        r"zcat {input} | head -n 40000 | "
+        # Disable pipefail: head closes the pipe early, giving zcat a SIGPIPE.
+        r"set +o pipefail; zcat {input} | head -n 40000 | "
         r"awk 'NR%4==2{{if(length($0)>m)m=length($0)}}END{{print m}}' > {output}"
 
 
