@@ -45,3 +45,29 @@ def test_main_window_benchmark_smoke() -> None:
     assert (window.project_root / "results" / "reports" / "timing_summary.txt").exists()
 
     window.close()
+
+
+def test_config_round_trip_through_widgets() -> None:
+    _app()
+    window = MainWindow()
+    workdir = Path("manual_test_gui") / uuid4().hex
+    window.workdir.setText(str(workdir))
+    window.project_name.setText("rt")
+    window._create_benchmark_project()
+    root = window.project_root
+    assert root is not None
+
+    # Loaded widgets must reflect the on-disk config (the round-trip bug).
+    window._load_project(root)
+    assert window.aligner.currentText() == "STAR"
+    assert window.design.text() == window.config.deseq2.design_formula
+
+    # Change a setting, save, reload from disk, assert it persisted (not overwritten
+    # by widget defaults).
+    window.design.setText("~ batch + condition")
+    window.alpha.setValue(0.1)
+    window._save_workflow_settings()
+    reloaded = window.manager.load_config(root)
+    assert reloaded.deseq2.design_formula == "~ batch + condition"
+    assert abs(reloaded.deseq2.alpha - 0.1) < 1e-9
+    window.close()
