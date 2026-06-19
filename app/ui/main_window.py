@@ -15,11 +15,13 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -158,8 +160,14 @@ class MainWindow(QMainWindow):
             ("Add row", self.metadata_add_row),
             ("Delete rows", self.metadata_delete_rows),
             ("Duplicate rows", self.metadata_duplicate_rows),
+            ("Add column", self._add_column),
+            ("Rename column", self._rename_column),
+            ("Remove column", self._remove_column),
+            ("Assign condition", self._assign_condition),
             ("Autofill replicates", self.metadata_autofill),
             ("Import TSV/CSV/XLSX", self._import_metadata),
+            ("Export TSV", self._export_metadata),
+            ("Restore auto-generated", self._restore_auto_metadata),
             ("Save samples.tsv", self._save_metadata),
             ("Validate", self._validate_metadata),
         ]:
@@ -329,15 +337,45 @@ class MainWindow(QMainWindow):
         open_report.clicked.connect(self._open_report)
         for w in (stop, open_folder, open_report):
             actions.addWidget(w)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.elapsed_label = QLabel("Elapsed: 00:00:00")
+        self.elapsed_timer = QTimer(self)
+        self.elapsed_timer.timeout.connect(self._tick_elapsed)
+        self._run_start = 0.0
         self.command_text = QLineEdit()
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
+        progress_row = QHBoxLayout()
+        progress_row.addWidget(self.progress)
+        progress_row.addWidget(self.elapsed_label)
         layout.addLayout(buttons)
         layout.addLayout(actions)
+        layout.addLayout(progress_row)
         layout.addWidget(QLabel("Command"))
         layout.addWidget(self.command_text)
         layout.addWidget(self.log_text)
         self.tabs.addTab(page, "Run Monitor")
+
+    def _tick_elapsed(self) -> None:
+        import time
+
+        secs = int(time.monotonic() - self._run_start)
+        self.elapsed_label.setText(f"Elapsed: {secs // 3600:02d}:{(secs % 3600) // 60:02d}:{secs % 60:02d}")
+
+    def _on_run_line(self, line: str) -> None:
+        self.log_text.append(line)
+        match = re.search(r"(\d+)\s+of\s+(\d+)\s+steps", line)
+        if match:
+            done, total = int(match.group(1)), int(match.group(2))
+            if total:
+                self.progress.setValue(int(done / total * 100))
+
+    def _on_run_finished(self, code: int) -> None:
+        self.elapsed_timer.stop()
+        if code == 0:
+            self.progress.setValue(100)
+        self.log_text.append(f"Process finished with exit code {code}")
 
     def _stop_run(self) -> None:
         if self.runner is not None:
@@ -567,6 +605,45 @@ class MainWindow(QMainWindow):
     def metadata_autofill(self) -> None:
         self.metadata_table.autofill_replicates()
 
+    def _add_column(self) -> None:
+        name, ok = QInputDialog.getText(self, APP_NAME, "New column name:")
+        if ok and name.strip():
+            self.metadata_table.add_column(name.strip())
+
+    def _rename_column(self) -> None:
+        col = self.metadata_table.currentColumn()
+        if col < 0:
+            return
+        current = self.metadata_table.column_names()[col]
+        name, ok = QInputDialog.getText(self, APP_NAME, "Rename column:", text=current)
+        if ok and name.strip():
+            self.metadata_table.rename_column(col, name.strip())
+
+    def _remove_column(self) -> None:
+        col = self.metadata_table.currentColumn()
+        if col >= 0:
+            self.metadata_table.remove_column(col)
+
+    def _assign_condition(self) -> None:
+        value, ok = QInputDialog.getText(self, APP_NAME, "Assign condition to selected rows:")
+        if ok and value.strip():
+            self.metadata_table.assign_condition(value.strip())
+
+    def _export_metadata(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Export metadata", "samples.tsv", "TSV (*.tsv);;CSV (*.csv)")
+        if not path:
+            return
+        sep = "," if path.lower().endswith(".csv") else "\t"
+        self.metadata_table.to_dataframe().to_csv(path, sep=sep, index=False)
+
+    def _restore_auto_metadata(self) -> None:
+        if not self._require_project():
+            return
+        assert self.project_root is not None
+        auto = self.project_root / "config" / "samples.auto_generated.tsv"
+        if auto.exists():
+            self.metadata_table.load_tsv(auto)
+
     def _save_metadata(self) -> None:
         if not self._require_project():
             return
@@ -675,10 +752,16 @@ class MainWindow(QMainWindow):
             self.log_text.append("WSL is not available on PATH. Command was constructed but not started.")
             self.log_text.append(command.display)
             return
+        import time
+
         self.runner = SnakemakeRunner(self.project_root, command)
         self.runner_thread = RunnerThread(self.runner)
-        self.runner_thread.line.connect(self.log_text.append)
-        self.runner_thread.finished_with_code.connect(lambda code: self.log_text.append(f"Process finished with exit code {code}"))
+        self.runner_thread.line.connect(self._on_run_line)
+        self.runner_thread.finished_with_code.connect(self._on_run_finished)
+        if mode in ("run", "resume"):
+            self.progress.setValue(0)
+            self._run_start = time.monotonic()
+            self.elapsed_timer.start(1000)
         self.runner_thread.start()
 
     def _generate_reports(self) -> None:

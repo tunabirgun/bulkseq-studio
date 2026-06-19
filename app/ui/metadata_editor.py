@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pandas as pd
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QAbstractItemView, QTableWidget, QTableWidgetItem
+from PySide6.QtGui import QKeySequence
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QTableWidget, QTableWidgetItem
 
 from app.constants import OPTIONAL_METADATA_COLUMNS, REQUIRED_METADATA_COLUMNS
 
@@ -58,6 +59,53 @@ class MetadataTable(QTableWidget):
             for col in range(self.columnCount()):
                 text = self.item(row, col).text() if self.item(row, col) else ""
                 self.setItem(target, col, QTableWidgetItem(text))
+
+    def add_column(self, name: str) -> None:
+        col = self.columnCount()
+        self.insertColumn(col)
+        self.setHorizontalHeaderItem(col, QTableWidgetItem(name))
+
+    def rename_column(self, index: int, name: str) -> None:
+        if 0 <= index < self.columnCount():
+            self.setHorizontalHeaderItem(index, QTableWidgetItem(name))
+
+    def remove_column(self, index: int) -> None:
+        if 0 <= index < self.columnCount():
+            self.removeColumn(index)
+
+    def column_names(self) -> list[str]:
+        return [self.horizontalHeaderItem(i).text() if self.horizontalHeaderItem(i) else "" for i in range(self.columnCount())]
+
+    def assign_condition(self, value: str) -> None:
+        names = self.column_names()
+        if "condition" not in names:
+            return
+        col = names.index("condition")
+        for row in sorted({idx.row() for idx in self.selectedIndexes()}):
+            self.setItem(row, col, QTableWidgetItem(value))
+
+    def keyPressEvent(self, event) -> None:
+        if event.matches(QKeySequence.StandardKey.Paste):
+            self.paste_clipboard()
+            return
+        super().keyPressEvent(event)
+
+    def paste_clipboard(self) -> None:
+        text = QApplication.clipboard().text()
+        if not text:
+            return
+        start = self.currentRow() if self.currentRow() >= 0 else 0
+        start_col = self.currentColumn() if self.currentColumn() >= 0 else 0
+        for r, line in enumerate(text.splitlines()):
+            cells = line.split("\t")
+            row = start + r
+            if row >= self.rowCount():
+                self.insertRow(self.rowCount())
+            for c, cell in enumerate(cells):
+                col = start_col + c
+                if col >= self.columnCount():
+                    self.add_column(f"col_{col}")
+                self.setItem(row, col, QTableWidgetItem(cell))
 
     def autofill_replicates(self) -> None:
         columns = [self.horizontalHeaderItem(i).text() for i in range(self.columnCount())]
