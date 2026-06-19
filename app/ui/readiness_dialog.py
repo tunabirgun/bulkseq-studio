@@ -72,19 +72,11 @@ _PILL_COLOR = {
 def _make_status_pill(state: str) -> QLabel:
     """Build a colored status pill.
 
-    Prefers a shared factory from app.ui.theme when it exists so the whole app
-    stays visually consistent; falls back to a self-contained stylesheet pill.
+    Uses the self-contained _StatusPill, which colors by semantic state from the
+    shared palette (ready=green, action=amber, ...). A theme factory that only
+    receives the display text cannot color by status, so it is intentionally not
+    used here; visual consistency comes from sharing the same palette constants.
     """
-    try:
-        from app.ui import theme  # type: ignore
-
-        factory = getattr(theme, "status_pill", None) or getattr(theme, "StatusPill", None)
-        if factory is not None:
-            pill = factory(_PILL_TEXT.get(state, state))  # type: ignore[misc]
-            if isinstance(pill, QLabel):
-                return pill
-    except Exception:
-        pass
     return _StatusPill(state)
 
 
