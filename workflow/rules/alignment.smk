@@ -19,10 +19,15 @@ rule star_align:
     log:
         "logs/star_align_{sample}.log",
     shell:
+        # --readFilesCommand zcat makes STAR use FIFOs in its temp dir; NTFS
+        # (/mnt/c) cannot create FIFOs, so point --outTmpDir at a Linux partition
+        # (snakemake's tmpdir, i.e. /tmp). The BAM still writes to the project.
+        "rm -rf {resources.tmpdir}/star_{wildcards.sample} && "
         "STAR --runMode alignReads --genomeDir {input.index} "
         "--readFilesIn {input.fastqs} --readFilesCommand zcat "
         "--outSAMtype BAM SortedByCoordinate --quantMode GeneCounts "
         "--runThreadN {threads} "
+        "--outTmpDir {resources.tmpdir}/star_{wildcards.sample} "
         "--outFileNamePrefix results/aligned/{wildcards.sample}_ > {log} 2>&1"
 
 
