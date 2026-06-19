@@ -1,5 +1,13 @@
 # BulkSeq Studio — Remediation & Completion Plan
 
+**Status (this session):** Phases 1–4 complete and the pipeline is validated
+end-to-end on the pasilla subset (real STAR→featureCounts→DESeq2→figures result:
+467 DE genes, the pasilla gene strongly down, sanity all-PASS). Phase 5 GUI items
+(Outputs panel, contrast builder, fastp params, run progress, Reference Manager
+custom import + lock, metadata editor ops, sanity approval gate) landed. Remaining:
+some Phase 5 breadth (per-rule resource editing, full single-end/alt-route rules)
+and Phase 6 (catalog population, runtime calibration). 37 tests pass.
+
 Derived from a 6-lane audit of the codebase against its build spec and the
 `bulk_transcriptomics.pdf` protocol (the scientific backbone). Ground truth at
 start: 19 tests pass, the PySide6 GUI constructs with 10 tabs, but the **entire
