@@ -3,9 +3,11 @@ from __future__ import annotations
 import shutil
 import os
 import re
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import yaml
 from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -42,7 +44,7 @@ from app.core.input_detection import detect_fastq_inputs
 from app.core.metadata import dataframe_from_rows, load_metadata, save_metadata, validate_metadata
 from app.core.project import ProjectManager, validate_working_directory
 from app.core.provenance import write_run_summary
-from app.core.reference_manager import load_reference_catalog
+from app.core.reference_manager import load_reference_catalog, md5sum, validate_reference
 from app.core.resources import detect_system, recommend_profile
 from app.core.runtime_estimator import estimate_runtime
 from app.core.sanity_checks import write_check
@@ -190,12 +192,97 @@ class MainWindow(QMainWindow):
             self.reference_list.addItem(f"{entry['organism_name']} | {entry.get('strain')} | {entry.get('genome_size_category')}")
         choose = QPushButton("Use Selected Preset")
         choose.clicked.connect(self._select_reference)
-        self.reference_details = QTextEdit()
-        self.reference_details.setReadOnly(True)
+        layout.addWidget(QLabel("Available presets"))
         layout.addWidget(self.reference_list)
         layout.addWidget(choose)
+
+        # Custom reference import
+        layout.addWidget(QLabel("Custom reference"))
+        form = QFormLayout()
+        self.ref_organism = QLineEdit()
+        self.ref_genome = QLineEdit()
+        genome_browse = QPushButton("Browse")
+        genome_browse.clicked.connect(lambda: self._pick_reference_file(self.ref_genome, "FASTA (*.fa *.fasta *.fa.gz *.fasta.gz)"))
+        genome_row = QHBoxLayout()
+        genome_row.addWidget(self.ref_genome)
+        genome_row.addWidget(genome_browse)
+        self.ref_annotation = QLineEdit()
+        ann_browse = QPushButton("Browse")
+        ann_browse.clicked.connect(lambda: self._pick_reference_file(self.ref_annotation, "Annotation (*.gtf *.gff3 *.gff *.gtf.gz *.gff3.gz)"))
+        ann_row = QHBoxLayout()
+        ann_row.addWidget(self.ref_annotation)
+        ann_row.addWidget(ann_browse)
+        self.ref_format = QComboBox()
+        self.ref_format.addItems(["gtf", "gff3"])
+        validate = QPushButton("Validate Reference")
+        validate.clicked.connect(self._validate_reference_ui)
+        use_custom = QPushButton("Use Custom Reference (writes lock)")
+        use_custom.clicked.connect(self._use_custom_reference)
+        form.addRow("Organism", self.ref_organism)
+        form.addRow("Genome FASTA", genome_row)
+        form.addRow("Annotation", ann_row)
+        form.addRow("Format", self.ref_format)
+        form.addRow(validate, use_custom)
+        layout.addLayout(form)
+        self.reference_details = QTextEdit()
+        self.reference_details.setReadOnly(True)
         layout.addWidget(self.reference_details)
         self.tabs.addTab(page, "Reference Manager")
+
+    def _pick_reference_file(self, target: QLineEdit, filter_str: str) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Select reference file", "", filter_str)
+        if path:
+            target.setText(path)
+
+    def _validate_reference_ui(self) -> None:
+        genome = Path(self.ref_genome.text())
+        annotation = Path(self.ref_annotation.text())
+        messages = validate_reference(genome, annotation)
+        self.reference_details.setPlainText("Reference validation:\n" + self._format_messages(messages))
+
+    def _use_custom_reference(self) -> None:
+        if self.config is None or self.project_root is None:
+            QMessageBox.warning(self, APP_NAME, "Create or open a project first.")
+            return
+        genome = Path(self.ref_genome.text())
+        annotation = Path(self.ref_annotation.text())
+        if not genome.exists() or not annotation.exists():
+            QMessageBox.warning(self, APP_NAME, "Genome FASTA and annotation must exist.")
+            return
+        genome_md5 = md5sum(genome)
+        lock_path = self.project_root / "references" / "project_reference.lock.yaml"
+        existing = yaml.safe_load(lock_path.read_text(encoding="utf-8")) if lock_path.exists() else {}
+        if existing and existing.get("locked") and existing.get("genome_md5") not in (None, genome_md5):
+            reply = QMessageBox.question(
+                self, APP_NAME,
+                "A different reference is already locked for this project. Replace it?",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+        annotation_md5 = md5sum(annotation)
+        self.config.reference.mode = "custom"
+        self.config.reference.organism_name = self.ref_organism.text().strip() or "custom"
+        self.config.reference.genome_fasta = str(genome)
+        self.config.reference.annotation_file = str(annotation)
+        self.config.reference.annotation_format = self.ref_format.currentText()  # type: ignore[assignment]
+        self.config.reference.genome_md5 = genome_md5
+        self.config.reference.annotation_md5 = annotation_md5
+        self.manager.save_config(self.project_root, self.config)
+        lock = {
+            "locked": True,
+            "organism": self.config.reference.organism_name,
+            "mode": "custom",
+            "genome_path": str(genome),
+            "annotation_path": str(annotation),
+            "genome_md5": genome_md5,
+            "annotation_md5": annotation_md5,
+            "date_selected": date.today().isoformat(),
+        }
+        lock_path.write_text(yaml.safe_dump(lock, sort_keys=False), encoding="utf-8")
+        self.reference_details.setPlainText(
+            "Custom reference selected and locked:\n" + yaml.safe_dump(lock, sort_keys=False)
+        )
 
     def _build_workflow_tab(self) -> None:
         page = QWidget()
@@ -309,11 +396,18 @@ class MainWindow(QMainWindow):
     def _build_sanity_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
+        buttons = QHBoxLayout()
         run = QPushButton("Run Project and Metadata Checks")
         run.clicked.connect(self._run_sanity_checks)
+        refresh = QPushButton("Refresh Phase Checks")
+        refresh.clicked.connect(self._refresh_phase_checks)
+        buttons.addWidget(run)
+        buttons.addWidget(refresh)
+        self.approve_review = QCheckBox("I have reviewed and approve REVIEW_REQUIRED items")
         self.sanity_text = QTextEdit()
         self.sanity_text.setReadOnly(True)
-        layout.addWidget(run)
+        layout.addLayout(buttons)
+        layout.addWidget(self.approve_review)
         layout.addWidget(self.sanity_text)
         self.tabs.addTab(page, "Sanity Checks")
 
@@ -736,9 +830,51 @@ class MainWindow(QMainWindow):
         write_check(self.project_root, "01_input_validation", messages)
         text = self._format_messages(messages)
         self.sanity_text.setPlainText(text)
+        self._refresh_phase_checks()
+
+    def _phase_check_statuses(self) -> dict[str, str]:
+        # Read every checks/*.json the GUI and pipeline have produced.
+        statuses: dict[str, str] = {}
+        if self.project_root is None:
+            return statuses
+        import json
+
+        for path in sorted((self.project_root / "checks").glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            statuses[path.stem] = payload.get("status", "PASS")
+        return statuses
+
+    def _refresh_phase_checks(self) -> None:
+        if not self._require_project():
+            return
+        statuses = self._phase_check_statuses()
+        if not statuses:
+            self.sanity_text.setPlainText("No phase checks yet. Run checks or the pipeline first.")
+            return
+        priority = {"FAIL": 4, "REVIEW_REQUIRED": 3, "WARNING": 2, "PASS": 1}
+        worst = max(statuses.values(), key=lambda s: priority.get(s, 0))
+        lines = [f"Overall: {worst}", ""]
+        lines += [f"{name}: {status}" for name, status in statuses.items()]
+        self.sanity_text.setPlainText("\n".join(lines))
+
+    def _run_gate_ok(self) -> bool:
+        # Block on FAIL; require explicit approval for REVIEW_REQUIRED.
+        statuses = self._phase_check_statuses()
+        if any(s == "FAIL" for s in statuses.values()):
+            QMessageBox.warning(self, APP_NAME, "Cannot start: one or more sanity checks FAILED. Resolve them first.")
+            return False
+        if any(s == "REVIEW_REQUIRED" for s in statuses.values()) and not self.approve_review.isChecked():
+            QMessageBox.warning(self, APP_NAME, "REVIEW_REQUIRED checks present. Tick the approval box on the Sanity tab to proceed.")
+            return False
+        return True
 
     def _start_snakemake(self, mode: str) -> None:
         if self.config is None or self.project_root is None:
+            return
+        if mode in ("run", "resume") and not self._run_gate_ok():
             return
         self._save_workflow_settings()
         self._save_resources()
