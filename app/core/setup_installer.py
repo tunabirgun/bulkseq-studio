@@ -26,14 +26,14 @@ def launch_wsl_admin_install(distro: str = "Ubuntu") -> subprocess.Popen[str]:
     return subprocess.Popen(build_wsl_admin_install_command(distro), text=True)
 
 
-def build_wsl_bioenv_command(env_name: str = "bulkseq", distro: str = "Ubuntu", profile: str = "core") -> list[str]:
+def build_wsl_bioenv_command(env_name: str = "bulkseq", distro: str | None = None, profile: str = "core") -> list[str]:
     repo = windows_to_wsl_path(app_root())
     script = windows_to_wsl_path(wsl_bioenv_script())
     inner = f"cd '{repo}' && bash '{script}' '{env_name}' '{profile}'"
-    return ["wsl", "-d", distro, "--", "bash", "-lc", inner]
+    return ["wsl"] + (["-d", distro] if distro else []) + ["--", "bash", "-lc", inner]
 
 
-def launch_wsl_bioenv_install(env_name: str = "bulkseq", distro: str = "Ubuntu", profile: str = "core") -> subprocess.Popen[str]:
+def launch_wsl_bioenv_install(env_name: str = "bulkseq", distro: str | None = None, profile: str = "core") -> subprocess.Popen[str]:
     return subprocess.Popen(
         build_wsl_bioenv_command(env_name, distro, profile),
         stdout=subprocess.PIPE,

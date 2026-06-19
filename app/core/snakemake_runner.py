@@ -5,6 +5,7 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.constants import WSL_ENV_NAME, WSL_MAMBA_ROOT, WSL_MICROMAMBA
 from app.core.config_models import AppConfig
 from app.core.paths import windows_to_wsl_path
 
@@ -15,8 +16,9 @@ class SnakemakeCommand:
     display: str
 
 
-def build_snakemake_command(project_root: Path, config: AppConfig, mode: str = "run", use_wsl: bool = False, distro: str = "Ubuntu") -> SnakemakeCommand:
-    base = [
+def build_snakemake_args(config: AppConfig, mode: str = "run") -> list[str]:
+    """Snakemake argument vector, independent of how it is launched."""
+    args = [
         "snakemake",
         "--snakefile",
         "workflow/Snakefile",
@@ -24,23 +26,47 @@ def build_snakemake_command(project_root: Path, config: AppConfig, mode: str = "
         str(config.resources.total_threads),
         "--resources",
         f"mem_mb={config.resources.total_memory_gb * 1000}",
-        "--use-conda",
         "--configfile",
         "config/config.yaml",
     ]
     if mode == "dry-run":
-        base.insert(1, "-n")
+        args.insert(1, "-n")
     elif mode == "resume":
-        base.insert(1, "--rerun-incomplete")
+        args.insert(1, "--rerun-incomplete")
     elif mode == "unlock":
-        base = ["snakemake", "--snakefile", "workflow/Snakefile", "--unlock", "--configfile", "config/config.yaml"]
+        args = ["snakemake", "--snakefile", "workflow/Snakefile", "--unlock", "--configfile", "config/config.yaml"]
+    return args
 
+
+def build_snakemake_command(
+    project_root: Path,
+    config: AppConfig,
+    mode: str = "run",
+    use_wsl: bool = False,
+    distro: str | None = None,
+) -> SnakemakeCommand:
+    """Build the launch command.
+
+    On WSL the tools live in a micromamba environment that an unactivated login
+    shell does not put on PATH, so snakemake is invoked through
+    ``micromamba run -n <env>`` (the same mechanism the readiness check probes).
+    ``--use-conda`` is intentionally omitted: no rule declares a ``conda:``
+    directive, the whole pipeline runs inside the single activated environment.
+    """
+    args = build_snakemake_args(config, mode)
     if use_wsl:
         wsl_root = windows_to_wsl_path(project_root)
-        inner = f"cd {shlex.quote(wsl_root)} && {shlex.join(base)}"
-        cmd = ["wsl", "-d", distro, "--", "bash", "-lc", inner]
+        inner = (
+            f'cd {shlex.quote(wsl_root)} && '
+            f'export MAMBA_ROOT_PREFIX="{WSL_MAMBA_ROOT}" && '
+            f'{WSL_MICROMAMBA} run -n {WSL_ENV_NAME} {shlex.join(args)}'
+        )
+        cmd = ["wsl"]
+        if distro:
+            cmd += ["-d", distro]
+        cmd += ["--", "bash", "-lc", inner]
         return SnakemakeCommand(cmd, subprocess.list2cmdline(cmd))
-    return SnakemakeCommand(base, subprocess.list2cmdline(base))
+    return SnakemakeCommand(args, subprocess.list2cmdline(args))
 
 
 class SnakemakeRunner:

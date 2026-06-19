@@ -1,20 +1,18 @@
+# Core environment: the wired STAR -> featureCounts -> DESeq2 route command-line
+# tools. conda-forge has priority over bioconda (channel added last wins); use
+# with channel_priority strict. CLI tools pinned to the protocol versions.
 name: bulkseq
 channels:
-  - bioconda
   - conda-forge
+  - bioconda
 dependencies:
-  - python=3.11
-  - snakemake
-  - sra-tools
-  - fastqc
-  - multiqc
-  - fastp
-  - star
-  - hisat2
-  - salmon
-  - subread
-  - samtools
-  - sortmerna
-  - bbmap
+  - python=3.12
+  - snakemake-minimal
+  - fastqc=0.12.1
+  - multiqc=1.30
+  - fastp=1.0.1
+  - star=2.7.11b
+  - samtools=1.22.1
+  - subread=2.1.1
   - pandas
   - pyyaml

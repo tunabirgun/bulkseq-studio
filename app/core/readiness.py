@@ -76,7 +76,7 @@ def check_readiness() -> list[ReadinessItem]:
     return items
 
 
-def check_wsl_bulkseq_environment(distro: str = "Ubuntu", env_name: str = WSL_ENV_NAME) -> list[ReadinessItem]:
+def check_wsl_bulkseq_environment(distro: str | None = None, env_name: str = WSL_ENV_NAME) -> list[ReadinessItem]:
     if shutil.which("wsl") is None:
         return [ReadinessItem(f"WSL env:{env_name}", "REVIEW_REQUIRED", "wsl.exe is not available", "Linux bioinformatics tools")]
 
@@ -134,10 +134,11 @@ def install_python_packages(requirements_path: Path) -> subprocess.Popen[str]:
     )
 
 
-def _run_wsl(distro: str, command: str) -> subprocess.CompletedProcess[str]:
+def _run_wsl(distro: str | None, command: str) -> subprocess.CompletedProcess[str]:
+    cmd = ["wsl"] + (["-d", distro] if distro else []) + ["--", "bash", "-lc", command]
     try:
         return subprocess.run(
-            ["wsl", "-d", distro, "--", "bash", "-lc", command],
+            cmd,
             capture_output=True,
             text=True,
             timeout=20,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import os
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -308,12 +309,42 @@ class MainWindow(QMainWindow):
     def _load_project(self, root: Path) -> None:
         self.project_root = root
         self.config = self.manager.load_config(root)
-        self.cores.setValue(self.config.resources.total_threads)
-        self.ram.setValue(self.config.resources.total_memory_gb)
+        self._populate_widgets_from_config()
         samples = root / "config" / "samples.tsv"
         if samples.exists():
             self.metadata_table.load_tsv(samples)
         self.project_status.setPlainText(f"Open project: {root}")
+
+    def _populate_widgets_from_config(self) -> None:
+        # Repopulate every editable widget from the loaded config so a Save on any
+        # tab does not silently overwrite on-disk values with widget defaults.
+        if self.config is None:
+            return
+        wf = self.config.workflow
+        self.aligner.setCurrentText(wf.aligner)
+        self.quantifier.setCurrentText(wf.quantifier)
+        self.trim.setChecked(wf.trimming)
+        self.rrna.setChecked(wf.rrna_filtering)
+        self.enrichment.setChecked(wf.enrichment)
+        self.figures.setChecked(wf.figures)
+        self.design.setText(self.config.deseq2.design_formula)
+        self.profile.setCurrentText(self.config.resources.profile)
+        self.cores.setValue(self.config.resources.total_threads)
+        self.ram.setValue(self.config.resources.total_memory_gb)
+        organism = self.config.reference.organism_name
+        for i in range(self.reference_list.count()):
+            if self.reference_list.item(i).text().startswith(f"{organism} "):
+                self.reference_list.setCurrentRow(i)
+                break
+
+    def _design_variables(self) -> list[str]:
+        # Parse a DESeq2 design formula (e.g. "~ batch + condition") into the
+        # metadata columns it references, so missing design columns are flagged.
+        if self.config is None:
+            return []
+        formula = self.config.deseq2.design_formula.split("~", 1)[-1]
+        tokens = re.split(r"[+*:]", formula)
+        return [t.strip() for t in tokens if t.strip()]
 
     def _select_fastqs(self) -> None:
         if not self._require_project():
@@ -361,7 +392,11 @@ class MainWindow(QMainWindow):
 
     def _validate_metadata(self) -> None:
         allow_pending_sra = self.config is not None and self.config.input.type == "sra"
-        messages = validate_metadata(self.metadata_table.to_dataframe(), allow_pending_sra=allow_pending_sra)
+        messages = validate_metadata(
+            self.metadata_table.to_dataframe(),
+            allow_pending_sra=allow_pending_sra,
+            design_variables=self._design_variables(),
+        )
         self.metadata_messages.setPlainText(self._format_messages(messages))
 
     def _select_reference(self) -> None:
@@ -419,7 +454,11 @@ class MainWindow(QMainWindow):
             return
         assert self.project_root is not None
         allow_pending_sra = self.config is not None and self.config.input.type == "sra"
-        messages = validate_metadata(self.metadata_table.to_dataframe(), allow_pending_sra=allow_pending_sra)
+        messages = validate_metadata(
+            self.metadata_table.to_dataframe(),
+            allow_pending_sra=allow_pending_sra,
+            design_variables=self._design_variables(),
+        )
         write_check(self.project_root, "01_input_validation", messages)
         text = self._format_messages(messages)
         self.sanity_text.setPlainText(text)
@@ -427,6 +466,7 @@ class MainWindow(QMainWindow):
     def _start_snakemake(self, mode: str) -> None:
         if self.config is None or self.project_root is None:
             return
+        self._save_workflow_settings()
         self._save_resources()
         command = build_snakemake_command(self.project_root, self.config, mode=mode, use_wsl=self.use_wsl.isChecked())
         self.command_text.setText(command.display)

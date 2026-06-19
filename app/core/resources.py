@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import platform
 import shutil
 import subprocess
 from dataclasses import dataclass, asdict
@@ -60,7 +61,8 @@ def recommend_profile(system: SystemResources, profile: str = "balanced") -> dic
         reserve = 8 if ram >= 32 else 4
         total_memory_gb = max(4, int(min(ram * 0.75, ram - reserve)))
     star_threads = min(total_threads, 12)
-    star_mem = min(total_memory_gb, max(8, total_memory_gb))
+    # STAR is the memory bottleneck, so it may use the whole allocated budget.
+    star_mem = total_memory_gb
     return {
         "profile": profile,
         "total_threads": total_threads,
@@ -82,7 +84,21 @@ def _command_available(command: list[str]) -> bool:
 
 
 def _cpu_name() -> str:
-    try:
-        return (subprocess.check_output("wmic cpu get name", shell=True, text=True, timeout=3).splitlines()[1]).strip()
-    except Exception:
-        return "Unknown CPU"
+    # wmic is deprecated/removed on newer Windows 11 builds; read the processor
+    # name from the registry on Windows, fall back to platform.processor().
+    if psutil.WINDOWS:
+        try:
+            import winreg
+
+            key = winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+            )
+            try:
+                value, _ = winreg.QueryValueEx(key, "ProcessorNameString")
+                return str(value).strip()
+            finally:
+                winreg.CloseKey(key)
+        except Exception:
+            pass
+    return platform.processor() or "Unknown CPU"

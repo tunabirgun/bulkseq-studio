@@ -42,7 +42,10 @@ def write_run_summary(project_root: Path, default_config_path: Path | None = Non
     config_path = project_root / "config" / "config.yaml"
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     defaults = yaml.safe_load(default_config_path.read_text(encoding="utf-8")) if default_config_path and default_config_path.exists() else {}
-    customized = diff_configs(defaults, config)
+    # The 'project' block carries per-project identity (name, working directory,
+    # creation date) that always differs from the bundled defaults; excluding it
+    # keeps the customized-parameters list focused on scientific/tool settings.
+    customized = diff_configs(_drop_project(defaults), _drop_project(config))
     versions = capture_versions(project_root)
     sanity_path = project_root / "checks" / "sanity_checks.txt"
     payload = {
@@ -60,6 +63,10 @@ def write_run_summary(project_root: Path, default_config_path: Path | None = Non
     (reports / "run_summary.json").write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
     (reports / "run_summary.txt").write_text(_summary_text(payload), encoding="utf-8")
     return payload
+
+
+def _drop_project(config: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in config.items() if k != "project"}
 
 
 def diff_configs(defaults: dict[str, Any], used: dict[str, Any], prefix: str = "") -> dict[str, Any]:

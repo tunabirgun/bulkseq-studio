@@ -6,8 +6,11 @@ from pathlib import Path
 from uuid import uuid4
 
 
-def test_benchmark_cli_create_validate() -> None:
-    workdir = Path("manual_test_benchmark_cli") / uuid4().hex
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_benchmark_cli_create_validate(tmp_path) -> None:
+    workdir = tmp_path / "benchmark_cli" / uuid4().hex
     result = subprocess.run(
         [
             sys.executable,
@@ -25,6 +28,7 @@ def test_benchmark_cli_create_validate() -> None:
         capture_output=True,
         text=True,
         check=False,
+        cwd=REPO_ROOT,  # so `-m app.benchmark_cli` resolves regardless of test CWD
     )
     assert result.returncode == 0, result.stderr
     assert "Runtime estimate:" in result.stdout

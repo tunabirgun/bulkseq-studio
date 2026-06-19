@@ -6,6 +6,11 @@ WORKFLOW_VERSION = "0.1.0"
 
 SAFE_ID_PATTERN = r"^[A-Za-z0-9_.-]+$"
 
+# WSL bioinformatics environment (created by scripts/setup_wsl_bioenv.sh).
+WSL_ENV_NAME = "bulkseq"
+WSL_MICROMAMBA = "$HOME/.local/bin/micromamba"
+WSL_MAMBA_ROOT = "$HOME/micromamba"
+
 PROJECT_DIRS = [
     "config",
     "data/raw",

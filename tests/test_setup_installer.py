@@ -11,8 +11,15 @@ def test_wsl_admin_install_command_uses_uac() -> None:
 
 
 def test_wsl_bioenv_command_runs_repo_script() -> None:
+    # Default distro is None so the command targets WSL's default distribution
+    # (avoids hardcoding "Ubuntu" when the installed distro is e.g. Ubuntu-24.04).
     command = build_wsl_bioenv_command()
-    assert command[:5] == ["wsl", "-d", "Ubuntu", "--", "bash"]
+    assert command[:4] == ["wsl", "--", "bash", "-lc"]
     assert "setup_wsl_bioenv.sh" in command[-1]
     assert "bulkseq" in command[-1]
     assert "core" in command[-1]
+
+
+def test_wsl_bioenv_command_accepts_explicit_distro() -> None:
+    command = build_wsl_bioenv_command(distro="Ubuntu-24.04")
+    assert command[:4] == ["wsl", "-d", "Ubuntu-24.04", "--"]

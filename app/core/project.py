@@ -12,7 +12,7 @@ from app.core.config_models import AppConfig, default_config
 from app.core.paths import workflow_root
 
 
-def validate_working_directory(path: Path, min_free_gb: float = 5.0) -> list[dict[str, str]]:
+def validate_working_directory(path: Path, min_free_gb: float = 5.0, use_wsl: bool = False) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = []
     path = path.expanduser()
     try:
@@ -34,8 +34,8 @@ def validate_working_directory(path: Path, min_free_gb: float = 5.0) -> list[dic
         if marker in lowered:
             messages.append({"status": "REVIEW_REQUIRED", "message": f"Path appears to be inside {marker}; sync tools can slow or lock workflow files."})
 
-    if path.drive:
-        messages.append({"status": "WARNING", "message": "Windows paths are WSL-accessible under /mnt/<drive>, but WSL home paths are often faster."})
+    if use_wsl and path.drive:
+        messages.append({"status": "WARNING", "message": "Under WSL this path is reached via /mnt/<drive>; staging the project in the WSL home directory is often faster for genomics I/O."})
 
     if not messages:
         messages.append({"status": "PASS", "message": "Working directory is writable and has sufficient free space."})

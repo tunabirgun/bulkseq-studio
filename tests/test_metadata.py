@@ -6,7 +6,7 @@ from uuid import uuid4
 import pandas as pd
 
 from app.core.input_detection import detect_fastq_inputs
-from app.core.metadata import validate_metadata
+from app.core.metadata import detect_batch_condition_confounding, validate_metadata
 
 
 BASE = Path("manual_test_metadata")
@@ -37,3 +37,35 @@ def test_metadata_duplicate_fails() -> None:
     )
     messages = validate_metadata(df)
     assert any(m["status"] == "FAIL" and "Duplicate" in m["message"] for m in messages)
+
+
+def test_missing_design_variable_fails() -> None:
+    df = pd.DataFrame(
+        [{"sample_id": "s1", "condition": "control", "layout": "single", "fastq_1": "x.fq"}]
+    )
+    messages = validate_metadata(df, allow_pending_sra=True, design_variables=["batch", "condition"])
+    assert any(m["status"] == "FAIL" and "batch" in m["message"] for m in messages)
+
+
+def test_batch_condition_confounding_flagged() -> None:
+    df = pd.DataFrame(
+        [
+            {"sample_id": "s1", "condition": "control", "batch": "b1"},
+            {"sample_id": "s2", "condition": "control", "batch": "b1"},
+            {"sample_id": "s3", "condition": "treated", "batch": "b2"},
+            {"sample_id": "s4", "condition": "treated", "batch": "b2"},
+        ]
+    )
+    messages = detect_batch_condition_confounding(df)
+    assert messages and messages[0]["status"] == "REVIEW_REQUIRED"
+
+
+def test_single_replicate_warns() -> None:
+    df = pd.DataFrame(
+        [
+            {"sample_id": "s1", "condition": "control", "layout": "single", "fastq_1": "a.fq"},
+            {"sample_id": "s2", "condition": "treated", "layout": "single", "fastq_1": "b.fq"},
+        ]
+    )
+    messages = validate_metadata(df, allow_pending_sra=True)
+    assert any(m["status"] == "WARNING" and "two biological replicates" in m["message"] for m in messages)
