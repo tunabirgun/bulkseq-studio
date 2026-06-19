@@ -1,0 +1,67 @@
+benchmarks:
+  - id: pasilla_paired_subset
+    name: Pasilla paired-end subset
+    organism_name: Drosophila melanogaster
+    reference_preset: Drosophila melanogaster
+    genome_size_category: custom
+    source_publication: Brooks et al. Genome Research 2011
+    geo_series: GSE18508
+    bioconductor_package: pasilla
+    description: >
+      Four-sample paired-end subset of the pasilla RNAi RNA-seq experiment.
+      One ENA/SRA run is selected from each GEO biological sample to keep the
+      benchmark practical while preserving two untreated and two CG8144 RNAi
+      biological samples.
+    notes:
+      - The original GEO samples often contain more than one SRA run. This subset uses one run per biological sample for a quick validation benchmark.
+      - Use allow_pending_sra validation until FASTQ files are downloaded.
+      - For full biological reanalysis, include all lanes/runs and merge technical runs by sample before DESeq2.
+    samples:
+      - sample_id: untreated_3
+        condition: untreated
+        replicate: 1
+        batch: pasilla
+        layout: paired
+        original_accession: SRR031714
+        geo_accession: GSM461177
+        experiment_accession: SRX014459
+        read_count: 5327425
+        base_count: 394229450
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR031/SRR031714/SRR031714_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR031/SRR031714/SRR031714_2.fastq.gz
+      - sample_id: untreated_4
+        condition: untreated
+        replicate: 2
+        batch: pasilla
+        layout: paired
+        original_accession: SRR031716
+        geo_accession: GSM461178
+        experiment_accession: SRX014460
+        read_count: 5921707
+        base_count: 438206318
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR031/SRR031716/SRR031716_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR031/SRR031716/SRR031716_2.fastq.gz
+      - sample_id: cg8144_rnai_3
+        condition: cg8144_rnai
+        replicate: 1
+        batch: pasilla
+        layout: paired
+        original_accession: SRR031724
+        geo_accession: GSM461180
+        experiment_accession: SRX014462
+        read_count: 5962418
+        base_count: 441218932
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR031/SRR031724/SRR031724_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR031/SRR031724/SRR031724_2.fastq.gz
+      - sample_id: cg8144_rnai_4
+        condition: cg8144_rnai
+        replicate: 2
+        batch: pasilla
+        layout: paired
+        original_accession: SRR031726
+        geo_accession: GSM461181
+        experiment_accession: SRX014463
+        read_count: 6372581
+        base_count: 471570994
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR031/SRR031726/SRR031726_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR031/SRR031726/SRR031726_2.fastq.gz

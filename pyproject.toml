@@ -1,0 +1,23 @@
+[project]
+name = "bulkseq-studio"
+version = "0.1.0"
+description = "Windows GUI project manager for reproducible bulk RNA-seq Snakemake workflows"
+requires-python = ">=3.11"
+dependencies = [
+  "PySide6>=6.7",
+  "pandas>=2.2",
+  "pydantic>=2.7",
+  "PyYAML>=6.0",
+  "psutil>=5.9",
+]
+
+[project.scripts]
+bulkseq-studio = "app.main:main"
+bulkseq-benchmark = "app.benchmark_cli:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8.2", "openpyxl>=3.1"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

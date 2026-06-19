@@ -1,0 +1,32 @@
+id: pasilla_paired_subset
+name: Pasilla paired-end subset
+organism_name: Drosophila melanogaster
+source_publication: Brooks et al. Genome Research 2011
+geo_series: GSE18508
+bioconductor_package: pasilla
+selection_policy: One paired-end ENA/SRA run from each of four GEO biological samples.
+selected_runs:
+  - sample_id: untreated_3
+    geo_accession: GSM461177
+    experiment_accession: SRX014459
+    run_accession: SRR031714
+    condition: untreated
+    read_count: 5327425
+  - sample_id: untreated_4
+    geo_accession: GSM461178
+    experiment_accession: SRX014460
+    run_accession: SRR031716
+    condition: untreated
+    read_count: 5921707
+  - sample_id: cg8144_rnai_3
+    geo_accession: GSM461180
+    experiment_accession: SRX014462
+    run_accession: SRR031724
+    condition: cg8144_rnai
+    read_count: 5962418
+  - sample_id: cg8144_rnai_4
+    geo_accession: GSM461181
+    experiment_accession: SRX014463
+    run_accession: SRR031726
+    condition: cg8144_rnai
+    read_count: 6372581

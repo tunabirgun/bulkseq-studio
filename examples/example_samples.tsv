@@ -1,0 +1,3 @@
+sample_id	condition	layout	fastq_1	fastq_2	replicate	batch
+control_1	control	paired	examples/fastq/control_1_R1.fastq.gz	examples/fastq/control_1_R2.fastq.gz	1	batch1
+treated_1	treated	paired	examples/fastq/treated_1_R1.fastq.gz	examples/fastq/treated_1_R2.fastq.gz	1	batch1

@@ -1,0 +1,18 @@
+project:
+  name: example_project
+  working_directory: example_project
+input:
+  type: fastq
+  layout: paired
+  samples: config/samples.tsv
+reference:
+  mode: preset
+  organism_name: Fusarium graminearum PH-1
+  genome_size_category: fungal
+workflow:
+  aligner: STAR
+  quantifier: featureCounts
+resources:
+  profile: balanced
+  total_threads: 8
+  total_memory_gb: 24

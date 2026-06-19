@@ -1,0 +1,397 @@
+references:
+  - organism_name: Homo sapiens
+    scientific_name: Homo sapiens
+    strain: GRCh38
+    taxon_id: 9606
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: GRCh38
+    annotation_source: GENCODE
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Fill URLs from Ensembl/GENCODE/NCBI before production use.
+    recommended_aligner_settings: STAR defaults; use sufficient RAM.
+    genome_size_category: mammalian
+  - organism_name: Mus musculus
+    scientific_name: Mus musculus
+    strain: GRCm39
+    taxon_id: 10090
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: GRCm39
+    annotation_source: GENCODE
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Fill URLs from Ensembl/GENCODE/NCBI before production use.
+    recommended_aligner_settings: STAR defaults; use sufficient RAM.
+    genome_size_category: mammalian
+  - organism_name: Saccharomyces cerevisiae
+    scientific_name: Saccharomyces cerevisiae
+    strain: S288C
+    taxon_id: 4932
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: R64
+    annotation_source: SGD/EnsemblFungi
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Yeast-sized genome; STAR index can use smaller genomeSAindexNbases.
+    recommended_aligner_settings: genomeSAindexNbases auto/small genome.
+    genome_size_category: yeast
+  - organism_name: Schizosaccharomyces pombe
+    scientific_name: Schizosaccharomyces pombe
+    strain: 972h-
+    taxon_id: 4896
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: ASM294v2
+    annotation_source: PomBase/EnsemblFungi
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Placeholder entry.
+    recommended_aligner_settings: genomeSAindexNbases auto/small genome.
+    genome_size_category: yeast
+  - organism_name: Fusarium graminearum PH-1
+    scientific_name: Fusarium graminearum
+    strain: PH-1
+    taxon_id: 5518
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: PH-1
+    annotation_source: EnsemblFungi/NCBI
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Core Fusarium preset requested by the project spec.
+    recommended_aligner_settings: fungal genome; STAR or HISAT2.
+    genome_size_category: fungal
+  - organism_name: Fusarium culmorum
+    scientific_name: Fusarium culmorum
+    strain: placeholder
+    taxon_id: 5507
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: placeholder
+    annotation_source: placeholder
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Placeholder entry; update with chosen strain/release.
+    recommended_aligner_settings: fungal genome; STAR or HISAT2.
+    genome_size_category: fungal
+  - organism_name: Fusarium oxysporum
+    scientific_name: Fusarium oxysporum
+    strain: placeholder
+    taxon_id: 5507
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: placeholder
+    annotation_source: placeholder
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Placeholder entry; update with forma specialis/strain.
+    recommended_aligner_settings: fungal genome; STAR or HISAT2.
+    genome_size_category: fungal
+  - organism_name: Fusarium pseudograminearum
+    scientific_name: Fusarium pseudograminearum
+    strain: placeholder
+    taxon_id: 115659
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: placeholder
+    annotation_source: placeholder
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Placeholder entry.
+    recommended_aligner_settings: fungal genome; STAR or HISAT2.
+    genome_size_category: fungal
+  - organism_name: Arabidopsis thaliana
+    scientific_name: Arabidopsis thaliana
+    strain: TAIR10
+    taxon_id: 3702
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: TAIR10
+    annotation_source: TAIR/EnsemblPlants
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Placeholder entry.
+    recommended_aligner_settings: plant genome.
+    genome_size_category: plant
+  - organism_name: Drosophila melanogaster
+    scientific_name: Drosophila melanogaster
+    strain: BDGP6
+    taxon_id: 7227
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: BDGP6
+    annotation_source: FlyBase/EnsemblMetazoa
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Placeholder entry.
+    recommended_aligner_settings: STAR defaults.
+    genome_size_category: custom
+  - organism_name: Caenorhabditis elegans
+    scientific_name: Caenorhabditis elegans
+    strain: WBcel235
+    taxon_id: 6239
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: WBcel235
+    annotation_source: WormBase/EnsemblMetazoa
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Placeholder entry.
+    recommended_aligner_settings: STAR defaults.
+    genome_size_category: custom
+  - organism_name: Danio rerio
+    scientific_name: Danio rerio
+    strain: GRCz11
+    taxon_id: 7955
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: GRCz11
+    annotation_source: Ensembl
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Placeholder entry.
+    recommended_aligner_settings: vertebrate genome; use sufficient RAM.
+    genome_size_category: mammalian
+  - organism_name: Candida albicans
+    scientific_name: Candida albicans
+    strain: SC5314
+    taxon_id: 5476
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: SC5314
+    annotation_source: Candida Genome Database
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Placeholder entry.
+    recommended_aligner_settings: yeast/fungal genome.
+    genome_size_category: yeast
+  - organism_name: Neurospora crassa
+    scientific_name: Neurospora crassa
+    strain: OR74A
+    taxon_id: 5141
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: placeholder
+    annotation_source: FungiDB/EnsemblFungi
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Placeholder entry.
+    recommended_aligner_settings: fungal genome.
+    genome_size_category: fungal
+  - organism_name: Aspergillus nidulans
+    scientific_name: Aspergillus nidulans
+    strain: FGSC A4
+    taxon_id: 162425
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: placeholder
+    annotation_source: FungiDB/EnsemblFungi
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Placeholder entry.
+    recommended_aligner_settings: fungal genome.
+    genome_size_category: fungal
+  - organism_name: Aspergillus fumigatus
+    scientific_name: Aspergillus fumigatus
+    strain: Af293
+    taxon_id: 746128
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: placeholder
+    annotation_source: FungiDB/EnsemblFungi
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Placeholder entry.
+    recommended_aligner_settings: fungal genome.
+    genome_size_category: fungal
+  - organism_name: Cryptococcus neoformans
+    scientific_name: Cryptococcus neoformans
+    strain: H99
+    taxon_id: 5207
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: placeholder
+    annotation_source: FungiDB/EnsemblFungi
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Placeholder entry.
+    recommended_aligner_settings: fungal genome.
+    genome_size_category: fungal
+  - organism_name: Fusarium verticillioides
+    scientific_name: Fusarium verticillioides
+    strain: placeholder
+    taxon_id: 117187
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: placeholder
+    annotation_source: placeholder
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Placeholder entry.
+    recommended_aligner_settings: fungal genome.
+    genome_size_category: fungal
+  - organism_name: Botrytis cinerea
+    scientific_name: Botrytis cinerea
+    strain: B05.10
+    taxon_id: 40559
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: placeholder
+    annotation_source: EnsemblFungi/NCBI
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Placeholder entry.
+    recommended_aligner_settings: fungal genome.
+    genome_size_category: fungal
+  - organism_name: Magnaporthe oryzae
+    scientific_name: Magnaporthe oryzae
+    strain: 70-15
+    taxon_id: 318829
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: placeholder
+    annotation_source: EnsemblFungi/NCBI
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Placeholder entry.
+    recommended_aligner_settings: fungal genome.
+    genome_size_category: fungal
+  - organism_name: Escherichia coli K-12 MG1655
+    scientific_name: Escherichia coli
+    strain: K-12 MG1655
+    taxon_id: 511145
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: ASM584v2
+    annotation_source: RefSeq/EnsemblBacteria
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Bacterial expression experiments may need different strandedness and feature settings.
+    recommended_aligner_settings: small genome; consider HISAT2/STAR with small-index settings.
+    genome_size_category: bacterial
+  - organism_name: Bacillus subtilis 168
+    scientific_name: Bacillus subtilis
+    strain: 168
+    taxon_id: 224308
+    source: placeholder
+    assembly_accession: placeholder
+    assembly_name: ASM904v1
+    annotation_source: RefSeq/EnsemblBacteria
+    genome_fasta_url: TODO
+    annotation_gtf_url: TODO
+    annotation_gff3_url: TODO
+    transcriptome_fasta_url: TODO
+    protein_fasta_url: TODO
+    release: TODO
+    date: TODO
+    notes: Bacterial expression experiments may need different strandedness and feature settings.
+    recommended_aligner_settings: small genome.
+    genome_size_category: bacterial

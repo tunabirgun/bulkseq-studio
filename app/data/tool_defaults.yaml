@@ -1,0 +1,17 @@
+fastp:
+  detect_adapter_for_pe: true
+  qualified_quality_phred: 15
+  unqualified_percent_limit: 40
+  length_required: 36
+  trim_poly_g: false
+STAR:
+  outSAMtype: BAM SortedByCoordinate
+  quantMode: GeneCounts
+featureCounts:
+  feature_type: exon
+  attribute_type: gene_id
+  strandedness: 0
+DESeq2:
+  design_formula: "~ condition"
+  alpha: 0.05
+  lfc_shrinkage: true

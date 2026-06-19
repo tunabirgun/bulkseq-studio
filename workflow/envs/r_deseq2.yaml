@@ -1,0 +1,10 @@
+name: bulkseq-r-deseq2
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - r-base
+  - bioconductor-deseq2
+  - bioconductor-apeglm
+  - r-ggplot2
+  - r-pheatmap

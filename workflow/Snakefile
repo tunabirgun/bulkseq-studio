@@ -1,0 +1,37 @@
+configfile: "config/config.yaml"
+
+include: "rules/checks.smk"
+include: "rules/sra.smk"
+include: "rules/qc.smk"
+include: "rules/trimming.smk"
+include: "rules/reference.smk"
+include: "rules/alignment.smk"
+include: "rules/quantification.smk"
+include: "rules/deseq2.smk"
+include: "rules/enrichment.smk"
+include: "rules/figures.smk"
+include: "rules/reports.smk"
+
+SAMPLES = []
+RAW_FASTQS = []
+try:
+    import pandas as pd
+
+    samples_path = config["input"]["samples"]
+    SAMPLES_DF = pd.read_csv(samples_path, sep="\t", dtype=str).fillna("")
+    SAMPLES = SAMPLES_DF["sample_id"].tolist()
+    for column in ("fastq_1", "fastq_2"):
+        if column in SAMPLES_DF.columns:
+            RAW_FASTQS.extend([value for value in SAMPLES_DF[column].tolist() if value])
+except Exception:
+    SAMPLES = []
+    RAW_FASTQS = []
+
+rule all:
+    input:
+        "results/reports/run_summary.txt",
+        "results/reports/timing_summary.txt",
+        "checks/sanity_checks.txt",
+        expand("results/counts/{sample}.featureCounts.txt", sample=SAMPLES),
+        "results/deseq2/deseq2_results.tsv",
+        "results/figures/pca_placeholder.txt"

@@ -1,0 +1,20 @@
+name: bulkseq
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - python=3.11
+  - snakemake
+  - sra-tools
+  - fastqc
+  - multiqc
+  - fastp
+  - star
+  - hisat2
+  - salmon
+  - subread
+  - samtools
+  - sortmerna
+  - bbmap
+  - pandas
+  - pyyaml

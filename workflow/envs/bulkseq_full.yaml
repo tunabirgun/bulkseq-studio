@@ -1,0 +1,32 @@
+name: bulkseq
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - python=3.11
+  - snakemake
+  - sra-tools
+  - fastqc
+  - multiqc
+  - fastp
+  - star
+  - hisat2
+  - salmon
+  - subread
+  - samtools
+  - sortmerna
+  - bbmap
+  - pandas
+  - pyyaml
+  - r-base
+  - r-ggplot2
+  - r-ggrepel
+  - r-pheatmap
+  - bioconductor-deseq2
+  - bioconductor-apeglm
+  - bioconductor-tximport
+  - bioconductor-clusterprofiler
+  - bioconductor-enrichplot
+  - bioconductor-fgsea
+  - bioconductor-biomart
+  - bioconductor-complexheatmap

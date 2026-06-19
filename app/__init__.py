@@ -1,0 +1,1 @@
+"""BulkSeq Studio application package."""

@@ -1,0 +1,107 @@
+project:
+  name: example_project
+  working_directory: example_project
+  created_at: 2026-06-19
+  app_version: 0.1.0
+  workflow_version: 0.1.0
+input:
+  type: fastq
+  layout: unknown
+  samples: config/samples.tsv
+  sra_accessions: config/sra_accessions.txt
+reference:
+  mode: unset
+  organism_name: unset
+  strain: null
+  package_id: null
+  genome_fasta: null
+  annotation_file: null
+  annotation_format: unset
+  transcriptome_fasta: null
+  protein_fasta: null
+  star_index: null
+  hisat2_index: null
+  salmon_index: null
+  genome_md5: null
+  annotation_md5: null
+  genome_size_category: custom
+workflow:
+  fastqc_pre_trim: true
+  trimming: true
+  fastqc_post_trim: true
+  rrna_filtering: false
+  repair_pairs: false
+  aligner: STAR
+  quantifier: featureCounts
+  differential_expression: DESeq2
+  enrichment: true
+  figures: true
+  custom_gene_list_analysis: true
+fastp:
+  detect_adapter_for_pe: true
+  qualified_quality_phred: 15
+  unqualified_percent_limit: 40
+  length_required: 36
+  trim_poly_g: false
+sortmerna:
+  enabled: false
+  paired_mode: paired_in
+  database: null
+star:
+  sjdb_overhang: auto
+  genomeSAindexNbases: auto
+  twopass_mode: false
+  outSAMtype: BAM SortedByCoordinate
+  quantMode: GeneCounts
+featurecounts:
+  feature_type: exon
+  attribute_type: gene_id
+  strandedness: 0
+  count_read_pairs: true
+deseq2:
+  design_formula: "~ condition"
+  reference_level:
+    condition: control
+  contrasts:
+    - name: treated_vs_control
+      factor: condition
+      numerator: treated
+      denominator: control
+  alpha: 0.05
+  lfc_shrinkage: true
+  shrinkage_method: apeglm
+gene_sets:
+  custom_gene_list: null
+  custom_gene_sets: null
+  functional_annotation_table: null
+  background_gene_list: null
+resources:
+  profile: balanced
+  total_threads: 4
+  total_memory_gb: 8
+  temp_dir: tmp
+  keep_intermediate: false
+rule_threads:
+  fasterq_dump: 4
+  fastqc: 1
+  fastp: 4
+  sortmerna: 4
+  star_index: 4
+  star_align: 4
+  hisat2_align: 4
+  salmon_quant: 4
+  featurecounts: 4
+  deseq2: 2
+  multiqc: 1
+rule_memory_gb:
+  fasterq_dump: 8
+  fastqc: 1
+  fastp: 4
+  sortmerna: 12
+  star_index: 24
+  star_align: 24
+  hisat2_align: 8
+  salmon_quant: 8
+  featurecounts: 8
+  deseq2: 12
+  multiqc: 2
