@@ -10,6 +10,7 @@ from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -26,6 +27,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QUrl
 
 from app.constants import APP_NAME
 from app.core.benchmark_datasets import create_benchmark_project, load_benchmark_catalog
@@ -119,15 +122,29 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         self.sra_box = QTextEdit()
         self.sra_box.setPlaceholderText("Paste SRR accessions, one per line")
+        save_sra = QPushButton("Save SRA Accessions")
+        save_sra.clicked.connect(self._save_sra)
         pick_fastq = QPushButton("Select FASTQ Files")
         pick_fastq.clicked.connect(self._select_fastqs)
         self.input_preview = QTextEdit()
         self.input_preview.setReadOnly(True)
         layout.addWidget(QLabel("SRA accessions"))
         layout.addWidget(self.sra_box)
+        layout.addWidget(save_sra)
         layout.addWidget(pick_fastq)
         layout.addWidget(self.input_preview)
         self.tabs.addTab(page, "Input Data")
+
+    def _save_sra(self) -> None:
+        if not self._require_project():
+            return
+        assert self.project_root is not None
+        accessions = [line.strip() for line in self.sra_box.toPlainText().splitlines() if line.strip()]
+        (self.project_root / "config" / "sra_accessions.txt").write_text("\n".join(accessions) + "\n", encoding="utf-8")
+        if self.config is not None:
+            self.config.input.type = "sra"
+            self.manager.save_config(self.project_root, self.config)
+        self.input_preview.setPlainText(f"Saved {len(accessions)} accession(s) to config/sra_accessions.txt")
 
     def _build_metadata_tab(self) -> None:
         page = QWidget()
@@ -182,18 +199,63 @@ class MainWindow(QMainWindow):
         self.enrichment.setChecked(True)
         self.figures = QCheckBox()
         self.figures.setChecked(True)
+        # fastp parameters
+        self.fastp_q = QSpinBox()
+        self.fastp_q.setRange(0, 40)
+        self.fastp_q.setValue(15)
+        self.fastp_len = QSpinBox()
+        self.fastp_len.setRange(0, 300)
+        self.fastp_len.setValue(36)
+        self.trim_poly_g = QCheckBox()
+        # DESeq2 design + contrast builder
         self.design = QLineEdit("~ condition")
+        self.contrast_factor = QLineEdit("condition")
+        self.numerator = QComboBox()
+        self.numerator.setEditable(True)
+        self.denominator = QComboBox()
+        self.denominator.setEditable(True)
+        self.reference_level = QComboBox()
+        self.reference_level.setEditable(True)
+        refresh = QPushButton("Refresh conditions from metadata")
+        refresh.clicked.connect(self._refresh_conditions)
+        self.alpha = QDoubleSpinBox()
+        self.alpha.setRange(0.0001, 0.5)
+        self.alpha.setSingleStep(0.01)
+        self.alpha.setDecimals(4)
+        self.alpha.setValue(0.05)
         save = QPushButton("Save Workflow Settings")
         save.clicked.connect(self._save_workflow_settings)
         layout.addRow("Aligner", self.aligner)
         layout.addRow("Quantifier", self.quantifier)
         layout.addRow("fastp trimming", self.trim)
+        layout.addRow("fastp quality (-q)", self.fastp_q)
+        layout.addRow("fastp min length (-l)", self.fastp_len)
+        layout.addRow("fastp poly-G (-g)", self.trim_poly_g)
         layout.addRow("rRNA filtering", self.rrna)
         layout.addRow("Enrichment", self.enrichment)
         layout.addRow("Figures", self.figures)
         layout.addRow("DESeq2 design", self.design)
+        layout.addRow(refresh)
+        layout.addRow("Contrast factor", self.contrast_factor)
+        layout.addRow("Numerator (treated)", self.numerator)
+        layout.addRow("Denominator (reference)", self.denominator)
+        layout.addRow("Reference level", self.reference_level)
+        layout.addRow("Alpha (FDR)", self.alpha)
+        layout.addRow(QLabel("featureCounts strandedness is auto-inferred per protocol."))
         layout.addRow(save)
         self.tabs.addTab(page, "Workflow Settings")
+
+    def _refresh_conditions(self) -> None:
+        df = self.metadata_table.to_dataframe()
+        if "condition" not in df.columns:
+            return
+        values = sorted({str(v) for v in df["condition"].tolist() if str(v) and str(v) != "unknown"})
+        for combo in (self.numerator, self.denominator, self.reference_level):
+            current = combo.currentText()
+            combo.clear()
+            combo.addItems(values)
+            if current in values:
+                combo.setCurrentText(current)
 
     def _build_resources_tab(self) -> None:
         page = QWidget()
@@ -247,20 +309,49 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         buttons = QHBoxLayout()
-        for text, mode in [("Validate Project", "dry-run"), ("Dry Run", "dry-run"), ("Start Run", "run"), ("Resume", "resume"), ("Unlock", "unlock")]:
+        for text, mode in [("Dry Run", "dry-run"), ("Start Run", "run"), ("Resume", "resume"), ("Unlock", "unlock")]:
             button = QPushButton(text)
             button.clicked.connect(lambda _checked=False, m=mode: self._start_snakemake(m))
             buttons.addWidget(button)
         self.use_wsl = QCheckBox("Use WSL2")
+        self.use_wsl.setChecked(True)
         buttons.addWidget(self.use_wsl)
+        actions = QHBoxLayout()
+        stop = QPushButton("Stop")
+        stop.clicked.connect(self._stop_run)
+        open_folder = QPushButton("Open Project Folder")
+        open_folder.clicked.connect(self._open_folder)
+        open_report = QPushButton("Open MultiQC Report")
+        open_report.clicked.connect(self._open_report)
+        for w in (stop, open_folder, open_report):
+            actions.addWidget(w)
         self.command_text = QLineEdit()
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         layout.addLayout(buttons)
+        layout.addLayout(actions)
         layout.addWidget(QLabel("Command"))
         layout.addWidget(self.command_text)
         layout.addWidget(self.log_text)
         self.tabs.addTab(page, "Run Monitor")
+
+    def _stop_run(self) -> None:
+        if self.runner is not None:
+            self.runner.stop()
+            self.log_text.append("Stop requested.")
+
+    def _open_folder(self) -> None:
+        if self.project_root is not None:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.project_root)))
+
+    def _open_report(self) -> None:
+        if self.project_root is None:
+            return
+        report = self.project_root / "results" / "qc" / "multiqc" / "multiqc_report.html"
+        if report.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(report)))
+        else:
+            self.log_text.append(f"MultiQC report not found yet: {report}")
 
     def _build_reports_tab(self) -> None:
         page = QWidget()
@@ -327,7 +418,20 @@ class MainWindow(QMainWindow):
         self.rrna.setChecked(wf.rrna_filtering)
         self.enrichment.setChecked(wf.enrichment)
         self.figures.setChecked(wf.figures)
+        self.fastp_q.setValue(self.config.fastp.qualified_quality_phred)
+        self.fastp_len.setValue(self.config.fastp.length_required)
+        self.trim_poly_g.setChecked(self.config.fastp.trim_poly_g)
         self.design.setText(self.config.deseq2.design_formula)
+        self.alpha.setValue(self.config.deseq2.alpha)
+        self._refresh_conditions()
+        contrast = self.config.deseq2.contrasts[0] if self.config.deseq2.contrasts else None
+        if contrast:
+            self.contrast_factor.setText(contrast.factor)
+            self.numerator.setCurrentText(contrast.numerator)
+            self.denominator.setCurrentText(contrast.denominator)
+        ref_level = self.config.deseq2.reference_level
+        if ref_level:
+            self.reference_level.setCurrentText(next(iter(ref_level.values())))
         self.profile.setCurrentText(self.config.resources.profile)
         self.cores.setValue(self.config.resources.total_threads)
         self.ram.setValue(self.config.resources.total_memory_gb)
@@ -423,7 +527,20 @@ class MainWindow(QMainWindow):
         self.config.workflow.rrna_filtering = self.rrna.isChecked()
         self.config.workflow.enrichment = self.enrichment.isChecked()
         self.config.workflow.figures = self.figures.isChecked()
+        self.config.fastp.qualified_quality_phred = self.fastp_q.value()
+        self.config.fastp.length_required = self.fastp_len.value()
+        self.config.fastp.trim_poly_g = self.trim_poly_g.isChecked()
         self.config.deseq2.design_formula = self.design.text()
+        self.config.deseq2.alpha = self.alpha.value()
+        factor = self.contrast_factor.text().strip() or "condition"
+        if self.reference_level.currentText().strip():
+            self.config.deseq2.reference_level = {factor: self.reference_level.currentText().strip()}
+        if self.config.deseq2.contrasts:
+            contrast = self.config.deseq2.contrasts[0]
+            contrast.factor = factor
+            contrast.numerator = self.numerator.currentText().strip() or contrast.numerator
+            contrast.denominator = self.denominator.currentText().strip() or contrast.denominator
+            contrast.name = f"{contrast.numerator}_vs_{contrast.denominator}"
         self.manager.save_config(self.project_root, self.config)
 
     def _detect_resources(self) -> None:
@@ -487,11 +604,22 @@ class MainWindow(QMainWindow):
     def _generate_reports(self) -> None:
         if self.project_root is None:
             return
-        estimate = estimate_runtime(self.config, self.metadata_table.to_dataframe()) if self.config else None
-        write_timing_summary(self.project_root, estimate)
-        write_run_summary(self.project_root, data_path("default_config.yaml"))
         reports = self.project_root / "results" / "reports"
-        self.report_text.setPlainText(f"Wrote:\n{reports / 'run_summary.txt'}\n{reports / 'timing_summary.txt'}\n{reports / 'sanity_checks.txt'}")
+        # If a real pipeline run already produced reports, display those; otherwise
+        # generate the lightweight GUI-side summaries.
+        if not (reports / "run_summary.txt").exists():
+            estimate = estimate_runtime(self.config, self.metadata_table.to_dataframe()) if self.config else None
+            write_timing_summary(self.project_root, estimate)
+            write_run_summary(self.project_root, data_path("default_config.yaml"))
+        sections = []
+        for name in ("run_summary.txt", "timing_summary.txt"):
+            path = reports / name
+            if path.exists():
+                sections.append(f"===== {name} =====\n{path.read_text(encoding='utf-8')}")
+        sanity = self.project_root / "checks" / "sanity_checks.txt"
+        if sanity.exists():
+            sections.append(f"===== sanity_checks.txt =====\n{sanity.read_text(encoding='utf-8')}")
+        self.report_text.setPlainText("\n\n".join(sections) if sections else "No reports generated yet.")
 
     def _require_project(self) -> bool:
         if self.project_root is None:
