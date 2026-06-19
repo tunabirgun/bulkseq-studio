@@ -1,10 +1,25 @@
+# Functional enrichment (protocol section 8): GO/KEGG ORA and GSEA via
+# clusterProfiler. Organism-specific; wrapped so failures degrade gracefully.
+
+_ENR = config.get("enrichment", {})
+
+
 rule enrichment:
     input:
-        "results/deseq2/deseq2_results.tsv"
+        results="results/deseq2/deseq2_results.csv",
     output:
-        "results/enrichment/enrichment_results.tsv",
-        "checks/10_enrichment_qc.json"
+        summary="results/enrichment/enrichment_summary.txt",
+        go="results/enrichment/go_ora.csv",
+        gsea="results/enrichment/gsea.csv",
+        check="checks/10_enrichment_qc.json",
+    params:
+        orgdb=_ENR.get("orgdb", "org.Dm.eg.db"),
+        keytype=_ENR.get("keytype", "FLYBASE"),
+        kegg=_ENR.get("kegg_organism", "dme"),
+        alpha=config.get("deseq2", {}).get("alpha", 0.05),
     benchmark:
         "benchmarks/enrichment.tsv"
-    shell:
-        "python workflow/scripts/touch_report.py --out {output[0]} --message 'GO/KEGG/GSEA placeholder.' && python workflow/scripts/write_check.py --out {output[1]} --status REVIEW_REQUIRED --message 'Enrichment is scaffolded; configure organism-specific gene sets before interpretation.'"
+    log:
+        "logs/enrichment.log",
+    script:
+        "../scripts/run_enrichment.R"

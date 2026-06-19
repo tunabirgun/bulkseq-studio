@@ -4,6 +4,13 @@ benchmarks:
     organism_name: Drosophila melanogaster
     reference_preset: Drosophila melanogaster
     genome_size_category: custom
+    reference:
+      source: Ensembl
+      release: "111"
+      assembly: BDGP6.46
+      annotation_format: gtf
+      genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/drosophila_melanogaster/dna/Drosophila_melanogaster.BDGP6.46.dna.toplevel.fa.gz
+      annotation_gtf_url: https://ftp.ensembl.org/pub/release-111/gtf/drosophila_melanogaster/Drosophila_melanogaster.BDGP6.46.111.gtf.gz
     source_publication: Brooks et al. Genome Research 2011
     geo_series: GSE18508
     bioconductor_package: pasilla

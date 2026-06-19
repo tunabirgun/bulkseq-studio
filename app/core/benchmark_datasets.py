@@ -41,6 +41,16 @@ def create_benchmark_project(benchmark_id: str, working_directory: Path, project
     cfg.reference.mode = "preset"
     cfg.reference.organism_name = str(benchmark["organism_name"])
     cfg.reference.genome_size_category = str(benchmark.get("genome_size_category", "custom"))
+    ref = benchmark.get("reference", {})
+    if ref:
+        cfg.reference.source = ref.get("source")
+        cfg.reference.release = str(ref.get("release")) if ref.get("release") else None
+        cfg.reference.strain = ref.get("assembly")
+        cfg.reference.annotation_format = ref.get("annotation_format", "gtf")
+        cfg.reference.genome_fasta = "references/genome.fa"
+        cfg.reference.annotation_file = "references/annotation.gtf"
+        cfg.reference.genome_fasta_url = ref.get("genome_fasta_url")
+        cfg.reference.annotation_gtf_url = ref.get("annotation_gtf_url")
     cfg.workflow.aligner = "STAR"
     cfg.workflow.quantifier = "featureCounts"
     cfg.deseq2.design_formula = "~ condition"

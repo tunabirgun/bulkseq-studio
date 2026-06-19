@@ -1,20 +1,41 @@
+# Gene-level quantification with featureCounts using the inferred strandedness
+# (protocol section 6.12). A single matrix over all BAMs.
+
+_FC = config.get("featurecounts", {})
+
+
 rule featurecounts:
     input:
-        bam="results/aligned/{sample}.Aligned.sortedByCoord.out.bam"
+        bams=expand("results/aligned/{sample}_Aligned.sortedByCoord.out.bam", sample=SAMPLES),
+        bais=expand("results/aligned/{sample}_Aligned.sortedByCoord.out.bam.bai", sample=SAMPLES),
+        gtf=ANNOTATION_GTF,
+        strand="results/aligned/strandedness.txt",
     output:
-        "results/counts/{sample}.featureCounts.txt"
+        counts="results/counts/counts.txt",
+        summary="results/counts/counts.txt.summary",
+    params:
+        paired="-p --countReadPairs" if ALL_PAIRED else "",
+        feature=_FC.get("feature_type", "exon"),
+        attribute=_FC.get("attribute_type", "gene_id"),
+    threads:
+        rule_threads("featurecounts", 6)
     benchmark:
-        "benchmarks/featurecounts_{sample}.tsv"
+        "benchmarks/featurecounts.tsv"
+    log:
+        "logs/featurecounts.log",
     shell:
-        "python workflow/scripts/touch_report.py --out {output} --message 'featureCounts placeholder for {wildcards.sample}.'"
+        "S=$(cat {input.strand}); "
+        "featureCounts -a {input.gtf} -o {output.counts} -T {threads} "
+        "{params.paired} -t {params.feature} -g {params.attribute} -s $S -Q 10 "
+        "{input.bams} > {log} 2>&1"
 
-rule merge_counts:
+
+rule quantification_check:
     input:
-        expand("results/counts/{sample}.featureCounts.txt", sample=SAMPLES)
+        summary="results/counts/counts.txt.summary",
     output:
-        "results/counts/gene_counts.tsv",
-        "checks/07_quantification_qc.json"
+        "checks/07_quantification_qc.json",
     benchmark:
-        "benchmarks/merge_counts.tsv"
+        "benchmarks/07_quantification_qc.tsv"
     shell:
-        "python workflow/scripts/make_counts_placeholder.py --samples config/samples.tsv --counts {output[0]} --check {output[1]}"
+        "python workflow/scripts/summarize_quantification.py --summary {input.summary} --out {output}"

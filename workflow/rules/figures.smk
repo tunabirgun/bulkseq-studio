@@ -1,11 +1,24 @@
+# Transcriptomics figures (protocol section 9). Each figure is exported as both
+# PNG (raster) and SVG (vector); titles are kept out of the figure.
+
+
 rule figures:
     input:
-        "results/deseq2/deseq2_results.tsv"
+        rds="results/deseq2/deseq2_objects.rds",
     output:
-        "results/figures/pca_placeholder.txt",
-        "results/figures/volcano_placeholder.txt",
-        "results/figures/top_deg_heatmap_placeholder.txt"
+        pca_png="results/figures/pca.png",
+        pca_svg="results/figures/pca.svg",
+        dist_png="results/figures/sample_distance.png",
+        dist_svg="results/figures/sample_distance.svg",
+        ma_png="results/figures/ma_plot.png",
+        ma_svg="results/figures/ma_plot.svg",
+        volcano_png="results/figures/volcano.png",
+        volcano_svg="results/figures/volcano.svg",
+        heatmap_png="results/figures/top_deg_heatmap.png",
+        heatmap_svg="results/figures/top_deg_heatmap.svg",
     benchmark:
         "benchmarks/figures.tsv"
-    shell:
-        "python workflow/scripts/touch_report.py --out {output[0]} --message 'PCA placeholder.' && python workflow/scripts/touch_report.py --out {output[1]} --message 'Volcano placeholder.' && python workflow/scripts/touch_report.py --out {output[2]} --message 'Top DEG heatmap placeholder.'"
+    log:
+        "logs/figures.log",
+    script:
+        "../scripts/make_figures.R"

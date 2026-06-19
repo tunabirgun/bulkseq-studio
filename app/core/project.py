@@ -9,7 +9,7 @@ import yaml
 
 from app.constants import APP_VERSION, PROJECT_DIRS, WORKFLOW_VERSION
 from app.core.config_models import AppConfig, default_config
-from app.core.paths import workflow_root
+from app.core.paths import data_path, workflow_root
 
 
 def validate_working_directory(path: Path, min_free_gb: float = 5.0, use_wsl: bool = False) -> list[dict[str, str]]:
@@ -68,6 +68,11 @@ class ProjectManager:
 
         cfg = default_config(safe_name, root)
         self.save_config(root, cfg)
+        # Copy the bundled defaults so the workflow can diff config vs defaults
+        # (the Customized / Non-standard Parameters section of run_summary).
+        default_src = data_path("default_config.yaml")
+        if default_src.exists():
+            shutil.copyfile(default_src, root / "config" / "default_config.yaml")
         self.copy_workflow_metadata(root)
         return root
 

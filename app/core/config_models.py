@@ -29,9 +29,13 @@ class ReferenceConfig(BaseModel):
     organism_name: str = "unset"
     strain: str | None = None
     package_id: str | None = None
+    source: str | None = None
+    release: str | None = None
     genome_fasta: str | None = None
     annotation_file: str | None = None
     annotation_format: Literal["gtf", "gff3", "unset"] = "unset"
+    genome_fasta_url: str | None = None
+    annotation_gtf_url: str | None = None
     transcriptome_fasta: str | None = None
     protein_fasta: str | None = None
     star_index: str | None = None

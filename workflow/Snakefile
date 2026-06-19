@@ -1,37 +1,119 @@
+# BulkSeq Studio workflow: reference-based bulk RNA-seq, STAR -> featureCounts ->
+# DESeq2 -> figures, following the bundled protocol. Globals and helper functions
+# are defined BEFORE the rule includes so included rules can reference them.
+import os
+import re
+import pandas as pd
+
 configfile: "config/config.yaml"
 
-include: "rules/checks.smk"
+
+# ---------------------------------------------------------------------------
+# Samples
+# ---------------------------------------------------------------------------
+samples_df = pd.read_csv(config["input"]["samples"], sep="\t", dtype=str).fillna("")
+samples_df = samples_df.set_index("sample_id", drop=False)
+SAMPLES = samples_df["sample_id"].tolist()
+FIRST_SAMPLE = SAMPLES[0] if SAMPLES else None
+
+# Constrain {sample} to known IDs so paired (..._1.trim) and single (...trim)
+# trimmed filenames parse unambiguously.
+if SAMPLES:
+    wildcard_constraints:
+        sample="|".join(re.escape(s) for s in SAMPLES)
+
+
+def sample_layout(sample):
+    layout = str(samples_df.loc[sample, "layout"]).lower() if "layout" in samples_df.columns else "paired"
+    return "single" if layout == "single" else "paired"
+
+
+def is_paired(sample):
+    return sample_layout(sample) == "paired"
+
+
+ALL_PAIRED = all(is_paired(s) for s in SAMPLES) if SAMPLES else True
+
+
+def raw_fastq(sample, read):
+    column = "fastq_1" if read == 1 else "fastq_2"
+    value = str(samples_df.loc[sample, column]) if column in samples_df.columns else ""
+    return value
+
+
+# Map each downloadable raw FASTQ target to its ENA URL (built from samples.tsv).
+URL_BY_TARGET = {}
+for _s in SAMPLES:
+    for _url_col, _path_col in (("fastq_1_url", "fastq_1"), ("fastq_2_url", "fastq_2")):
+        if _url_col in samples_df.columns and _path_col in samples_df.columns:
+            _url = str(samples_df.loc[_s, _url_col]).strip()
+            _target = str(samples_df.loc[_s, _path_col]).strip()
+            if _url and _target:
+                URL_BY_TARGET[_target] = _url
+
+
+def trimmed_fastqs(sample):
+    if is_paired(sample):
+        return [f"results/trimmed/{sample}_1.trim.fastq.gz", f"results/trimmed/{sample}_2.trim.fastq.gz"]
+    return [f"results/trimmed/{sample}.trim.fastq.gz"]
+
+
+# ---------------------------------------------------------------------------
+# Reference / resources
+# ---------------------------------------------------------------------------
+REF = config.get("reference", {})
+WF = config.get("workflow", {})
+GENOME_FA = "references/genome.fa"
+ANNOTATION_GTF = "references/annotation.gtf"
+STAR_INDEX = "references/star_index"
+
+
+def rule_threads(name, default=4):
+    return int(config.get("rule_threads", {}).get(name, default))
+
+
+def rule_mem_mb(name, default=8):
+    return int(config.get("rule_memory_gb", {}).get(name, default)) * 1000
+
+
+# ---------------------------------------------------------------------------
+# Rule includes (order matters only for readability; globals already defined)
+# ---------------------------------------------------------------------------
 include: "rules/sra.smk"
+include: "rules/reference.smk"
 include: "rules/qc.smk"
 include: "rules/trimming.smk"
-include: "rules/reference.smk"
 include: "rules/alignment.smk"
 include: "rules/quantification.smk"
 include: "rules/deseq2.smk"
-include: "rules/enrichment.smk"
 include: "rules/figures.smk"
+include: "rules/enrichment.smk"
+include: "rules/checks.smk"
 include: "rules/reports.smk"
 
-SAMPLES = []
-RAW_FASTQS = []
-try:
-    import pandas as pd
 
-    samples_path = config["input"]["samples"]
-    SAMPLES_DF = pd.read_csv(samples_path, sep="\t", dtype=str).fillna("")
-    SAMPLES = SAMPLES_DF["sample_id"].tolist()
-    for column in ("fastq_1", "fastq_2"):
-        if column in SAMPLES_DF.columns:
-            RAW_FASTQS.extend([value for value in SAMPLES_DF[column].tolist() if value])
-except Exception:
-    SAMPLES = []
-    RAW_FASTQS = []
+# ---------------------------------------------------------------------------
+# Targets
+# ---------------------------------------------------------------------------
+def final_targets():
+    targets = [
+        "results/qc/multiqc/multiqc_report.html",
+        "results/counts/counts.txt",
+        "results/deseq2/deseq2_results.csv",
+        "results/reports/run_summary.txt",
+        "results/reports/timing_summary.txt",
+        "results/reports/software_versions.txt",
+        "checks/sanity_checks.txt",
+    ]
+    if WF.get("figures", True):
+        for fig in ("pca", "sample_distance", "ma_plot", "volcano", "top_deg_heatmap"):
+            targets.append(f"results/figures/{fig}.png")
+            targets.append(f"results/figures/{fig}.svg")
+    if WF.get("enrichment", True):
+        targets.append("results/enrichment/enrichment_summary.txt")
+    return targets
+
 
 rule all:
     input:
-        "results/reports/run_summary.txt",
-        "results/reports/timing_summary.txt",
-        "checks/sanity_checks.txt",
-        expand("results/counts/{sample}.featureCounts.txt", sample=SAMPLES),
-        "results/deseq2/deseq2_results.tsv",
-        "results/figures/pca_placeholder.txt"
+        final_targets(),
