@@ -29,7 +29,8 @@ if (-not (Test-Path $iscc)) { throw "ISCC.exe (Inno Setup) not found" }
 & $iscc packaging\installer.iss
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup compile failed" }
 
+$version = ((Select-String -Path "app\constants.py" -Pattern 'APP_VERSION\s*=\s*"([^"]+)"').Matches.Groups[1].Value)
 Write-Host ""
 Write-Host "Done."
 Write-Host "  Executable: dist\BulkSeq Studio\BulkSeqStudio.exe"
-Write-Host "  Installer:  installer_output\BulkSeqStudio-Setup-0.1.0.exe"
+Write-Host "  Installer:  installer_output\BulkSeqStudio-Setup-$version.exe"

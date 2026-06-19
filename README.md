@@ -14,12 +14,14 @@ Implemented:
 - Metadata/config/reference/resource validation helpers; design-formula variable checks.
 - Reference catalog and custom reference manifest/checksum scaffolding.
 - Snakemake command builder (runs via `micromamba run -n bulkseq` under WSL) and non-blocking runner.
-- **A real, runnable paired-end pipeline**: ENA FASTQ download, FastQC/MultiQC, fastp, STAR index (genome-size-aware) and alignment, strandedness inference, featureCounts, DESeq2 (shrinkage, VST), and PCA/MA/volcano/sample-distance/top-DEG figures (PNG + SVG). Validated end-to-end on the pasilla subset.
-- Report generators for run summary (with a default-vs-used parameter diff), timing summary, sanity checks, software versions, and R `sessionInfo`.
+- **A real, runnable pipeline**: ENA FASTQ download (with an SRA/ENA metadata fetch that builds the sample sheet from accessions), FastQC/MultiQC, fastp, STAR index (genome-size-aware) and alignment, strandedness inference, featureCounts, DESeq2 (apeglm shrinkage, VST), and PCA/MA/volcano/sample-distance/top-DEG figures (PNG + SVG). Validated end-to-end on the pasilla subset (Drosophila, Ensembl) and a Fusarium graminearum spore-vs-mycelium dataset (PH-1, NCBI RefSeq).
+- Configurable significance thresholds (alpha, |log2FC|) with separate up- and down-regulated gene lists, each carried into directional GO ORA and GSEA enrichment (clusterProfiler), gated by organism so unsupported organisms skip cleanly.
+- Genes-of-interest analysis: a focused z-scored heatmap and per-condition expression panel for a user-supplied gene list.
+- Report generators for run summary (default-vs-used parameter diff, environment lock md5, software versions), timing summary, sanity checks, and R `sessionInfo`.
 - Tests for metadata detection/validation, config generation/round-trip, reference validation, resources, runtime estimation, provenance diff, WSL path translation, and the WSL command builder.
 - Curated pasilla paired-end subset benchmark project template under `examples/benchmarks/pasilla_paired_subset`.
 
-The STAR -> featureCounts -> DESeq2 -> figures route is fully implemented. HISAT2, Salmon/tximport, SortMeRNA, BBMap, htseq-count, edgeR/limma-voom, and single-end handling remain scaffolding/TODOs.
+The STAR -> featureCounts -> DESeq2 -> enrichment -> figures route is fully implemented, for both paired-end and single-end layouts (paired-end is the benchmark-validated path). HISAT2, Salmon/tximport, SortMeRNA, BBMap, htseq-count, and edgeR/limma-voom remain alternative scaffolding/TODOs.
 
 ## Install
 

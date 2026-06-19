@@ -1,12 +1,20 @@
 # BulkSeq Studio — Remediation & Completion Plan
 
-**Status (this session):** Phases 1–4 complete and the pipeline is validated
-end-to-end on the pasilla subset (real STAR→featureCounts→DESeq2→figures result:
-467 DE genes, the pasilla gene strongly down, sanity all-PASS). Phase 5 GUI items
-(Outputs panel, contrast builder, fastp params, run progress, Reference Manager
-custom import + lock, metadata editor ops, sanity approval gate) landed. Remaining:
-some Phase 5 breadth (per-rule resource editing, full single-end/alt-route rules)
-and Phase 6 (catalog population, runtime calibration). 37 tests pass.
+**Status (v0.2.0):** The pipeline is validated end-to-end on two real datasets:
+the pasilla subset (Drosophila/Ensembl: 467 DE genes, pasilla gene strongly down,
+all-PASS) and a Fusarium graminearum spore-vs-mycelium dataset (PH-1/NCBI RefSeq:
+PC1 = 98% spore↔mycelium separation, 5,734 DE genes, top hits log2FC 11–14, the
+genes-of-interest heatmap/expression panel reproducing the directional changes).
+Shipped this session: configurable alpha/|log2FC| thresholds with separate
+up/down gene lists, directional GO ORA + GSEA (organism-gated), SRA/ENA metadata
+fetch that builds the sample sheet from accessions, genes-of-interest figures, the
+reference catalog populated with verified Ensembl/RefSeq URLs, and the app
+icon/logo. A 4-dimension multi-agent evaluation (functionality, design, scientific
+validity, reproducibility) produced 52 verified findings; the A-tier crash/validity
+guards and the high-value reproducibility/UX items are fixed (new scientific knobs
+default to the validated values). exe + per-user installer rebuilt. 40 tests pass.
+Remaining: alternative routes (HISAT2/Salmon/edgeR), per-rule resource editing in
+the GUI, and the deferred C-tier UX polish from the audit backlog.
 
 Derived from a 6-lane audit of the codebase against its build spec and the
 `bulk_transcriptomics.pdf` protocol (the scientific backbone). Ground truth at
