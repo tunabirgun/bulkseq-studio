@@ -6,6 +6,12 @@ __pycache__/
 build/
 dist/
 
+# PyInstaller / installer build outputs
+/build/
+/dist/
+/Output/
+installer_output/
+
 # Virtual environments
 .venv/
 venv/

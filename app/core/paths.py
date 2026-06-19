@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 
 def app_root() -> Path:
+    # When frozen by PyInstaller, bundled data (app/data, workflow, scripts) lives
+    # under sys._MEIPASS; in development it is the repository root.
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", None)
+        if base:
+            return Path(base)
+        return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parents[2]
 
 

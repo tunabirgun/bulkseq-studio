@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 
 from PySide6.QtWidgets import QApplication
@@ -14,6 +15,12 @@ def main() -> int:
     window = MainWindow()
     window.resize(1280, 820)
     window.show()
+    # Self-test mode: construct the window, pump the event loop briefly, then exit.
+    # Used to verify a packaged (frozen) build launches without import/path errors.
+    if os.environ.get("BULKSEQ_SELFTEST") == "1":
+        from PySide6.QtCore import QTimer
+
+        QTimer.singleShot(1000, app.quit)
     return app.exec()
 
 
