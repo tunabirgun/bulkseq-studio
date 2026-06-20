@@ -22,6 +22,10 @@ class InputConfig(BaseModel):
     layout: Literal["paired", "single", "mixed", "unknown"] = "unknown"
     samples: str = "config/samples.tsv"
     sra_accessions: str = "config/sra_accessions.txt"
+    # When type == count_matrix: a user-supplied gene x sample counts table; the
+    # pipeline ingests it (skipping download/QC/alignment/featureCounts) into the
+    # canonical results/counts/counts.txt and runs DESeq2 -> figures -> enrichment.
+    count_matrix: str | None = None
 
 
 class ReferenceConfig(BaseModel):

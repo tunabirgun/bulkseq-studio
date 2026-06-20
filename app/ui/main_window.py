@@ -61,7 +61,7 @@ from app.core.snakemake_runner import (
 )
 from app.core.timing import write_timing_summary
 from app.core.paths import data_path
-from app.ui.image_viewer import ImageViewer
+from app.ui.image_viewer import SVG_AVAILABLE, ImageViewer
 from app.ui.metadata_editor import MetadataTable
 from app.ui.readiness_dialog import ReadinessDialog
 from app.ui.theme import IMAGEVIEWER_BG, apply_theme
@@ -86,6 +86,26 @@ class RunnerThread(QThread):
         for line in process.stdout:
             self.line.emit(line.rstrip())
         self.finished_with_code.emit(process.wait())
+
+
+class BackgroundWorker(QThread):
+    """Runs a callable off the UI thread so a busy bar can animate while a blocking
+    operation (e.g. detect_system probing WSL) runs, instead of freezing."""
+
+    done = Signal(object)
+    failed = Signal(object)
+
+    def __init__(self, fn) -> None:
+        super().__init__()
+        self._fn = fn
+
+    def run(self) -> None:
+        try:
+            result = self._fn()
+        except Exception as exc:  # surfaced via failed signal on the UI thread
+            self.failed.emit(exc)
+            return
+        self.done.emit(result)
 
 
 class MainWindow(QMainWindow):
@@ -135,9 +155,15 @@ class MainWindow(QMainWindow):
         # detection), so blocking actions show progress instead of looking frozen.
         # The environment check is on-demand (the 'Check Environment' button) so the
         # window opens instantly instead of blocking on WSL/conda probes at startup.
-        self.statusBar().showMessage(
-            "Ready — on the Project tab, click 'Check Environment' to verify your WSL setup."
-        )
+        if shutil.which("wsl") is None:
+            self.statusBar().showMessage(
+                "WSL2 was not detected. Click 'Check Environment' on the Project tab to "
+                "enable WSL2 and install the bioinformatics environment before running."
+            )
+        else:
+            self.statusBar().showMessage(
+                "Ready — on the Project tab, click 'Check Environment' to verify your WSL setup."
+            )
 
     # ---- Theme toggle ------------------------------------------------------
     def _current_theme_mode(self) -> str:
@@ -553,7 +579,7 @@ class MainWindow(QMainWindow):
         bar = QProgressBar()
         bar.setRange(0, 0)
         bar.setTextVisible(False)
-        bar.setFixedHeight(6)
+        bar.setFixedHeight(10)
         bar.setVisible(False)
         return bar
 
@@ -652,8 +678,16 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         buttons = QHBoxLayout()
+        run_tips = {
+            "dry-run": "Show what the pipeline would do, without running anything.",
+            "run": "Start the pipeline. Completed steps are reused; only missing outputs are produced.",
+            "resume": "Continue a stopped or interrupted run from where it left off "
+                      "(re-runs only incomplete/missing steps — the project is the saved state).",
+            "unlock": "Release a stale lock left by a killed run so you can start again.",
+        }
         for text, mode in [("Dry Run", "dry-run"), ("Start Run", "run"), ("Resume", "resume"), ("Unlock", "unlock")]:
             button = QPushButton(text)
+            button.setToolTip(run_tips.get(mode, ""))
             button.clicked.connect(lambda _checked=False, m=mode: self._start_snakemake(m))
             self.run_action_buttons[mode] = button
             buttons.addWidget(button)
@@ -859,12 +893,18 @@ class MainWindow(QMainWindow):
         fit_btn.clicked.connect(lambda: self.figure_viewer.fit())
         actual_btn = QPushButton("100%")
         actual_btn.clicked.connect(lambda: self.figure_viewer.actual_size())
+        self.svg_toggle = QCheckBox("Vector (SVG)")
+        self.svg_toggle.setToolTip("Show the vector SVG of the selected figure — crisp at any zoom. "
+                                   "PNG is faster for very complex figures.")
+        self.svg_toggle.setEnabled(SVG_AVAILABLE)
+        self.svg_toggle.toggled.connect(lambda _=False: self._show_selected_figure(self.figure_pick.currentText()))
         fig_controls.addWidget(QLabel("Figure:"))
         fig_controls.addWidget(self.figure_pick, 1)
         fig_controls.addWidget(regen_figs)
         fig_controls.addWidget(refresh_figs)
         fig_controls.addWidget(fit_btn)
         fig_controls.addWidget(actual_btn)
+        fig_controls.addWidget(self.svg_toggle)
         figure_layout.addLayout(fig_controls)
         self.figure_viewer = ImageViewer()
         self.figure_viewer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -927,21 +967,28 @@ class MainWindow(QMainWindow):
         v.addWidget(save)
         return group
 
-    def _save_goi(self) -> None:
-        if not self._require_project() or self.config is None:
-            return
-        assert self.project_root is not None
+    def _persist_goi(self) -> int:
+        # Write the genes-of-interest box to config/genes_of_interest.txt and wire
+        # it into config (or clear it when empty). Returns the gene count. No dialog.
+        assert self.project_root is not None and self.config is not None
         genes = [g.strip() for g in self.goi_box.toPlainText().splitlines() if g.strip()]
         if not genes:
             self.config.gene_sets.custom_gene_list = None
-            self.manager.save_config(self.project_root, self.config)
-            QMessageBox.information(self, APP_NAME, "Genes of interest cleared.")
-            return
-        path = self.project_root / "config" / "genes_of_interest.txt"
-        path.write_text("\n".join(genes) + "\n", encoding="utf-8")
-        self.config.gene_sets.custom_gene_list = "config/genes_of_interest.txt"
+        else:
+            path = self.project_root / "config" / "genes_of_interest.txt"
+            path.write_text("\n".join(genes) + "\n", encoding="utf-8")
+            self.config.gene_sets.custom_gene_list = "config/genes_of_interest.txt"
         self.manager.save_config(self.project_root, self.config)
-        QMessageBox.information(self, APP_NAME, f"Saved {len(genes)} gene(s). Re-run to produce the genes-of-interest heatmap and expression plots.")
+        return len(genes)
+
+    def _save_goi(self) -> None:
+        if not self._require_project() or self.config is None:
+            return
+        n = self._persist_goi()
+        if n == 0:
+            QMessageBox.information(self, APP_NAME, "Genes of interest cleared.")
+        else:
+            QMessageBox.information(self, APP_NAME, f"Saved {n} gene(s). Re-run, or click 'Regenerate figures', to produce the genes-of-interest heatmap and expression plots.")
 
     def _info_label(self, text: str, help_text: str) -> QWidget:
         # A form-row label with a small info button that explains a complex
@@ -1065,6 +1112,7 @@ class MainWindow(QMainWindow):
         if not self._require_project() or self.config is None:
             return
         self._apply_figure_style()
+        self._persist_goi()  # include unsaved genes-of-interest edits in the re-render
         self._start_snakemake("figures")
 
     def _open_subpath(self, relative: str) -> None:
@@ -1110,6 +1158,11 @@ class MainWindow(QMainWindow):
         if not name or self.project_root is None:
             return
         path = self.project_root / "results" / "figures" / name
+        # When the vector toggle is on, prefer the matching .svg (crisp at any zoom).
+        if getattr(self, "svg_toggle", None) is not None and self.svg_toggle.isChecked():
+            svg = path.with_suffix(".svg")
+            if svg.exists():
+                path = svg
         if path.exists():
             self.figure_viewer.set_image(path)
 
@@ -1400,8 +1453,14 @@ class MainWindow(QMainWindow):
                 "section below to supply your own genome FASTA + annotation."
             )
         self.manager.save_config(self.project_root, self.config)
+        if ref.genome_fasta_url:
+            self.statusBar().showMessage(f"Reference set: {ref.organism_name} — ready to run.", 6000)
+        else:
+            self.statusBar().showMessage(
+                "This preset has no download URLs — supply a custom genome + annotation below.", 8000)
         details = "\n".join(f"{k}: {v}" for k, v in entry.items())
-        self.reference_details.setPlainText(f"{note}\n\nAssembly: {entry.get('assembly_accession')} ({entry.get('assembly_name')})  release: {entry.get('release')}\n\n{details}")
+        prefix = "Reference set: " if ref.genome_fasta_url else ""
+        self.reference_details.setPlainText(f"{prefix}{note}\n\nAssembly: {entry.get('assembly_accession')} ({entry.get('assembly_name')})  release: {entry.get('release')}\n\n{details}")
 
     def _save_workflow_settings(self) -> None:
         if self.config is None or self.project_root is None:
@@ -1430,35 +1489,47 @@ class MainWindow(QMainWindow):
         self.manager.save_config(self.project_root, self.config)
 
     def _detect_resources(self) -> None:
-        # Detection probes WSL/conda and can block briefly, so show progress in
-        # the status bar with a wait cursor instead of looking frozen.
+        # Detection probes WSL/conda (~seconds), so run it off-thread; the busy bar
+        # animates and the UI stays responsive instead of freezing.
+        if getattr(self, "_detect_worker", None) is not None and self._detect_worker.isRunning():
+            return
+        root = self.project_root or Path(self.workdir.text())
+        profile = self.profile.currentText()
         self.statusBar().showMessage("Detecting system resources…")
         self.resources_busy.setVisible(True)
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        QApplication.processEvents()
-        try:
-            root = self.project_root or Path(self.workdir.text())
+
+        def work():
             system = detect_system(root)
-            rec = recommend_profile(system, self.profile.currentText())
-            self.cores.setValue(int(rec["total_threads"]))
-            self.ram.setValue(int(rec["total_memory_gb"]))
-            self.system_info_label.setText(
-                f"{system.cpu_model} — {system.physical_cores} cores "
-                f"({system.logical_threads} threads), {system.total_ram_gb:.0f} GB RAM, "
-                f"{system.disk_free_gb:.0f} GB free disk."
-            )
-            self.recommendation_label.setText(
-                f"Recommended for the '{self.profile.currentText()}' profile: "
-                f"{rec['total_threads']} cores and {rec['total_memory_gb']} GB RAM."
-            )
-            self.statusBar().showMessage(
-                f"Detected {system.physical_cores} cores / {system.total_ram_gb:.0f} GB RAM — "
-                f"recommending {rec['total_threads']} cores, {rec['total_memory_gb']} GB.",
-                8000,
-            )
-        finally:
-            QApplication.restoreOverrideCursor()
-            self.resources_busy.setVisible(False)
+            return system, recommend_profile(system, profile)
+
+        self._detect_worker = BackgroundWorker(work)
+        self._detect_worker.done.connect(self._on_detect_done)
+        self._detect_worker.failed.connect(self._on_detect_failed)
+        self._detect_worker.start()
+
+    def _on_detect_failed(self, exc: object) -> None:
+        self.resources_busy.setVisible(False)
+        self.statusBar().showMessage(f"Resource detection failed: {exc}", 8000)
+
+    def _on_detect_done(self, result: object) -> None:
+        self.resources_busy.setVisible(False)
+        system, rec = result
+        self.cores.setValue(int(rec["total_threads"]))
+        self.ram.setValue(int(rec["total_memory_gb"]))
+        self.system_info_label.setText(
+            f"{system.cpu_model} — {system.physical_cores} cores "
+            f"({system.logical_threads} threads), {system.total_ram_gb:.0f} GB RAM, "
+            f"{system.disk_free_gb:.0f} GB free disk."
+        )
+        self.recommendation_label.setText(
+            f"Recommended for the '{self.profile.currentText()}' profile: "
+            f"{rec['total_threads']} cores and {rec['total_memory_gb']} GB RAM."
+        )
+        self.statusBar().showMessage(
+            f"Detected {system.physical_cores} cores / {system.total_ram_gb:.0f} GB RAM — "
+            f"recommending {rec['total_threads']} cores, {rec['total_memory_gb']} GB.",
+            8000,
+        )
 
     def _save_resources(self) -> None:
         if self.config is None or self.project_root is None:
@@ -1542,6 +1613,14 @@ class MainWindow(QMainWindow):
                     "Open the Reference Manager tab and either select a preset organism "
                     "and click 'Use Selected Preset', or import a custom genome FASTA + "
                     "annotation. Then start the run again.",
+                )
+                return False
+            goi = self.config.gene_sets.custom_gene_list
+            if goi and self.project_root is not None and not (self.project_root / goi).exists():
+                QMessageBox.warning(
+                    self, APP_NAME,
+                    f"The genes-of-interest file '{goi}' is missing. Re-save your genes "
+                    "of interest on the Outputs tab, or clear the list, before running.",
                 )
                 return False
         # Block on FAIL; require explicit approval for REVIEW_REQUIRED.

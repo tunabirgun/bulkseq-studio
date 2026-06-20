@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import traceback
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QRect, QSettings, Qt
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QRect, QSettings, Qt, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMessageBox, QSplashScreen
 
 from app.constants import APP_NAME, APP_VERSION
@@ -21,27 +22,40 @@ def error_log_path() -> Path:
     return Path(base) / APP_NAME / "logs" / "error.log"
 
 
+def _write_error_log(text: str) -> Path | None:
+    # Try the per-user app log dir; fall back to the temp dir if it is unwritable
+    # (restricted/frozen installs), so the trace is never lost silently.
+    stamp = f"\n===== {datetime.now().isoformat(timespec='seconds')} =====\n{text}\n"
+    for path in (error_log_path(), Path(tempfile.gettempdir()) / f"{APP_NAME} error.log"):
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(stamp)
+            return path
+        except Exception:
+            continue
+    return None
+
+
 def _install_excepthook() -> None:
     # Convert an otherwise-silent crash into a logged, visible error and keep the
     # app alive. Unhandled exceptions in Qt slots are routed here by PySide6.
-    log_file = error_log_path()
-
     def handler(exc_type, exc, tb) -> None:
         text = "".join(traceback.format_exception(exc_type, exc, tb))
         sys.stderr.write(text)
+        written = _write_error_log(text)
         try:
-            log_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(log_file, "a", encoding="utf-8") as fh:
-                fh.write(f"\n===== {datetime.now().isoformat(timespec='seconds')} =====\n{text}\n")
-        except Exception:
-            pass
-        try:
-            QMessageBox.critical(
-                None,
-                APP_NAME,
-                f"An unexpected error occurred:\n\n{exc_type.__name__}: {exc}\n\n"
-                f"The app will keep running. Details were saved to:\n{log_file}",
-            )
+            box = QMessageBox(QMessageBox.Icon.Critical, APP_NAME,
+                              f"An unexpected error occurred:\n\n{exc_type.__name__}: {exc}\n\n"
+                              "The app will keep running. You can send the error log to the developer.")
+            box.addButton(QMessageBox.StandardButton.Ok)
+            if written is not None:
+                open_btn = box.addButton("Open log folder", QMessageBox.ButtonRole.ActionRole)
+                box.exec()
+                if box.clickedButton() is open_btn:
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(str(written.parent)))
+            else:
+                box.exec()
         except Exception:
             pass
 
