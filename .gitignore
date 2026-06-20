@@ -42,3 +42,7 @@ desktop.ini
 
 # Screenshot scratch
 _screens/
+
+# Internal dev docs (kept local, not published)
+PLAN.md
+BUILD.md

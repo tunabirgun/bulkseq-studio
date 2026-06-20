@@ -41,7 +41,7 @@ Download the latest build from the [**Releases**](https://github.com/tunabirgun/
 - **Installer** — `BulkSeqStudio-Setup-<version>.exe`. Per-user install (no administrator rights); launch from the Start Menu.
 - **Portable** — `BulkSeqStudio-Portable-<version>.zip`. Unzip anywhere and double-click `BulkSeq Studio\BulkSeqStudio.exe`. No installation.
 
-(Or build them yourself with `scripts\build_release.ps1` — see [`BUILD.md`](BUILD.md).)
+(Or build them yourself with `scripts\build_release.ps1`.)
 
 On first launch the app runs a readiness check and can install the WSL2 environment for you. Only enabling WSL itself asks for elevation (Windows requires it); normal use does not run as administrator.
 
@@ -103,7 +103,7 @@ python -m venv .venv
 .\scripts\build_release.ps1
 ```
 
-This produces the executable, the per-user installer, and the portable ZIP under `installer_output\`. See [`BUILD.md`](BUILD.md) for details (Inno Setup, what gets bundled, version bumping).
+This produces the executable, the per-user installer, and the portable ZIP under `installer_output\` (Inno Setup is required for the installer: `winget install JRSoftware.InnoSetup`).
 
 ## Tests
 
@@ -118,8 +118,7 @@ pytest
 | `app/` | PySide6 GUI (`app/ui/`), core logic (`app/core/`), bundled data (`app/data/`). |
 | `workflow/` | Snakemake `Snakefile`, `rules/`, R/Python `scripts/`, pinned conda envs (`envs/`). |
 | `examples/benchmarks/` | Ready-to-run benchmark project templates. |
-| `packaging/`, `scripts/` | PyInstaller spec, Inno Setup script, build/setup scripts. |
-| `BUILD.md`, `PLAN.md` | Build guide and the development roadmap. |
+| `packaging/`, `scripts/` | PyInstaller spec, Inno Setup script, build/setup/release scripts. |
 
 ## License
 
