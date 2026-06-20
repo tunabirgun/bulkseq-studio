@@ -22,14 +22,18 @@ foreach ($d in @("build", "dist")) {
 & $py -m PyInstaller packaging\BulkSeqStudio.spec --noconfirm
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
 
-Write-Host "[2/2] Building installer with Inno Setup..."
+$version = ((Select-String -Path "app\constants.py" -Pattern 'APP_VERSION\s*=\s*"([^"]+)"').Matches.Groups[1].Value)
+
+Write-Host "[2/2] Building installer with Inno Setup (version $version)..."
 $iscc = "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
 if (-not (Test-Path $iscc)) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
 if (-not (Test-Path $iscc)) { throw "ISCC.exe (Inno Setup) not found" }
-& $iscc packaging\installer.iss
+# Pass the version so the installer name tracks APP_VERSION (installer.iss has an
+# #ifndef fallback for manual compiles).
+& $iscc "/DMyAppVersion=$version" packaging\installer.iss
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup compile failed" }
-
-$version = ((Select-String -Path "app\constants.py" -Pattern 'APP_VERSION\s*=\s*"([^"]+)"').Matches.Groups[1].Value)
+$installerExe = Join-Path $root "installer_output\BulkSeqStudio-Setup-$version.exe"
+if (-not (Test-Path $installerExe)) { throw "Installer not produced at $installerExe" }
 
 Write-Host "[3/3] Creating portable (click-and-run) ZIP..."
 # Zip the onedir folder so a user can unzip and double-click BulkSeqStudio.exe
