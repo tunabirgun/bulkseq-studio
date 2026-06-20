@@ -36,10 +36,12 @@ The bioinformatics tools (Snakemake, STAR, featureCounts, samtools, fastp, FastQ
 
 ## Install
 
-Two prebuilt options (build them with `scripts\build_release.ps1`, or grab them from a release):
+Download the latest build from the [**Releases**](https://github.com/tunabirgun/bulkseq-studio/releases/latest) page — two options:
 
 - **Installer** — `BulkSeqStudio-Setup-<version>.exe`. Per-user install (no administrator rights); launch from the Start Menu.
 - **Portable** — `BulkSeqStudio-Portable-<version>.zip`. Unzip anywhere and double-click `BulkSeq Studio\BulkSeqStudio.exe`. No installation.
+
+(Or build them yourself with `scripts\build_release.ps1` — see [`BUILD.md`](BUILD.md).)
 
 On first launch the app runs a readiness check and can install the WSL2 environment for you. Only enabling WSL itself asks for elevation (Windows requires it); normal use does not run as administrator.
 

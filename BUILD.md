@@ -50,3 +50,18 @@ $env:BULKSEQ_SELFTEST="1"; $env:BULKSEQ_SKIP_READINESS_DIALOG="1"
 Bump `APP_VERSION` in `app/constants.py` and `MyAppVersion` in
 `packaging/installer.iss` together. The installer and portable-ZIP filenames are
 derived from `APP_VERSION` by the build script.
+
+## Publishing a release
+After bumping the version and building, publish the installer and portable ZIP as
+a GitHub Release so users can download them (the binaries are not committed to the
+repository):
+
+```powershell
+.\scripts\build_release.ps1   # produce the artifacts
+.\scripts\release.ps1         # tag vX.Y.Z and attach both artifacts to a GitHub Release
+```
+
+`release.ps1` reads the version from `app/constants.py`, creates the `vX.Y.Z`
+release if it does not exist (or replaces its assets with `--clobber` if it does),
+and requires the GitHub CLI authenticated (`gh auth login`). Releases appear at
+<https://github.com/tunabirgun/bulkseq-studio/releases>.
