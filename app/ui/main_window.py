@@ -286,29 +286,63 @@ class MainWindow(QMainWindow):
     def _build_metadata_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
-        buttons = QHBoxLayout()
+
+        # Group the actions so each button keeps its natural width and reads
+        # clearly, instead of 13 buttons cramped into one shrinking row.
+        groups = [
+            ("Rows", [
+                ("Add row", self.metadata_add_row),
+                ("Delete rows", self.metadata_delete_rows),
+                ("Duplicate rows", self.metadata_duplicate_rows),
+            ]),
+            ("Columns", [
+                ("Add column", self._add_column),
+                ("Rename column", self._rename_column),
+                ("Remove column", self._remove_column),
+            ]),
+            ("Data", [
+                ("Assign condition", self._assign_condition),
+                ("Autofill replicates", self.metadata_autofill),
+            ]),
+        ]
+        top_row = QHBoxLayout()
+        for title, specs in groups:
+            box = QGroupBox(title)
+            box_layout = QHBoxLayout(box)
+            for text, slot in specs:
+                btn = QPushButton(text)
+                btn.clicked.connect(slot)
+                box_layout.addWidget(btn)
+            top_row.addWidget(box)
+        top_row.addStretch(1)
+        layout.addLayout(top_row)
+
+        bottom_row = QHBoxLayout()
+        files_box = QGroupBox("File Operations")
+        files_layout = QHBoxLayout(files_box)
         for text, slot in [
-            ("Add row", self.metadata_add_row),
-            ("Delete rows", self.metadata_delete_rows),
-            ("Duplicate rows", self.metadata_duplicate_rows),
-            ("Add column", self._add_column),
-            ("Rename column", self._rename_column),
-            ("Remove column", self._remove_column),
-            ("Assign condition", self._assign_condition),
-            ("Autofill replicates", self.metadata_autofill),
             ("Import TSV/CSV/XLSX", self._import_metadata),
             ("Export TSV", self._export_metadata),
             ("Restore auto-generated", self._restore_auto_metadata),
-            ("Save samples.tsv", self._save_metadata),
-            ("Validate", self._validate_metadata),
         ]:
-            button = QPushButton(text)
-            button.clicked.connect(slot)
-            buttons.addWidget(button)
+            btn = QPushButton(text)
+            btn.clicked.connect(slot)
+            files_layout.addWidget(btn)
+        bottom_row.addWidget(files_box)
+        bottom_row.addStretch(1)
+        validate_btn = QPushButton("Validate")
+        validate_btn.setProperty("primary", True)
+        validate_btn.clicked.connect(self._validate_metadata)
+        save_btn = QPushButton("Save samples.tsv")
+        save_btn.setProperty("primary", True)
+        save_btn.clicked.connect(self._save_metadata)
+        bottom_row.addWidget(validate_btn)
+        bottom_row.addWidget(save_btn)
+        layout.addLayout(bottom_row)
+
         self.metadata_table = MetadataTable()
         self.metadata_messages = QTextEdit()
         self.metadata_messages.setReadOnly(True)
-        layout.addLayout(buttons)
         layout.addWidget(self.metadata_table)
         layout.addWidget(self.metadata_messages)
         self.tabs.addTab(page, "Metadata")
@@ -493,28 +527,58 @@ class MainWindow(QMainWindow):
 
     def _build_resources_tab(self) -> None:
         page = QWidget()
-        layout = QGridLayout(page)
-        self.resource_text = QTextEdit()
-        self.resource_text.setReadOnly(True)
-        self.profile = QComboBox()
-        self.profile.addItems(["balanced", "low", "high", "custom"])
+        layout = QVBoxLayout(page)
+
+        # System Information: a friendly summary instead of a raw key/value dump.
+        system_group = QGroupBox("System Information")
+        system_layout = QVBoxLayout(system_group)
+        self.system_info_label = QLabel("Click 'Detect and Recommend' to scan your computer.")
+        self.system_info_label.setWordWrap(True)
+        self.recommendation_label = QLabel()
+        self.recommendation_label.setWordWrap(True)
         detect = QPushButton("Detect and Recommend")
         detect.clicked.connect(self._detect_resources)
+        system_layout.addWidget(self.system_info_label)
+        system_layout.addWidget(self.recommendation_label)
+        system_layout.addWidget(detect)
+        layout.addWidget(system_group)
+
+        # Resource profile: plain-language presets with an info button.
+        profile_group = QGroupBox("Resource Profile")
+        profile_form = QFormLayout(profile_group)
+        self.profile = QComboBox()
+        self.profile.addItems(["balanced", "low", "high", "custom"])  # lowercase: matches config
+        profile_help = (
+            "Balanced uses about 75% of your CPU and memory and suits most runs. "
+            "Low is conservative if you are using other programs at the same time. "
+            "High uses about 90% for a dedicated machine. "
+            "Custom keeps the cores and memory you set below."
+        )
+        profile_form.addRow(self._info_label("Profile", profile_help), self.profile)
+        layout.addWidget(profile_group)
+
+        # Manual adjustment: plain-language labels for cores and memory.
+        manual_group = QGroupBox("Manual Adjustment")
+        manual_form = QFormLayout(manual_group)
         self.cores = QSpinBox()
         self.cores.setRange(1, 256)
         self.ram = QSpinBox()
         self.ram.setRange(1, 2048)
+        manual_form.addRow(
+            self._info_label("CPU cores to use",
+                             "Number of processor cores the pipeline may use. Detect first to see how many your computer has."),
+            self.cores)
+        manual_form.addRow(
+            self._info_label("Memory (GB)",
+                             "RAM allocated to the pipeline. Alignment (STAR) is the most memory-intensive step."),
+            self.ram)
         save = QPushButton("Save Resources")
+        save.setProperty("primary", True)
         save.clicked.connect(self._save_resources)
-        layout.addWidget(self.resource_text, 0, 0, 1, 3)
-        layout.addWidget(QLabel("Profile"), 1, 0)
-        layout.addWidget(self.profile, 1, 1)
-        layout.addWidget(detect, 1, 2)
-        layout.addWidget(QLabel("Snakemake cores"), 2, 0)
-        layout.addWidget(self.cores, 2, 1)
-        layout.addWidget(QLabel("RAM GB"), 3, 0)
-        layout.addWidget(self.ram, 3, 1)
-        layout.addWidget(save, 4, 1)
+        manual_form.addRow(save)
+        layout.addWidget(manual_group)
+
+        layout.addStretch(1)
         self.tabs.addTab(self._scrollable(page), "Resources")
 
     def _build_runtime_tab(self) -> None:
@@ -812,7 +876,9 @@ class MainWindow(QMainWindow):
     def _build_goi_group(self) -> QGroupBox:
         group = QGroupBox("Genes of Interest")
         v = QVBoxLayout(group)
-        v.addWidget(QLabel("Paste gene IDs (one per line) matching the count matrix (e.g. FBgn..., RefSeq locus tags, or symbols present in the GTF). On the next run, a focused z-scored heatmap and per-condition expression plots are produced."))
+        help_label = QLabel("Paste gene IDs (one per line) matching the count matrix (e.g. FBgn..., RefSeq locus tags, or symbols present in the GTF). On the next run, a focused z-scored heatmap and per-condition expression plots are produced.")
+        help_label.setWordWrap(True)  # without this the long label forces a huge min width
+        v.addWidget(help_label)
         self.goi_box = QTextEdit()
         self.goi_box.setPlaceholderText("One gene ID per line")
         self.goi_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -845,7 +911,9 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout(holder)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(4)
-        row.addWidget(QLabel(text))
+        label = QLabel(text)
+        label.setWordWrap(True)  # lets narrow form columns wrap instead of forcing width
+        row.addWidget(label)
         info = QToolButton()
         info.setText("ⓘ")  # circled small i
         info.setAutoRaise(True)
@@ -861,6 +929,9 @@ class MainWindow(QMainWindow):
         # and consumed by workflow/scripts/make_figures.R.
         group = QGroupBox("Figure Style")
         form = QFormLayout(group)
+        # Stack each field under its (wrapping) label so the form fits the narrow
+        # control panel without a horizontal scrollbar.
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
         self.fig_palette = QComboBox()
         self.fig_palette.addItems(["Blue-Red", "Viridis", "Greyscale"])
         self.fig_point_size = QDoubleSpinBox()
@@ -1320,7 +1391,15 @@ class MainWindow(QMainWindow):
         rec = recommend_profile(system, self.profile.currentText())
         self.cores.setValue(int(rec["total_threads"]))
         self.ram.setValue(int(rec["total_memory_gb"]))
-        self.resource_text.setPlainText("\n".join(f"{k}: {v}" for k, v in system.to_dict().items()) + "\n\nRecommendation\n" + "\n".join(f"{k}: {v}" for k, v in rec.items()))
+        self.system_info_label.setText(
+            f"{system.cpu_model} — {system.physical_cores} cores "
+            f"({system.logical_threads} threads), {system.total_ram_gb:.0f} GB RAM, "
+            f"{system.disk_free_gb:.0f} GB free disk."
+        )
+        self.recommendation_label.setText(
+            f"Recommended for the '{self.profile.currentText()}' profile: "
+            f"{rec['total_threads']} cores and {rec['total_memory_gb']} GB RAM."
+        )
 
     def _save_resources(self) -> None:
         if self.config is None or self.project_root is None:
