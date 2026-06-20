@@ -39,11 +39,19 @@ if (-not (Test-Path $installerOut)) { New-Item -ItemType Directory -Path $instal
 $onedir = Join-Path $root (Join-Path "dist" "BulkSeq Studio")
 $portableZip = Join-Path $installerOut "BulkSeqStudio-Portable-$version.zip"
 if (Test-Path $portableZip) { Remove-Item $portableZip -Force }
-try {
-    Compress-Archive -Path $onedir -DestinationPath $portableZip -CompressionLevel Optimal -ErrorAction Stop
-} catch {
-    throw "Portable ZIP creation failed: $_"
+# A freshly-built dist/ can be briefly locked by the AV/search indexer, so retry.
+$zipped = $false
+foreach ($attempt in 1..4) {
+    try {
+        Compress-Archive -Path $onedir -DestinationPath $portableZip -CompressionLevel Optimal -ErrorAction Stop
+        $zipped = $true
+        break
+    } catch {
+        if (Test-Path $portableZip) { Remove-Item $portableZip -Force -ErrorAction SilentlyContinue }
+        Start-Sleep -Seconds 5
+    }
 }
+if (-not $zipped) { throw "Portable ZIP creation failed after retries (a dist/ file stayed locked)." }
 
 Write-Host ""
 Write-Host "Done."
