@@ -521,12 +521,25 @@ class MainWindow(QMainWindow):
         if "condition" not in df.columns:
             return
         values = sorted({str(v) for v in df["condition"].tolist() if str(v) and str(v) != "unknown"})
+        if not values:
+            for combo in (self.numerator, self.denominator, self.reference_level):
+                combo.clear()
+            return
+        # Distinct defaults so the contrast is never X_vs_X (which DESeq2 rejects):
+        # denominator/reference = a control-like level if one is present, numerator
+        # = a different level. A valid prior user pick is preserved.
+        control_keys = ("control", "ctrl", "untreated", "wildtype", "wild-type", "wt",
+                        "mock", "dmso", "vehicle", "baseline", "normal")
+        reference = next((v for v in values if any(k in v.lower() for k in control_keys)), values[0])
+        treated = next((v for v in values if v != reference), reference)
+        defaults = {id(self.numerator): treated,
+                    id(self.denominator): reference,
+                    id(self.reference_level): reference}
         for combo in (self.numerator, self.denominator, self.reference_level):
-            current = combo.currentText()
+            current = combo.currentText().strip()
             combo.clear()
             combo.addItems(values)
-            if current in values:
-                combo.setCurrentText(current)
+            combo.setCurrentText(current if current in values else defaults[id(combo)])
 
     def _build_resources_tab(self) -> None:
         page = QWidget()
@@ -1478,6 +1491,21 @@ class MainWindow(QMainWindow):
         self.sanity_text.setPlainText("\n".join(lines))
 
     def _run_gate_ok(self) -> bool:
+        # A reference must be resolvable, or the pipeline dies mid-run with a
+        # cryptic "genome_fasta_url is not set". Block early with clear guidance.
+        if self.config is not None:
+            ref = self.config.reference
+            has_url = bool(ref.genome_fasta_url and ref.annotation_gtf_url)
+            has_local = bool(ref.genome_fasta and ref.annotation_file)
+            if not (has_url or has_local):
+                QMessageBox.warning(
+                    self, APP_NAME,
+                    "No reference is set, so the run cannot start.\n\n"
+                    "Open the Reference Manager tab and either select a preset organism "
+                    "and click 'Use Selected Preset', or import a custom genome FASTA + "
+                    "annotation. Then start the run again.",
+                )
+                return False
         # Block on FAIL; require explicit approval for REVIEW_REQUIRED.
         statuses = self._phase_check_statuses()
         if any(s == "FAIL" for s in statuses.values()):
@@ -1489,6 +1517,21 @@ class MainWindow(QMainWindow):
         return True
 
     def _start_snakemake(self, mode: str) -> None:
+        # Never let a failure here crash the app; surface it in the log + a dialog.
+        try:
+            self._start_snakemake_impl(mode)
+        except Exception as exc:
+            import traceback as _tb
+            detail = _tb.format_exc()
+            try:
+                self.log_text.append(f"Failed to start run: {exc}")
+                self.log_text.append(detail)
+            except Exception:
+                pass
+            self._set_running_ui(False)
+            QMessageBox.critical(self, APP_NAME, f"Failed to start the run:\n\n{exc}")
+
+    def _start_snakemake_impl(self, mode: str) -> None:
         if self.config is None or self.project_root is None:
             return
         # Guard double-starts: one snakemake per directory at a time.
