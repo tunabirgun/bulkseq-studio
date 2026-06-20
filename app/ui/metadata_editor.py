@@ -94,15 +94,34 @@ class MetadataTable(QTableWidget):
         text = QApplication.clipboard().text()
         if not text:
             return
-        start = self.currentRow() if self.currentRow() >= 0 else 0
-        start_col = self.currentColumn() if self.currentColumn() >= 0 else 0
-        for r, line in enumerate(text.splitlines()):
-            cells = line.split("\t")
-            row = start + r
+        # Parse the clipboard into a grid: rows on newlines, cells on tabs.
+        # Excel/xlsx copies tab-separated cells with a trailing newline; drop it.
+        lines = text.split("\n")
+        if len(lines) > 1 and lines[-1] == "":
+            lines = lines[:-1]
+        grid = [line.rstrip("\r").split("\t") for line in lines]
+        selected = self.selectedIndexes()
+        if selected:
+            top = min(idx.row() for idx in selected)
+            left = min(idx.column() for idx in selected)
+        else:
+            top = self.currentRow() if self.currentRow() >= 0 else 0
+            left = self.currentColumn() if self.currentColumn() >= 0 else 0
+        # A single copied value pasted onto a multi-cell selection fills every
+        # selected cell (Excel/Sheets behaviour).
+        if len(grid) == 1 and len(grid[0]) == 1 and len(selected) > 1:
+            value = grid[0][0]
+            for idx in selected:
+                self.setItem(idx.row(), idx.column(), QTableWidgetItem(value))
+            return
+        # Otherwise lay the copied block down from the top-left anchor,
+        # growing rows and columns as needed.
+        for r, cells in enumerate(grid):
+            row = top + r
             if row >= self.rowCount():
                 self.insertRow(self.rowCount())
             for c, cell in enumerate(cells):
-                col = start_col + c
+                col = left + c
                 if col >= self.columnCount():
                     self.add_column(f"col_{col}")
                 self.setItem(row, col, QTableWidgetItem(cell))

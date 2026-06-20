@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 APP_NAME = "BulkSeq Studio"
-APP_VERSION = "0.3.4"
-WORKFLOW_VERSION = "0.3.4"
+APP_VERSION = "0.3.5"
+WORKFLOW_VERSION = "0.3.5"
 
 SAFE_ID_PATTERN = r"^[A-Za-z0-9_.-]+$"
 

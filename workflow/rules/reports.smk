@@ -5,9 +5,10 @@
 rule final_reports:
     input:
         sanity="checks/sanity_checks.txt",
-        multiqc="results/qc/multiqc/multiqc_report.html",
         counts="results/counts/counts.txt",
         deseq2="results/deseq2/deseq2_results.csv",
+        # MultiQC only exists on the alignment route, not in count-matrix mode.
+        **({} if COUNT_MATRIX_MODE else {"multiqc": "results/qc/multiqc/multiqc_report.html"}),
     output:
         run_txt="results/reports/run_summary.txt",
         run_json="results/reports/run_summary.json",

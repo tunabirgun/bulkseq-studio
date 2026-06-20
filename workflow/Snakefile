@@ -69,6 +69,11 @@ def trimmed_fastqs(sample):
 # ---------------------------------------------------------------------------
 REF = config.get("reference", {})
 WF = config.get("workflow", {})
+INPUT = config.get("input", {})
+# Count-matrix mode: the user supplies a counts table, so the pipeline skips
+# download/QC/alignment/featureCounts and ingests it into results/counts/counts.txt.
+COUNT_MATRIX_MODE = INPUT.get("type") == "count_matrix"
+COUNT_MATRIX = INPUT.get("count_matrix")
 GENOME_FA = "references/genome.fa"
 ANNOTATION_GTF = "references/annotation.gtf"
 STAR_INDEX = "references/star_index"
@@ -103,7 +108,6 @@ include: "rules/reports.smk"
 # ---------------------------------------------------------------------------
 def final_targets():
     targets = [
-        "results/qc/multiqc/multiqc_report.html",
         "results/counts/counts.txt",
         "results/deseq2/deseq2_results.csv",
         "results/reports/run_summary.txt",
@@ -111,6 +115,9 @@ def final_targets():
         "results/reports/software_versions.txt",
         "checks/sanity_checks.txt",
     ]
+    if not COUNT_MATRIX_MODE:
+        # MultiQC aggregates FastQC/fastp/STAR — irrelevant when starting from counts.
+        targets.insert(0, "results/qc/multiqc/multiqc_report.html")
     if WF.get("figures", True):
         for fig in ("pca", "sample_distance", "ma_plot", "volcano", "top_deg_heatmap"):
             targets.append(f"results/figures/{fig}.png")

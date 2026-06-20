@@ -9,7 +9,7 @@ import yaml
 
 from app.constants import APP_VERSION, PROJECT_DIRS, WORKFLOW_VERSION
 from app.core.config_models import AppConfig, default_config
-from app.core.paths import data_path, workflow_root
+from app.core.paths import data_path, is_wsl_unc_path, workflow_root
 
 
 def validate_working_directory(path: Path, min_free_gb: float = 5.0, use_wsl: bool = False) -> list[dict[str, str]]:
@@ -34,8 +34,10 @@ def validate_working_directory(path: Path, min_free_gb: float = 5.0, use_wsl: bo
         if marker in lowered:
             messages.append({"status": "REVIEW_REQUIRED", "message": f"Path appears to be inside {marker}; sync tools can slow or lock workflow files."})
 
-    if use_wsl and path.drive:
-        messages.append({"status": "WARNING", "message": "Under WSL this path is reached via /mnt/<drive>; staging the project in the WSL home directory is often faster for genomics I/O."})
+    # A WSL-native UNC path is already on the fast Linux filesystem; only a
+    # Windows-drive path under WSL pays the /mnt 9P penalty.
+    if use_wsl and path.drive and not is_wsl_unc_path(path):
+        messages.append({"status": "WARNING", "message": "Under WSL this Windows-drive path is reached via the slower /mnt/<drive> 9P mount; staging the project on the WSL filesystem (\\\\wsl.localhost\\...) is faster for genomics I/O."})
 
     if not messages:
         messages.append({"status": "PASS", "message": "Working directory is writable and has sufficient free space."})

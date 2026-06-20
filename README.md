@@ -11,6 +11,7 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 - **End-to-end pipeline** — ENA/SRA FASTQ download → FastQC/MultiQC → fastp trimming → STAR alignment (genome-size-aware index) → featureCounts → DESeq2 → GO/KEGG enrichment → figures, orchestrated by Snakemake.
 - **No command line needed** — a tabbed GUI walks you from project setup through metadata, reference selection, a sanity-check gate, the run monitor, and an interactive Outputs browser.
 - **Fetch a study from its accession** — paste SRR/SRP/PRJ accessions and the ENA metadata fetch builds the sample sheet (layout, FASTQ URLs, read counts) for you.
+- **Start from a count matrix** — already have counts? Upload a gene × sample table (featureCounts output or any TSV/CSV) to skip download/QC/alignment and go straight to DESeq2 → figures → enrichment.
 - **Differential expression with DESeq2** — apeglm shrinkage, VST, configurable significance thresholds (`alpha`, `|log2FC|`), and separate up- and down-regulated gene lists.
 - **Directional functional enrichment** — GO over-representation and GSEA (clusterProfiler) run separately on the up- and down-regulated sets, gated by organism so unsupported species skip cleanly instead of producing wrong results.
 - **Genes of interest** — supply a gene list to get a focused z-scored heatmap and per-condition expression panel.
@@ -57,15 +58,18 @@ python -m app.main
 ## Quick start
 
 1. **Project** — create a project folder (the app scaffolds `config/`, the Snakemake `workflow/`, and a provenance manifest).
-2. **Input Data** — select FASTQ files, or paste SRR/SRP/PRJ accessions and click *Fetch metadata & build samples*.
+2. **Input Data** — select FASTQ files, or paste SRR/SRP/PRJ accessions and click *Fetch metadata & build samples*. Already have counts? Click *Use a Count Matrix (skip alignment)* to start from a gene × sample table; the pipeline skips download/QC/alignment and runs DESeq2 → figures → enrichment.
 3. **Metadata** — assign each sample a `condition` and check the layout (paired/single) in the editable table.
 4. **Reference Manager** — pick an organism from the catalog (Ensembl / NCBI RefSeq) or import a custom genome + annotation.
 5. **Workflow Settings** — set the DESeq2 design and contrast, `alpha`, and `|log2FC|` threshold.
 6. **Sanity Checks** — resolve any flagged issues before running.
 7. **Run Monitor** — start the pipeline and watch progress.
-8. **Outputs** — browse the count matrix and DESeq2 table, view/zoom figures, restyle and regenerate them, and define genes of interest.
+8. **Outputs** — browse the count matrix and DESeq2 table, view/zoom figures (toggle *Vector (SVG)* for a crisp preview at any zoom), restyle and regenerate them, and define genes of interest.
 
-> Tip: for best I/O, create the project under the WSL home filesystem (`~/…`) rather than `/mnt/c`.
+> Tip: for best I/O, keep the project on the WSL filesystem rather than a Windows drive
+> (`/mnt/c`, which is slower over the 9P boundary). On the **Project** tab, click *Use WSL
+> filesystem* to set the working directory to `\\wsl.localhost\<distro>\home\<user>\…`; this
+> is the default when WSL2 is detected. A Windows folder still works, with a speed warning.
 
 > A reference is required — the run will not start until you select a preset
 > organism (and click *Use Selected Preset*) or import a custom genome + annotation

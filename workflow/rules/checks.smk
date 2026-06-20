@@ -1,15 +1,25 @@
 # Sanity-check phase gates. The aggregate depends on EVERY phase check so the
 # summary is reproducible (not dependent on prior filesystem state).
 
-ALL_CHECKS = [
-    "checks/00_project_setup.json",
-    "checks/01_input_validation.json",
-    "checks/05_reference_validation.json",
-    "checks/06_alignment_qc.json",
-    "checks/07_quantification_qc.json",
-    "checks/08_metadata_design_qc.json",
-    "checks/09_deseq2_qc.json",
-]
+if COUNT_MATRIX_MODE:
+    # No reference/alignment in count-matrix mode, so those checks are not produced.
+    ALL_CHECKS = [
+        "checks/00_project_setup.json",
+        "checks/01_input_validation.json",
+        "checks/07_quantification_qc.json",
+        "checks/08_metadata_design_qc.json",
+        "checks/09_deseq2_qc.json",
+    ]
+else:
+    ALL_CHECKS = [
+        "checks/00_project_setup.json",
+        "checks/01_input_validation.json",
+        "checks/05_reference_validation.json",
+        "checks/06_alignment_qc.json",
+        "checks/07_quantification_qc.json",
+        "checks/08_metadata_design_qc.json",
+        "checks/09_deseq2_qc.json",
+    ]
 if WF.get("enrichment", True):
     ALL_CHECKS.append("checks/10_enrichment_qc.json")
 

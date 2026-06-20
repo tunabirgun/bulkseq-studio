@@ -65,6 +65,20 @@ def build_snakemake_args(config: AppConfig, mode: str = "run") -> list[str]:
         if config.gene_sets.custom_gene_list:
             targets.append("genes_of_interest")
         args += ["--forcerun", *targets, "--allowed-rules", *targets]
+    elif mode == "goi":
+        # Produce only the genes-of-interest outputs from the existing DESeq2 object
+        # (no re-alignment / re-DESeq2 / other figures). The GOI output files are
+        # named explicitly as leading positional targets, and --allowed-rules limits
+        # execution to the genes_of_interest rule so nothing upstream re-runs.
+        goi_outputs = [
+            "results/figures/goi_heatmap.png",
+            "results/figures/goi_expression.png",
+            "results/genes_of_interest/goi_normalized_counts.csv",
+            "results/genes_of_interest/goi_report.txt",
+        ]
+        for offset, target in enumerate(goi_outputs):
+            args.insert(1 + offset, target)
+        args += ["--forcerun", "genes_of_interest", "--allowed-rules", "genes_of_interest"]
     return args
 
 
@@ -79,7 +93,7 @@ def _wrap_wsl(args: list[str], wsl_root: str, run_tag: str | None) -> str:
         f"{tag_prefix}"
         f"cd {shlex.quote(wsl_root)} && "
         f'export MAMBA_ROOT_PREFIX="{WSL_MAMBA_ROOT}" && '
-        f"{WSL_MICROMAMBA} run -n {WSL_ENV_NAME} {shlex.join(args)}"
+        f'"{WSL_MICROMAMBA}" run -n {WSL_ENV_NAME} {shlex.join(args)}'
     )
 
 

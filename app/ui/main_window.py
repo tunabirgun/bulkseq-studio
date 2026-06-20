@@ -60,7 +60,7 @@ from app.core.snakemake_runner import (
     build_snakemake_command,
 )
 from app.core.timing import write_timing_summary
-from app.core.paths import data_path
+from app.core.paths import data_path, wsl_recommended_workdir
 from app.ui.image_viewer import SVG_AVAILABLE, ImageViewer
 from app.ui.metadata_editor import MetadataTable
 from app.ui.readiness_dialog import ReadinessDialog
@@ -124,6 +124,7 @@ class MainWindow(QMainWindow):
         self._run_mode: str | None = None
         self._stop_in_progress = False
         self._recovery_offered = False
+        self._closing = False
         self.run_action_buttons: dict[str, QPushButton] = {}
         self.stop_button: QPushButton | None = None
 
@@ -132,14 +133,22 @@ class MainWindow(QMainWindow):
         # The window owns its minimum so the size contract holds even under direct
         # construction (tests), and the restore-geometry size guard has a real bound.
         self.setMinimumSize(900, 640)
-        # Light/dark mode toggle: a labelled button in the top-right corner.
+        # Light/dark mode toggle: a labelled button in the top-right corner. It is
+        # wrapped in a container with margins so it isn't flush against (and visually
+        # clipped by) the window edge; the container is the corner widget, so the
+        # button still sits in the corner rather than drifting into the page.
         self.theme_toggle = QPushButton()
         self.theme_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self.theme_toggle.setMinimumWidth(110)  # stable width across Dark/Light label swap
+        self.theme_toggle.setMinimumHeight(26)  # readable height, not squeezed by the tab bar
         self.theme_toggle.setFlat(False)
         self.theme_toggle.clicked.connect(self._toggle_theme)
         self._sync_theme_toggle(str(QSettings().value("theme_mode", "light")))
-        self.tabs.setCornerWidget(self.theme_toggle, Qt.Corner.TopRightCorner)
+        theme_corner = QWidget()
+        theme_corner_layout = QHBoxLayout(theme_corner)
+        theme_corner_layout.setContentsMargins(6, 2, 8, 2)
+        theme_corner_layout.addWidget(self.theme_toggle)
+        self.tabs.setCornerWidget(theme_corner, Qt.Corner.TopRightCorner)
         self._build_project_tab()
         self._build_input_tab()
         self._build_metadata_tab()
@@ -164,6 +173,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 "Ready — on the Project tab, click 'Check Environment' to verify your WSL setup."
             )
+        # Prefer the WSL-native filesystem by default (resolved in the background so
+        # startup stays instant); the user can still pick a Windows folder.
+        self._autodetect_wsl_workdir()
 
     # ---- Theme toggle ------------------------------------------------------
     def _current_theme_mode(self) -> str:
@@ -212,7 +224,16 @@ class MainWindow(QMainWindow):
             self.restoreState(st)
 
     def closeEvent(self, event) -> None:
+        # Flag closing so any queued worker callbacks return early instead of
+        # touching widgets that are being torn down.
+        self._closing = True
         self._save_geometry_state()
+        # Let short-lived background probes finish so QThread isn't destroyed while
+        # running (which would crash). These are bounded WSL/resource queries.
+        for attr in ("_wsl_autodetect_worker", "_wsl_workdir_worker", "_detect_worker"):
+            worker = getattr(self, attr, None)
+            if worker is not None and worker.isRunning():
+                worker.wait(3000)
         super().closeEvent(event)
 
     def _scrollable(self, page: QWidget) -> QScrollArea:
@@ -228,12 +249,25 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QFormLayout(page)
         self.project_name = QLineEdit("example_project")
-        self.workdir = QLineEdit(str(Path.home() / "BulkSeqProjects"))
+        self._default_workdir = str(Path.home() / "BulkSeqProjects")
+        self.workdir = QLineEdit(self._default_workdir)
         browse = QPushButton("Browse")
         browse.clicked.connect(self._browse_workdir)
+        wsl_fs = QPushButton("Use WSL filesystem")
+        wsl_fs.setToolTip("Place the project on the WSL2 (Linux) filesystem for the fastest "
+                          "genomics I/O. A Windows-drive folder works too but is slower over the "
+                          "/mnt 9P boundary.")
+        wsl_fs.clicked.connect(self._use_wsl_workdir)
         workdir_row = QHBoxLayout()
         workdir_row.addWidget(self.workdir)
         workdir_row.addWidget(browse)
+        workdir_row.addWidget(wsl_fs)
+        workdir_hint = QLabel(
+            "Recommended for WSL2: keep the project on the Linux filesystem "
+            "(\\\\wsl.localhost\\...). A Windows folder (C:\\...) also works but is slower for "
+            "large genomics files."
+        )
+        workdir_hint.setWordWrap(True)
         create = QPushButton("New Project")
         create.clicked.connect(self._create_project)
         benchmark = QPushButton("Create Benchmark Project")
@@ -246,6 +280,7 @@ class MainWindow(QMainWindow):
         self.project_status.setReadOnly(True)
         layout.addRow("Project name", self.project_name)
         layout.addRow("Working directory", workdir_row)
+        layout.addRow("", workdir_hint)
         layout.addRow(create, open_existing)
         layout.addRow(benchmark, readiness)
         layout.addRow("Status", self.project_status)
@@ -272,7 +307,67 @@ class MainWindow(QMainWindow):
         layout.addLayout(buttons)
         layout.addWidget(QLabel("Fetched from the ENA Portal API: layout, FASTQ URLs, read counts. Condition is set to 'unknown' for you to edit in the Metadata tab."))
         layout.addWidget(self.input_preview)
+        cm_row = QHBoxLayout()
+        cm_btn = QPushButton("Use a Count Matrix (skip alignment)")
+        cm_btn.setToolTip("Start from a gene x sample counts table (TSV/CSV or featureCounts output). "
+                          "The pipeline skips download/QC/alignment and runs DESeq2 -> figures -> enrichment.")
+        cm_btn.clicked.connect(self._import_count_matrix)
+        cm_row.addWidget(QLabel("Already have counts?"))
+        cm_row.addWidget(cm_btn)
+        cm_row.addStretch(1)
+        layout.addLayout(cm_row)
         self.tabs.addTab(self._scrollable(page), "Input Data")
+
+    def _import_count_matrix(self) -> None:
+        if not self._require_project() or self.config is None:
+            return
+        assert self.project_root is not None
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select a counts matrix", "", "Counts (*.tsv *.txt *.csv)")
+        if not path:
+            return
+        src = Path(path)
+        sep = "," if src.suffix.lower() == ".csv" else "\t"
+        # Reading/copying the matrix is blocking I/O (and a UNC/9P source can be
+        # slow), so show a wait cursor and status instead of a frozen-looking window.
+        self.statusBar().showMessage("Importing count matrix...")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            try:
+                df = pd.read_csv(src, sep=sep, comment="#", dtype=str)
+            except Exception as exc:
+                QMessageBox.warning(self, APP_NAME, f"Could not read the matrix: {exc}")
+                return
+            if df.shape[1] < 2:
+                QMessageBox.warning(self, APP_NAME, "The matrix needs a gene-id column plus at least one sample column.")
+                return
+            # Sample columns = all but the gene-id column, minus featureCounts metadata.
+            meta_cols = {"Chr", "Start", "End", "Strand", "Length"}
+            sample_cols = [c for c in df.columns[1:] if c not in meta_cols]
+            # featureCounts BAM-path columns -> sample_ids.
+            def clean(c: str) -> str:
+                return re.sub(r"_Aligned\.sortedByCoord\.out\.bam$", "", Path(str(c)).name)
+            sample_ids = [clean(c) for c in sample_cols]
+            # Copy the matrix into the project and switch to count-matrix mode.
+            dest = self.project_root / "config" / "counts_matrix.txt"
+            dest.write_bytes(src.read_bytes())
+            samples = dataframe_from_rows([
+                {"sample_id": sid, "condition": "unknown", "layout": "n/a", "fastq_1": ""}
+                for sid in sample_ids
+            ])
+            save_metadata(samples, self.project_root / "config" / "samples.tsv")
+            self.metadata_table.load_dataframe(samples)
+            self.config.input.type = "count_matrix"
+            self.config.input.count_matrix = "config/counts_matrix.txt"
+            self.manager.save_config(self.project_root, self.config)
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.input_preview.setPlainText(
+            f"Count-matrix mode: {len(sample_ids)} samples — {', '.join(sample_ids)}\n\n"
+            "Next: assign each sample a condition on the Metadata tab, set the contrast on "
+            "Workflow Settings, then Start Run. Alignment is skipped."
+        )
+        self.statusBar().showMessage(f"Count matrix imported: {len(sample_ids)} samples. Assign conditions on the Metadata tab.", 8000)
 
     def _fetch_sra_metadata(self) -> None:
         if not self._require_project():
@@ -339,15 +434,23 @@ class MainWindow(QMainWindow):
             ("Data", [
                 ("Assign condition", self._assign_condition),
                 ("Autofill replicates", self.metadata_autofill),
+                ("Paste", self._paste_metadata),
             ]),
         ]
         top_row = QHBoxLayout()
+        tooltips = {
+            "Paste": "Paste clipboard cells (e.g. copied from Excel) at the selected cell. "
+                     "A single copied value fills every selected cell. Ctrl+V works too "
+                     "(if a cell is in edit mode, press Esc first).",
+        }
         for title, specs in groups:
             box = QGroupBox(title)
             box_layout = QHBoxLayout(box)
             for text, slot in specs:
                 btn = QPushButton(text)
                 btn.clicked.connect(slot)
+                if text in tooltips:
+                    btn.setToolTip(tooltips[text])
                 box_layout.addWidget(btn)
             top_row.addWidget(box)
         top_row.addStretch(1)
@@ -713,6 +816,13 @@ class MainWindow(QMainWindow):
         self._run_start = 0.0
         self.command_text = QLineEdit()
         self.status_label = QLabel("Idle")
+        # Plain-language "current phase" line so non-CLI users can follow along;
+        # the raw Snakemake log below is for power users.
+        self.phase_label = QLabel("")
+        phase_font = self.phase_label.font()
+        phase_font.setPointSize(phase_font.pointSize() + 2)
+        phase_font.setBold(True)
+        self.phase_label.setFont(phase_font)
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         progress_row = QHBoxLayout()
@@ -720,10 +830,12 @@ class MainWindow(QMainWindow):
         progress_row.addWidget(self.elapsed_label)
         layout.addLayout(buttons)
         layout.addLayout(actions)
+        layout.addWidget(self.phase_label)
         layout.addLayout(progress_row)
         layout.addWidget(self.status_label)
         layout.addWidget(QLabel("Command"))
         layout.addWidget(self.command_text)
+        layout.addWidget(QLabel("Detailed log"))
         layout.addWidget(self.log_text)
         self.tabs.addTab(page, "Run Monitor")
 
@@ -748,6 +860,50 @@ class MainWindow(QMainWindow):
         secs = int(time.monotonic() - self._run_start)
         self.elapsed_label.setText(f"Elapsed: {secs // 3600:02d}:{(secs % 3600) // 60:02d}:{secs % 60:02d}")
 
+    # Map a Snakemake rule name to a plain-language phase, longest/most specific
+    # substrings first so e.g. "fastqc_trim" wins over "fastqc".
+    _PHASE_BY_RULE = [
+        ("download", "Downloading sequencing data"),
+        ("fasterq", "Downloading sequencing data"),
+        ("prefetch", "Downloading sequencing data"),
+        ("fastqc_raw", "Quality control (raw reads)"),
+        ("fastqc_trim", "Quality control (trimmed reads)"),
+        ("fastqc", "Quality control"),
+        ("fastp", "Trimming reads"),
+        ("sortmerna", "Filtering rRNA"),
+        ("rrna", "Filtering rRNA"),
+        ("repair", "Repairing read pairs"),
+        ("star_index", "Building genome index"),
+        ("hisat2_index", "Building genome index"),
+        ("salmon_index", "Building transcriptome index"),
+        ("reference", "Preparing the reference genome"),
+        ("star_align", "Aligning reads to the genome"),
+        ("hisat2_align", "Aligning reads to the genome"),
+        ("align", "Aligning reads to the genome"),
+        ("salmon_quant", "Quantifying transcripts"),
+        ("ingest_counts", "Reading the count matrix"),
+        ("featurecounts", "Counting reads per gene"),
+        ("htseq", "Counting reads per gene"),
+        ("genes_of_interest", "Genes-of-interest figures"),
+        ("deseq2", "Differential expression (DESeq2)"),
+        ("enrichment", "Functional enrichment (GO / GSEA)"),
+        ("figures", "Generating figures"),
+        ("multiqc", "Aggregating the QC report"),
+        ("validate", "Running sanity checks"),
+        ("input_check", "Running sanity checks"),
+        ("sanity", "Running sanity checks"),
+        ("_check", "Running sanity checks"),
+        ("reports", "Writing run reports"),
+        ("summary", "Writing run reports"),
+    ]
+
+    def _friendly_phase(self, rule_name: str) -> str | None:
+        name = rule_name.lower()
+        for key, label in self._PHASE_BY_RULE:
+            if key in name:
+                return label
+        return None
+
     def _on_run_line(self, line: str) -> None:
         self.log_text.append(line)
         match = re.search(r"(\d+)\s+of\s+(\d+)\s+steps", line)
@@ -755,6 +911,12 @@ class MainWindow(QMainWindow):
             done, total = int(match.group(1)), int(match.group(2))
             if total:
                 self.progress.setValue(int(done / total * 100))
+        # Surface a plain-language phase when Snakemake announces a job's rule.
+        rule_match = re.search(r"(?:^|\s)(?:local|check)?rule\s+([A-Za-z0-9_]+)\s*:", line)
+        if rule_match:
+            phase = self._friendly_phase(rule_match.group(1))
+            if phase:
+                self.phase_label.setText(f"Current step: {phase}")
         # Detect a stale lock / incomplete-output state and offer auto-recovery
         # once per run so a killed-WSL orphan does not wedge every later start.
         if not self._recovery_offered and re.search(
@@ -791,16 +953,19 @@ class MainWindow(QMainWindow):
         if was_stop:
             self.progress.setStyleSheet("")
             self._set_run_status("Stopped", "#B26A00")
+            self.phase_label.setText("")
             self.log_text.append("Run stopped.")
             return
         if code == 0:
             self.progress.setValue(100)
             self.progress.setStyleSheet("")
             self._set_run_status("Completed", "#2E7D32")
+            self.phase_label.setText("Finished")
         else:
             # Non-zero: do not imply success. Red bar, red status, keep partial %.
             self.progress.setStyleSheet("QProgressBar::chunk { background-color: #C0392B; }")
             self._set_run_status(f"Failed (exit code {code})", "#C0392B")
+            self.phase_label.setText("")
         self.log_text.append(f"Process finished with exit code {code}")
 
     def _stop_run(self, _checked: bool = False, announce: bool = True) -> None:
@@ -963,9 +1128,40 @@ class MainWindow(QMainWindow):
         self.goi_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         save = QPushButton("Save genes of interest")
         save.clicked.connect(self._save_goi)
+        generate = QPushButton("Generate from existing results")
+        generate.setToolTip("Build the genes-of-interest heatmap, expression plots, and table "
+                            "from the already-computed DESeq2 results — no re-alignment or "
+                            "re-analysis. Requires a completed run.")
+        generate.clicked.connect(self._generate_goi)
         v.addWidget(self.goi_box)
-        v.addWidget(save)
+        goi_buttons = QHBoxLayout()
+        goi_buttons.addWidget(save)
+        goi_buttons.addWidget(generate)
+        v.addLayout(goi_buttons)
         return group
+
+    def _generate_goi(self) -> None:
+        # Extract the genes-of-interest figures/tables from the existing DESeq2
+        # object (no full re-run). Requires a completed DESeq2 run.
+        if not self._require_project() or self.config is None:
+            return
+        assert self.project_root is not None
+        self._apply_figure_style()  # GOI figures honor the current style, like Regenerate figures
+        n = self._persist_goi()
+        if n == 0:
+            QMessageBox.information(
+                self, APP_NAME,
+                "Add at least one gene ID before generating the genes-of-interest outputs.")
+            return
+        rds = self.project_root / "results" / "deseq2" / "deseq2_objects.rds"
+        if not rds.exists():
+            QMessageBox.warning(
+                self, APP_NAME,
+                "No DESeq2 results were found for this project yet. Run the pipeline once "
+                "(Run Monitor) to produce them; afterwards this button regenerates the "
+                "genes-of-interest figures from those results without re-analyzing.")
+            return
+        self._start_snakemake("goi")
 
     def _persist_goi(self) -> int:
         # Write the genes-of-interest box to config/genes_of_interest.txt and wire
@@ -1171,6 +1367,61 @@ class MainWindow(QMainWindow):
         if directory:
             self.workdir.setText(directory)
 
+    def _use_wsl_workdir(self) -> None:
+        # Resolve the WSL-native projects folder off the UI thread (a cold WSL can
+        # take a moment to answer) and fill the field when it returns. Guard against
+        # double-clicks so only one probe runs at a time.
+        existing = getattr(self, "_wsl_workdir_worker", None)
+        if existing is not None and existing.isRunning():
+            return
+        self.statusBar().showMessage("Locating the WSL filesystem...", 4000)
+        worker = BackgroundWorker(wsl_recommended_workdir)
+        worker.done.connect(self._on_wsl_workdir_resolved)
+        worker.failed.connect(self._on_wsl_workdir_failed)
+        self._wsl_workdir_worker = worker  # hold a reference so the thread isn't GC'd
+        worker.start()
+
+    def _on_wsl_workdir_resolved(self, path: object) -> None:
+        if getattr(self, "_closing", False):
+            return
+        if not path:
+            QMessageBox.information(
+                self, APP_NAME,
+                "Could not determine the WSL filesystem location. Is WSL2 installed with a "
+                "distribution running? You can still pick a Windows folder, which works but is "
+                "slower for large genomics files.",
+            )
+            return
+        self.workdir.setText(str(path))
+        self.statusBar().showMessage(f"Working directory set to the WSL filesystem: {path}", 8000)
+
+    def _on_wsl_workdir_failed(self, exc: object) -> None:
+        if getattr(self, "_closing", False):
+            return
+        QMessageBox.warning(
+            self, APP_NAME,
+            f"Could not reach WSL to locate its filesystem:\n{exc}\n\n"
+            "Make sure WSL2 is installed and a distribution is running, or pick a Windows "
+            "folder instead.",
+        )
+
+    def _autodetect_wsl_workdir(self) -> None:
+        # On startup, prefer the WSL-native filesystem for WSL users without
+        # blocking the instant startup: resolve it in the background and adopt it
+        # only if the user has not changed the default Windows path yet.
+        if shutil.which("wsl") is None:
+            return
+        worker = BackgroundWorker(wsl_recommended_workdir)
+        worker.done.connect(self._on_autodetect_wsl_workdir)
+        self._wsl_autodetect_worker = worker
+        worker.start()
+
+    def _on_autodetect_wsl_workdir(self, path: object) -> None:
+        if getattr(self, "_closing", False):
+            return
+        if path and self.workdir.text() == self._default_workdir:
+            self.workdir.setText(str(path))
+
     def show_readiness_dialog(self) -> None:
         self.readiness_dialog = ReadinessDialog(self)
         self.readiness_dialog.show()
@@ -1307,6 +1558,15 @@ class MainWindow(QMainWindow):
             if self.reference_list.item(i).text().startswith(f"{organism} "):
                 self.reference_list.setCurrentRow(i)
                 break
+        # Restore the custom-reference fields so reopening a project does not show
+        # them blank (which would invite an accidental empty re-lock).
+        ref = self.config.reference
+        if ref.mode == "custom":
+            self.ref_organism.setText(ref.organism_name if ref.organism_name != "unset" else "")
+            self.ref_genome.setText(ref.genome_fasta or "")
+            self.ref_annotation.setText(ref.annotation_file or "")
+            if ref.annotation_format in ("gtf", "gff3"):
+                self.ref_format.setCurrentText(ref.annotation_format)
 
     def _design_variables(self) -> list[str]:
         # Parse a DESeq2 design formula (e.g. "~ batch + condition") into the
@@ -1382,6 +1642,11 @@ class MainWindow(QMainWindow):
         value, ok = QInputDialog.getText(self, APP_NAME, "Assign condition to selected rows:")
         if ok and value.strip():
             self.metadata_table.assign_condition(value.strip())
+
+    def _paste_metadata(self) -> None:
+        # Explicit button so pasting works regardless of gesture (e.g. after a
+        # double-click would otherwise route Ctrl+V into the cell editor).
+        self.metadata_table.paste_clipboard()
 
     def _export_metadata(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Export metadata", "samples.tsv", "TSV (*.tsv);;CSV (*.csv)")
@@ -1603,10 +1868,12 @@ class MainWindow(QMainWindow):
         # A reference must be resolvable, or the pipeline dies mid-run with a
         # cryptic "genome_fasta_url is not set". Block early with clear guidance.
         if self.config is not None:
+            count_matrix_mode = self.config.input.type == "count_matrix"
             ref = self.config.reference
             has_url = bool(ref.genome_fasta_url and ref.annotation_gtf_url)
             has_local = bool(ref.genome_fasta and ref.annotation_file)
-            if not (has_url or has_local):
+            # Count-matrix mode skips alignment, so no reference is required.
+            if not count_matrix_mode and not (has_url or has_local):
                 QMessageBox.warning(
                     self, APP_NAME,
                     "No reference is set, so the run cannot start.\n\n"
@@ -1689,10 +1956,13 @@ class MainWindow(QMainWindow):
         self._recovery_offered = False
         self._stop_in_progress = False
         self._set_running_ui(True)
-        if mode in ("run", "resume", "recover", "figures"):
+        if mode in ("run", "resume", "recover", "figures", "goi"):
             self.progress.setValue(0)
             self.progress.setStyleSheet("")
-            self._set_run_status("Regenerating figures..." if mode == "figures" else "Running...", "#2C6FB6")
+            status = {"figures": "Regenerating figures...",
+                      "goi": "Generating genes-of-interest outputs..."}.get(mode, "Running...")
+            self._set_run_status(status, "#2C6FB6")
+            self.phase_label.setText("Current step: starting...")
             self._run_start = time.monotonic()
             self.elapsed_timer.start(1000)
         else:

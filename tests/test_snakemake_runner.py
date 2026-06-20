@@ -36,7 +36,9 @@ def test_wsl_command_activates_micromamba_env() -> None:
     cfg = default_config("demo", Path("C:/work/demo"))
     command = build_snakemake_command(Path("C:/work/demo"), cfg, mode="run", use_wsl=True)
     inner = command.command[-1]
-    assert "micromamba run -n bulkseq snakemake" in inner
+    # The micromamba path is double-quoted (preserving $HOME expansion) to be safe
+    # against spaces, so the env activation reads ".../micromamba" run -n bulkseq.
+    assert 'micromamba" run -n bulkseq snakemake' in inner
     assert "MAMBA_ROOT_PREFIX" in inner
     assert command.command[:3] == ["wsl", "--", "bash"]
 
