@@ -18,7 +18,7 @@ class ProjectConfig(BaseModel):
 
 
 class InputConfig(BaseModel):
-    type: Literal["fastq", "sra", "mixed", "count_matrix"] = "fastq"
+    type: Literal["fastq", "sra", "mixed", "count_matrix", "microarray"] = "fastq"
     layout: Literal["paired", "single", "mixed", "unknown"] = "unknown"
     samples: str = "config/samples.tsv"
     sra_accessions: str = "config/sra_accessions.txt"
@@ -26,6 +26,20 @@ class InputConfig(BaseModel):
     # pipeline ingests it (skipping download/QC/alignment/featureCounts) into the
     # canonical results/counts/counts.txt and runs DESeq2 -> figures -> enrichment.
     count_matrix: str | None = None
+
+
+class MicroarrayConfig(BaseModel):
+    # GEO/GSE microarray input (input.type == "microarray"). The pipeline ingests
+    # a normalized expression matrix (GEOquery series matrix, or RMA from raw CEL)
+    # and runs limma -> the canonical DESeq2-shaped results so figures/enrichment/
+    # GOI stay backend-agnostic. No genome alignment or reference is involved.
+    gse_accession: str | None = None
+    platform: str | None = None  # GEO platform id (GPL...)
+    source: Literal["geo_series_matrix", "affy_cel"] = "geo_series_matrix"
+    # auto: trust the submitter matrix (skip re-normalizing); rma: affy::rma on CEL.
+    normalization: Literal["auto", "rma", "none"] = "auto"
+    # auto: detect whether values are already log2 (GEO2R quantile heuristic).
+    log2_transform: Literal["auto", "yes", "no"] = "auto"
 
 
 class ReferenceConfig(BaseModel):
@@ -144,6 +158,16 @@ class GeneSetsConfig(BaseModel):
     background_gene_list: str | None = None
 
 
+class EnrichmentConfig(BaseModel):
+    # Overrides the organism-derived enrichment database/keytype/KEGG code. Left
+    # empty (None), the workflow falls back to the organism mapping in
+    # workflow/rules/enrichment.smk. Distinct from workflow.enrichment (on/off).
+    # Microarray mode sets keytype = SYMBOL (GPL annotation maps to gene symbols).
+    orgdb: str | None = None
+    keytype: str | None = None
+    kegg_organism: str | None = None
+
+
 class FigureConfig(BaseModel):
     # Visual style applied to all DESeq2 figures (workflow/scripts/make_figures.R).
     palette: Literal["Blue-Red", "Viridis", "Greyscale"] = "Blue-Red"
@@ -213,6 +237,7 @@ class RuleMemoryGb(BaseModel):
 class AppConfig(BaseModel):
     project: ProjectConfig
     input: InputConfig = Field(default_factory=InputConfig)
+    microarray: MicroarrayConfig = Field(default_factory=MicroarrayConfig)
     reference: ReferenceConfig = Field(default_factory=ReferenceConfig)
     workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
     fastp: FastpConfig = Field(default_factory=FastpConfig)
@@ -221,6 +246,7 @@ class AppConfig(BaseModel):
     featurecounts: FeatureCountsConfig = Field(default_factory=FeatureCountsConfig)
     deseq2: Deseq2Config = Field(default_factory=Deseq2Config)
     gene_sets: GeneSetsConfig = Field(default_factory=GeneSetsConfig)
+    enrichment: EnrichmentConfig = Field(default_factory=EnrichmentConfig)
     figures_style: FigureConfig = Field(default_factory=FigureConfig)
     resources: ResourcesConfig = Field(default_factory=ResourcesConfig)
     rule_threads: RuleThreads = Field(default_factory=RuleThreads)

@@ -52,6 +52,7 @@ from app.core.provenance import write_run_summary
 from app.core.reference_manager import load_reference_catalog, md5sum, validate_reference
 from app.core.resources import detect_system, recommend_profile
 from app.core.sra_metadata import fetch_ena_metadata, metadata_to_samples
+from app.core.geo_metadata import fetch_geo_series
 from app.core.runtime_estimator import estimate_runtime
 from app.core.sanity_checks import write_check
 from app.core.snakemake_runner import (
@@ -230,7 +231,7 @@ class MainWindow(QMainWindow):
         self._save_geometry_state()
         # Let short-lived background probes finish so QThread isn't destroyed while
         # running (which would crash). These are bounded WSL/resource queries.
-        for attr in ("_wsl_autodetect_worker", "_wsl_workdir_worker", "_detect_worker"):
+        for attr in ("_wsl_autodetect_worker", "_wsl_workdir_worker", "_detect_worker", "_geo_worker"):
             worker = getattr(self, attr, None)
             if worker is not None and worker.isRunning():
                 worker.wait(3000)
@@ -316,7 +317,94 @@ class MainWindow(QMainWindow):
         cm_row.addWidget(cm_btn)
         cm_row.addStretch(1)
         layout.addLayout(cm_row)
+        geo_row = QHBoxLayout()
+        self.gse_box = QLineEdit()
+        self.gse_box.setPlaceholderText("GSE accession, e.g. GSE5583")
+        self.gse_box.setMaximumWidth(220)
+        geo_btn = QPushButton("Fetch a GEO microarray series (GSE)")
+        geo_btn.setToolTip("Load a GEO/GSE microarray dataset. The pipeline ingests the normalized "
+                           "intensities (GEOquery/affy), runs limma differential expression, then the "
+                           "same figures and enrichment. RNA-seq GSEs are redirected to the SRA box.")
+        geo_btn.clicked.connect(self._fetch_geo_series)
+        geo_row.addWidget(QLabel("Microarray?"))
+        geo_row.addWidget(self.gse_box)
+        geo_row.addWidget(geo_btn)
+        geo_row.addStretch(1)
+        layout.addLayout(geo_row)
         self.tabs.addTab(self._scrollable(page), "Input Data")
+
+    def _fetch_geo_series(self) -> None:
+        if not self._require_project() or self.config is None:
+            return
+        assert self.project_root is not None
+        gse = self.gse_box.text().strip()
+        if not gse:
+            QMessageBox.information(self, APP_NAME, "Enter a GSE accession (e.g. GSE5583) first.")
+            return
+        if getattr(self, "_geo_worker", None) is not None and self._geo_worker.isRunning():
+            return
+        self.statusBar().showMessage(f"Fetching {gse} from GEO...")
+        worker = BackgroundWorker(lambda: fetch_geo_series(gse))
+        worker.done.connect(lambda result: self._on_geo_fetched(gse, result))
+        worker.failed.connect(self._on_geo_failed)
+        self._geo_worker = worker
+        worker.start()
+
+    def _on_geo_failed(self, exc: object) -> None:
+        if getattr(self, "_closing", False):
+            return
+        self.statusBar().clearMessage()
+        QMessageBox.warning(self, APP_NAME, f"Could not load the GEO series:\n{exc}")
+
+    def _on_geo_fetched(self, gse: str, result: object) -> None:
+        if getattr(self, "_closing", False) or self.config is None or self.project_root is None:
+            return
+        self.statusBar().clearMessage()
+        info = result if isinstance(result, dict) else {}
+        if not info.get("is_microarray", False):
+            QMessageBox.warning(
+                self, APP_NAME,
+                f"{gse} looks like a sequencing series (type: {info.get('series_type', 'unknown')}), "
+                "not a microarray. Use the SRA/ENA accessions box above for RNA-seq studies.")
+            return
+        samples = info["samples"]
+        save_metadata(samples, self.project_root / "config" / "samples.tsv")
+        self.metadata_table.load_dataframe(samples)
+        organism = str(info.get("organism", "")).strip()
+        platform = str(info.get("platform", "")).strip()
+        self.config.input.type = "microarray"
+        self.config.microarray.gse_accession = gse
+        self.config.microarray.platform = platform or None
+        self.config.microarray.source = "geo_series_matrix"
+        if organism:
+            self.config.reference.organism_name = organism
+        # GPL annotation maps probes to gene symbols, so enrichment uses SYMBOL.
+        self.config.enrichment.keytype = "SYMBOL"
+        self.manager.save_config(self.project_root, self.config)
+        self._apply_input_mode_ui()
+        self.input_preview.setPlainText(
+            f"Microarray mode: {gse} ({platform}), {len(samples)} samples — {organism}.\n\n"
+            "Next: assign each sample a condition on the Metadata tab, set the contrast on "
+            "Workflow Settings, then Start Run. Alignment and a reference genome are not needed.")
+        self.statusBar().showMessage(f"Loaded {gse}: {len(samples)} microarray samples.", 8000)
+
+    def _apply_input_mode_ui(self) -> None:
+        # Reflect the current input mode: microarray/count-matrix need no genome
+        # reference, so surface that on the Reference tab.
+        if self.config is None:
+            return
+        mode = self.config.input.type
+        if getattr(self, "reference_mode_banner", None) is not None:
+            if mode == "microarray":
+                self.reference_mode_banner.setText(
+                    "Microarray mode: no reference genome is needed (limma works on intensities).")
+                self.reference_mode_banner.setVisible(True)
+            elif mode == "count_matrix":
+                self.reference_mode_banner.setText(
+                    "Count-matrix mode: no reference genome is needed (alignment is skipped).")
+                self.reference_mode_banner.setVisible(True)
+            else:
+                self.reference_mode_banner.setVisible(False)
 
     def _import_count_matrix(self) -> None:
         if not self._require_project() or self.config is None:
@@ -494,6 +582,11 @@ class MainWindow(QMainWindow):
             self.reference_list.addItem(f"{entry['organism_name']} | {entry.get('strain')} | {entry.get('genome_size_category')}")
         choose = QPushButton("Use Selected Preset")
         choose.clicked.connect(self._select_reference)
+        self.reference_mode_banner = QLabel("")
+        self.reference_mode_banner.setWordWrap(True)
+        self.reference_mode_banner.setStyleSheet("font-weight: bold;")
+        self.reference_mode_banner.setVisible(False)
+        layout.addWidget(self.reference_mode_banner)
         layout.addWidget(QLabel("Available presets"))
         layout.addWidget(self.reference_list)
         layout.addWidget(choose)
@@ -1567,6 +1660,7 @@ class MainWindow(QMainWindow):
             self.ref_annotation.setText(ref.annotation_file or "")
             if ref.annotation_format in ("gtf", "gff3"):
                 self.ref_format.setCurrentText(ref.annotation_format)
+        self._apply_input_mode_ui()
 
     def _design_variables(self) -> list[str]:
         # Parse a DESeq2 design formula (e.g. "~ batch + condition") into the
@@ -1868,12 +1962,12 @@ class MainWindow(QMainWindow):
         # A reference must be resolvable, or the pipeline dies mid-run with a
         # cryptic "genome_fasta_url is not set". Block early with clear guidance.
         if self.config is not None:
-            count_matrix_mode = self.config.input.type == "count_matrix"
+            no_reference_mode = self.config.input.type in ("count_matrix", "microarray")
             ref = self.config.reference
             has_url = bool(ref.genome_fasta_url and ref.annotation_gtf_url)
             has_local = bool(ref.genome_fasta and ref.annotation_file)
-            # Count-matrix mode skips alignment, so no reference is required.
-            if not count_matrix_mode and not (has_url or has_local):
+            # Count-matrix and microarray modes skip alignment, so no reference is required.
+            if not no_reference_mode and not (has_url or has_local):
                 QMessageBox.warning(
                     self, APP_NAME,
                     "No reference is set, so the run cannot start.\n\n"
@@ -1979,7 +2073,10 @@ class MainWindow(QMainWindow):
         if not (reports / "run_summary.txt").exists():
             estimate = estimate_runtime(self.config, self.metadata_table.to_dataframe()) if self.config else None
             write_timing_summary(self.project_root, estimate)
-            write_run_summary(self.project_root, data_path("default_config.yaml"))
+            # Probe tool versions inside the WSL env (that is where they live);
+            # a local probe would report every tool as unavailable.
+            use_wsl = getattr(self, "use_wsl", None) is not None and self.use_wsl.isChecked()
+            write_run_summary(self.project_root, data_path("default_config.yaml"), use_wsl=use_wsl)
         sections = []
         for name in ("run_summary.txt", "timing_summary.txt"):
             path = reports / name

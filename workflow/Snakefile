@@ -74,6 +74,10 @@ INPUT = config.get("input", {})
 # download/QC/alignment/featureCounts and ingests it into results/counts/counts.txt.
 COUNT_MATRIX_MODE = INPUT.get("type") == "count_matrix"
 COUNT_MATRIX = INPUT.get("count_matrix")
+# Microarray mode: GEO/GSE intensities ingested via GEOquery/affy and analyzed
+# with limma; no alignment/reference/counts. limma emits the DESeq2-shaped
+# artifacts so figures/enrichment/GOI are shared.
+MICROARRAY_MODE = INPUT.get("type") == "microarray"
 GENOME_FA = "references/genome.fa"
 ANNOTATION_GTF = "references/annotation.gtf"
 STAR_INDEX = "references/star_index"
@@ -96,6 +100,7 @@ include: "rules/qc.smk"
 include: "rules/trimming.smk"
 include: "rules/alignment.smk"
 include: "rules/quantification.smk"
+include: "rules/microarray.smk"
 include: "rules/deseq2.smk"
 include: "rules/figures.smk"
 include: "rules/enrichment.smk"
@@ -108,15 +113,17 @@ include: "rules/reports.smk"
 # ---------------------------------------------------------------------------
 def final_targets():
     targets = [
-        "results/counts/counts.txt",
         "results/deseq2/deseq2_results.csv",
         "results/reports/run_summary.txt",
         "results/reports/timing_summary.txt",
         "results/reports/software_versions.txt",
         "checks/sanity_checks.txt",
     ]
-    if not COUNT_MATRIX_MODE:
-        # MultiQC aggregates FastQC/fastp/STAR — irrelevant when starting from counts.
+    # Microarray has no counts.txt (intensities, not counts); every other mode does.
+    if not MICROARRAY_MODE:
+        targets.insert(0, "results/counts/counts.txt")
+    if not (COUNT_MATRIX_MODE or MICROARRAY_MODE):
+        # MultiQC aggregates FastQC/fastp/STAR — irrelevant without alignment.
         targets.insert(0, "results/qc/multiqc/multiqc_report.html")
     if WF.get("figures", True):
         for fig in ("pca", "sample_distance", "ma_plot", "volcano", "top_deg_heatmap"):

@@ -11,6 +11,10 @@ dist/
 /dist/
 /Output/
 installer_output/
+# Stray PyInstaller onedir output if extracted into the repo root
+/BulkSeqStudio.exe
+/_internal/
+tmp_*
 
 # Virtual environments
 .venv/

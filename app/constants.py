@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 APP_NAME = "BulkSeq Studio"
-APP_VERSION = "0.3.5"
-WORKFLOW_VERSION = "0.3.5"
+APP_VERSION = "0.4.0"
+WORKFLOW_VERSION = "0.4.0"
 
 SAFE_ID_PATTERN = r"^[A-Za-z0-9_.-]+$"
 
@@ -22,6 +22,7 @@ PROJECT_DIRS = [
     "results/qc",
     "results/aligned",
     "results/counts",
+    "results/microarray",
     "results/deseq2",
     "results/enrichment",
     "results/figures",
@@ -36,6 +37,8 @@ PROJECT_DIRS = [
 REQUIRED_METADATA_COLUMNS = ["sample_id", "condition", "layout", "fastq_1"]
 OPTIONAL_METADATA_COLUMNS = [
     "fastq_2",
+    "gsm_accession",
+    "platform",
     "original_accession",
     "original_filename",
     "detected_pair_id",

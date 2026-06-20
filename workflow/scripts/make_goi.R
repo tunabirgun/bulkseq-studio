@@ -16,6 +16,9 @@ sink(log_con, type = "message")
 obj <- readRDS(snakemake@input[["rds"]])
 dds <- obj$dds; vsd <- obj$vsd
 out <- snakemake@output
+# Microarray (limma): there are no counts; use the log2 intensity matrix and a
+# linear y axis for the per-gene panel instead of normalized-count / log scale.
+is_intensity <- identical(tryCatch(obj$assay_kind, error = function(e) NULL), "log2_intensity")
 
 style <- tryCatch(snakemake@params[["style"]], error = function(e) NULL)
 if (is.null(style) || !is.list(style)) style <- tryCatch(snakemake@config[["figures_style"]], error = function(e) NULL)
@@ -88,7 +91,9 @@ svglite(out[["heatmap_svg"]], width = 7, height = hh)
 grid::grid.newpage(); grid::grid.draw(ph$gtable); dev.off()
 
 # ---- Per-gene expression comparison across conditions -----------------------
-nc <- counts(dds, normalized = TRUE)[present, , drop = FALSE]
+# Counts route through counts(dds, normalized=TRUE); microarray has no counts, so
+# use the normalized log2 intensity matrix (assay(vsd)) on a linear axis.
+nc <- if (is_intensity) assay(vsd)[present, , drop = FALSE] else counts(dds, normalized = TRUE)[present, , drop = FALSE]
 rownames(nc) <- rownames(vsd)[present]
 groups <- as.character(colData(dds)[[group_var]])
 long <- do.call(rbind, lapply(seq_len(nrow(nc)), function(i) {
@@ -99,10 +104,10 @@ p_expr <- ggplot(long, aes(group, count, colour = group)) +
   geom_boxplot(outlier.shape = NA, alpha = 0.4) +
   geom_jitter(width = 0.15, size = 1.6) +
   facet_wrap(~ gene, scales = "free_y") +
-  scale_y_log10() +
-  labs(x = NULL, y = "normalised counts (log scale)") +
+  labs(x = NULL, y = if (is_intensity) "normalized log2 intensity" else "normalised counts (log scale)") +
   theme_bw(base_size = base_size) +
   theme(legend.position = "none", axis.text.x = element_text(angle = 30, hjust = 1))
+if (!is_intensity) p_expr <- p_expr + scale_y_log10()
 n_facet <- length(present)
 save_gg(p_expr, out[["expr_png"]], out[["expr_svg"]],
         w = min(12, 3 * ceiling(sqrt(n_facet))), h = min(12, 2.5 * ceiling(n_facet / ceiling(sqrt(n_facet)))))

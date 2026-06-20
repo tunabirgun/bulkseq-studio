@@ -39,6 +39,7 @@ def estimate_runtime(config: AppConfig, metadata: pd.DataFrame | None = None) ->
     sample_count = len(metadata) if metadata is not None else 0
     gbase = _total_gbase(metadata)
     count_matrix = config.input.type == "count_matrix"
+    microarray = config.input.type == "microarray"
     ref_cat = config.reference.genome_size_category
     ref_factor = REFERENCE_FACTORS.get(ref_cat, 1.0)
     threads = max(config.resources.total_threads, 1)
@@ -48,7 +49,12 @@ def estimate_runtime(config: AppConfig, metadata: pd.DataFrame | None = None) ->
     overhead = 2.0
     bottlenecks: list[str] = []
 
-    if count_matrix:
+    if microarray:
+        # GEO download/ingest + probe collapse + limma -> figures -> enrichment.
+        minutes = overhead + 3.0 + sample_count * 0.3
+        minutes += 1.0 if config.workflow.enrichment else 0.0
+        minutes += 0.4 if config.workflow.figures else 0.0
+    elif count_matrix:
         # Alignment, QC, and download are all skipped; only DESeq2 -> figures ->
         # enrichment run, which is fast.
         minutes = overhead + sample_count * 0.2
@@ -95,11 +101,14 @@ def estimate_runtime(config: AppConfig, metadata: pd.DataFrame | None = None) ->
         "sample_count": sample_count,
         "sequencing_gbase": round(gbase, 2),
         "reference_group": ref_cat,
-        "aligner": "n/a (count matrix)" if count_matrix else config.workflow.aligner,
+        "aligner": ("n/a (microarray/limma)" if microarray
+                    else "n/a (count matrix)" if count_matrix
+                    else config.workflow.aligner),
         "threads": threads,
         "memory_gb": config.resources.total_memory_gb,
         "bottlenecks": bottlenecks or (
-            ["count-matrix mode: alignment skipped"] if count_matrix
+            ["microarray mode: GEO download + limma, no alignment"] if microarray
+            else ["count-matrix mode: alignment skipped"] if count_matrix
             else ["none obvious from current configuration"]
         ),
     }

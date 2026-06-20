@@ -18,6 +18,9 @@ sink(log_con, type = "message")
 obj <- readRDS(snakemake@input[["rds"]])
 dds <- obj$dds; res <- obj$res; resLFC <- obj$resLFC; vsd <- obj$vsd
 out <- snakemake@output
+# Microarray (limma) backend: baseMean is average log2 intensity, not a count
+# mean, so count-scale transforms (log10 on baseMean) are skipped below.
+is_intensity <- identical(tryCatch(obj$assay_kind, error = function(e) NULL), "log2_intensity")
 
 # ---- Style parameters (NULL-safe) ------------------------------------------
 # Read from the rule's declared params (a Snakemake rerun trigger); fall back to
@@ -143,11 +146,13 @@ ma$sig <- ma$padj < alpha_thr
 p_ma <- ggplot(ma, aes(baseMean, log2FoldChange, colour = sig)) +
   geom_point(size = ma_point, alpha = 0.6) +
   geom_hline(yintercept = 0, colour = "grey40") +
-  scale_x_log10() +
   scale_colour_manual(values = c("FALSE" = "grey75", "TRUE" = pal_spec$discrete[1]),
                       name = sprintf("padj < %.3g", alpha_thr)) +
-  labs(x = "mean of normalised counts", y = "log2 fold change") +
+  labs(x = if (is_intensity) "average log2 expression" else "mean of normalised counts",
+       y = "log2 fold change") +
   style_theme(theme_bw)
+# Counts span orders of magnitude (log x); log2 intensities do not.
+if (!is_intensity) p_ma <- p_ma + scale_x_log10()
 save_gg(p_ma, out[["ma_png"]], out[["ma_svg"]])
 
 # ---- Volcano ----------------------------------------------------------------

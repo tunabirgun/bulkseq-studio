@@ -29,6 +29,14 @@ dependencies:
   - bioconductor-complexheatmap
   - bioconductor-enhancedvolcano
   - bioconductor-org.dm.eg.db
+  # Microarray / GEO support (0.4.0): GEOquery ingest + limma DE + Affy RMA;
+  # human/mouse OrgDbs for symbol-based enrichment.
+  - bioconductor-geoquery
+  - bioconductor-limma
+  - bioconductor-affy
+  - bioconductor-biobase
+  - bioconductor-org.hs.eg.db
+  - bioconductor-org.mm.eg.db
   - r-ggplot2
   - r-ggrepel
   - r-ggtext

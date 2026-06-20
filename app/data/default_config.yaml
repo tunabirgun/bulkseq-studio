@@ -9,6 +9,13 @@ input:
   layout: unknown
   samples: config/samples.tsv
   sra_accessions: config/sra_accessions.txt
+microarray:
+  # Only used when input.type == microarray (GEO/GSE). limma replaces DESeq2.
+  gse_accession: null
+  platform: null
+  source: geo_series_matrix   # or affy_cel (RMA from raw CEL)
+  normalization: auto         # auto | rma | none
+  log2_transform: auto        # auto | yes | no
 reference:
   mode: unset
   organism_name: unset
@@ -86,6 +93,13 @@ gene_sets:
   custom_gene_sets: null
   functional_annotation_table: null
   background_gene_list: null
+enrichment:
+  # Override the organism-derived enrichment DB/keytype/KEGG. Null => fall back to
+  # the organism mapping in workflow/rules/enrichment.smk. Microarray sets keytype
+  # to SYMBOL. Distinct from workflow.enrichment (the on/off toggle).
+  orgdb: null
+  keytype: null
+  kegg_organism: null
 figures_style:
   palette: Blue-Red
   point_size: 2.5

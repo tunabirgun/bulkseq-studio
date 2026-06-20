@@ -1,7 +1,18 @@
 # Sanity-check phase gates. The aggregate depends on EVERY phase check so the
 # summary is reproducible (not dependent on prior filesystem state).
 
-if COUNT_MATRIX_MODE:
+if MICROARRAY_MODE:
+    # Microarray: no reference/alignment/featureCounts; add normalization and
+    # probe-mapping checks produced by ingest_geo.R instead.
+    ALL_CHECKS = [
+        "checks/00_project_setup.json",
+        "checks/01_input_validation.json",
+        "checks/11_normalization_qc.json",
+        "checks/12_probe_mapping_qc.json",
+        "checks/08_metadata_design_qc.json",
+        "checks/09_deseq2_qc.json",
+    ]
+elif COUNT_MATRIX_MODE:
     # No reference/alignment in count-matrix mode, so those checks are not produced.
     ALL_CHECKS = [
         "checks/00_project_setup.json",
