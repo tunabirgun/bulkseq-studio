@@ -19,10 +19,14 @@ python -m venv .venv
 ```powershell
 .\scripts\build_release.ps1
 ```
-This runs PyInstaller (`packaging\BulkSeqStudio.spec`, onedir) then Inno Setup
-(`packaging\installer.iss`). Outputs:
+This runs PyInstaller (`packaging\BulkSeqStudio.spec`, onedir), then Inno Setup
+(`packaging\installer.iss`), then zips the onedir folder. Outputs (version comes
+from `APP_VERSION`):
 - `dist\BulkSeq Studio\BulkSeqStudio.exe` — the application (a folder bundle).
-- `installer_output\BulkSeqStudio-Setup-0.1.0.exe` — the installer.
+- `installer_output\BulkSeqStudio-Setup-<version>.exe` — the per-user installer.
+- `installer_output\BulkSeqStudio-Portable-<version>.zip` — a portable
+  click-and-run build. Unzip anywhere and double-click `BulkSeq Studio\BulkSeqStudio.exe`;
+  no installation. Regenerated on every build.
 
 ## What gets bundled
 The PyInstaller spec bundles `app/data`, `workflow/`, `scripts/`, and `examples/`
@@ -44,4 +48,5 @@ $env:BULKSEQ_SELFTEST="1"; $env:BULKSEQ_SKIP_READINESS_DIALOG="1"
 
 ## Version
 Bump `APP_VERSION` in `app/constants.py` and `MyAppVersion` in
-`packaging/installer.iss` together.
+`packaging/installer.iss` together. The installer and portable-ZIP filenames are
+derived from `APP_VERSION` by the build script.

@@ -17,6 +17,7 @@ Implemented:
 - **A real, runnable pipeline**: ENA FASTQ download (with an SRA/ENA metadata fetch that builds the sample sheet from accessions), FastQC/MultiQC, fastp, STAR index (genome-size-aware) and alignment, strandedness inference, featureCounts, DESeq2 (apeglm shrinkage, VST), and PCA/MA/volcano/sample-distance/top-DEG figures (PNG + SVG). Validated end-to-end on the pasilla subset (Drosophila, Ensembl) and a Fusarium graminearum spore-vs-mycelium dataset (PH-1, NCBI RefSeq).
 - Configurable significance thresholds (alpha, |log2FC|) with separate up- and down-regulated gene lists, each carried into directional GO ORA and GSEA enrichment (clusterProfiler), gated by organism so unsupported organisms skip cleanly.
 - Genes-of-interest analysis: a focused z-scored heatmap and per-condition expression panel for a user-supplied gene list.
+- A light/dark theme toggle (top-right corner, choice persisted), a scalable window (saved geometry, scroll-wrapped forms), and a redesigned Outputs page with user-resizable table and figure panels plus a "Regenerate figures" action that re-renders with the current style without re-running alignment or DESeq2.
 - Report generators for run summary (default-vs-used parameter diff, environment lock md5, software versions), timing summary, sanity checks, and R `sessionInfo`.
 - Tests for metadata detection/validation, config generation/round-trip, reference validation, resources, runtime estimation, provenance diff, WSL path translation, and the WSL command builder.
 - Curated pasilla paired-end subset benchmark project template under `examples/benchmarks/pasilla_paired_subset`.
@@ -24,6 +25,13 @@ Implemented:
 The STAR -> featureCounts -> DESeq2 -> enrichment -> figures route is fully implemented, for both paired-end and single-end layouts (paired-end is the benchmark-validated path). HISAT2, Salmon/tximport, SortMeRNA, BBMap, htseq-count, and edgeR/limma-voom remain alternative scaffolding/TODOs.
 
 ## Install
+
+End users have two options for the prebuilt app (see `BUILD.md` to produce them):
+- **Installer** — `BulkSeqStudio-Setup-<version>.exe`, a per-user install (no admin).
+- **Portable** — `BulkSeqStudio-Portable-<version>.zip`; unzip anywhere and
+  double-click `BulkSeq Studio\BulkSeqStudio.exe`. No installation.
+
+To run from source for development:
 
 ```powershell
 python -m venv .venv
