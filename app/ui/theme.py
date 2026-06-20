@@ -3,7 +3,7 @@ from __future__ import annotations
 from string import Template
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import QApplication, QLabel
 
 # Two palettes drive a light and a dark theme. Every token below has an entry in
@@ -583,12 +583,50 @@ def _generate_qss(palette: dict[str, str]) -> str:
     return _QSS_TEMPLATE.substitute(palette)
 
 
+def build_qpalette(p: dict[str, str]) -> QPalette:
+    """Map the theme palette onto a Qt QPalette.
+
+    Fusion draws many surfaces (item-view/graphics-view viewports, menus, native
+    sub-controls, disabled states) from the QPalette, not the style sheet. Without
+    this, a light QSS over an OS dark palette renders "half light, half dark".
+    """
+    def c(key: str) -> QColor:
+        return QColor(p[key])
+
+    pal = QPalette()
+    pal.setColor(QPalette.ColorRole.Window, c("BACKGROUND"))
+    pal.setColor(QPalette.ColorRole.WindowText, c("TEXT"))
+    pal.setColor(QPalette.ColorRole.Base, c("INPUT_BG"))
+    pal.setColor(QPalette.ColorRole.AlternateBase, c("TABLE_ALT_BG"))
+    pal.setColor(QPalette.ColorRole.ToolTipBase, c("TOOLTIP_BG"))
+    pal.setColor(QPalette.ColorRole.ToolTipText, c("TOOLTIP_TEXT"))
+    pal.setColor(QPalette.ColorRole.Text, c("TEXT"))
+    pal.setColor(QPalette.ColorRole.Button, c("BUTTON_BG"))
+    pal.setColor(QPalette.ColorRole.ButtonText, c("TEXT"))
+    pal.setColor(QPalette.ColorRole.BrightText, c("SELECTION_TEXT"))
+    pal.setColor(QPalette.ColorRole.PlaceholderText, c("MUTED_TEXT"))
+    pal.setColor(QPalette.ColorRole.Highlight, c("SELECTION_BG"))
+    pal.setColor(QPalette.ColorRole.HighlightedText, c("SELECTION_TEXT"))
+    pal.setColor(QPalette.ColorRole.Link, c("PRIMARY"))
+    pal.setColor(QPalette.ColorRole.LinkVisited, c("REVIEW"))
+    # Disabled group so disabled states do not fight the QSS.
+    for role, key in (
+        (QPalette.ColorRole.Text, "MUTED_TEXT"),
+        (QPalette.ColorRole.ButtonText, "BUTTON_TEXT_DISABLED"),
+        (QPalette.ColorRole.WindowText, "MUTED_TEXT"),
+    ):
+        pal.setColor(QPalette.ColorGroup.Disabled, role, c(key))
+    return pal
+
+
 def apply_theme(app: QApplication, mode: str = "light") -> None:
-    """Apply the BulkSeq Studio theme (light or dark): Fusion style, base font, QSS.
+    """Apply the BulkSeq Studio theme (light or dark): Fusion style, palette, QSS.
 
     Fusion renders combo/spin sub-control arrows as crisp native triangles and is
     consistent across platforms, avoiding the empty-square arrows that the native
-    Windows style showed under a heavy style sheet. Re-call to switch themes live.
+    Windows style showed under a heavy style sheet. The QPalette is set as well as
+    the QSS so palette-driven surfaces (graphics/item viewports, menus) match the
+    theme instead of inheriting the OS palette. Re-call to switch themes live.
     """
     if mode not in PALETTES:
         mode = "light"
@@ -598,6 +636,7 @@ def apply_theme(app: QApplication, mode: str = "light") -> None:
         pass
     font = QFont(BASE_FONT_FAMILY, BASE_FONT_POINT_SIZE)
     app.setFont(font)
+    app.setPalette(build_qpalette(PALETTES[mode]))
     app.setStyleSheet(_generate_qss(PALETTES[mode]))
 
 
