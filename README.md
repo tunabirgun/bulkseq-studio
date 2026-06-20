@@ -104,22 +104,6 @@ The pipeline is validated end-to-end on two real datasets:
 
 Both runs reproduce byte-for-byte across pipeline revisions, confirming the analysis is deterministic.
 
-## Building the Windows app
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-build.txt
-.\scripts\build_release.ps1
-```
-
-This produces the executable, the per-user installer, and the portable ZIP under `installer_output\` (Inno Setup is required for the installer: `winget install JRSoftware.InnoSetup`).
-
-## Tests
-
-```powershell
-pytest
-```
-
 ## Project layout
 
 | Path | Contents |

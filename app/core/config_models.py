@@ -182,6 +182,9 @@ class FigureConfig(BaseModel):
     width_in: float = 6.0
     height_in: float = 5.0
     dpi: int = 300
+    # UI display unit for the width/height fields; width_in/height_in stay the
+    # canonical inches the R export uses (px is converted via dpi).
+    dimension_unit: Literal["in", "cm", "px"] = "in"
 
     @field_validator("point_size", "width_in", "height_in")
     @classmethod

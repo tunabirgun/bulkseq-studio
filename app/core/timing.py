@@ -16,8 +16,10 @@ def write_timing_summary(project_root: Path, estimate: dict[str, object] | None 
                 benchmarks.append(row)
     payload = {
         "project_name": project_root.name,
+        # Do not fabricate a finish time: an unfinished/un-run project should not
+        # claim it finished "now". Both are filled only when an actual run records them.
         "run_start_time": run_started,
-        "run_finish_time": run_finished or datetime.now().isoformat(timespec="seconds"),
+        "run_finish_time": run_finished,
         "pre_run_estimate": estimate or {},
         "per_step_timings": benchmarks,
         "slowest_steps": sorted(benchmarks, key=lambda r: float(r.get("s", 0) or 0), reverse=True)[:5],
@@ -32,8 +34,8 @@ def write_timing_summary(project_root: Path, estimate: dict[str, object] | None 
 def _timing_text(payload: dict[str, object]) -> str:
     lines = ["RNA-seq Analysis Timing Summary", "===============================", "", "Project", "-------"]
     lines.append(f"Project name: {payload.get('project_name')}")
-    lines.append(f"Run started: {payload.get('run_start_time')}")
-    lines.append(f"Run finished: {payload.get('run_finish_time')}")
+    lines.append(f"Run started: {payload.get('run_start_time') or 'not recorded yet'}")
+    lines.append(f"Run finished: {payload.get('run_finish_time') or 'not recorded yet'}")
     estimate = payload.get("pre_run_estimate") or {}
     if isinstance(estimate, dict):
         lines += ["", "Estimated Runtime", "-----------------", f"Pre-run estimate: {estimate.get('range', 'not calculated')}"]

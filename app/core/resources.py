@@ -3,6 +3,7 @@ from __future__ import annotations
 import platform
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
@@ -23,6 +24,10 @@ class SystemResources:
     conda_available: bool
     mamba_available: bool
     snakemake_available: bool
+    # The WSL2 VM's RAM/CPU caps (0 if WSL is unavailable). The pipeline runs in
+    # WSL, so these — not the Windows host totals — are the binding constraints.
+    wsl_ram_gb: float = 0.0
+    wsl_cpus: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -31,6 +36,7 @@ class SystemResources:
 def detect_system(path: Path | None = None) -> SystemResources:
     disk_path = str(path or Path.cwd())
     vm = psutil.virtual_memory()
+    wsl_ram, wsl_cpus = _wsl_caps()
     return SystemResources(
         os=f"{psutil.WINDOWS and 'Windows' or 'POSIX'}",
         cpu_model=_cpu_name(),
@@ -44,12 +50,45 @@ def detect_system(path: Path | None = None) -> SystemResources:
         conda_available=shutil.which("conda") is not None,
         mamba_available=shutil.which("mamba") is not None,
         snakemake_available=shutil.which("snakemake") is not None,
+        wsl_ram_gb=wsl_ram,
+        wsl_cpus=wsl_cpus,
     )
 
 
+def _wsl_caps() -> tuple[float, int]:
+    """RAM (GB) and CPU count actually available inside the WSL2 VM, or (0, 0).
+
+    The pipeline runs in WSL, whose memory is capped (default ~50% of host) well
+    below the Windows total; recommending against the host RAM over-subscribes
+    memory-heavy jobs (STAR) and thrashes swap.
+    """
+    if not sys.platform.startswith("win"):
+        return 0.0, 0
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    # Labeled lines so a login-shell banner/MOTD can't shift the parse.
+    probe = "echo RAM=$(awk '/MemTotal/{print $2}' /proc/meminfo); echo CPU=$(nproc)"
+    try:
+        proc = subprocess.run(
+            ["wsl", "--", "bash", "-lc", probe],
+            capture_output=True, text=True, timeout=15, check=False, creationflags=flags,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 0.0, 0
+    ram_gb, cpus = 0.0, 0
+    for line in (proc.stdout or "").splitlines():
+        line = line.strip()
+        if line.startswith("RAM=") and line[4:].isdigit():
+            ram_gb = round(int(line[4:]) / (1024 ** 2), 1)  # kB -> GB
+        elif line.startswith("CPU=") and line[4:].isdigit():
+            cpus = int(line[4:])
+    return ram_gb, cpus
+
+
 def recommend_profile(system: SystemResources, profile: str = "balanced") -> dict[str, int | str]:
-    threads = max(system.logical_threads, 1)
-    ram = max(system.total_ram_gb, 1)
+    # The pipeline executes in WSL, so cap recommendations by the WSL2 limits when
+    # known — otherwise STAR's declared memory exceeds the VM and swaps.
+    threads = max(system.wsl_cpus or system.logical_threads, 1)
+    ram = max(system.wsl_ram_gb or system.total_ram_gb, 1)
     if profile == "low":
         total_threads = max(1, int(threads * 0.45))
         total_memory_gb = max(2, int(ram * 0.55))

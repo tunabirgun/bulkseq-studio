@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 import os
 import re
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -1049,6 +1049,9 @@ class MainWindow(QMainWindow):
 
     def _on_run_finished(self, code: int) -> None:
         self.elapsed_timer.stop()
+        # Record the wall-clock finish of an actual pipeline run for the timing report.
+        if getattr(self, "_run_start_wall", None) and not getattr(self, "_run_finish_wall", None):
+            self._run_finish_wall = datetime.now().isoformat(timespec="seconds")
         was_stop = self._stop_in_progress
         self._set_running_ui(False)
         self._stop_in_progress = False
@@ -1165,6 +1168,9 @@ class MainWindow(QMainWindow):
         self.svg_toggle.setToolTip("Show the vector SVG of the selected figure — crisp at any zoom. "
                                    "PNG is faster for very complex figures.")
         self.svg_toggle.setEnabled(SVG_AVAILABLE)
+        # Reserve enough width for the indicator + label so it is never clipped at
+        # the right edge of the controls row.
+        self.svg_toggle.setMinimumWidth(self.svg_toggle.sizeHint().width() + 12)
         self.svg_toggle.toggled.connect(lambda _=False: self._show_selected_figure(self.figure_pick.currentText()))
         fig_controls.addWidget(QLabel("Figure:"))
         fig_controls.addWidget(self.figure_pick, 1)
@@ -1359,6 +1365,10 @@ class MainWindow(QMainWindow):
         self.fig_dpi = QSpinBox()
         self.fig_dpi.setRange(72, 1200)
         self.fig_dpi.setValue(300)
+        self.fig_dim_unit = QComboBox()
+        self.fig_dim_unit.addItems(["in", "cm", "px"])
+        self._fig_dim_unit_prev = "in"
+        self.fig_dim_unit.currentTextChanged.connect(self._on_fig_unit_changed)
         save_style = QPushButton("Save figure style")
         save_style.clicked.connect(self._save_figure_style)
         form.addRow(self._info_label("Palette", "Colour scheme for all figures. Blue-Red is diverging; Viridis is colour-blind friendly; Greyscale prints well in mono."), self.fig_palette)
@@ -1370,11 +1380,51 @@ class MainWindow(QMainWindow):
         form.addRow(self._info_label("Volcano top-N labels", "How many of the most significant genes to label on the volcano plot. 0 = none."), self.fig_volcano_top)
         form.addRow(self._info_label("Heatmap top-N genes", "Number of top genes (by adjusted p) shown in the top-DEG heatmap."), self.fig_heatmap_top)
         form.addRow(self._info_label("PCA n-top genes", "Number of most-variable genes used to compute the PCA. Protocol default 500."), self.fig_pca_ntop)
-        form.addRow(self._info_label("Width (in)", "Saved figure width in inches (PNG and SVG)."), self.fig_width)
-        form.addRow(self._info_label("Height (in)", "Saved figure height in inches (PNG and SVG)."), self.fig_height)
-        form.addRow(self._info_label("DPI (PNG)", "Resolution for the raster PNG export. SVG is vector and unaffected. 300 is publication quality."), self.fig_dpi)
+        form.addRow(self._info_label("Size units", "Units for the width/height below. Pixels (px) are converted using the DPI."), self.fig_dim_unit)
+        form.addRow(self._info_label("Width", "Saved figure width (PNG and SVG), in the units selected above."), self.fig_width)
+        form.addRow(self._info_label("Height", "Saved figure height (PNG and SVG), in the units selected above."), self.fig_height)
+        form.addRow(self._info_label("DPI (PNG)", "Resolution for the raster PNG export. SVG is vector and unaffected. 300 is publication quality. Also converts px width/height to inches."), self.fig_dpi)
         form.addRow(save_style)
         return group
+
+    @staticmethod
+    def _dim_to_inches(value: float, unit: str, dpi: int) -> float:
+        if unit == "cm":
+            return value / 2.54
+        if unit == "px":
+            return value / max(dpi, 1)
+        return value
+
+    @staticmethod
+    def _dim_from_inches(inches: float, unit: str, dpi: int) -> float:
+        if unit == "cm":
+            return inches * 2.54
+        if unit == "px":
+            return inches * dpi
+        return inches
+
+    def _configure_dim_spins(self, unit: str) -> None:
+        for spin in (self.fig_width, self.fig_height):
+            if unit == "px":
+                spin.setDecimals(0); spin.setRange(72.0, 9000.0); spin.setSingleStep(50.0)
+            elif unit == "cm":
+                spin.setDecimals(2); spin.setRange(2.5, 76.0); spin.setSingleStep(0.5)
+            else:
+                spin.setDecimals(1); spin.setRange(1.0, 30.0); spin.setSingleStep(0.5)
+
+    def _on_fig_unit_changed(self, new_unit: str) -> None:
+        # Convert the displayed width/height so the physical size is preserved
+        # when the user switches units.
+        old_unit = getattr(self, "_fig_dim_unit_prev", "in")
+        if new_unit == old_unit:
+            return
+        dpi = self.fig_dpi.value()
+        w_in = self._dim_to_inches(self.fig_width.value(), old_unit, dpi)
+        h_in = self._dim_to_inches(self.fig_height.value(), old_unit, dpi)
+        self._configure_dim_spins(new_unit)
+        self.fig_width.setValue(self._dim_from_inches(w_in, new_unit, dpi))
+        self.fig_height.setValue(self._dim_from_inches(h_in, new_unit, dpi))
+        self._fig_dim_unit_prev = new_unit
 
     def _apply_figure_style(self) -> bool:
         # Copy the style controls into config and persist (no dialog). Returns
@@ -1392,9 +1442,13 @@ class MainWindow(QMainWindow):
         style.volcano_top_n = self.fig_volcano_top.value()
         style.heatmap_top_n = self.fig_heatmap_top.value()
         style.pca_ntop = self.fig_pca_ntop.value()
-        style.width_in = self.fig_width.value()
-        style.height_in = self.fig_height.value()
-        style.dpi = self.fig_dpi.value()
+        unit = self.fig_dim_unit.currentText()
+        dpi = self.fig_dpi.value()
+        # width_in/height_in stay the canonical inches the R export uses.
+        style.width_in = round(self._dim_to_inches(self.fig_width.value(), unit, dpi), 4)
+        style.height_in = round(self._dim_to_inches(self.fig_height.value(), unit, dpi), 4)
+        style.dpi = dpi
+        style.dimension_unit = unit  # type: ignore[assignment]
         self.manager.save_config(self.project_root, self.config)
         return True
 
@@ -1648,9 +1702,15 @@ class MainWindow(QMainWindow):
         self.fig_volcano_top.setValue(fig.volcano_top_n)
         self.fig_heatmap_top.setValue(fig.heatmap_top_n)
         self.fig_pca_ntop.setValue(fig.pca_ntop)
-        self.fig_width.setValue(fig.width_in)
-        self.fig_height.setValue(fig.height_in)
         self.fig_dpi.setValue(fig.dpi)
+        unit = getattr(fig, "dimension_unit", "in") or "in"
+        self.fig_dim_unit.blockSignals(True)
+        self.fig_dim_unit.setCurrentText(unit)
+        self.fig_dim_unit.blockSignals(False)
+        self._fig_dim_unit_prev = unit
+        self._configure_dim_spins(unit)
+        self.fig_width.setValue(self._dim_from_inches(fig.width_in, unit, fig.dpi))
+        self.fig_height.setValue(self._dim_from_inches(fig.height_in, unit, fig.dpi))
         goi_path = self.config.gene_sets.custom_gene_list
         if goi_path and self.project_root is not None and (self.project_root / goi_path).exists():
             self.goi_box.setPlainText((self.project_root / goi_path).read_text(encoding="utf-8").strip())
@@ -1885,11 +1945,17 @@ class MainWindow(QMainWindow):
         system, rec = result
         self.cores.setValue(int(rec["total_threads"]))
         self.ram.setValue(int(rec["total_memory_gb"]))
-        self.system_info_label.setText(
+        info = (
             f"{system.cpu_model} — {system.physical_cores} cores "
             f"({system.logical_threads} threads), {system.total_ram_gb:.0f} GB RAM, "
             f"{system.disk_free_gb:.0f} GB free disk."
         )
+        if getattr(system, "wsl_ram_gb", 0):
+            # The pipeline runs in WSL2, whose caps (not the host total) bound it.
+            info += (f"\nWSL2 sees {system.wsl_cpus} CPUs / {system.wsl_ram_gb:.0f} GB — "
+                     "recommendations use these limits. Raise them in %UserProfile%\\.wslconfig "
+                     "([wsl2] memory=, processors=) then 'wsl --shutdown' if you want more.")
+        self.system_info_label.setText(info)
         self.recommendation_label.setText(
             f"Recommended for the '{self.profile.currentText()}' profile: "
             f"{rec['total_threads']} cores and {rec['total_memory_gb']} GB RAM."
@@ -2068,6 +2134,11 @@ class MainWindow(QMainWindow):
             self._set_run_status(status, "#2C6FB6")
             self.phase_label.setText("Current step: starting...")
             self._run_start = time.monotonic()
+            # Wall-clock start for the timing report (only for an actual pipeline
+            # run, not a figures/GOI regeneration).
+            if mode in ("run", "resume", "recover"):
+                self._run_start_wall = datetime.now().isoformat(timespec="seconds")
+                self._run_finish_wall = None
             self.elapsed_timer.start(1000)
         else:
             self._set_run_status("Running..." if mode == "dry-run" else "Unlocking...", "#2C6FB6")
@@ -2082,7 +2153,11 @@ class MainWindow(QMainWindow):
         # generate the lightweight GUI-side summaries.
         if not (reports / "run_summary.txt").exists():
             estimate = estimate_runtime(self.config, self.metadata_table.to_dataframe()) if self.config else None
-            write_timing_summary(self.project_root, estimate)
+            write_timing_summary(
+                self.project_root, estimate,
+                run_started=getattr(self, "_run_start_wall", None),
+                run_finished=getattr(self, "_run_finish_wall", None),
+            )
             # Probe tool versions inside the WSL env (that is where they live);
             # a local probe would report every tool as unavailable.
             use_wsl = getattr(self, "use_wsl", None) is not None and self.use_wsl.isChecked()
