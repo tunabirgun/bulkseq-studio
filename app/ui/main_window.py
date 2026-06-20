@@ -109,6 +109,9 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
+        # The window owns its minimum so the size contract holds even under direct
+        # construction (tests), and the restore-geometry size guard has a real bound.
+        self.setMinimumSize(900, 640)
         # Light/dark toggle pinned to the top-right corner of the tab bar.
         self.theme_toggle = QToolButton()
         self.theme_toggle.setAutoRaise(True)
@@ -773,7 +776,7 @@ class MainWindow(QMainWindow):
         control_panel.setMaximumWidth(460)
         control_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         control_panel.addTab(self._scrollable(self._build_figure_style_group()), "Figure Style")
-        control_panel.addTab(self._build_goi_group(), "Genes of Interest")
+        control_panel.addTab(self._scrollable(self._build_goi_group()), "Genes of Interest")
 
         results_splitter = QSplitter(Qt.Orientation.Horizontal)
         results_splitter.setChildrenCollapsible(False)
@@ -916,10 +919,11 @@ class MainWindow(QMainWindow):
         form.addRow(save_style)
         return group
 
-    def _save_figure_style(self) -> None:
+    def _apply_figure_style(self) -> bool:
+        # Copy the style controls into config and persist (no dialog). Returns
+        # False if there is no open project.
         if self.config is None or self.project_root is None:
-            QMessageBox.warning(self, APP_NAME, "Create or open a project first.")
-            return
+            return False
         style = self.config.figures_style
         style.palette = self.fig_palette.currentText()  # type: ignore[assignment]
         style.point_size = self.fig_point_size.value()
@@ -935,15 +939,21 @@ class MainWindow(QMainWindow):
         style.height_in = self.fig_height.value()
         style.dpi = self.fig_dpi.value()
         self.manager.save_config(self.project_root, self.config)
+        return True
+
+    def _save_figure_style(self) -> None:
+        if not self._apply_figure_style():
+            QMessageBox.warning(self, APP_NAME, "Create or open a project first.")
+            return
         QMessageBox.information(self, APP_NAME, "Figure style saved. Click 'Regenerate figures' to apply it now.")
 
     def _regenerate_figures(self) -> None:
-        # Persist the current style, then re-render only the figure rules
-        # (no re-alignment / re-DESeq2) via the runner's "figures" mode.
+        # Persist the current style (no dialog), then re-render only the figure
+        # rules (no re-alignment / re-DESeq2) via the runner's "figures" mode.
         # Progress and status appear on the Run Monitor tab.
         if not self._require_project() or self.config is None:
             return
-        self._save_figure_style()
+        self._apply_figure_style()
         self._start_snakemake("figures")
 
     def _open_subpath(self, relative: str) -> None:

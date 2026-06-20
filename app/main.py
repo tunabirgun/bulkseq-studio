@@ -23,8 +23,7 @@ def main() -> int:
     icon_path = app_root() / "app" / "assets" / "icons" / "bulkseq.ico"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
-    window = MainWindow()
-    window.setMinimumSize(900, 640)   # logical px; Qt scales per-DPI automatically
+    window = MainWindow()             # minimum size is set in __init__
     window.resize(1280, 820)          # default when no stored geometry
     window._restore_geometry_state()  # overrides default only if a valid saved geometry exists
     window.show()
