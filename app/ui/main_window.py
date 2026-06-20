@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 import yaml
-from PySide6.QtCore import QThread, QTimer, Signal
+from PySide6.QtCore import QByteArray, QSettings, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -28,7 +28,9 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -62,6 +64,7 @@ from app.core.paths import data_path
 from app.ui.image_viewer import ImageViewer
 from app.ui.metadata_editor import MetadataTable
 from app.ui.readiness_dialog import ReadinessDialog
+from app.ui.theme import IMAGEVIEWER_BG, apply_theme
 
 
 class RunnerThread(QThread):
@@ -106,6 +109,13 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
+        # Light/dark toggle pinned to the top-right corner of the tab bar.
+        self.theme_toggle = QToolButton()
+        self.theme_toggle.setAutoRaise(True)
+        self.theme_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.theme_toggle.clicked.connect(self._toggle_theme)
+        self._sync_theme_toggle(str(QSettings().value("theme_mode", "light")))
+        self.tabs.setCornerWidget(self.theme_toggle, Qt.Corner.TopRightCorner)
         self._build_project_tab()
         self._build_input_tab()
         self._build_metadata_tab()
@@ -119,6 +129,61 @@ class MainWindow(QMainWindow):
         self._build_outputs_tab()
         if os.environ.get("BULKSEQ_SKIP_READINESS_DIALOG") != "1":
             QTimer.singleShot(500, self.show_readiness_dialog)
+
+    # ---- Theme toggle ------------------------------------------------------
+    def _current_theme_mode(self) -> str:
+        mode = str(QSettings().value("theme_mode", "light"))
+        return mode if mode in ("light", "dark") else "light"
+
+    def _toggle_theme(self) -> None:
+        new_mode = "dark" if self._current_theme_mode() == "light" else "light"
+        app = QApplication.instance()
+        if app is not None:
+            apply_theme(app, mode=new_mode)
+        QSettings().setValue("theme_mode", new_mode)
+        self._sync_theme_toggle(new_mode)
+        # A QGraphicsScene ignores widget QSS, so repaint the viewer background.
+        if hasattr(self, "figure_viewer"):
+            self.figure_viewer.update_theme(IMAGEVIEWER_BG.get(new_mode, IMAGEVIEWER_BG["light"]))
+
+    def _sync_theme_toggle(self, mode: str) -> None:
+        # Moon offers "go dark"; sun offers "go light".
+        self.theme_toggle.setText("☾" if mode == "light" else "☀")
+        self.theme_toggle.setToolTip("Switch to dark theme" if mode == "light" else "Switch to light theme")
+
+    # ---- Window geometry persistence --------------------------------------
+    def _save_geometry_state(self) -> None:
+        s = QSettings()
+        s.setValue("geometry", self.saveGeometry())
+        s.setValue("windowState", self.saveState())
+        for key in ("_outputs_main_splitter", "_outputs_results_splitter"):
+            sp = getattr(self, key, None)
+            if sp is not None:
+                s.setValue(f"outputs/{key}", sp.saveState())
+
+    def _restore_geometry_state(self) -> None:
+        s = QSettings()
+        geo = s.value("geometry", QByteArray())
+        if isinstance(geo, QByteArray) and not geo.isEmpty():
+            self.restoreGeometry(geo)
+            if self.width() < self.minimumWidth() or self.height() < self.minimumHeight():
+                self.resize(1280, 820)  # reject a saved size smaller than the minimum
+        st = s.value("windowState", QByteArray())
+        if isinstance(st, QByteArray) and not st.isEmpty():
+            self.restoreState(st)
+
+    def closeEvent(self, event) -> None:
+        self._save_geometry_state()
+        super().closeEvent(event)
+
+    def _scrollable(self, page: QWidget) -> QScrollArea:
+        # Wrap a tall form page so the window can shrink below the page's natural
+        # height; the page scrolls instead of forcing a large minimum window size.
+        scroll = QScrollArea()
+        scroll.setWidget(page)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        return scroll
 
     def _build_project_tab(self) -> None:
         page = QWidget()
@@ -145,7 +210,7 @@ class MainWindow(QMainWindow):
         layout.addRow(create, open_existing)
         layout.addRow(benchmark, readiness)
         layout.addRow("Status", self.project_status)
-        self.tabs.addTab(page, "Project")
+        self.tabs.addTab(self._scrollable(page), "Project")
 
     def _build_input_tab(self) -> None:
         page = QWidget()
@@ -168,7 +233,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(buttons)
         layout.addWidget(QLabel("Fetched from the ENA Portal API: layout, FASTQ URLs, read counts. Condition is set to 'unknown' for you to edit in the Metadata tab."))
         layout.addWidget(self.input_preview)
-        self.tabs.addTab(page, "Input Data")
+        self.tabs.addTab(self._scrollable(page), "Input Data")
 
     def _fetch_sra_metadata(self) -> None:
         if not self._require_project():
@@ -288,7 +353,7 @@ class MainWindow(QMainWindow):
         self.reference_details = QTextEdit()
         self.reference_details.setReadOnly(True)
         layout.addWidget(self.reference_details)
-        self.tabs.addTab(page, "Reference Manager")
+        self.tabs.addTab(self._scrollable(page), "Reference Manager")
 
     def _pick_reference_file(self, target: QLineEdit, filter_str: str) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select reference file", "", filter_str)
@@ -409,7 +474,7 @@ class MainWindow(QMainWindow):
         layout.addRow(self._info_label("log2FC threshold", "Minimum absolute log2 fold change for a gene to count as up/down-regulated. |log2FC| >= this AND padj < alpha. Default 1.0 (a 2-fold change)."), self.lfc_threshold)
         layout.addRow(QLabel("featureCounts strandedness is auto-inferred per protocol."))
         layout.addRow(save)
-        self.tabs.addTab(page, "Workflow Settings")
+        self.tabs.addTab(self._scrollable(page), "Workflow Settings")
 
     def _refresh_conditions(self) -> None:
         df = self.metadata_table.to_dataframe()
@@ -447,7 +512,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(QLabel("RAM GB"), 3, 0)
         layout.addWidget(self.ram, 3, 1)
         layout.addWidget(save, 4, 1)
-        self.tabs.addTab(page, "Resources")
+        self.tabs.addTab(self._scrollable(page), "Resources")
 
     def _build_runtime_tab(self) -> None:
         page = QWidget()
@@ -458,7 +523,7 @@ class MainWindow(QMainWindow):
         self.runtime_text.setReadOnly(True)
         layout.addWidget(estimate)
         layout.addWidget(self.runtime_text)
-        self.tabs.addTab(page, "Runtime Estimate")
+        self.tabs.addTab(self._scrollable(page), "Runtime Estimate")
 
     def _build_sanity_tab(self) -> None:
         page = QWidget()
@@ -476,7 +541,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(buttons)
         layout.addWidget(self.approve_review)
         layout.addWidget(self.sanity_text)
-        self.tabs.addTab(page, "Sanity Checks")
+        self.tabs.addTab(self._scrollable(page), "Sanity Checks")
 
     def _build_run_tab(self) -> None:
         page = QWidget()
@@ -634,11 +699,18 @@ class MainWindow(QMainWindow):
         self.report_text.setReadOnly(True)
         layout.addWidget(generate)
         layout.addWidget(self.report_text)
-        self.tabs.addTab(page, "Reports")
+        self.tabs.addTab(self._scrollable(page), "Reports")
 
     def _build_outputs_tab(self) -> None:
+        # Resizable workspace: a vertical splitter separates the table (top) from
+        # the figure area (bottom); inside the figure area a horizontal splitter
+        # separates the figure viewer (left) from the tabbed controls (right).
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        # Table picker row.
         controls = QHBoxLayout()
         self.output_table_pick = QComboBox()
         self.output_table_pick.addItems(
@@ -648,18 +720,35 @@ class MainWindow(QMainWindow):
         load.clicked.connect(self._load_output_table)
         open_results = QPushButton("Open results folder")
         open_results.clicked.connect(lambda: self._open_subpath("results"))
-        controls.addWidget(self.output_table_pick)
+        controls.addWidget(QLabel("Table:"))
+        controls.addWidget(self.output_table_pick, 1)
         controls.addWidget(load)
         controls.addWidget(open_results)
+        layout.addLayout(controls)
+
+        # --- Table panel (top of the vertical splitter) ---
+        table_panel = QWidget()
+        table_layout = QVBoxLayout(table_panel)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        table_layout.addWidget(QLabel("Table preview (first 200 rows)"))
         self.output_table = QTableWidget()
         self.output_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.output_table.setMaximumHeight(220)
+        self.output_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        table_layout.addWidget(self.output_table)
 
-        # Figure viewer: pick a figure, then zoom (wheel) / pan (drag) / fit.
+        # --- Figure panel (left of the horizontal splitter) ---
+        figure_panel = QWidget()
+        figure_layout = QVBoxLayout(figure_panel)
+        figure_layout.setContentsMargins(0, 0, 0, 0)
+        figure_layout.addWidget(QLabel("Figures — scroll to zoom, drag to pan"))
         fig_controls = QHBoxLayout()
         self.figure_pick = QComboBox()
         self.figure_pick.currentTextChanged.connect(self._show_selected_figure)
+        regen_figs = QPushButton("Regenerate figures")
+        regen_figs.setToolTip("Re-render figures with the current style. Does not re-run alignment or DESeq2. Progress shows on the Run Monitor tab.")
+        regen_figs.clicked.connect(self._regenerate_figures)
         refresh_figs = QPushButton("Refresh figures")
+        refresh_figs.setToolTip("Reload the figure list and image from disk.")
         refresh_figs.clicked.connect(self._refresh_gallery)
         fit_btn = QPushButton("Fit")
         fit_btn.clicked.connect(lambda: self.figure_viewer.fit())
@@ -667,19 +756,54 @@ class MainWindow(QMainWindow):
         actual_btn.clicked.connect(lambda: self.figure_viewer.actual_size())
         fig_controls.addWidget(QLabel("Figure:"))
         fig_controls.addWidget(self.figure_pick, 1)
+        fig_controls.addWidget(regen_figs)
         fig_controls.addWidget(refresh_figs)
         fig_controls.addWidget(fit_btn)
         fig_controls.addWidget(actual_btn)
+        figure_layout.addLayout(fig_controls)
         self.figure_viewer = ImageViewer()
+        self.figure_viewer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.figure_viewer.setMinimumSize(360, 320)
+        self.figure_viewer.update_theme(IMAGEVIEWER_BG.get(self._current_theme_mode(), IMAGEVIEWER_BG["light"]))
+        figure_layout.addWidget(self.figure_viewer, 1)
 
-        layout.addLayout(controls)
-        layout.addWidget(QLabel("Table preview (first 200 rows)"))
-        layout.addWidget(self.output_table)
-        layout.addWidget(QLabel("Figures — scroll to zoom, drag to pan"))
-        layout.addLayout(fig_controls)
-        layout.addWidget(self.figure_viewer, 1)
-        layout.addWidget(self._build_figure_style_group())
-        layout.addWidget(self._build_goi_group())
+        # --- Controls panel (right of the horizontal splitter): tabbed ---
+        control_panel = QTabWidget()
+        control_panel.setMinimumWidth(280)
+        control_panel.setMaximumWidth(460)
+        control_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        control_panel.addTab(self._scrollable(self._build_figure_style_group()), "Figure Style")
+        control_panel.addTab(self._build_goi_group(), "Genes of Interest")
+
+        results_splitter = QSplitter(Qt.Orientation.Horizontal)
+        results_splitter.setChildrenCollapsible(False)
+        results_splitter.setHandleWidth(6)
+        results_splitter.addWidget(figure_panel)
+        results_splitter.addWidget(control_panel)
+        results_splitter.setStretchFactor(0, 3)
+        results_splitter.setStretchFactor(1, 1)
+        results_splitter.setSizes([640, 340])
+        self._outputs_results_splitter = results_splitter
+
+        main_splitter = QSplitter(Qt.Orientation.Vertical)
+        main_splitter.setChildrenCollapsible(True)
+        main_splitter.setHandleWidth(8)
+        main_splitter.addWidget(table_panel)
+        main_splitter.addWidget(results_splitter)
+        main_splitter.setStretchFactor(0, 1)
+        main_splitter.setStretchFactor(1, 3)
+        main_splitter.setSizes([220, 560])
+        self._outputs_main_splitter = main_splitter
+
+        layout.addWidget(main_splitter, 1)
+
+        # Restore saved splitter positions, if any.
+        s = QSettings()
+        for key, sp in (("_outputs_main_splitter", main_splitter), ("_outputs_results_splitter", results_splitter)):
+            st = s.value(f"outputs/{key}", QByteArray())
+            if isinstance(st, QByteArray) and not st.isEmpty():
+                sp.restoreState(st)
+
         self.tabs.addTab(page, "Outputs")
 
     def _build_goi_group(self) -> QGroupBox:
@@ -688,7 +812,7 @@ class MainWindow(QMainWindow):
         v.addWidget(QLabel("Paste gene IDs (one per line) matching the count matrix (e.g. FBgn..., RefSeq locus tags, or symbols present in the GTF). On the next run, a focused z-scored heatmap and per-condition expression plots are produced."))
         self.goi_box = QTextEdit()
         self.goi_box.setPlaceholderText("One gene ID per line")
-        self.goi_box.setMaximumHeight(120)
+        self.goi_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         save = QPushButton("Save genes of interest")
         save.clicked.connect(self._save_goi)
         v.addWidget(self.goi_box)
@@ -811,7 +935,16 @@ class MainWindow(QMainWindow):
         style.height_in = self.fig_height.value()
         style.dpi = self.fig_dpi.value()
         self.manager.save_config(self.project_root, self.config)
-        QMessageBox.information(self, APP_NAME, "Figure style saved. Re-run the figures step to apply it.")
+        QMessageBox.information(self, APP_NAME, "Figure style saved. Click 'Regenerate figures' to apply it now.")
+
+    def _regenerate_figures(self) -> None:
+        # Persist the current style, then re-render only the figure rules
+        # (no re-alignment / re-DESeq2) via the runner's "figures" mode.
+        # Progress and status appear on the Run Monitor tab.
+        if not self._require_project() or self.config is None:
+            return
+        self._save_figure_style()
+        self._start_snakemake("figures")
 
     def _open_subpath(self, relative: str) -> None:
         if self.project_root is not None:
@@ -1289,10 +1422,10 @@ class MainWindow(QMainWindow):
         self._recovery_offered = False
         self._stop_in_progress = False
         self._set_running_ui(True)
-        if mode in ("run", "resume", "recover"):
+        if mode in ("run", "resume", "recover", "figures"):
             self.progress.setValue(0)
             self.progress.setStyleSheet("")
-            self._set_run_status("Running...", "#2C6FB6")
+            self._set_run_status("Regenerating figures..." if mode == "figures" else "Running...", "#2C6FB6")
             self._run_start = time.monotonic()
             self.elapsed_timer.start(1000)
         else:

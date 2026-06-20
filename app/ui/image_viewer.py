@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPainter, QPixmap
+from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 
 
@@ -36,6 +36,11 @@ class ImageViewer(QGraphicsView):
         if self._has_image:
             self._scene.setSceneRect(self._item.boundingRect())
             self.fit()
+
+    def update_theme(self, bg_hex: str) -> None:
+        # A QGraphicsScene does not inherit widget QSS, so set its background
+        # explicitly when the app theme changes.
+        self.setBackgroundBrush(QColor(bg_hex))
 
     def clear(self) -> None:
         self._item.setPixmap(QPixmap())

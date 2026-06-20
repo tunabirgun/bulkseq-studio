@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 
+from PySide6.QtCore import QSettings
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
@@ -14,13 +15,18 @@ from app.ui.theme import apply_theme
 
 def main() -> int:
     app = QApplication(sys.argv)
+    # One shared QSettings identity backs theme, window geometry, and splitter state.
+    app.setOrganizationName("BulkSeq")
     app.setApplicationName(APP_NAME)
-    apply_theme(app)
+    mode = QSettings().value("theme_mode", "light")
+    apply_theme(app, mode=mode if mode in ("light", "dark") else "light")
     icon_path = app_root() / "app" / "assets" / "icons" / "bulkseq.ico"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
     window = MainWindow()
-    window.resize(1280, 820)
+    window.setMinimumSize(900, 640)   # logical px; Qt scales per-DPI automatically
+    window.resize(1280, 820)          # default when no stored geometry
+    window._restore_geometry_state()  # overrides default only if a valid saved geometry exists
     window.show()
     # Self-test mode: construct the window, pump the event loop briefly, then exit.
     # Used to verify a packaged (frozen) build launches without import/path errors.

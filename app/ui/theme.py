@@ -1,81 +1,196 @@
 from __future__ import annotations
 
+from string import Template
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication, QLabel
 
-# Shared design-language palette. Kept as Python constants for status_color and the
-# pill helper; the same hex values are typed directly into APP_QSS below.
-PRIMARY = "#2C6FB6"
-PRIMARY_HOVER = "#2560A0"
-PRIMARY_PRESSED = "#1E4F86"
-BACKGROUND = "#F5F7FA"
-SURFACE = "#FFFFFF"
-BORDER = "#D7DEE6"
-TEXT = "#1F2933"
-MUTED_TEXT = "#6B7785"
-SUCCESS = "#2E7D32"
-WARNING = "#B26A00"
-ERROR = "#C0392B"
-REVIEW = "#6A1B9A"
+# Two palettes drive a light and a dark theme. Every token below has an entry in
+# both maps; the QSS template references them as $TOKEN so the literal { } braces
+# of the style sheet never collide with substitution (string.Template only
+# touches the $placeholders). All pairs target WCAG-AA contrast.
+
+LIGHT_PALETTE: dict[str, str] = {
+    "PRIMARY": "#2C6FB6",
+    "PRIMARY_HOVER": "#2560A0",
+    "PRIMARY_PRESSED": "#1E4F86",
+    "ON_PRIMARY": "#FFFFFF",
+    "PRIMARY_DISABLED_BG": "#9FBEDD",
+    "PRIMARY_DISABLED_TEXT": "#EAF1F8",
+    "BACKGROUND": "#F5F7FA",
+    "SURFACE": "#FFFFFF",
+    "BORDER": "#D7DEE6",
+    "TEXT": "#1F2933",
+    "MUTED_TEXT": "#6B7785",
+    "SELECTION_BG": "#2C6FB6",
+    "SELECTION_TEXT": "#FFFFFF",
+    "TAB_BG_INACTIVE": "#ECF0F5",
+    "TAB_BG_ACTIVE": "#FFFFFF",
+    "TAB_TEXT_INACTIVE": "#6B7785",
+    "TAB_HOVER_BG": "#F5F7FA",
+    "BUTTON_BG": "#FFFFFF",
+    "BUTTON_BG_HOVER": "#F0F4F9",
+    "BUTTON_BG_PRESSED": "#E4EBF3",
+    "BUTTON_BG_DISABLED": "#F0F2F5",
+    "BUTTON_TEXT_DISABLED": "#A4AEB9",
+    "BUTTON_BORDER_HOVER": "#C3CDD8",
+    "BUTTON_BORDER_PRESSED": "#B6C2CF",
+    "INPUT_BG": "#FFFFFF",
+    "INPUT_BG_READONLY": "#F7F9FB",
+    "INPUT_BG_DISABLED": "#F0F2F5",
+    "INPUT_TEXT_DISABLED": "#A4AEB9",
+    "INPUT_BORDER_DISABLED": "#E1E6EC",
+    "SPINBOX_BUTTON_BG": "#F0F4F9",
+    "SPINBOX_BUTTON_HOVER": "#E4EBF3",
+    "TABLE_BG": "#FFFFFF",
+    "TABLE_ALT_BG": "#F7F9FB",
+    "TABLE_GRIDLINE": "#E4E9EF",
+    "TABLE_SELECTION_BG": "#D9E6F4",
+    "TABLE_SELECTION_TEXT": "#1F2933",
+    "TABLE_HEADER_BG": "#ECF0F5",
+    "TABLE_HEADER_TEXT": "#6B7785",
+    "LIST_ITEM_HOVER_BG": "#F0F4F9",
+    "CHECKBOX_BORDER": "#C3CDD8",
+    "CHECKBOX_BG": "#FFFFFF",
+    "CHECKBOX_BG_DISABLED": "#F0F2F5",
+    "PROGRESSBAR_BG": "#ECF0F5",
+    "SCROLLBAR_HANDLE": "#C3CDD8",
+    "SCROLLBAR_HANDLE_HOVER": "#AEB9C6",
+    "TOOLTIP_BG": "#1F2933",
+    "TOOLTIP_TEXT": "#FFFFFF",
+    "SUCCESS": "#2E7D32",
+    "WARNING": "#B26A00",
+    "ERROR": "#C0392B",
+    "REVIEW": "#6A1B9A",
+}
+
+DARK_PALETTE: dict[str, str] = {
+    "PRIMARY": "#5BA3E0",
+    "PRIMARY_HOVER": "#4A8FCC",
+    "PRIMARY_PRESSED": "#3A6FA8",
+    "ON_PRIMARY": "#0E1A24",
+    "PRIMARY_DISABLED_BG": "#4A5F8A",
+    "PRIMARY_DISABLED_TEXT": "#A5BAD4",
+    "BACKGROUND": "#1A1D23",
+    "SURFACE": "#242A33",
+    "BORDER": "#3D4450",
+    "TEXT": "#E8EAED",
+    "MUTED_TEXT": "#9CA3AF",
+    "SELECTION_BG": "#3A4F6F",
+    "SELECTION_TEXT": "#E8EAED",
+    "TAB_BG_INACTIVE": "#323A45",
+    "TAB_BG_ACTIVE": "#242A33",
+    "TAB_TEXT_INACTIVE": "#9CA3AF",
+    "TAB_HOVER_BG": "#2F3640",
+    "BUTTON_BG": "#2F3640",
+    "BUTTON_BG_HOVER": "#3D4550",
+    "BUTTON_BG_PRESSED": "#4A5361",
+    "BUTTON_BG_DISABLED": "#1F2329",
+    "BUTTON_TEXT_DISABLED": "#6B7280",
+    "BUTTON_BORDER_HOVER": "#4A5361",
+    "BUTTON_BORDER_PRESSED": "#5A6370",
+    "INPUT_BG": "#2F3640",
+    "INPUT_BG_READONLY": "#1F2329",
+    "INPUT_BG_DISABLED": "#1A1D23",
+    "INPUT_TEXT_DISABLED": "#6B7280",
+    "INPUT_BORDER_DISABLED": "#2A3039",
+    "SPINBOX_BUTTON_BG": "#323A45",
+    "SPINBOX_BUTTON_HOVER": "#3D4550",
+    "TABLE_BG": "#242A33",
+    "TABLE_ALT_BG": "#2C3239",
+    "TABLE_GRIDLINE": "#3D4450",
+    "TABLE_SELECTION_BG": "#3A4F6F",
+    "TABLE_SELECTION_TEXT": "#E8EAED",
+    "TABLE_HEADER_BG": "#2F3640",
+    "TABLE_HEADER_TEXT": "#9CA3AF",
+    "LIST_ITEM_HOVER_BG": "#2F3640",
+    "CHECKBOX_BORDER": "#5A6370",
+    "CHECKBOX_BG": "#2F3640",
+    "CHECKBOX_BG_DISABLED": "#1A1D23",
+    "PROGRESSBAR_BG": "#2F3640",
+    "SCROLLBAR_HANDLE": "#5A6370",
+    "SCROLLBAR_HANDLE_HOVER": "#6B7280",
+    "TOOLTIP_BG": "#2F3640",
+    "TOOLTIP_TEXT": "#E8EAED",
+    "SUCCESS": "#4CAF50",
+    "WARNING": "#FFA726",
+    "ERROR": "#EF5350",
+    "REVIEW": "#BA68C8",
+}
+
+PALETTES = {"light": LIGHT_PALETTE, "dark": DARK_PALETTE}
+
+# Backwards-compatible module-level constants (the light values are the source).
+PRIMARY = LIGHT_PALETTE["PRIMARY"]
+PRIMARY_HOVER = LIGHT_PALETTE["PRIMARY_HOVER"]
+PRIMARY_PRESSED = LIGHT_PALETTE["PRIMARY_PRESSED"]
+BACKGROUND = LIGHT_PALETTE["BACKGROUND"]
+SURFACE = LIGHT_PALETTE["SURFACE"]
+BORDER = LIGHT_PALETTE["BORDER"]
+TEXT = LIGHT_PALETTE["TEXT"]
+MUTED_TEXT = LIGHT_PALETTE["MUTED_TEXT"]
+SUCCESS = LIGHT_PALETTE["SUCCESS"]
+WARNING = LIGHT_PALETTE["WARNING"]
+ERROR = LIGHT_PALETTE["ERROR"]
+REVIEW = LIGHT_PALETTE["REVIEW"]
 
 BASE_FONT_FAMILY = "Segoe UI"
 BASE_FONT_POINT_SIZE = 10
 
-# Status string -> accent hex. Keys match the exact readiness status strings.
+# Status string -> accent hex, per mode.
 _STATUS_COLORS = {
-    "PASS": SUCCESS,
-    "WARNING": WARNING,
-    "REVIEW_REQUIRED": REVIEW,
-    "FAIL": ERROR,
+    "light": {"PASS": "#2E7D32", "WARNING": "#B26A00", "REVIEW_REQUIRED": "#6A1B9A", "FAIL": "#C0392B"},
+    "dark": {"PASS": "#4CAF50", "WARNING": "#FFA726", "REVIEW_REQUIRED": "#BA68C8", "FAIL": "#EF5350"},
 }
 
-# Light tint background per status for status pills.
+# Light tint background per status for status pills, per mode.
 _STATUS_PILL_BG = {
-    "PASS": "#E6F2E6",
-    "WARNING": "#FBEEDA",
-    "REVIEW_REQUIRED": "#F1E5F6",
-    "FAIL": "#F8E3E0",
+    "light": {"PASS": "#E6F2E6", "WARNING": "#FBEEDA", "REVIEW_REQUIRED": "#F1E5F6", "FAIL": "#F8E3E0"},
+    "dark": {"PASS": "#1B3D1B", "WARNING": "#4D3A1A", "REVIEW_REQUIRED": "#3D1F4D", "FAIL": "#4D1A1A"},
 }
 
+# Image-viewer scene background per mode (a QGraphicsScene ignores widget QSS).
+IMAGEVIEWER_BG = {"light": "#F5F7FA", "dark": "#1A1D23"}
 
-# Complete application style sheet. Plain triple-quoted string with hard-coded hex so
-# Qt's literal { } braces never collide with Python string formatting.
-APP_QSS = """
+
+# Complete application style template. Literal { } braces are QSS; $TOKEN markers
+# are substituted from the active palette by _generate_qss().
+_QSS_TEMPLATE = Template("""
 /* ---- Window / dialog surfaces ---- */
 QMainWindow, QDialog {
-    background-color: #F5F7FA;
-    color: #1F2933;
+    background-color: $BACKGROUND;
+    color: $TEXT;
 }
 
 QWidget {
-    color: #1F2933;
+    color: $TEXT;
     font-family: "Segoe UI";
     font-size: 10pt;
 }
 
 /* ---- Labels ---- */
 QLabel {
-    color: #1F2933;
+    color: $TEXT;
     background: transparent;
 }
 
 QLabel:disabled {
-    color: #6B7785;
+    color: $MUTED_TEXT;
 }
 
 /* ---- Tabs ---- */
 QTabWidget::pane {
-    border: 1px solid #D7DEE6;
+    border: 1px solid $BORDER;
     border-radius: 6px;
-    background-color: #FFFFFF;
+    background-color: $SURFACE;
     top: -1px;
 }
 
 QTabBar::tab {
-    background-color: #ECF0F5;
-    color: #6B7785;
-    border: 1px solid #D7DEE6;
+    background-color: $TAB_BG_INACTIVE;
+    color: $TAB_TEXT_INACTIVE;
+    border: 1px solid $BORDER;
     border-bottom: none;
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
@@ -84,14 +199,14 @@ QTabBar::tab {
 }
 
 QTabBar::tab:selected {
-    background-color: #FFFFFF;
-    color: #1F2933;
-    border-color: #D7DEE6;
+    background-color: $TAB_BG_ACTIVE;
+    color: $TEXT;
+    border-color: $BORDER;
 }
 
 QTabBar::tab:hover:!selected {
-    background-color: #F5F7FA;
-    color: #1F2933;
+    background-color: $TAB_HOVER_BG;
+    color: $TEXT;
 }
 
 QTabBar::tab:!selected {
@@ -100,88 +215,101 @@ QTabBar::tab:!selected {
 
 /* ---- Buttons ---- */
 QPushButton {
-    background-color: #FFFFFF;
-    color: #1F2933;
-    border: 1px solid #D7DEE6;
+    background-color: $BUTTON_BG;
+    color: $TEXT;
+    border: 1px solid $BORDER;
     border-radius: 6px;
     padding: 6px 14px;
     min-height: 18px;
 }
 
 QPushButton:hover {
-    background-color: #F0F4F9;
-    border-color: #C3CDD8;
+    background-color: $BUTTON_BG_HOVER;
+    border-color: $BUTTON_BORDER_HOVER;
 }
 
 QPushButton:pressed {
-    background-color: #E4EBF3;
-    border-color: #B6C2CF;
+    background-color: $BUTTON_BG_PRESSED;
+    border-color: $BUTTON_BORDER_PRESSED;
 }
 
 QPushButton:disabled {
-    background-color: #F0F2F5;
-    color: #A4AEB9;
-    border-color: #E1E6EC;
+    background-color: $BUTTON_BG_DISABLED;
+    color: $BUTTON_TEXT_DISABLED;
+    border-color: $INPUT_BORDER_DISABLED;
 }
 
 QPushButton:focus {
-    border-color: #2C6FB6;
+    border-color: $PRIMARY;
 }
 
 /* Primary-action buttons: QPushButton[primary="true"] */
 QPushButton[primary="true"] {
-    background-color: #2C6FB6;
-    color: #FFFFFF;
-    border: 1px solid #2C6FB6;
+    background-color: $PRIMARY;
+    color: $ON_PRIMARY;
+    border: 1px solid $PRIMARY;
     font-weight: 600;
 }
 
 QPushButton[primary="true"]:hover {
-    background-color: #2560A0;
-    border-color: #2560A0;
+    background-color: $PRIMARY_HOVER;
+    border-color: $PRIMARY_HOVER;
 }
 
 QPushButton[primary="true"]:pressed {
-    background-color: #1E4F86;
-    border-color: #1E4F86;
+    background-color: $PRIMARY_PRESSED;
+    border-color: $PRIMARY_PRESSED;
 }
 
 QPushButton[primary="true"]:disabled {
-    background-color: #9FBEDD;
-    color: #EAF1F8;
-    border-color: #9FBEDD;
+    background-color: $PRIMARY_DISABLED_BG;
+    color: $PRIMARY_DISABLED_TEXT;
+    border-color: $PRIMARY_DISABLED_BG;
 }
 
 QPushButton[primary="true"]:focus {
-    border-color: #1E4F86;
+    border-color: $PRIMARY_PRESSED;
+}
+
+/* ---- Tool buttons (e.g. theme toggle, info buttons) ---- */
+QToolButton {
+    color: $TEXT;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 4px;
+}
+
+QToolButton:hover {
+    background-color: $BUTTON_BG_HOVER;
 }
 
 /* ---- Text inputs and combo/spin ---- */
 QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {
-    background-color: #FFFFFF;
-    color: #1F2933;
-    border: 1px solid #D7DEE6;
+    background-color: $INPUT_BG;
+    color: $TEXT;
+    border: 1px solid $BORDER;
     border-radius: 6px;
     padding: 5px 8px;
-    selection-background-color: #2C6FB6;
-    selection-color: #FFFFFF;
+    selection-background-color: $SELECTION_BG;
+    selection-color: $SELECTION_TEXT;
 }
 
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus,
 QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {
-    border: 1px solid #2C6FB6;
+    border: 1px solid $PRIMARY;
 }
 
 QLineEdit:disabled, QTextEdit:disabled, QPlainTextEdit:disabled,
 QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {
-    background-color: #F0F2F5;
-    color: #A4AEB9;
-    border-color: #E1E6EC;
+    background-color: $INPUT_BG_DISABLED;
+    color: $INPUT_TEXT_DISABLED;
+    border-color: $INPUT_BORDER_DISABLED;
 }
 
 QLineEdit:read-only, QTextEdit:read-only, QPlainTextEdit:read-only {
-    background-color: #F7F9FB;
-    color: #1F2933;
+    background-color: $INPUT_BG_READONLY;
+    color: $TEXT;
 }
 
 /* ---- ComboBox subcontrols and popup ---- */
@@ -189,7 +317,7 @@ QComboBox::drop-down {
     subcontrol-origin: padding;
     subcontrol-position: top right;
     width: 22px;
-    border-left: 1px solid #D7DEE6;
+    border-left: 1px solid $BORDER;
     border-top-right-radius: 6px;
     border-bottom-right-radius: 6px;
 }
@@ -198,13 +326,13 @@ QComboBox::drop-down {
    its image here produced an empty square on some Qt builds. */
 
 QComboBox QAbstractItemView {
-    background-color: #FFFFFF;
-    color: #1F2933;
-    border: 1px solid #D7DEE6;
+    background-color: $SURFACE;
+    color: $TEXT;
+    border: 1px solid $BORDER;
     border-radius: 6px;
     outline: none;
-    selection-background-color: #2C6FB6;
-    selection-color: #FFFFFF;
+    selection-background-color: $SELECTION_BG;
+    selection-color: $SELECTION_TEXT;
 }
 
 /* ---- SpinBox subcontrols ---- */
@@ -212,23 +340,23 @@ QSpinBox::up-button, QDoubleSpinBox::up-button {
     subcontrol-origin: border;
     subcontrol-position: top right;
     width: 18px;
-    border-left: 1px solid #D7DEE6;
+    border-left: 1px solid $BORDER;
     border-top-right-radius: 6px;
-    background-color: #F0F4F9;
+    background-color: $SPINBOX_BUTTON_BG;
 }
 
 QSpinBox::down-button, QDoubleSpinBox::down-button {
     subcontrol-origin: border;
     subcontrol-position: bottom right;
     width: 18px;
-    border-left: 1px solid #D7DEE6;
+    border-left: 1px solid $BORDER;
     border-bottom-right-radius: 6px;
-    background-color: #F0F4F9;
+    background-color: $SPINBOX_BUTTON_BG;
 }
 
 QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
 QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
-    background-color: #E4EBF3;
+    background-color: $SPINBOX_BUTTON_HOVER;
 }
 
 /* Spin arrows are left to the Fusion style (set in apply_theme) so they render
@@ -236,8 +364,8 @@ QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
 
 /* ---- Group boxes (cards) ---- */
 QGroupBox {
-    background-color: #FFFFFF;
-    border: 1px solid #D7DEE6;
+    background-color: $SURFACE;
+    border: 1px solid $BORDER;
     border-radius: 6px;
     margin-top: 14px;
     padding: 10px 8px 8px 8px;
@@ -249,19 +377,19 @@ QGroupBox::title {
     subcontrol-position: top left;
     left: 10px;
     padding: 0px 4px;
-    color: #1F2933;
+    color: $TEXT;
     background-color: transparent;
 }
 
 /* ---- Tables ---- */
 QTableWidget, QTableView {
-    background-color: #FFFFFF;
-    alternate-background-color: #F7F9FB;
-    gridline-color: #E4E9EF;
-    border: 1px solid #D7DEE6;
+    background-color: $TABLE_BG;
+    alternate-background-color: $TABLE_ALT_BG;
+    gridline-color: $TABLE_GRIDLINE;
+    border: 1px solid $BORDER;
     border-radius: 6px;
-    selection-background-color: #D9E6F4;
-    selection-color: #1F2933;
+    selection-background-color: $TABLE_SELECTION_BG;
+    selection-color: $TABLE_SELECTION_TEXT;
     outline: none;
 }
 
@@ -270,22 +398,22 @@ QTableWidget::item, QTableView::item {
 }
 
 QTableWidget::item:selected, QTableView::item:selected {
-    background-color: #D9E6F4;
-    color: #1F2933;
+    background-color: $TABLE_SELECTION_BG;
+    color: $TABLE_SELECTION_TEXT;
 }
 
 QHeaderView {
-    background-color: #ECF0F5;
+    background-color: $TABLE_HEADER_BG;
     border: none;
 }
 
 QHeaderView::section {
-    background-color: #ECF0F5;
-    color: #6B7785;
+    background-color: $TABLE_HEADER_BG;
+    color: $TABLE_HEADER_TEXT;
     padding: 6px 8px;
     border: none;
-    border-right: 1px solid #D7DEE6;
-    border-bottom: 1px solid #D7DEE6;
+    border-right: 1px solid $BORDER;
+    border-bottom: 1px solid $BORDER;
     font-weight: 600;
 }
 
@@ -294,16 +422,16 @@ QHeaderView::section:last {
 }
 
 QTableCornerButton::section {
-    background-color: #ECF0F5;
+    background-color: $TABLE_HEADER_BG;
     border: none;
-    border-right: 1px solid #D7DEE6;
-    border-bottom: 1px solid #D7DEE6;
+    border-right: 1px solid $BORDER;
+    border-bottom: 1px solid $BORDER;
 }
 
 /* ---- List widgets ---- */
 QListWidget {
-    background-color: #FFFFFF;
-    border: 1px solid #D7DEE6;
+    background-color: $SURFACE;
+    border: 1px solid $BORDER;
     border-radius: 6px;
     outline: none;
     padding: 2px;
@@ -315,17 +443,17 @@ QListWidget::item {
 }
 
 QListWidget::item:selected {
-    background-color: #2C6FB6;
-    color: #FFFFFF;
+    background-color: $SELECTION_BG;
+    color: $SELECTION_TEXT;
 }
 
 QListWidget::item:hover:!selected {
-    background-color: #F0F4F9;
+    background-color: $LIST_ITEM_HOVER_BG;
 }
 
 /* ---- Checkboxes ---- */
 QCheckBox {
-    color: #1F2933;
+    color: $TEXT;
     spacing: 7px;
     background: transparent;
 }
@@ -333,47 +461,56 @@ QCheckBox {
 QCheckBox::indicator {
     width: 16px;
     height: 16px;
-    border: 1px solid #C3CDD8;
+    border: 1px solid $CHECKBOX_BORDER;
     border-radius: 4px;
-    background-color: #FFFFFF;
+    background-color: $CHECKBOX_BG;
 }
 
 QCheckBox::indicator:hover {
-    border-color: #2C6FB6;
+    border-color: $PRIMARY;
 }
 
 QCheckBox::indicator:checked {
-    background-color: #2C6FB6;
-    border-color: #2C6FB6;
+    background-color: $PRIMARY;
+    border-color: $PRIMARY;
 }
 
 QCheckBox::indicator:checked:hover {
-    background-color: #2560A0;
-    border-color: #2560A0;
+    background-color: $PRIMARY_HOVER;
+    border-color: $PRIMARY_HOVER;
 }
 
 QCheckBox::indicator:disabled {
-    border-color: #E1E6EC;
-    background-color: #F0F2F5;
+    border-color: $INPUT_BORDER_DISABLED;
+    background-color: $CHECKBOX_BG_DISABLED;
 }
 
 QCheckBox:disabled {
-    color: #A4AEB9;
+    color: $BUTTON_TEXT_DISABLED;
 }
 
 /* ---- Progress bar ---- */
 QProgressBar {
-    background-color: #ECF0F5;
-    border: 1px solid #D7DEE6;
+    background-color: $PROGRESSBAR_BG;
+    border: 1px solid $BORDER;
     border-radius: 6px;
     text-align: center;
-    color: #1F2933;
+    color: $TEXT;
     min-height: 16px;
 }
 
 QProgressBar::chunk {
-    background-color: #2C6FB6;
+    background-color: $PRIMARY;
     border-radius: 5px;
+}
+
+/* ---- Splitter handles ---- */
+QSplitter::handle {
+    background-color: $BORDER;
+}
+
+QSplitter::handle:hover {
+    background-color: $PRIMARY;
 }
 
 /* ---- Scroll bars ---- */
@@ -384,14 +521,14 @@ QScrollBar:vertical {
 }
 
 QScrollBar::handle:vertical {
-    background-color: #C3CDD8;
+    background-color: $SCROLLBAR_HANDLE;
     border-radius: 5px;
     min-height: 28px;
     margin: 2px;
 }
 
 QScrollBar::handle:vertical:hover {
-    background-color: #AEB9C6;
+    background-color: $SCROLLBAR_HANDLE_HOVER;
 }
 
 QScrollBar:horizontal {
@@ -401,14 +538,14 @@ QScrollBar:horizontal {
 }
 
 QScrollBar::handle:horizontal {
-    background-color: #C3CDD8;
+    background-color: $SCROLLBAR_HANDLE;
     border-radius: 5px;
     min-width: 28px;
     margin: 2px;
 }
 
 QScrollBar::handle:horizontal:hover {
-    background-color: #AEB9C6;
+    background-color: $SCROLLBAR_HANDLE_HOVER;
 }
 
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
@@ -423,51 +560,61 @@ QScrollBar::add-page, QScrollBar::sub-page {
     background: none;
 }
 
+/* ---- Scroll areas ---- */
+QScrollArea {
+    background: transparent;
+    border: none;
+}
+
 /* ---- Tooltips ---- */
 QToolTip {
-    background-color: #1F2933;
-    color: #FFFFFF;
+    background-color: $TOOLTIP_BG;
+    color: $TOOLTIP_TEXT;
     border: none;
     padding: 4px 7px;
     border-radius: 4px;
 }
-"""
+""")
 
 
-def apply_theme(app: QApplication) -> None:
-    """Apply the BulkSeq Studio light theme: Fusion style, base font, style sheet.
+def _generate_qss(palette: dict[str, str]) -> str:
+    # .substitute (strict) raises KeyError on a missing token, so a typo fails
+    # loudly at startup rather than shipping a malformed style sheet.
+    return _QSS_TEMPLATE.substitute(palette)
 
-    Fusion renders combo/spin sub-control arrows as crisp native triangles and
-    is consistent across platforms, avoiding the empty-square arrows that the
-    native Windows style showed under a heavy style sheet.
+
+def apply_theme(app: QApplication, mode: str = "light") -> None:
+    """Apply the BulkSeq Studio theme (light or dark): Fusion style, base font, QSS.
+
+    Fusion renders combo/spin sub-control arrows as crisp native triangles and is
+    consistent across platforms, avoiding the empty-square arrows that the native
+    Windows style showed under a heavy style sheet. Re-call to switch themes live.
     """
+    if mode not in PALETTES:
+        mode = "light"
     try:
         app.setStyle("Fusion")
     except Exception:
         pass
     font = QFont(BASE_FONT_FAMILY, BASE_FONT_POINT_SIZE)
     app.setFont(font)
-    app.setStyleSheet(APP_QSS)
+    app.setStyleSheet(_generate_qss(PALETTES[mode]))
 
 
-def status_color(status: str) -> str:
-    """Return the accent hex for a readiness status string.
+def status_color(status: str, mode: str = "light") -> str:
+    """Return the accent hex for a readiness status string in the active mode.
 
     Unknown statuses fall back to muted text so callers never KeyError.
     """
-    return _STATUS_COLORS.get(status, MUTED_TEXT)
+    return _STATUS_COLORS.get(mode, _STATUS_COLORS["light"]).get(status, PALETTES.get(mode, LIGHT_PALETTE)["MUTED_TEXT"])
 
 
-def status_pill(status: str, text: str | None = None) -> QLabel:
-    """Build a tinted, rounded status pill QLabel.
-
-    The tint is applied via inline setStyleSheet on the label so it overrides the
-    global QLabel rule. ``text`` defaults to the status string itself.
-    """
+def status_pill(status: str, text: str | None = None, mode: str = "light") -> QLabel:
+    """Build a tinted, rounded status pill QLabel for the active mode."""
     label = QLabel(text if text is not None else status)
     label.setAlignment(Qt.AlignCenter)
-    fg = status_color(status)
-    bg = _STATUS_PILL_BG.get(status, "#EDEFF2")
+    fg = status_color(status, mode)
+    bg = _STATUS_PILL_BG.get(mode, _STATUS_PILL_BG["light"]).get(status, "#EDEFF2")
     label.setStyleSheet(
         "QLabel {"
         f" color: {fg};"
