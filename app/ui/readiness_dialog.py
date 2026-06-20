@@ -445,11 +445,29 @@ class ReadinessDialog(QDialog):
 
     # -- refresh / state mapping ------------------------------------------
 
+    def closeEvent(self, event) -> None:
+        # Stop background threads before the widget is destroyed, or their signals
+        # fire into deleted slots ("underlying C/C++ object has been deleted").
+        for thread, stopper in (
+            (self._check_thread, "quit"),
+            (self.install_thread, "quit"),
+            (self.wsl_install_thread, "stop"),
+        ):
+            if thread is not None and thread.isRunning():
+                getattr(thread, stopper)()
+                thread.wait(5000)
+        super().closeEvent(event)
+
     def refresh(self) -> None:
         # Run the blocking probes off-thread so the dialog opens instantly and the
         # busy bar moves while WSL/conda are queried, instead of freezing.
         if self._check_thread is not None and self._check_thread.isRunning():
             return
+        # Drop a stale connection so a thread finishing in the gap can't double-fire.
+        try:
+            self._check_thread.done.disconnect(self._on_check_done)
+        except (RuntimeError, TypeError, AttributeError):
+            pass
         self.check_progress.setVisible(True)
         self.summary_label.setText("Checking requirements…")
         self.refresh_button.setEnabled(False)

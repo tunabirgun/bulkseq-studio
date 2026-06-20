@@ -113,15 +113,13 @@ class MainWindow(QMainWindow):
         # construction (tests), and the restore-geometry size guard has a real bound.
         self.setMinimumSize(900, 640)
         # Light/dark mode toggle: a labelled button in the top-right corner.
-        corner = QWidget()
-        corner_row = QHBoxLayout(corner)
-        corner_row.setContentsMargins(0, 0, 8, 0)
         self.theme_toggle = QPushButton()
         self.theme_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.theme_toggle.setMinimumWidth(110)  # stable width across Dark/Light label swap
+        self.theme_toggle.setFlat(False)
         self.theme_toggle.clicked.connect(self._toggle_theme)
         self._sync_theme_toggle(str(QSettings().value("theme_mode", "light")))
-        corner_row.addWidget(self.theme_toggle)
-        self.tabs.setCornerWidget(corner, Qt.Corner.TopRightCorner)
+        self.tabs.setCornerWidget(self.theme_toggle, Qt.Corner.TopRightCorner)
         self._build_project_tab()
         self._build_input_tab()
         self._build_metadata_tab()
@@ -160,10 +158,10 @@ class MainWindow(QMainWindow):
     def _sync_theme_toggle(self, mode: str) -> None:
         # The button is labelled with the mode it switches TO.
         if mode == "light":
-            self.theme_toggle.setText("🌙  Dark Mode")
+            self.theme_toggle.setText("Dark Mode")
             self.theme_toggle.setToolTip("Switch to the dark theme")
         else:
-            self.theme_toggle.setText("☀  Light Mode")
+            self.theme_toggle.setText("Light Mode")
             self.theme_toggle.setToolTip("Switch to the light theme")
 
     # ---- Window geometry persistence --------------------------------------
@@ -216,7 +214,7 @@ class MainWindow(QMainWindow):
         benchmark.clicked.connect(self._create_benchmark_project)
         open_existing = QPushButton("Open Existing Project")
         open_existing.clicked.connect(self._open_project)
-        readiness = QPushButton("Check Setup")
+        readiness = QPushButton("Check Environment")
         readiness.clicked.connect(self.show_readiness_dialog)
         self.project_status = QTextEdit()
         self.project_status.setReadOnly(True)
@@ -1391,8 +1389,12 @@ class MainWindow(QMainWindow):
             ref.annotation_format = "gtf"
             note = "Reference selected; the pipeline will download and index it on run."
         else:
+            # Clear local paths too, or a lingering custom path makes the run gate
+            # falsely pass while the (URL-based) download rules have nothing to fetch.
             ref.genome_fasta_url = None
             ref.annotation_gtf_url = None
+            ref.genome_fasta = None
+            ref.annotation_file = None
             note = (
                 "This preset has no ready GTF (see notes). Use the Custom Reference "
                 "section below to supply your own genome FASTA + annotation."

@@ -69,10 +69,11 @@ result <- tryCatch({
   run_ora <- function(genes, path) {
     genes <- genes[!is.na(genes)]
     if (length(genes) < 1) return(0)
-    # qvalueCutoff = 0.20 is clusterProfiler's enrichGO default; kept as-is.
+    # pvalueCutoff follows the user's deseq2.alpha (default 0.05); qvalueCutoff is
+    # left at clusterProfiler's enrichGO default (0.20), independent of alpha.
     ego <- tryCatch(enrichGO(gene = genes, universe = universe, OrgDb = orgdb,
                     keyType = "ENTREZID", ont = "BP", pAdjustMethod = "BH",
-                    pvalueCutoff = 0.05, qvalueCutoff = 0.20,
+                    pvalueCutoff = alpha, qvalueCutoff = 0.20,
                     minGSSize = 10, maxGSSize = 500, readable = TRUE),
                     error = function(e) NULL)
     n <- if (is.null(ego)) 0 else nrow(as.data.frame(ego))
@@ -94,7 +95,7 @@ result <- tryCatch({
   # Gene-set size limits and BH correction are gseGO's defaults, stated explicitly.
   gse <- tryCatch(
     gseGO(geneList = gene_list, OrgDb = orgdb, ont = "BP", keyType = "ENTREZID",
-          pvalueCutoff = 0.05, pAdjustMethod = "BH", minGSSize = 10, maxGSSize = 500,
+          pvalueCutoff = alpha, pAdjustMethod = "BH", minGSSize = 10, maxGSSize = 500,
           eps = 0, seed = TRUE, verbose = FALSE),
     error = function(e) NULL)
   n_gsea <- 0
