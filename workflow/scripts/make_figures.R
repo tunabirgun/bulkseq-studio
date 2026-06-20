@@ -20,7 +20,12 @@ dds <- obj$dds; res <- obj$res; resLFC <- obj$resLFC; vsd <- obj$vsd
 out <- snakemake@output
 
 # ---- Style parameters (NULL-safe) ------------------------------------------
-style <- tryCatch(snakemake@config[["figures_style"]], error = function(e) NULL)
+# Read from the rule's declared params (a Snakemake rerun trigger); fall back to
+# config for older invocations that did not pass the style as a param.
+style <- tryCatch(snakemake@params[["style"]], error = function(e) NULL)
+if (is.null(style) || !is.list(style)) {
+  style <- tryCatch(snakemake@config[["figures_style"]], error = function(e) NULL)
+}
 if (is.null(style) || !is.list(style)) style <- list()
 getp <- function(key, default) {
   v <- style[[key]]

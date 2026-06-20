@@ -54,6 +54,15 @@ def build_snakemake_args(config: AppConfig, mode: str = "run") -> list[str]:
         args.insert(1, "--rerun-incomplete")
     elif mode == "unlock":
         args = ["snakemake", "--snakefile", "workflow/Snakefile", "--unlock", "--configfile", "config/config.yaml"]
+    elif mode == "figures":
+        # Re-render only the figure rules with the current style; --forcerun
+        # forces just these against the up-to-date DAG, so nothing re-aligns or
+        # re-runs DESeq2. The GOI target is requested only when it exists as a
+        # rule (custom_gene_list set), matching the `if _GOI:` rule guard.
+        targets = ["figures"]
+        if config.gene_sets.custom_gene_list:
+            targets.append("genes_of_interest")
+        args += ["--forcerun", *targets]
     return args
 
 

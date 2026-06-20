@@ -16,6 +16,11 @@ rule figures:
         volcano_svg="results/figures/volcano.svg",
         heatmap_png="results/figures/top_deg_heatmap.png",
         heatmap_svg="results/figures/top_deg_heatmap.svg",
+    params:
+        # Declared so a figure-style change is a Snakemake rerun trigger (the
+        # script reads style from params, not config). Without this, editing the
+        # style in the GUI would not re-render the figures on the next run.
+        style=config.get("figures_style", {}),
     benchmark:
         "benchmarks/figures.tsv"
     log:
@@ -44,6 +49,8 @@ if _GOI:
             expr_svg="results/figures/goi_expression.svg",
             csv="results/genes_of_interest/goi_normalized_counts.csv",
             report="results/genes_of_interest/goi_report.txt",
+        params:
+            style=config.get("figures_style", {}),
         benchmark:
             "benchmarks/genes_of_interest.tsv"
         log:

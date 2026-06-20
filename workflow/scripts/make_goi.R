@@ -17,7 +17,8 @@ obj <- readRDS(snakemake@input[["rds"]])
 dds <- obj$dds; vsd <- obj$vsd
 out <- snakemake@output
 
-style <- tryCatch(snakemake@config[["figures_style"]], error = function(e) NULL)
+style <- tryCatch(snakemake@params[["style"]], error = function(e) NULL)
+if (is.null(style) || !is.list(style)) style <- tryCatch(snakemake@config[["figures_style"]], error = function(e) NULL)
 if (!is.list(style)) style <- list()
 base_size <- tryCatch(as.numeric(style[["base_font_size"]]), error = function(e) 12)
 if (length(base_size) != 1 || is.na(base_size)) base_size <- 12
