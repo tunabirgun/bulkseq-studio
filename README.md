@@ -23,9 +23,13 @@ The default **STAR → featureCounts → DESeq2 → enrichment → figures** rou
 
 ## Screenshots
 
-| Outputs (light) | Outputs (dark) |
-| --- | --- |
-| ![Light theme](docs/screenshot-outputs-light.png) | ![Dark theme](docs/screenshot-outputs-dark.png) |
+From data to results in one window — bring in a study, configure the analysis, run it while watching progress by phase, then browse tables and publication figures:
+
+![BulkSeq Studio workflow, light theme](docs/screenshot-overview-light.png)
+
+The same, in dark mode:
+
+![BulkSeq Studio workflow, dark theme](docs/screenshot-overview-dark.png)
 
 ## Requirements
 
