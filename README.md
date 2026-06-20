@@ -9,14 +9,15 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 ## Features
 
 - **End-to-end pipeline** — ENA/SRA FASTQ download → FastQC/MultiQC → fastp trimming → STAR alignment (genome-size-aware index) → featureCounts → DESeq2 → GO/KEGG enrichment → figures, orchestrated by Snakemake.
-- **No command line needed** — a tabbed GUI walks you from project setup through metadata, reference selection, a sanity-check gate, the run monitor, and an interactive Outputs browser.
+- **No command line needed** — a tabbed GUI walks you from project setup through metadata, reference selection, a sanity-check gate, and an interactive Outputs browser. The Run Monitor shows a plain-language current phase (Downloading, Aligning, DESeq2, …) above the raw log.
+- **Sizes itself to your machine** — resource recommendations are based on the WSL2 VM's real RAM/CPU caps (not the Windows host total), so memory-heavy steps like STAR don't over-subscribe and thrash. A runtime estimate is shown before you start.
 - **Fetch a study from its accession** — paste SRR/SRP/PRJ accessions and the ENA metadata fetch builds the sample sheet (layout, FASTQ URLs, read counts) for you.
 - **Start from a count matrix** — already have counts? Upload a gene × sample table (featureCounts output or any TSV/CSV) to skip download/QC/alignment and go straight to DESeq2 → figures → enrichment.
 - **GEO microarray (GSE)** — enter a GEO series accession and the app ingests the normalized intensities (GEOquery series matrix, or RMA from raw Affymetrix CEL), maps probes to gene symbols, and runs **limma** differential expression — then the same figures, enrichment, and genes-of-interest. RNA-seq series are redirected to the SRA box.
 - **Differential expression with DESeq2** — apeglm shrinkage, VST, configurable significance thresholds (`alpha`, `|log2FC|`), and separate up- and down-regulated gene lists.
 - **Directional functional enrichment** — GO over-representation and GSEA (clusterProfiler) run separately on the up- and down-regulated sets, gated by organism so unsupported species skip cleanly instead of producing wrong results.
-- **Genes of interest** — supply a gene list to get a focused z-scored heatmap and per-condition expression panel.
-- **Publication figures** — PCA, sample-distance, MA, volcano, and top-DEG heatmap, each exported as PNG (raster) and SVG (vector). A built-in **Figure Style** editor (palette, fonts, sizes, point size, label counts, dimensions, DPI) re-renders figures with **Regenerate figures** — without re-running alignment or DESeq2.
+- **Genes of interest** — supply a gene list to get a focused z-scored heatmap and per-condition expression panel, generated from an existing run without re-analysis.
+- **Publication figures** — PCA, sample-distance, MA, volcano, and top-DEG heatmap, each exported as PNG (raster) and SVG (vector, with a crisp in-app preview toggle). A built-in **Figure Style** editor (palette, fonts, sizes, point size, label counts, dimensions in in/cm/px, DPI) re-renders figures with **Regenerate figures** — without re-running alignment or DESeq2.
 - **Reproducibility built in** — every run records a default-vs-used parameter diff, software versions, an environment lock hash, the reference accession/MD5, and R `sessionInfo`. The conda environment is pinned in `workflow/envs/bulkseq.lock.yaml`.
 - **Light & dark themes**, a resizable Outputs workspace, and a window that remembers its size.
 
