@@ -73,14 +73,20 @@ if (identical(source_kind, "affy_cel")) {
 
 # ---- 2. log2 transform decision (GEO2R quantile heuristic) -------------------
 applied_log2 <- FALSE
+log2_reason <- ""
 if (identical(log2_opt, "yes")) {
   exprs_mat[exprs_mat <= 0] <- NA
   exprs_mat <- log2(exprs_mat); applied_log2 <- TRUE
+  log2_reason <- "forced (log2_transform=yes)"
 } else if (identical(log2_opt, "no") || already_log2) {
   applied_log2 <- FALSE
-} else {  # auto
+  log2_reason <- if (already_log2) "skipped (RMA output already log2)" else "skipped (log2_transform=no)"
+} else {  # auto: GEO2R quantile heuristic; record the decision so a misclassified
+          # distribution (bimodal / zero-inflated) can be diagnosed afterwards.
   qx <- as.numeric(stats::quantile(exprs_mat, c(0, 0.25, 0.5, 0.75, 0.99, 1.0), na.rm = TRUE))
   log_c <- (qx[5] > 100) || (qx[6] - qx[1] > 50 && qx[2] > 0)
+  log2_reason <- sprintf("auto: max=%.1f, 99%%=%.1f, Q1=%.1f, range=%.1f -> %s",
+                         qx[6], qx[5], qx[2], qx[6] - qx[1], if (log_c) "log2 applied" else "no log2")
   if (log_c) {
     exprs_mat[exprs_mat <= 0] <- NA
     exprs_mat <- log2(exprs_mat); applied_log2 <- TRUE
@@ -89,9 +95,10 @@ if (identical(log2_opt, "yes")) {
 
 n_probes <- nrow(exprs_mat)
 norm_messages <- list(list(status = "PASS",
-  message = sprintf("%d probes x %d samples; %s; log2 %s.",
+  message = sprintf("%d probes x %d samples; %s; log2 %s [%s].",
                     n_probes, ncol(exprs_mat), norm_method,
-                    if (applied_log2) "applied" else (if (already_log2) "already (RMA)" else "not needed"))))
+                    if (applied_log2) "applied" else (if (already_log2) "already (RMA)" else "not needed"),
+                    log2_reason)))
 write_check(out_norm_check, "11_normalization_qc", "PASS", norm_messages)
 
 # ---- 3. Probe -> gene symbol (synonym resolver) -----------------------------
@@ -149,11 +156,19 @@ gene_mat <- em[keep, , drop = FALSE]
 rownames(gene_mat) <- sym_ord[keep]
 gene_mat <- gene_mat[order(rownames(gene_mat)), , drop = FALSE]
 
+# Drop genes whose collapsed intensity is mostly missing (e.g. all probes were
+# <= 0 and became NA at log2); limma would otherwise return NaN stats that are
+# silently filtered downstream, hiding the data-quality loss.
+na_frac <- rowMeans(is.na(gene_mat))
+n_dropped_na <- sum(na_frac > 0.5)
+gene_mat <- gene_mat[na_frac <= 0.5, , drop = FALSE]
+
 map_status <- if (map_rate >= 0.5) "PASS" else "REVIEW_REQUIRED"
+drop_note <- if (n_dropped_na > 0) sprintf(" Dropped %d gene(s) with >50%% missing intensity.", n_dropped_na) else ""
 write_check(out_map_check, "12_probe_mapping_qc", map_status,
             list(list(status = map_status,
-                      message = sprintf("%.1f%% of probes mapped to a symbol; %d unique genes.",
-                                        100 * map_rate, nrow(gene_mat)))))
+                      message = sprintf("%.1f%% of probes mapped to a symbol; %d unique genes.%s",
+                                        100 * map_rate, nrow(gene_mat), drop_note))))
 
 # ---- 5. Validate / order sample columns against samples.tsv -----------------
 samples <- read.delim(samples_file, stringsAsFactors = FALSE)

@@ -382,10 +382,15 @@ class MainWindow(QMainWindow):
         self.config.enrichment.keytype = "SYMBOL"
         self.manager.save_config(self.project_root, self.config)
         self._apply_input_mode_ui()
+        organism_note = (organism or "organism not reported")
+        enrichment_warn = "" if organism else (
+            "\n\nNote: no organism was found in the series matrix, so functional enrichment "
+            "may be skipped. Set the organism on the Reference Manager tab if you want enrichment.")
         self.input_preview.setPlainText(
-            f"Microarray mode: {gse} ({platform}), {len(samples)} samples — {organism}.\n\n"
+            f"Microarray mode: {gse} ({platform}), {len(samples)} samples — {organism_note}.\n\n"
             "Next: assign each sample a condition on the Metadata tab, set the contrast on "
-            "Workflow Settings, then Start Run. Alignment and a reference genome are not needed.")
+            "Workflow Settings, then Start Run. Alignment and a reference genome are not needed."
+            + enrichment_warn)
         self.statusBar().showMessage(f"Loaded {gse}: {len(samples)} microarray samples.", 8000)
 
     def _apply_input_mode_ui(self) -> None:
@@ -447,6 +452,11 @@ class MainWindow(QMainWindow):
             self.metadata_table.load_dataframe(samples)
             self.config.input.type = "count_matrix"
             self.config.input.count_matrix = "config/counts_matrix.txt"
+            # Clear a microarray-only SYMBOL keytype so it can't carry into a
+            # count-matrix run (whose ids are usually ENSEMBL); fall back to the
+            # organism mapping.
+            if self.config.enrichment.keytype == "SYMBOL":
+                self.config.enrichment.keytype = None
             self.manager.save_config(self.project_root, self.config)
         finally:
             QApplication.restoreOverrideCursor()

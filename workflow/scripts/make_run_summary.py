@@ -110,6 +110,8 @@ def main() -> int:
         "project": project,
         "input": config.get("input", {}),
         "reference": config.get("reference", {}),
+        "microarray": config.get("microarray", {}),
+        "enrichment": config.get("enrichment", {}),
         "workflow": config.get("workflow", {}),
         "deseq2": config.get("deseq2", {}),
         "fastp": config.get("fastp", {}),
@@ -142,17 +144,32 @@ def render_text(p: dict) -> str:
               f"Workflow commit: {p.get('workflow_git_commit') or 'n/a (packaged build)'}",
               f"Environment lock md5: {p.get('environment_lock_md5') or 'n/a'}",
               f"Snakemake: {p['snakemake_version']}", ""]
-    ref = p["reference"]
-    lines += ["Reference", "---------",
-              f"Organism: {ref.get('organism_name')}  Strain: {ref.get('strain')}",
-              f"Source/release: {ref.get('source')} {ref.get('release', '')}",
-              f"Genome MD5: {ref.get('genome_md5')}  Annotation MD5: {ref.get('annotation_md5')}", ""]
+    input_type = p.get("input", {}).get("type")
+    is_microarray = input_type == "microarray"
+    if is_microarray:
+        # No reference genome in microarray mode; document the GEO source instead.
+        ma = p.get("microarray", {})
+        enr = p.get("enrichment", {})
+        lines += ["Microarray Source", "-----------------",
+                  f"Organism: {p['reference'].get('organism_name')}",
+                  f"GEO series: {ma.get('gse_accession')}  Platform: {ma.get('platform')}",
+                  f"Source: {ma.get('source')}  Normalization: {ma.get('normalization')}  log2: {ma.get('log2_transform')}",
+                  f"Enrichment keytype: {enr.get('keytype') or '(organism default)'}", ""]
+    else:
+        ref = p["reference"]
+        lines += ["Reference", "---------",
+                  f"Organism: {ref.get('organism_name')}  Strain: {ref.get('strain')}",
+                  f"Source/release: {ref.get('source')} {ref.get('release', '')}",
+                  f"Genome MD5: {ref.get('genome_md5')}  Annotation MD5: {ref.get('annotation_md5')}", ""]
     de = p["deseq2"]
+    # limma (microarray) has no shrinkage; DESeq2 does.
+    de_method = ("limma (no LFC shrinkage)" if is_microarray
+                 else f"DESeq2, shrinkage: {de.get('shrinkage_method')}")
     lines += ["Design", "------",
               f"Design formula: {de.get('design_formula')}",
               f"Reference level: {de.get('reference_level')}",
               f"Contrasts: {json.dumps(de.get('contrasts', []))}",
-              f"Alpha: {de.get('alpha')}  Shrinkage: {de.get('shrinkage_method')}", ""]
+              f"Alpha: {de.get('alpha')}  Method: {de_method}", ""]
     lines += ["Selected modules", "----------------", json.dumps(p["workflow"], indent=2), ""]
     lines += ["Customized / Non-standard Parameters", "------------------------------------"]
     if p["customized_parameters"]:

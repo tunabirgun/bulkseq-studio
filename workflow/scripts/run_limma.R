@@ -124,6 +124,9 @@ se <- SummarizedExperiment(assays = list(intensity = expr_mat),
                            colData = S4Vectors::DataFrame(coldata))
 vsd <- DESeqTransform(se)
 dds <- vsd  # same object; make_goi guards counts(dds) -> assay(vsd) for microarray
+# Invariant the figure scripts rely on: res is in the same row order as the
+# expression matrix (sort.by="none"). Fail loudly here if a refactor breaks it.
+stopifnot(identical(rownames(SummarizedExperiment::assay(vsd)), rownames(res)))
 
 # ---- Outputs (match run_deseq2.R) -------------------------------------------
 res_out <- res

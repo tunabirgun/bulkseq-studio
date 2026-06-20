@@ -96,15 +96,22 @@ def fetch_geo_series(gse: str, timeout: int = 120) -> dict[str, object]:
             "title": titles[i] if i < len(titles) else "",
             "source_name": sources[i] if i < len(sources) else "",
         })
-    # Each !Sample_characteristics_ch1 line becomes a column; "key: value" pairs
-    # are split so a column is named by its characteristic (e.g. genotype).
+    # GEO characteristics are "key: value" pairs, but different samples can carry
+    # different keys on the same line (heterogeneous submissions). Route each pair
+    # to a column named by ITS key so nothing is conflated/lost; samples missing a
+    # key simply leave that column blank.
+    def _slug(name: str, fallback: str) -> str:
+        s = "".join(c if c.isalnum() else "_" for c in name).strip("_").lower()
+        return s or fallback
     for idx, vals in enumerate(characteristics):
-        keys = {v.split(":", 1)[0].strip().lower() for v in vals if ":" in v}
-        col = next(iter(keys)) if len(keys) == 1 else f"characteristic_{idx + 1}"
-        col = "".join(c if c.isalnum() else "_" for c in col).strip("_") or f"characteristic_{idx + 1}"
+        fallback = f"characteristic_{idx + 1}"
         for i in range(len(rows)):
             v = vals[i] if i < len(vals) else ""
-            rows[i][col] = v.split(":", 1)[1].strip() if ":" in v else v
+            if ":" in v:
+                key, _, val = v.partition(":")
+                rows[i][_slug(key, fallback)] = val.strip()
+            elif v:
+                rows[i][fallback] = v
 
     samples = pd.DataFrame(rows)
     return {

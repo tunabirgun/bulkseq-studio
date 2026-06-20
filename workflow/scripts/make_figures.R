@@ -179,9 +179,14 @@ p_vol <- ggplot(vol, aes(log2FoldChange, neglog10padj)) +
 save_gg(p_vol, out[["volcano_png"]], out[["volcano_svg"]])
 
 # ---- Top-DEG heatmap --------------------------------------------------------
-n_top <- min(heatmap_top, nrow(res))
-top <- head(order(res$padj), n_top)
-hm <- assay(vsd)[top, , drop = FALSE]
+# Drop NA padj first (order() puts NA last, so a naive head() would pull in NA
+# rows), then index assay(vsd) BY NAME so the heatmap is robust to any row-order
+# difference between res and vsd.
+ok <- which(!is.na(res$padj))
+ord <- ok[order(res$padj[ok])]
+n_top <- min(heatmap_top, length(ord))
+top_names <- rownames(res)[head(ord, n_top)]
+hm <- assay(vsd)[top_names, , drop = FALSE]
 hm <- t(scale(t(hm)))
 ann <- as.data.frame(colData(dds)[, group_var, drop = FALSE])
 ph2 <- pheatmap(hm, scale = "none", annotation_col = ann, show_rownames = TRUE,

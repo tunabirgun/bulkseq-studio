@@ -12,6 +12,7 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 - **No command line needed** — a tabbed GUI walks you from project setup through metadata, reference selection, a sanity-check gate, the run monitor, and an interactive Outputs browser.
 - **Fetch a study from its accession** — paste SRR/SRP/PRJ accessions and the ENA metadata fetch builds the sample sheet (layout, FASTQ URLs, read counts) for you.
 - **Start from a count matrix** — already have counts? Upload a gene × sample table (featureCounts output or any TSV/CSV) to skip download/QC/alignment and go straight to DESeq2 → figures → enrichment.
+- **GEO microarray (GSE)** — enter a GEO series accession and the app ingests the normalized intensities (GEOquery series matrix, or RMA from raw Affymetrix CEL), maps probes to gene symbols, and runs **limma** differential expression — then the same figures, enrichment, and genes-of-interest. RNA-seq series are redirected to the SRA box.
 - **Differential expression with DESeq2** — apeglm shrinkage, VST, configurable significance thresholds (`alpha`, `|log2FC|`), and separate up- and down-regulated gene lists.
 - **Directional functional enrichment** — GO over-representation and GSEA (clusterProfiler) run separately on the up- and down-regulated sets, gated by organism so unsupported species skip cleanly instead of producing wrong results.
 - **Genes of interest** — supply a gene list to get a focused z-scored heatmap and per-condition expression panel.
@@ -19,7 +20,7 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 - **Reproducibility built in** — every run records a default-vs-used parameter diff, software versions, an environment lock hash, the reference accession/MD5, and R `sessionInfo`. The conda environment is pinned in `workflow/envs/bulkseq.lock.yaml`.
 - **Light & dark themes**, a resizable Outputs workspace, and a window that remembers its size.
 
-The default **STAR → featureCounts → DESeq2 → enrichment → figures** route is fully implemented and benchmark-validated (see [Validation](#validation)). HISAT2, Salmon/tximport, SortMeRNA, htseq-count, and edgeR/limma-voom are defined as alternatives but are not the validated path.
+The default **STAR → featureCounts → DESeq2 → enrichment → figures** route (and the count-matrix and **GEO microarray → limma** routes) are implemented and validated (see [Validation](#validation)). HISAT2, Salmon/tximport, SortMeRNA, htseq-count, and edgeR/limma-voom for RNA-seq are defined as alternatives but are not the validated path.
 
 ## Screenshots
 
@@ -62,7 +63,7 @@ python -m app.main
 ## Quick start
 
 1. **Project** — create a project folder (the app scaffolds `config/`, the Snakemake `workflow/`, and a provenance manifest).
-2. **Input Data** — select FASTQ files, or paste SRR/SRP/PRJ accessions and click *Fetch metadata & build samples*. Already have counts? Click *Use a Count Matrix (skip alignment)* to start from a gene × sample table; the pipeline skips download/QC/alignment and runs DESeq2 → figures → enrichment.
+2. **Input Data** — select FASTQ files, or paste SRR/SRP/PRJ accessions and click *Fetch metadata & build samples*. Already have counts? Click *Use a Count Matrix (skip alignment)*. For a **GEO microarray** study, enter a GSE accession and click *Fetch a GEO microarray series* — the pipeline ingests the intensities and runs limma → figures → enrichment.
 3. **Metadata** — assign each sample a `condition` and check the layout (paired/single) in the editable table.
 4. **Reference Manager** — pick an organism from the catalog (Ensembl / NCBI RefSeq) or import a custom genome + annotation.
 5. **Workflow Settings** — set the DESeq2 design and contrast, `alpha`, and `|log2FC|` threshold.
