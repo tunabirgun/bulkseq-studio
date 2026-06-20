@@ -1,7 +1,10 @@
 [project]
 name = "bulkseq-studio"
-version = "0.1.0"
+version = "0.3.1"
 description = "Windows GUI project manager for reproducible bulk RNA-seq Snakemake workflows"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Tuna Birgun" }]
 requires-python = ">=3.11"
 dependencies = [
   "PySide6>=6.7",
