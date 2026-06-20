@@ -1,130 +1,114 @@
 # BulkSeq Studio
 
-BulkSeq Studio is a Windows-native PySide6 project manager for reproducible, reference-based bulk RNA-seq analysis. It generates plain Snakemake projects that can be run from the GUI or from a terminal.
+A Windows desktop app for reproducible, reference-based **bulk RNA-seq analysis** — from raw FASTQ/SRA reads to differential expression, functional enrichment, and publication figures, with no command line required.
 
-The scaffold follows the attached protocol, "Bulk Transcriptomics: From Raw SRA Reads to Differential Expression, Functional Enrichment, and Figures": FASTQ/SRA input, FastQC/MultiQC, fastp, optional rRNA removal, STAR alignment, featureCounts, DESeq2, enrichment, figures, sanity checks, provenance, and timing reports.
+BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://snakemake.github.io/) pipeline running inside WSL2. You point it at your data and reference, and it produces a count matrix, DESeq2 results, GO/KEGG enrichment, and figures — while recording the exact parameters, tool versions, and environment so a run can be reproduced later.
 
-## Current State
+![BulkSeq Studio — Outputs workspace](docs/screenshot-outputs-light.png)
 
-Implemented:
+## Features
 
-- PySide6 GUI shell with project, input, metadata, reference, workflow, resource, runtime, sanity, run monitor, and report tabs.
-- Project folder creation with manifest/config/sample files (and a bundled `default_config.yaml` for the provenance diff).
-- FASTQ pairing detection and editable metadata table.
-- Metadata/config/reference/resource validation helpers; design-formula variable checks.
-- Reference catalog and custom reference manifest/checksum scaffolding.
-- Snakemake command builder (runs via `micromamba run -n bulkseq` under WSL) and non-blocking runner.
-- **A real, runnable pipeline**: ENA FASTQ download (with an SRA/ENA metadata fetch that builds the sample sheet from accessions), FastQC/MultiQC, fastp, STAR index (genome-size-aware) and alignment, strandedness inference, featureCounts, DESeq2 (apeglm shrinkage, VST), and PCA/MA/volcano/sample-distance/top-DEG figures (PNG + SVG). Validated end-to-end on the pasilla subset (Drosophila, Ensembl) and a Fusarium graminearum spore-vs-mycelium dataset (PH-1, NCBI RefSeq).
-- Configurable significance thresholds (alpha, |log2FC|) with separate up- and down-regulated gene lists, each carried into directional GO ORA and GSEA enrichment (clusterProfiler), gated by organism so unsupported organisms skip cleanly.
-- Genes-of-interest analysis: a focused z-scored heatmap and per-condition expression panel for a user-supplied gene list.
-- A light/dark theme toggle (top-right corner, choice persisted), a scalable window (saved geometry, scroll-wrapped forms), and a redesigned Outputs page with user-resizable table and figure panels plus a "Regenerate figures" action that re-renders with the current style without re-running alignment or DESeq2.
-- Report generators for run summary (default-vs-used parameter diff, environment lock md5, software versions), timing summary, sanity checks, and R `sessionInfo`.
-- Tests for metadata detection/validation, config generation/round-trip, reference validation, resources, runtime estimation, provenance diff, WSL path translation, and the WSL command builder.
-- Curated pasilla paired-end subset benchmark project template under `examples/benchmarks/pasilla_paired_subset`.
+- **End-to-end pipeline** — ENA/SRA FASTQ download → FastQC/MultiQC → fastp trimming → STAR alignment (genome-size-aware index) → featureCounts → DESeq2 → GO/KEGG enrichment → figures, orchestrated by Snakemake.
+- **No command line needed** — a tabbed GUI walks you from project setup through metadata, reference selection, a sanity-check gate, the run monitor, and an interactive Outputs browser.
+- **Fetch a study from its accession** — paste SRR/SRP/PRJ accessions and the ENA metadata fetch builds the sample sheet (layout, FASTQ URLs, read counts) for you.
+- **Differential expression with DESeq2** — apeglm shrinkage, VST, configurable significance thresholds (`alpha`, `|log2FC|`), and separate up- and down-regulated gene lists.
+- **Directional functional enrichment** — GO over-representation and GSEA (clusterProfiler) run separately on the up- and down-regulated sets, gated by organism so unsupported species skip cleanly instead of producing wrong results.
+- **Genes of interest** — supply a gene list to get a focused z-scored heatmap and per-condition expression panel.
+- **Publication figures** — PCA, sample-distance, MA, volcano, and top-DEG heatmap, each exported as PNG (raster) and SVG (vector). A built-in **Figure Style** editor (palette, fonts, sizes, point size, label counts, dimensions, DPI) re-renders figures with **Regenerate figures** — without re-running alignment or DESeq2.
+- **Reproducibility built in** — every run records a default-vs-used parameter diff, software versions, an environment lock hash, the reference accession/MD5, and R `sessionInfo`. The conda environment is pinned in `workflow/envs/bulkseq.lock.yaml`.
+- **Light & dark themes**, a resizable Outputs workspace, and a window that remembers its size.
 
-The STAR -> featureCounts -> DESeq2 -> enrichment -> figures route is fully implemented, for both paired-end and single-end layouts (paired-end is the benchmark-validated path). HISAT2, Salmon/tximport, SortMeRNA, BBMap, htseq-count, and edgeR/limma-voom remain alternative scaffolding/TODOs.
+The default **STAR → featureCounts → DESeq2 → enrichment → figures** route is fully implemented and benchmark-validated (see [Validation](#validation)). HISAT2, Salmon/tximport, SortMeRNA, htseq-count, and edgeR/limma-voom are defined as alternatives but are not the validated path.
+
+## Screenshots
+
+| Outputs (light) | Outputs (dark) |
+| --- | --- |
+| ![Light theme](docs/screenshot-outputs-light.png) | ![Dark theme](docs/screenshot-outputs-dark.png) |
+
+## Requirements
+
+- Windows 10/11 (x64).
+- [WSL2](https://learn.microsoft.com/windows/wsl/install) with a Linux distribution. The app can enable WSL2 and install the bioinformatics environment for you from its setup screen.
+- ~10 GB free disk for the toolchain and reference indices; 16 GB+ RAM recommended (STAR alignment is the memory-intensive step).
+
+The bioinformatics tools (Snakemake, STAR, featureCounts, samtools, fastp, FastQC, MultiQC, DESeq2, clusterProfiler, …) install into a pinned micromamba environment inside WSL2; the Windows side only runs the GUI.
 
 ## Install
 
-End users have two options for the prebuilt app (see `BUILD.md` to produce them):
-- **Installer** — `BulkSeqStudio-Setup-<version>.exe`, a per-user install (no admin).
-- **Portable** — `BulkSeqStudio-Portable-<version>.zip`; unzip anywhere and
-  double-click `BulkSeq Studio\BulkSeqStudio.exe`. No installation.
+Two prebuilt options (build them with `scripts\build_release.ps1`, or grab them from a release):
 
-To run from source for development:
+- **Installer** — `BulkSeqStudio-Setup-<version>.exe`. Per-user install (no administrator rights); launch from the Start Menu.
+- **Portable** — `BulkSeqStudio-Portable-<version>.zip`. Unzip anywhere and double-click `BulkSeq Studio\BulkSeqStudio.exe`. No installation.
+
+On first launch the app runs a readiness check and can install the WSL2 environment for you. Only enabling WSL itself asks for elevation (Windows requires it); normal use does not run as administrator.
+
+### Run from source (development)
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-```
-
-Bioinformatics execution is expected under WSL2/Linux or an existing conda/mamba environment.
-
-On startup, BulkSeq Studio runs a readiness check. It can install missing Python GUI/core packages from `requirements.txt`, open an Administrator PowerShell setup for WSL2, and install a WSL bioinformatics environment.
-
-Use **Install/Repair Core WSL Env** first. It installs micromamba plus Snakemake, SRA download tooling, FastQC, MultiQC, fastp, STAR, featureCounts/subread, samtools, pandas, and PyYAML — the tools the default STAR → featureCounts → DESeq2 route uses. Use **Install Full R/DESeq2 Stack** afterward to add the R/Bioconductor packages (DESeq2, apeglm, clusterProfiler, and dependencies). Alternative aligners/quantifiers (HISAT2, Salmon) are defined in `workflow/envs/` and pulled per-rule only if selected; they are not part of the core install.
-
-The app does not run as Administrator during normal use. Only the WSL enable/install action asks for elevation because Windows requires it.
-
-If WSL setup fails or closes unexpectedly, inspect:
-
-```text
-scripts\logs\wsl_setup.log
-```
-
-If the WSL bioinformatics package setup is unclear, inspect:
-
-```text
-scripts\logs\wsl_bioenv_install.log
-```
-
-Manual WSL/micromamba setup sketch (what the installer does):
-
-```bash
-# core CLI tools (STAR route)
-micromamba create -y -n bulkseq -f workflow/envs/bulkseq_core.yaml
-# add the R/Bioconductor stack for DESeq2, enrichment, figures
-micromamba env update -y -n bulkseq -f workflow/envs/bulkseq_full.yaml
-```
-
-The solved environment is recorded in `workflow/envs/bulkseq.lock.yaml`.
-
-## Launch
-
-End users install via the packaged installer (`installer_output\BulkSeqStudio-Setup-0.1.0.exe`,
-built with `scripts\build_release.ps1` — see `BUILD.md`) and launch from the Start Menu.
-
-For development, run from source:
-
-```powershell
 python -m app.main
 ```
 
-If installed as a package, the GUI and benchmark helper are also available as:
+## Quick start
 
-```powershell
-bulkseq-studio
-bulkseq-benchmark list
+1. **Project** — create a project folder (the app scaffolds `config/`, the Snakemake `workflow/`, and a provenance manifest).
+2. **Input Data** — select FASTQ files, or paste SRR/SRP/PRJ accessions and click *Fetch metadata & build samples*.
+3. **Metadata** — assign each sample a `condition` and check the layout (paired/single) in the editable table.
+4. **Reference Manager** — pick an organism from the catalog (Ensembl / NCBI RefSeq) or import a custom genome + annotation.
+5. **Workflow Settings** — set the DESeq2 design and contrast, `alpha`, and `|log2FC|` threshold.
+6. **Sanity Checks** — resolve any flagged issues before running.
+7. **Run Monitor** — start the pipeline and watch progress.
+8. **Outputs** — browse the count matrix and DESeq2 table, view/zoom figures, restyle and regenerate them, and define genes of interest.
+
+> Tip: for best I/O, create the project under the WSL home filesystem (`~/…`) rather than `/mnt/c`.
+
+### Run the pipeline from a terminal
+
+A project is a plain Snakemake workspace, so you can also run it directly:
+
+```bash
+cd /path/to/project
+snakemake --cores 8 --resources mem_mb=24000 --configfile config/config.yaml
 ```
 
-## Test
+## Validation
+
+The pipeline is validated end-to-end on two real datasets:
+
+- **Drosophila — pasilla** (Ensembl): 467 DE genes, the *pasilla* gene strongly down-regulated, all sanity checks PASS. The four-sample subset ships as a one-click benchmark project (`examples/benchmarks/pasilla_paired_subset`).
+- **Fusarium graminearum — spore vs mycelium** (SRP039087; PH-1, NCBI RefSeq): clean PC1 = 98% separation, 5,734 DE genes (2,723 up / 2,478 down at |log2FC| > 1), top hits at log2FC 11–14, consistent with the known conidium↔mycelium developmental transition. The screenshot above shows this result.
+
+Both runs reproduce byte-for-byte across pipeline revisions, confirming the analysis is deterministic.
+
+## Building the Windows app
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-build.txt
+.\scripts\build_release.ps1
+```
+
+This produces the executable, the per-user installer, and the portable ZIP under `installer_output\`. See [`BUILD.md`](BUILD.md) for details (Inno Setup, what gets bundled, version bumping).
+
+## Tests
 
 ```powershell
 pytest
 ```
 
-## Benchmark Dataset
+## Project layout
 
-The first bundled validation benchmark is `pasilla_paired_subset`, a four-sample paired-end subset of the published Drosophila pasilla RNAi RNA-seq experiment. The GUI Project tab includes a "Create Benchmark Project" button that writes `samples.tsv`, `sra_accessions.txt`, benchmark provenance, and a STAR + featureCounts + DESeq2 config.
+| Path | Contents |
+| --- | --- |
+| `app/` | PySide6 GUI (`app/ui/`), core logic (`app/core/`), bundled data (`app/data/`). |
+| `workflow/` | Snakemake `Snakefile`, `rules/`, R/Python `scripts/`, pinned conda envs (`envs/`). |
+| `examples/benchmarks/` | Ready-to-run benchmark project templates. |
+| `packaging/`, `scripts/` | PyInstaller spec, Inno Setup script, build/setup scripts. |
+| `BUILD.md`, `PLAN.md` | Build guide and the development roadmap. |
 
-The selected SRR runs are `SRR031714`, `SRR031716`, `SRR031724`, and `SRR031726`.
+## License
 
-CLI usage:
-
-```powershell
-python -m app.benchmark_cli list
-python -m app.benchmark_cli create --benchmark pasilla_paired_subset --workdir C:\BulkSeqBenchmarks --name pasilla_paired_subset --validate
-```
-
-The pipeline downloads the benchmark FASTQs (from the ENA URLs in `config/samples.tsv`) and the Ensembl reference automatically as part of the run. For best I/O performance, stage the project under the WSL home filesystem (`~/`) rather than `/mnt/c` before running.
-
-## Snakemake From Terminal
-
-After creating a project in the GUI:
-
-```bash
-cd /path/to/project
-snakemake --cores 8 --resources mem_mb=24000 --use-conda --configfile config/config.yaml
-```
-
-## TODO
-
-- Replace placeholder reference URLs in `app/data/reference_catalog.yaml` (the pasilla benchmark already uses real Ensembl URLs via `benchmark_datasets.yaml`).
-- Add Snakemake rules for HISAT2, Salmon/tximport, SortMeRNA, BBMap repair, htseq-count, goseq, and UMAP; add single-end branching.
-- Add organism-specific enrichment config (OrgDb/keytype/KEGG) in the GUI for non-Drosophila projects.
-- Build out the Reference Manager (custom import/validate/build-index + lock enforcement), per-rule resource editing, metadata column/paste/export ops, and the sanity phase-gate approval UI.
-- Add runtime history calibration (`runtime_profiles.json`).
-- Add persisted app-level reference installation database.
-
-See `PLAN.md` for the full remediation roadmap and phase status.
+See [`LICENSE`](LICENSE).
