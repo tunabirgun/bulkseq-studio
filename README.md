@@ -4,7 +4,7 @@ A Windows desktop app for reproducible, reference-based **bulk RNA-seq analysis*
 
 BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://snakemake.github.io/) pipeline running inside WSL2. You point it at your data and reference, and it produces a count matrix, DESeq2 results, GO/KEGG enrichment, and figures — while recording the exact parameters, tool versions, and environment so a run can be reproduced later.
 
-![BulkSeq Studio — Outputs workspace](docs/screenshot-outputs-light.png)
+![BulkSeq Studio — from data to results](docs/screenshot-overview-light.png)
 
 ## Features
 
@@ -25,11 +25,7 @@ The default **STAR → featureCounts → DESeq2 → enrichment → figures** rou
 
 ## Screenshots
 
-From data to results in one window — bring in a study, configure the analysis, run it while watching progress by phase, then browse tables and publication figures:
-
-![BulkSeq Studio workflow, light theme](docs/screenshot-overview-light.png)
-
-The same, in dark mode:
+From data to results in one window — bring in a study, configure the analysis, run it while watching progress by phase, then browse tables and publication figures. The same workflow in dark mode:
 
 ![BulkSeq Studio workflow, dark theme](docs/screenshot-overview-dark.png)
 
@@ -101,7 +97,7 @@ snakemake --cores 8 --resources mem_mb=24000 --configfile config/config.yaml
 The pipeline is validated end-to-end on two real datasets:
 
 - **Drosophila — pasilla** (Ensembl): 467 DE genes, the *pasilla* gene strongly down-regulated, all sanity checks PASS. The four-sample subset ships as a one-click benchmark project (`examples/benchmarks/pasilla_paired_subset`).
-- **Fusarium graminearum — spore vs mycelium** (SRP039087; PH-1, NCBI RefSeq): clean PC1 = 98% separation, 5,734 DE genes (2,723 up / 2,478 down at |log2FC| > 1), top hits at log2FC 11–14, consistent with the known conidium↔mycelium developmental transition. The screenshot above shows this result.
+- **Fusarium graminearum — spore vs mycelium** (SRP039087; PH-1, NCBI RefSeq): clean PC1 = 98% separation, 5,734 DE genes (2,723 up / 2,478 down at |log2FC| > 1), top hits at log2FC 11–14, consistent with the known conidium↔mycelium developmental transition.
 
 Both runs reproduce byte-for-byte across pipeline revisions, confirming the analysis is deterministic.
 
