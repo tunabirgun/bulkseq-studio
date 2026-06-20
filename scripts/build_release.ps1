@@ -30,7 +30,23 @@ if (-not (Test-Path $iscc)) { throw "ISCC.exe (Inno Setup) not found" }
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup compile failed" }
 
 $version = ((Select-String -Path "app\constants.py" -Pattern 'APP_VERSION\s*=\s*"([^"]+)"').Matches.Groups[1].Value)
+
+Write-Host "[3/3] Creating portable (click-and-run) ZIP..."
+# Zip the onedir folder so a user can unzip and double-click BulkSeqStudio.exe
+# with no install. dist/ is pre-cleaned each build, so the ZIP is always current.
+$installerOut = Join-Path $root "installer_output"
+if (-not (Test-Path $installerOut)) { New-Item -ItemType Directory -Path $installerOut -Force | Out-Null }
+$onedir = Join-Path $root (Join-Path "dist" "BulkSeq Studio")
+$portableZip = Join-Path $installerOut "BulkSeqStudio-Portable-$version.zip"
+if (Test-Path $portableZip) { Remove-Item $portableZip -Force }
+try {
+    Compress-Archive -Path $onedir -DestinationPath $portableZip -CompressionLevel Optimal -ErrorAction Stop
+} catch {
+    throw "Portable ZIP creation failed: $_"
+}
+
 Write-Host ""
 Write-Host "Done."
-Write-Host "  Executable: dist\BulkSeq Studio\BulkSeqStudio.exe"
-Write-Host "  Installer:  installer_output\BulkSeqStudio-Setup-$version.exe"
+Write-Host "  Executable:   dist\BulkSeq Studio\BulkSeqStudio.exe"
+Write-Host "  Installer:    installer_output\BulkSeqStudio-Setup-$version.exe"
+Write-Host "  Portable ZIP: installer_output\BulkSeqStudio-Portable-$version.zip"
