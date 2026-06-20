@@ -6,7 +6,7 @@
 ; setup at runtime. Enabling WSL itself still prompts for elevation separately.
 
 #define MyAppName "BulkSeq Studio"
-#define MyAppVersion "0.3.1"
+#define MyAppVersion "0.3.2"
 #define MyAppPublisher "Tuna Birgun"
 #define MyAppExeName "BulkSeqStudio.exe"
 

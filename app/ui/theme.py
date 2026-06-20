@@ -367,8 +367,8 @@ QGroupBox {
     background-color: $SURFACE;
     border: 1px solid $BORDER;
     border-radius: 6px;
-    margin-top: 14px;
-    padding: 10px 8px 8px 8px;
+    margin-top: 16px;
+    padding: 16px 8px 8px 8px;
     font-weight: 600;
 }
 
@@ -376,9 +376,11 @@ QGroupBox::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
     left: 10px;
-    padding: 0px 4px;
+    padding: 2px 6px;
     color: $TEXT;
-    background-color: transparent;
+    /* Surface background so the card's top border does not strike through the
+       title text (clean notch instead of an overlapped line). */
+    background-color: $SURFACE;
 }
 
 /* ---- Tables ---- */

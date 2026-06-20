@@ -130,6 +130,9 @@ class MainWindow(QMainWindow):
         self._build_run_tab()
         self._build_reports_tab()
         self._build_outputs_tab()
+        # A small status bar at the bottom for transient feedback (e.g. resource
+        # detection), so blocking actions show progress instead of looking frozen.
+        self.statusBar().showMessage("Ready")
         if os.environ.get("BULKSEQ_SKIP_READINESS_DIALOG") != "1":
             QTimer.singleShot(500, self.show_readiness_dialog)
 
@@ -873,8 +876,9 @@ class MainWindow(QMainWindow):
 
         self.tabs.addTab(page, "Outputs")
 
-    def _build_goi_group(self) -> QGroupBox:
-        group = QGroupBox("Genes of Interest")
+    def _build_goi_group(self) -> QWidget:
+        # No group title — the enclosing "Genes of Interest" tab already names it.
+        group = QWidget()
         v = QVBoxLayout(group)
         help_label = QLabel("Paste gene IDs (one per line) matching the count matrix (e.g. FBgn..., RefSeq locus tags, or symbols present in the GTF). On the next run, a focused z-scored heatmap and per-condition expression plots are produced.")
         help_label.setWordWrap(True)  # without this the long label forces a huge min width
@@ -924,10 +928,11 @@ class MainWindow(QMainWindow):
         row.addStretch(1)
         return holder
 
-    def _build_figure_style_group(self) -> QGroupBox:
+    def _build_figure_style_group(self) -> QWidget:
         # Style controls for the DESeq2 figures; written to config.figures_style
-        # and consumed by workflow/scripts/make_figures.R.
-        group = QGroupBox("Figure Style")
+        # and consumed by workflow/scripts/make_figures.R. No group title — the
+        # enclosing "Figure Style" tab already names it.
+        group = QWidget()
         form = QFormLayout(group)
         # Stack each field under its (wrapping) label so the form fits the narrow
         # control panel without a horizontal scrollbar.
@@ -1386,20 +1391,33 @@ class MainWindow(QMainWindow):
         self.manager.save_config(self.project_root, self.config)
 
     def _detect_resources(self) -> None:
-        root = self.project_root or Path(self.workdir.text())
-        system = detect_system(root)
-        rec = recommend_profile(system, self.profile.currentText())
-        self.cores.setValue(int(rec["total_threads"]))
-        self.ram.setValue(int(rec["total_memory_gb"]))
-        self.system_info_label.setText(
-            f"{system.cpu_model} — {system.physical_cores} cores "
-            f"({system.logical_threads} threads), {system.total_ram_gb:.0f} GB RAM, "
-            f"{system.disk_free_gb:.0f} GB free disk."
-        )
-        self.recommendation_label.setText(
-            f"Recommended for the '{self.profile.currentText()}' profile: "
-            f"{rec['total_threads']} cores and {rec['total_memory_gb']} GB RAM."
-        )
+        # Detection probes WSL/conda and can block briefly, so show progress in
+        # the status bar with a wait cursor instead of looking frozen.
+        self.statusBar().showMessage("Detecting system resources…")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+        try:
+            root = self.project_root or Path(self.workdir.text())
+            system = detect_system(root)
+            rec = recommend_profile(system, self.profile.currentText())
+            self.cores.setValue(int(rec["total_threads"]))
+            self.ram.setValue(int(rec["total_memory_gb"]))
+            self.system_info_label.setText(
+                f"{system.cpu_model} — {system.physical_cores} cores "
+                f"({system.logical_threads} threads), {system.total_ram_gb:.0f} GB RAM, "
+                f"{system.disk_free_gb:.0f} GB free disk."
+            )
+            self.recommendation_label.setText(
+                f"Recommended for the '{self.profile.currentText()}' profile: "
+                f"{rec['total_threads']} cores and {rec['total_memory_gb']} GB RAM."
+            )
+            self.statusBar().showMessage(
+                f"Detected {system.physical_cores} cores / {system.total_ram_gb:.0f} GB RAM — "
+                f"recommending {rec['total_threads']} cores, {rec['total_memory_gb']} GB.",
+                8000,
+            )
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _save_resources(self) -> None:
         if self.config is None or self.project_root is None:
