@@ -118,7 +118,9 @@ p_pca <- ggplot(pca, aes(PC1, PC2, colour = group)) +
   geom_text_repel(aes(label = name), size = 3, seed = 1, show.legend = FALSE) +
   scale_colour_manual(values = pal_spec$discrete) +
   labs(x = paste0("PC1 (", pv[1], "%)"), y = paste0("PC2 (", pv[2], "%)")) +
-  coord_fixed() + style_theme(theme_bw)
+  style_theme(theme_bw)
+# No coord_fixed(): when PC1 dominates (e.g. 98% vs 1%) a 1:1 aspect squeezes the
+# plot into a thin band, so let the points fill the (near-square) panel instead.
 save_gg(p_pca, out[["pca_png"]], out[["pca_svg"]])
 
 # ---- Sample-distance heatmap -----------------------------------------------

@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -273,6 +274,20 @@ def _secondary_button_style() -> str:
 # ---------------------------------------------------------------------------
 
 
+class ReadinessCheckThread(QThread):
+    """Runs the (blocking) environment probes off the UI thread so the dialog can
+    show a moving progress bar instead of freezing while WSL/conda are queried."""
+
+    done = Signal(list)
+
+    def run(self) -> None:
+        try:
+            items = check_readiness()
+        except Exception:
+            items = []
+        self.done.emit(items)
+
+
 class ReadinessDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -282,6 +297,7 @@ class ReadinessDialog(QDialog):
 
         self.install_thread: PipInstallThread | None = None
         self.wsl_install_thread: WslBioenvInstallThread | None = None
+        self._check_thread: ReadinessCheckThread | None = None
         self._installing = False
 
         root = QVBoxLayout(self)
@@ -310,6 +326,19 @@ class ReadinessDialog(QDialog):
         self.refresh_button.clicked.connect(self.refresh)
         header.addWidget(self.refresh_button, alignment=Qt.AlignmentFlag.AlignTop)
         root.addLayout(header)
+
+        # Indeterminate "busy" bar shown while the (threaded) checks run.
+        self.check_progress = QProgressBar()
+        self.check_progress.setRange(0, 0)
+        self.check_progress.setTextVisible(False)
+        self.check_progress.setFixedHeight(6)
+        self.check_progress.setVisible(False)
+        self.check_progress.setStyleSheet(
+            f"QProgressBar {{ background: {SURFACE}; border: 1px solid {BORDER};"
+            f" border-radius: 3px; }} QProgressBar::chunk {{ background: {PRIMARY};"
+            " border-radius: 3px; }"
+        )
+        root.addWidget(self.check_progress)
 
         # Scrollable card column.
         scroll = QScrollArea()
@@ -417,7 +446,20 @@ class ReadinessDialog(QDialog):
     # -- refresh / state mapping ------------------------------------------
 
     def refresh(self) -> None:
-        items = check_readiness()
+        # Run the blocking probes off-thread so the dialog opens instantly and the
+        # busy bar moves while WSL/conda are queried, instead of freezing.
+        if self._check_thread is not None and self._check_thread.isRunning():
+            return
+        self.check_progress.setVisible(True)
+        self.summary_label.setText("Checking requirements…")
+        self.refresh_button.setEnabled(False)
+        self._check_thread = ReadinessCheckThread()
+        self._check_thread.done.connect(self._on_check_done)
+        self._check_thread.start()
+
+    def _on_check_done(self, items: list[ReadinessItem]) -> None:
+        self.check_progress.setVisible(False)
+        self.refresh_button.setEnabled(True)
         self._update_python_card()
         self._update_wsl_card(items)
         self._update_core_card(items)

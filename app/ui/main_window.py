@@ -112,13 +112,16 @@ class MainWindow(QMainWindow):
         # The window owns its minimum so the size contract holds even under direct
         # construction (tests), and the restore-geometry size guard has a real bound.
         self.setMinimumSize(900, 640)
-        # Light/dark toggle pinned to the top-right corner of the tab bar.
-        self.theme_toggle = QToolButton()
-        self.theme_toggle.setAutoRaise(True)
+        # Light/dark mode toggle: a labelled button in the top-right corner.
+        corner = QWidget()
+        corner_row = QHBoxLayout(corner)
+        corner_row.setContentsMargins(0, 0, 8, 0)
+        self.theme_toggle = QPushButton()
         self.theme_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self.theme_toggle.clicked.connect(self._toggle_theme)
         self._sync_theme_toggle(str(QSettings().value("theme_mode", "light")))
-        self.tabs.setCornerWidget(self.theme_toggle, Qt.Corner.TopRightCorner)
+        corner_row.addWidget(self.theme_toggle)
+        self.tabs.setCornerWidget(corner, Qt.Corner.TopRightCorner)
         self._build_project_tab()
         self._build_input_tab()
         self._build_metadata_tab()
@@ -132,9 +135,11 @@ class MainWindow(QMainWindow):
         self._build_outputs_tab()
         # A small status bar at the bottom for transient feedback (e.g. resource
         # detection), so blocking actions show progress instead of looking frozen.
-        self.statusBar().showMessage("Ready")
-        if os.environ.get("BULKSEQ_SKIP_READINESS_DIALOG") != "1":
-            QTimer.singleShot(500, self.show_readiness_dialog)
+        # The environment check is on-demand (the 'Check Environment' button) so the
+        # window opens instantly instead of blocking on WSL/conda probes at startup.
+        self.statusBar().showMessage(
+            "Ready — on the Project tab, click 'Check Environment' to verify your WSL setup."
+        )
 
     # ---- Theme toggle ------------------------------------------------------
     def _current_theme_mode(self) -> str:
@@ -153,9 +158,13 @@ class MainWindow(QMainWindow):
             self.figure_viewer.update_theme(IMAGEVIEWER_BG.get(new_mode, IMAGEVIEWER_BG["light"]))
 
     def _sync_theme_toggle(self, mode: str) -> None:
-        # Moon offers "go dark"; sun offers "go light".
-        self.theme_toggle.setText("☾" if mode == "light" else "☀")
-        self.theme_toggle.setToolTip("Switch to dark theme" if mode == "light" else "Switch to light theme")
+        # The button is labelled with the mode it switches TO.
+        if mode == "light":
+            self.theme_toggle.setText("🌙  Dark Mode")
+            self.theme_toggle.setToolTip("Switch to the dark theme")
+        else:
+            self.theme_toggle.setText("☀  Light Mode")
+            self.theme_toggle.setToolTip("Switch to the light theme")
 
     # ---- Window geometry persistence --------------------------------------
     def _save_geometry_state(self) -> None:
@@ -541,6 +550,15 @@ class MainWindow(QMainWindow):
             combo.addItems(values)
             combo.setCurrentText(current if current in values else defaults[id(combo)])
 
+    def _busy_bar(self) -> QProgressBar:
+        # An indeterminate "busy" bar (hidden until an action runs).
+        bar = QProgressBar()
+        bar.setRange(0, 0)
+        bar.setTextVisible(False)
+        bar.setFixedHeight(6)
+        bar.setVisible(False)
+        return bar
+
     def _build_resources_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -557,6 +575,8 @@ class MainWindow(QMainWindow):
         system_layout.addWidget(self.system_info_label)
         system_layout.addWidget(self.recommendation_label)
         system_layout.addWidget(detect)
+        self.resources_busy = self._busy_bar()
+        system_layout.addWidget(self.resources_busy)
         layout.addWidget(system_group)
 
         # Resource profile: plain-language presets with an info button.
@@ -602,9 +622,11 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         estimate = QPushButton("Estimate Runtime")
         estimate.clicked.connect(self._estimate_runtime)
+        self.runtime_busy = self._busy_bar()
         self.runtime_text = QTextEdit()
         self.runtime_text.setReadOnly(True)
         layout.addWidget(estimate)
+        layout.addWidget(self.runtime_busy)
         layout.addWidget(self.runtime_text)
         self.tabs.addTab(self._scrollable(page), "Runtime Estimate")
 
@@ -619,10 +641,12 @@ class MainWindow(QMainWindow):
         buttons.addWidget(run)
         buttons.addWidget(refresh)
         self.approve_review = QCheckBox("I have reviewed and approve REVIEW_REQUIRED items")
+        self.sanity_busy = self._busy_bar()
         self.sanity_text = QTextEdit()
         self.sanity_text.setReadOnly(True)
         layout.addLayout(buttons)
         layout.addWidget(self.approve_review)
+        layout.addWidget(self.sanity_busy)
         layout.addWidget(self.sanity_text)
         self.tabs.addTab(self._scrollable(page), "Sanity Checks")
 
@@ -1407,6 +1431,7 @@ class MainWindow(QMainWindow):
         # Detection probes WSL/conda and can block briefly, so show progress in
         # the status bar with a wait cursor instead of looking frozen.
         self.statusBar().showMessage("Detecting system resources…")
+        self.resources_busy.setVisible(True)
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         QApplication.processEvents()
         try:
@@ -1431,6 +1456,7 @@ class MainWindow(QMainWindow):
             )
         finally:
             QApplication.restoreOverrideCursor()
+            self.resources_busy.setVisible(False)
 
     def _save_resources(self) -> None:
         if self.config is None or self.project_root is None:
@@ -1443,24 +1469,34 @@ class MainWindow(QMainWindow):
     def _estimate_runtime(self) -> None:
         if not self._require_project() or self.config is None:
             return
-        df = self.metadata_table.to_dataframe()
-        estimate = estimate_runtime(self.config, df)
-        self.runtime_text.setPlainText("\n".join(f"{k}: {v}" for k, v in estimate.items()))
+        self.runtime_busy.setVisible(True)
+        QApplication.processEvents()
+        try:
+            df = self.metadata_table.to_dataframe()
+            estimate = estimate_runtime(self.config, df)
+            self.runtime_text.setPlainText("\n".join(f"{k}: {v}" for k, v in estimate.items()))
+        finally:
+            self.runtime_busy.setVisible(False)
 
     def _run_sanity_checks(self) -> None:
         if not self._require_project():
             return
         assert self.project_root is not None
-        allow_pending_sra = self.config is not None and self.config.input.type == "sra"
-        messages = validate_metadata(
-            self.metadata_table.to_dataframe(),
-            allow_pending_sra=allow_pending_sra,
-            design_variables=self._design_variables(),
-        )
-        write_check(self.project_root, "01_input_validation", messages)
-        text = self._format_messages(messages)
-        self.sanity_text.setPlainText(text)
-        self._refresh_phase_checks()
+        self.sanity_busy.setVisible(True)
+        QApplication.processEvents()
+        try:
+            allow_pending_sra = self.config is not None and self.config.input.type == "sra"
+            messages = validate_metadata(
+                self.metadata_table.to_dataframe(),
+                allow_pending_sra=allow_pending_sra,
+                design_variables=self._design_variables(),
+            )
+            write_check(self.project_root, "01_input_validation", messages)
+            text = self._format_messages(messages)
+            self.sanity_text.setPlainText(text)
+            self._refresh_phase_checks()
+        finally:
+            self.sanity_busy.setVisible(False)
 
     def _phase_check_statuses(self) -> dict[str, str]:
         # Read every checks/*.json the GUI and pipeline have produced.
