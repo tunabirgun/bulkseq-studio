@@ -174,8 +174,13 @@ class SnakemakeRunner:
     def start(self) -> subprocess.Popen[str]:
         creationflags = 0
         if sys.platform.startswith("win"):
-            # Own process group so a native taskkill /T reaches the whole tree.
-            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            # Own process group so a native taskkill /T reaches the whole tree, and
+            # CREATE_NO_WINDOW so the wsl.exe console does not pop up over the GUI
+            # when launched from the windowed (no-console) packaged app.
+            creationflags = (
+                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            )
         self.process = subprocess.Popen(
             self.command.command,
             cwd=self.project_root,

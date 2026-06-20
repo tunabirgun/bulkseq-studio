@@ -67,6 +67,16 @@ python -m app.main
 
 > Tip: for best I/O, create the project under the WSL home filesystem (`~/…`) rather than `/mnt/c`.
 
+> A reference is required — the run will not start until you select a preset
+> organism (and click *Use Selected Preset*) or import a custom genome + annotation
+> on the **Reference Manager** tab.
+
+> When a run starts, a WSL/terminal console window may briefly appear (the app
+> launches Snakemake inside WSL2). The packaged app hides it, but on some Windows
+> setups it can still flash on screen. This is normal — do not close that window
+> manually, as doing so kills the running pipeline. Use the **Stop** button in the
+> app to cancel a run instead.
+
 ### Run the pipeline from a terminal
 
 A project is a plain Snakemake workspace, so you can also run it directly:
