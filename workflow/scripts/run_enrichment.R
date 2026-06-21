@@ -110,10 +110,22 @@ result <- tryCatch({
     n_gsea <- nrow(as.data.frame(gse))
   }
 
+  # Disease-ontology ORA (human/mouse only). DOSE::enrichDO uses ont="HDO" and
+  # organism in {hsa, mm}, and THROWS for any other organism and on the first-run
+  # HDO.sqlite fetch. It MUST have its OWN tryCatch: the saveRDS below is inside
+  # the outer tryCatch, so an uncaught enrichDO error would wipe ALL persisted
+  # enrichment objects and figures.
+  do_org <- if (grepl("org.Hs", orgdb_name)) "hsa" else if (grepl("org.Mm", orgdb_name)) "mm" else NA_character_
+  ego_do <- tryCatch(
+    if (is.na(do_org)) NULL else DOSE::enrichDO(gene = all_sig, ont = "HDO", organism = do_org,
+                       universe = universe, pvalueCutoff = alpha, qvalueCutoff = 0.20),
+    error = function(e) { message("enrichDO skipped: ", conditionMessage(e)); NULL })
+  n_do <- if (is.null(ego_do)) 0 else nrow(as.data.frame(ego_do))
+
   # Persist the enrichment objects (+ ranked geneList and OrgDb name) so the
   # enrichment_figures rule can render dotplot/GSEA/network plots without re-running.
   saveRDS(list(ego_all = ego_all, ego_up = ego_up, ego_down = ego_down,
-               gse = gse, geneList = gene_list, orgdb = orgdb_name),
+               gse = gse, ego_do = ego_do, geneList = gene_list, orgdb = orgdb_name),
           out[["objects"]])
 
   summary_lines <<- c(summary_lines,

@@ -65,6 +65,8 @@ rule enrichment_figures:
         cnet_svg="results/figures/enrichment_cnetplot.svg",
         emap_png="results/figures/enrichment_emapplot.png",
         emap_svg="results/figures/enrichment_emapplot.svg",
+        do_dotplot_png="results/figures/enrichment_do_dotplot.png",
+        do_dotplot_svg="results/figures/enrichment_do_dotplot.svg",
     params:
         style=config.get("figures_style", {}),
     benchmark:

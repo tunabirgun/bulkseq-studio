@@ -71,5 +71,11 @@ render(have_ep && nrows(ego_all) > 1,
        emapplot(pairwise_termsim(ego_all), showCategory = 20),
        out[["emap_png"]], out[["emap_svg"]], no_data)
 
+# Disease-ontology ORA dotplot (human/mouse only; placeholder otherwise).
+render(have_ep && nrows(obj$ego_do) > 0,
+       dotplot(obj$ego_do, showCategory = 15),
+       out[["do_dotplot_png"]], out[["do_dotplot_svg"]],
+       "No disease-ontology terms (human/mouse only)")
+
 sink(type = "message")
 close(log_con)
