@@ -35,6 +35,8 @@ else:
     ]
 if WF.get("enrichment", True):
     ALL_CHECKS.append("checks/10_enrichment_qc.json")
+# Wilcoxon sensitivity diagnostic runs on every mode (reads the normalized matrix).
+ALL_CHECKS.append("checks/14_wilcoxon_sensitivity.json")
 
 
 rule validate_project:

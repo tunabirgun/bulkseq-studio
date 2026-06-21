@@ -117,6 +117,7 @@ include: "rules/enrichment.smk"
 include: "rules/checks.smk"
 include: "rules/reports.smk"
 include: "rules/coexpression.smk"
+include: "rules/stats.smk"
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +134,9 @@ def final_targets():
         "results/figures/sample_correlation_spearman.svg",
         "results/export/sample_correlation_pearson.csv",
         "results/export/sample_correlation_spearman.csv",
+        "results/figures/wilcoxon_concordance.png",
+        "results/figures/wilcoxon_concordance.svg",
+        "results/stats/wilcoxon_results.csv",
         "results/reports/run_summary.txt",
         "results/reports/timing_summary.txt",
         "results/reports/software_versions.txt",
