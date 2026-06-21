@@ -62,6 +62,12 @@ fig_dpi      <- as.integer(getp("dpi", 300))
 # colour ramps (sample-distance and top-DEG heatmaps). Viridis stops are
 # hardcoded so no extra package is required in the env.
 VIRIDIS_STOPS <- c("#440154", "#414487", "#2A788E", "#22A884", "#7AD151", "#FDE725")
+MAGMA_STOPS <- c("#000004", "#51127C", "#B63679", "#FB8861", "#FCFDBF")
+PLASMA_STOPS <- c("#0D0887", "#7E03A8", "#CC4778", "#F89540", "#F0F921")
+CIVIDIS_STOPS <- c("#00204D", "#414D6B", "#7C7B78", "#BCAF6F", "#FFEA46")
+.uniform_spec <- function(stops) {
+  list(discrete = stops, ramp = colorRampPalette(stops), diverging = colorRampPalette(stops))
+}
 palette_spec <- function(name) {
   if (identical(name, "Greyscale")) {
     list(discrete = c("#1A1A1A", "#7F7F7F", "#BFBFBF", "#4D4D4D", "#A6A6A6"),
@@ -71,6 +77,20 @@ palette_spec <- function(name) {
     list(discrete = c("#440154", "#21908C", "#FDE725", "#3B528B", "#5DC863"),
          ramp = colorRampPalette(VIRIDIS_STOPS),
          diverging = colorRampPalette(VIRIDIS_STOPS))
+  } else if (identical(name, "Magma")) {
+    .uniform_spec(MAGMA_STOPS)
+  } else if (identical(name, "Plasma")) {
+    .uniform_spec(PLASMA_STOPS)
+  } else if (identical(name, "Cividis")) {
+    .uniform_spec(CIVIDIS_STOPS)
+  } else if (identical(name, "Spectral")) {
+    list(discrete = brewer.pal(8, "Dark2"),
+         ramp = colorRampPalette(rev(brewer.pal(11, "Spectral"))),
+         diverging = colorRampPalette(brewer.pal(11, "Spectral")))
+  } else if (identical(name, "Red-Yellow-Blue")) {
+    list(discrete = brewer.pal(8, "Set2"),
+         ramp = colorRampPalette(rev(brewer.pal(11, "RdYlBu"))),
+         diverging = colorRampPalette(brewer.pal(11, "RdYlBu")))
   } else {
     list(discrete = c("#2C7BB6", "#C0392B", "#2E7D32", "#B26A00", "#6A1B9A"),
          ramp = colorRampPalette(c("#2C7BB6", "white", "#C0392B")),

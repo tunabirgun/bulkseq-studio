@@ -1416,7 +1416,8 @@ class MainWindow(QMainWindow):
         # control panel without a horizontal scrollbar.
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
         self.fig_palette = QComboBox()
-        self.fig_palette.addItems(["Blue-Red", "Viridis", "Greyscale"])
+        self.fig_palette.addItems(["Blue-Red", "Viridis", "Magma", "Plasma", "Cividis",
+                                   "Spectral", "Red-Yellow-Blue", "Greyscale"])
         self.fig_point_size = QDoubleSpinBox()
         self.fig_point_size.setRange(0.1, 12.0)
         self.fig_point_size.setSingleStep(0.1)

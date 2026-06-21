@@ -184,7 +184,8 @@ class PpiConfig(BaseModel):
 
 class FigureConfig(BaseModel):
     # Visual style applied to all DESeq2 figures (workflow/scripts/make_figures.R).
-    palette: Literal["Blue-Red", "Viridis", "Greyscale"] = "Blue-Red"
+    palette: Literal["Blue-Red", "Viridis", "Magma", "Plasma", "Cividis",
+                     "Spectral", "Red-Yellow-Blue", "Greyscale"] = "Blue-Red"
     point_size: float = 2.5
     base_font_size: int = 12
     font_family: str = ""

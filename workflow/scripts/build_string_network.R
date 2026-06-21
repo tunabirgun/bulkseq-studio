@@ -114,25 +114,44 @@ ok <- tryCatch({
   names(hub_df)[1] <- "symbol"
   write.csv(hub_df, out[["hubs"]], row.names = FALSE)
 
-  # Static figure: node colour = log2FC direction, size = degree, and ONLY the top
-  # hub proteins (by degree) labelled so the names stay legible.
-  cols <- ifelse(is.na(V(g)$log2FC), "grey70", ifelse(V(g)$log2FC > 0, "#C0392B", "#2C7BB6"))
-  mx <- max(V(g)$degree); vsize <- if (mx > 0) 3 + 7 * (V(g)$degree / mx) else 5
+  # Polished network figure: nodes coloured by log2FC (diverging), sized by degree,
+  # weighted curved edges, only the top hub proteins labelled (repelled). Rendered
+  # with ggraph; falls back to a base igraph plot if ggraph errors.
   n_label <- min(hub_n, igraph::vcount(g))
   vlab <- rep(NA_character_, igraph::vcount(g))
   if (n_label > 0) {
     top_idx <- order(V(g)$degree, decreasing = TRUE)[seq_len(n_label)]
     vlab[top_idx] <- V(g)$name[top_idx]
   }
+  V(g)$label <- vlab
   set.seed(42)
-  lay <- igraph::layout_with_fr(g)  # one layout shared by PNG + SVG
-  draw <- function() {
-    igraph::plot.igraph(g, layout = lay, vertex.color = cols, vertex.size = vsize,
+  fig_ok <- tryCatch({
+    suppressMessages({ library(ggraph); library(tidygraph) })
+    tg <- tidygraph::as_tbl_graph(g)
+    p <- ggraph(tg, layout = "fr") +
+      geom_edge_arc(aes(width = weight), strength = 0.08, colour = "grey75", alpha = 0.5, show.legend = FALSE) +
+      scale_edge_width(range = c(0.2, 1.3)) +
+      geom_node_point(aes(size = degree, fill = log2FC), shape = 21, colour = "white", stroke = 0.4) +
+      scale_size(range = c(2, 11), guide = "none") +
+      scale_fill_gradient2(low = "#2C7BB6", mid = "grey92", high = "#C0392B",
+                           midpoint = 0, na.value = "grey75", name = "log2FC") +
+      geom_node_text(aes(label = label), size = 3.1, fontface = "bold", repel = TRUE,
+                     max.overlaps = 30, na.rm = TRUE) +
+      theme_void() + theme(legend.position = "right")
+    ggsave(out[["png"]], p, width = fig_w, height = fig_h, dpi = fig_dpi)
+    ggsave(out[["svg"]], p, width = fig_w, height = fig_h)
+    TRUE
+  }, error = function(e) { message("ggraph figure failed, using base plot: ", conditionMessage(e)); FALSE })
+  if (!fig_ok) {
+    cols <- ifelse(is.na(V(g)$log2FC), "grey70", ifelse(V(g)$log2FC > 0, "#C0392B", "#2C7BB6"))
+    mx <- max(V(g)$degree); vsize <- if (mx > 0) 3 + 7 * (V(g)$degree / mx) else 5
+    lay <- igraph::layout_with_fr(g)
+    draw <- function() igraph::plot.igraph(g, layout = lay, vertex.color = cols, vertex.size = vsize,
                         vertex.label = vlab, vertex.label.cex = 0.75, vertex.label.font = 2,
                         vertex.frame.color = NA, edge.color = "grey88", vertex.label.color = "black")
+    png(out[["png"]], width = fig_w, height = fig_h, units = "in", res = fig_dpi); draw(); dev.off()
+    svglite(out[["svg"]], width = fig_w, height = fig_h); draw(); dev.off()
   }
-  png(out[["png"]], width = fig_w, height = fig_h, units = "in", res = fig_dpi); draw(); dev.off()
-  svglite(out[["svg"]], width = fig_w, height = fig_h); draw(); dev.off()
 
   write_check("PASS", sprintf("STRING PPI (taxid %d, score>=%d): %d nodes, %d edges, %d modules from %d seed genes.",
               tax, score_thr, igraph::vcount(g), igraph::ecount(g), length(unique(V(g)$module)), length(seed)))
