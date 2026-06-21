@@ -159,8 +159,11 @@ def final_targets():
             targets.append(f"results/figures/{fig}.svg")
     if WF.get("enrichment", True):
         targets.append("results/enrichment/enrichment_summary.txt")
+        targets.append("results/enrichment/kegg_ora.csv")
+        targets.append("results/enrichment/kegg_gsea.csv")
         for fig in ("enrichment_dotplot", "enrichment_gsea", "enrichment_ridgeplot",
-                    "enrichment_cnetplot", "enrichment_emapplot", "enrichment_do_dotplot"):
+                    "enrichment_cnetplot", "enrichment_emapplot", "enrichment_do_dotplot",
+                    "enrichment_kegg_dotplot", "enrichment_kegg_gsea"):
             targets.append(f"results/figures/{fig}.png")
             targets.append(f"results/figures/{fig}.svg")
         for net in ("enrichment_emap", "enrichment_genemap"):
