@@ -37,6 +37,8 @@ if WF.get("enrichment", True):
     ALL_CHECKS.append("checks/10_enrichment_qc.json")
 # Wilcoxon sensitivity diagnostic runs on every mode (reads the normalized matrix).
 ALL_CHECKS.append("checks/14_wilcoxon_sensitivity.json")
+# DE-vs-gene-set overlap (skips cleanly for organisms not covered by MSigDB).
+ALL_CHECKS.append("checks/15_set_overlap.json")
 
 
 rule validate_project:

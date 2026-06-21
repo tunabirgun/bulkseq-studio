@@ -26,3 +26,26 @@ rule wilcoxon_sensitivity:
         "logs/wilcoxon_sensitivity.log",
     script:
         "../scripts/run_wilcoxon.R"
+
+
+# DE-list vs MSigDB Hallmark overlap significance (hypergeometric ORA).
+rule set_overlap:
+    input:
+        results="results/deseq2/deseq2_results.csv",
+        up="results/deseq2/upregulated_genes.csv",
+        down="results/deseq2/downregulated_genes.csv",
+    output:
+        csv="results/stats/set_overlap.csv",
+        png="results/figures/set_overlap_dotplot.png",
+        svg="results/figures/set_overlap_dotplot.svg",
+        check="checks/15_set_overlap.json",
+    params:
+        organism=config.get("reference", {}).get("organism_name", ""),
+        alpha=config.get("deseq2", {}).get("alpha", 0.05),
+        style=config.get("figures_style", {}),
+    benchmark:
+        "benchmarks/set_overlap.tsv"
+    log:
+        "logs/set_overlap.log",
+    script:
+        "../scripts/run_set_overlap.R"
