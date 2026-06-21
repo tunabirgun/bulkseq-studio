@@ -41,6 +41,38 @@ write_check <- function(path, name, status, messages) {
   writeLines(json, path)
 }
 
+# Parse gene_id -> (gene_name, gene_biotype) from a GTF attribute column and
+# align to `gene_ids` (NA where unknown). Dependency-free regex parse; returns
+# all-NA when the GTF is absent (e.g. count-matrix mode has no reference).
+annotate_from_gtf <- function(gtf_path, gene_ids) {
+  na_vec <- setNames(rep(NA_character_, length(gene_ids)), gene_ids)
+  if (is.null(gtf_path) || length(gtf_path) < 1 || !nzchar(gtf_path[[1]]) ||
+      !file.exists(gtf_path[[1]])) {
+    return(list(symbol = na_vec, biotype = na_vec))
+  }
+  gtf <- tryCatch(
+    read.delim(gtf_path[[1]], header = FALSE, sep = "\t", quote = "", comment.char = "#",
+               colClasses = c("NULL", "NULL", "character", "NULL", "NULL",
+                              "NULL", "NULL", "NULL", "character")),
+    error = function(e) NULL)
+  if (is.null(gtf) || ncol(gtf) < 2) return(list(symbol = na_vec, biotype = na_vec))
+  names(gtf) <- c("feature", "attr")
+  g <- gtf[gtf$feature == "gene", , drop = FALSE]
+  if (nrow(g) == 0) g <- gtf  # some GTFs (e.g. minimal RefSeq) lack a gene feature
+  a <- g$attr
+  pull <- function(key) ifelse(grepl(paste0(key, ' "'), a),
+                               sub(paste0('.*', key, ' "([^"]+)".*'), "\\1", a), NA_character_)
+  gid <- pull("gene_id")
+  sym <- pull("gene_name")
+  bt <- pull("gene_biotype")
+  gt <- pull("gene_type")           # GENCODE uses gene_type; Ensembl gene_biotype
+  bt[is.na(bt)] <- gt[is.na(bt)]
+  keep <- !is.na(gid) & !duplicated(gid)
+  gid <- gid[keep]; sym <- sym[keep]; bt <- bt[keep]
+  idx <- match(gene_ids, gid)
+  list(symbol = setNames(sym[idx], gene_ids), biotype = setNames(bt[idx], gene_ids))
+}
+
 # ---- Import featureCounts matrix --------------------------------------------
 fc <- read.delim(counts_file, comment.char = "#", check.names = FALSE)
 rownames(fc) <- fc$Geneid
@@ -115,13 +147,23 @@ resLFC <- tryCatch(
 
 vsd <- tryCatch(vst(dds, blind = FALSE), error = function(e) rlog(dds, blind = FALSE))
 
+# ---- Gene annotation (symbol + biotype from the GTF) ------------------------
+# Adds human-readable columns to the results CSV and a gene_id->symbol map the
+# figure/GOI scripts use for labels. Behaviour-preserving: DE statistics, row
+# order, and the up/down cutoffs below are unchanged.
+gtf_path <- tryCatch(snakemake@params[["gtf"]], error = function(e) NULL)
+annot <- annotate_from_gtf(gtf_path, rownames(res))
+
 # ---- Outputs ----------------------------------------------------------------
 res_out <- as.data.frame(res)
 res_out$gene_id <- rownames(res_out)
+res_out$symbol <- unname(annot$symbol[rownames(res_out)])
+res_out$biotype <- unname(annot$biotype[rownames(res_out)])
 res_out <- res_out[order(res_out$padj), ]
 write.csv(res_out, snakemake@output[["results"]], row.names = FALSE)
 write.csv(as.data.frame(counts(dds, normalized = TRUE)), snakemake@output[["normalized"]])
-saveRDS(list(dds = dds, res = res, resLFC = resLFC, vsd = vsd),
+saveRDS(list(dds = dds, res = res, resLFC = resLFC, vsd = vsd,
+             symbol_map = annot$symbol),
         snakemake@output[["rds"]])
 
 # Up- and down-regulated sets: padj < alpha AND a raw-LFC effect-size cut

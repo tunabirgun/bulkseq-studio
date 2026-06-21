@@ -64,6 +64,9 @@ else:
             lfc_threshold=_DE.get("lfc_threshold", 1.0),
             min_count=_DE.get("min_count", 10),
             shrink=_DE.get("shrinkage_method", "apeglm"),
+            # Path (not input) so count-matrix mode, which has no reference, still
+            # runs; run_deseq2.R reads symbol/biotype from it only when it exists.
+            gtf=ANNOTATION_GTF,
         benchmark:
             "benchmarks/deseq2.tsv"
         log:

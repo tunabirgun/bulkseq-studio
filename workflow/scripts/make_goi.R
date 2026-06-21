@@ -16,6 +16,14 @@ sink(log_con, type = "message")
 obj <- readRDS(snakemake@input[["rds"]])
 dds <- obj$dds; vsd <- obj$vsd
 out <- snakemake@output
+# Gene-id -> symbol map (from the DE step) lets the user list match either ids or
+# symbols, and labels the figures by symbol. Falls back to ids when unknown.
+symbol_map <- tryCatch(obj$symbol_map, error = function(e) NULL)
+lab_for <- function(ids) {
+  if (is.null(symbol_map)) return(ids)
+  s <- unname(symbol_map[ids])
+  ifelse(is.na(s) | !nzchar(s), ids, s)
+}
 # Microarray (limma): there are no counts; use the log2 intensity matrix and a
 # linear y axis for the per-gene panel instead of normalized-count / log scale.
 is_intensity <- identical(tryCatch(obj$assay_kind, error = function(e) NULL), "log2_intensity")
@@ -53,6 +61,13 @@ goi <- goi[nzchar(goi) & !startsWith(goi, "#")]
 goi <- sub("\\..*$", "", goi)
 rn <- sub("\\..*$", "", rownames(vsd))
 idx <- match(goi, rn)
+# Second pass: match any still-unmatched entries against gene symbols (case-
+# insensitive), so a user can paste either Ensembl ids or symbols.
+if (!is.null(symbol_map)) {
+  sym <- toupper(unname(symbol_map[rownames(vsd)]))
+  un <- is.na(idx)
+  if (any(un)) idx[un] <- match(toupper(goi[un]), sym)
+}
 present <- idx[!is.na(idx)]
 missing <- goi[is.na(idx)]
 
@@ -76,7 +91,7 @@ if (length(present) < 1) {
 
 # ---- Focused heatmap (z-scored VST) ----------------------------------------
 mat <- assay(vsd)[present, , drop = FALSE]
-rownames(mat) <- rownames(vsd)[present]
+rownames(mat) <- lab_for(rownames(vsd)[present])
 if (length(present) > 1) mat <- t(scale(t(mat)))
 ann <- as.data.frame(colData(dds)[, group_var, drop = FALSE])
 ph <- pheatmap(mat, scale = "none", annotation_col = ann, show_rownames = TRUE,
@@ -94,7 +109,7 @@ grid::grid.newpage(); grid::grid.draw(ph$gtable); dev.off()
 # Counts route through counts(dds, normalized=TRUE); microarray has no counts, so
 # use the normalized log2 intensity matrix (assay(vsd)) on a linear axis.
 nc <- if (is_intensity) assay(vsd)[present, , drop = FALSE] else counts(dds, normalized = TRUE)[present, , drop = FALSE]
-rownames(nc) <- rownames(vsd)[present]
+rownames(nc) <- lab_for(rownames(vsd)[present])
 groups <- as.character(colData(dds)[[group_var]])
 long <- do.call(rbind, lapply(seq_len(nrow(nc)), function(i) {
   data.frame(gene = rownames(nc)[i], sample = colnames(nc), count = as.numeric(nc[i, ]),

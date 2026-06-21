@@ -22,6 +22,15 @@ out <- snakemake@output
 # mean, so count-scale transforms (log10 on baseMean) are skipped below.
 is_intensity <- identical(tryCatch(obj$assay_kind, error = function(e) NULL), "log2_intensity")
 
+# Gene-id -> symbol labels (from the DE step). Falls back to the gene id when no
+# symbol is known, so RefSeq/locus-tag references and older RDS files still work.
+symbol_map <- tryCatch(obj$symbol_map, error = function(e) NULL)
+label_for <- function(ids) {
+  if (is.null(symbol_map)) return(ids)
+  s <- unname(symbol_map[ids])
+  ifelse(is.na(s) | !nzchar(s), ids, s)
+}
+
 # ---- Style parameters (NULL-safe) ------------------------------------------
 # Read from the rule's declared params (a Snakemake rerun trigger); fall back to
 # config for older invocations that did not pass the style as a param.
@@ -172,6 +181,7 @@ save_gg(p_ma, out[["ma_png"]], out[["ma_svg"]])
 # ---- Volcano ----------------------------------------------------------------
 vol <- as.data.frame(resLFC)
 vol$gene <- rownames(vol)
+vol$label <- label_for(vol$gene)
 vol <- vol[!is.na(vol$padj), ]
 vol$neglog10padj <- -log10(vol$padj)
 vol$direction <- "n.s."
@@ -185,7 +195,7 @@ p_vol <- ggplot(vol, aes(log2FoldChange, neglog10padj)) +
   geom_vline(xintercept = c(-lfc_thr, lfc_thr), linetype = "dashed", colour = "grey60", linewidth = 0.3) +
   geom_hline(yintercept = -log10(alpha_thr), linetype = "dashed", colour = "grey60", linewidth = 0.3) +
   geom_point(aes(colour = direction, shape = direction), size = point_size, alpha = 0.8) +
-  geom_text_repel(data = lab, aes(label = gene), size = 3, seed = 42, max.overlaps = Inf) +
+  geom_text_repel(data = lab, aes(label = label), size = 3, seed = 42, max.overlaps = Inf) +
   scale_colour_manual(values = pal, name = NULL) +
   scale_shape_manual(values = shp, name = NULL) +
   labs(x = "log2 fold change", y = "-log10 adjusted p") +
@@ -201,6 +211,7 @@ ord <- ok[order(res$padj[ok])]
 n_top <- min(heatmap_top, length(ord))
 top_names <- rownames(res)[head(ord, n_top)]
 hm <- assay(vsd)[top_names, , drop = FALSE]
+rownames(hm) <- label_for(top_names)
 hm <- t(scale(t(hm)))
 ann <- as.data.frame(colData(dds)[, group_var, drop = FALSE])
 ph2 <- pheatmap(hm, scale = "none", annotation_col = ann, show_rownames = TRUE,

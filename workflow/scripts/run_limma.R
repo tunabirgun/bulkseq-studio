@@ -131,11 +131,14 @@ stopifnot(identical(rownames(SummarizedExperiment::assay(vsd)), rownames(res)))
 # ---- Outputs (match run_deseq2.R) -------------------------------------------
 res_out <- res
 res_out$gene_id <- rownames(res_out)
+res_out$symbol <- rownames(res_out)   # microarray rows are already gene symbols
+res_out$biotype <- NA_character_      # not available for probe-collapsed intensities
 res_out <- res_out[order(res_out$padj), ]
 write.csv(res_out, snakemake@output[["results"]], row.names = FALSE)
 write.csv(as.data.frame(expr_mat), snakemake@output[["normalized"]])
 saveRDS(list(dds = dds, res = res, resLFC = resLFC, vsd = vsd,
-             assay_kind = "log2_intensity"),
+             assay_kind = "log2_intensity",
+             symbol_map = setNames(rownames(res), rownames(res))),
         snakemake@output[["rds"]])
 
 sig <- !is.na(res_out$padj) & res_out$padj < alpha
