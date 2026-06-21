@@ -4,6 +4,10 @@ APP_NAME = "BulkSeq Studio"
 APP_VERSION = "0.5.0"
 WORKFLOW_VERSION = "0.5.0"
 
+# Below this STAR uniquely-mapped %, the Run Monitor warns and offers to stop the
+# run; a wrong reference or contaminated reads otherwise waste hours of alignment.
+MIN_UNIQUE_MAPPED_WARN_PCT = 50.0
+
 SAFE_ID_PATTERN = r"^[A-Za-z0-9_.-]+$"
 
 # WSL bioinformatics environment (created by scripts/setup_wsl_bioenv.sh).
