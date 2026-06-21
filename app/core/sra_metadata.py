@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import re
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -9,25 +11,71 @@ import pandas as pd
 # ENA Portal API: resolve run/experiment/study/project accessions to per-run
 # metadata + FASTQ URLs. Works from Windows over HTTPS (no WSL needed).
 ENA_API = "https://www.ebi.ac.uk/ena/portal/api/filereport"
+# GEO accession record (text); used to map a GEO series (GSE) to its SRA study,
+# because ENA's filereport does not accept GEO/GSE accessions as search terms.
+GEO_ACC_API = "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi"
 ENA_FIELDS = (
     "run_accession,experiment_accession,sample_accession,library_layout,"
     "read_count,base_count,fastq_ftp,fastq_md5,sample_title,scientific_name"
 )
 
+_GSE_RE = re.compile(r"^GSE\d+$", re.IGNORECASE)
+_SRP_RE = re.compile(r"((?:SRP|ERP|DRP)\d{4,})", re.IGNORECASE)
+
+
+def _parse_study_from_geo_text(text: str) -> str | None:
+    """Pull the SRA study (SRP/ERP/DRP) out of a GEO series text record's
+    `!Series_relation` lines. The SRA relation is the reliable marker of sequencing
+    data; a series with only a BioProject and no SRA relation is a microarray series,
+    so this returns None for it (the caller then points the user to the microarray flow)."""
+    m = _SRP_RE.search(text)
+    return m.group(1).upper() if m else None
+
+
+def _resolve_gse_to_study(gse: str, timeout: int = 60) -> str | None:
+    """Resolve a GEO series (GSE…) to its SRA study / BioProject accession, or None."""
+    url = (f"{GEO_ACC_API}?acc={urllib.parse.quote(gse)}"
+           f"&targ=self&form=text&view=brief")
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            text = response.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, OSError):
+        return None
+    return _parse_study_from_geo_text(text)
+
 
 def fetch_ena_metadata(accessions: list[str], timeout: int = 60) -> pd.DataFrame:
-    """Fetch read-run metadata for SRR/ERR/DRR/SRP/PRJ/GSE-linked accessions."""
+    """Fetch read-run metadata for SRA accessions (SRR/ERR/DRR runs, SRX experiments,
+    SRP/PRJ studies). GEO series (GSE…) are auto-resolved to their SRA study first,
+    since ENA does not accept GEO accessions directly."""
     frames: list[pd.DataFrame] = []
     for raw in accessions:
         acc = raw.strip()
         if not acc:
             continue
+        # GEO series are not valid ENA search terms -> resolve to the SRA study.
+        if _GSE_RE.match(acc):
+            study = _resolve_gse_to_study(acc, timeout=timeout)
+            if not study:
+                raise ValueError(
+                    f"{acc.upper()} has no linked SRA sequencing data. If it is a "
+                    f"microarray series, use 'Fetch a GEO microarray series' instead; "
+                    f"otherwise paste the SRA study (SRP…/PRJNA…) or run (SRR…) accessions.")
+            acc = study
         url = (
             f"{ENA_API}?accession={urllib.parse.quote(acc)}"
             f"&result=read_run&fields={ENA_FIELDS}&format=tsv"
         )
-        with urllib.request.urlopen(url, timeout=timeout) as response:
-            text = response.read().decode("utf-8")
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as response:
+                text = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            if exc.code == 400:
+                raise ValueError(
+                    f"ENA did not recognise the accession '{acc}'. Use an SRA run "
+                    f"(SRR/ERR/DRR…), experiment (SRX…), or study (SRP…/PRJNA…), or a "
+                    f"GEO series (GSE…). GEO samples (GSM…) are not supported here.") from exc
+            raise ValueError(f"ENA query failed for '{acc}': HTTP {exc.code}.") from exc
         if not text.strip():
             continue
         frame = pd.read_csv(io.StringIO(text), sep="\t", dtype=str).fillna("")

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.2 — 2026-06-22
+
+### Fixed
+
+- **GEO series (GSE…) accessions in the SRA box now work.** ENA's API rejects GEO
+  accessions (HTTP 400), so the metadata fetch now auto-resolves a `GSE…` to its
+  linked SRA study (e.g. GSE78885 → SRP071140) before querying ENA. A microarray
+  series (no SRA link) gives a clear message pointing to *Fetch a GEO microarray
+  series*, and an unrecognised accession gives an actionable error instead of a raw
+  `HTTP Error 400`.
+
 ## 0.6.1 — 2026-06-22
 
 Bug-fix release from a deep debug sweep of the 0.6.0 network/stats and
