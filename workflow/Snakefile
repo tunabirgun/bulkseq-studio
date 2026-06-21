@@ -116,6 +116,9 @@ include: "rules/figures.smk"
 include: "rules/enrichment.smk"
 include: "rules/checks.smk"
 include: "rules/reports.smk"
+include: "rules/coexpression.smk"
+include: "rules/stats.smk"
+include: "rules/ppi.smk"
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +129,18 @@ def final_targets():
         "results/deseq2/deseq2_results.csv",
         "results/export/normalized_expression_matrix.csv",
         "results/export/ranked_genes.rnk",
+        "results/figures/sample_correlation_pearson.png",
+        "results/figures/sample_correlation_pearson.svg",
+        "results/figures/sample_correlation_spearman.png",
+        "results/figures/sample_correlation_spearman.svg",
+        "results/export/sample_correlation_pearson.csv",
+        "results/export/sample_correlation_spearman.csv",
+        "results/figures/wilcoxon_concordance.png",
+        "results/figures/wilcoxon_concordance.svg",
+        "results/stats/wilcoxon_results.csv",
+        "results/figures/set_overlap_dotplot.png",
+        "results/figures/set_overlap_dotplot.svg",
+        "results/stats/set_overlap.csv",
         "results/reports/run_summary.txt",
         "results/reports/timing_summary.txt",
         "results/reports/software_versions.txt",
@@ -134,6 +149,7 @@ def final_targets():
     # Microarray has no counts.txt (intensities, not counts); every other mode does.
     if not MICROARRAY_MODE:
         targets.insert(0, "results/counts/counts.txt")
+        targets.append("results/deseq2/unchanged_genes.csv")
     if not (COUNT_MATRIX_MODE or MICROARRAY_MODE):
         # MultiQC aggregates FastQC/fastp/STAR — irrelevant without alignment.
         targets.insert(0, "results/qc/multiqc/multiqc_report.html")
@@ -143,14 +159,30 @@ def final_targets():
             targets.append(f"results/figures/{fig}.svg")
     if WF.get("enrichment", True):
         targets.append("results/enrichment/enrichment_summary.txt")
+        targets.append("results/enrichment/kegg_ora.csv")
+        targets.append("results/enrichment/kegg_gsea.csv")
         for fig in ("enrichment_dotplot", "enrichment_gsea", "enrichment_ridgeplot",
-                    "enrichment_cnetplot", "enrichment_emapplot"):
+                    "enrichment_cnetplot", "enrichment_emapplot", "enrichment_do_dotplot",
+                    "enrichment_kegg_dotplot", "enrichment_kegg_gsea"):
             targets.append(f"results/figures/{fig}.png")
             targets.append(f"results/figures/{fig}.svg")
+        for net in ("enrichment_emap", "enrichment_genemap"):
+            for ext in ("graphml", "sif", "cyjs"):
+                targets.append(f"results/networks/{net}.{ext}")
+            targets.append(f"results/networks/{net}_nodes.csv")
+            targets.append(f"results/networks/{net}_edges.csv")
     if config.get("gene_sets", {}).get("custom_gene_list"):
         targets.append("results/figures/goi_heatmap.png")
         targets.append("results/figures/goi_expression.png")
         targets.append("results/genes_of_interest/goi_report.txt")
+    if config.get("ppi", {}).get("enabled", True):
+        for ext in ("graphml", "sif", "cyjs"):
+            targets.append(f"results/networks/string_ppi.{ext}")
+        targets.append("results/networks/string_ppi_nodes.csv")
+        targets.append("results/networks/string_ppi_edges.csv")
+        targets.append("results/networks/ppi_hub_genes.csv")
+        targets.append("results/figures/ppi_network.png")
+        targets.append("results/figures/ppi_network.svg")
     return targets
 
 

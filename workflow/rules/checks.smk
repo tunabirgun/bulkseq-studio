@@ -20,6 +20,7 @@ elif COUNT_MATRIX_MODE:
         "checks/07_quantification_qc.json",
         "checks/08_metadata_design_qc.json",
         "checks/09_deseq2_qc.json",
+        "checks/13_equivalence_qc.json",
     ]
 else:
     ALL_CHECKS = [
@@ -30,9 +31,17 @@ else:
         "checks/07_quantification_qc.json",
         "checks/08_metadata_design_qc.json",
         "checks/09_deseq2_qc.json",
+        "checks/13_equivalence_qc.json",
     ]
 if WF.get("enrichment", True):
     ALL_CHECKS.append("checks/10_enrichment_qc.json")
+# Wilcoxon sensitivity diagnostic runs on every mode (reads the normalized matrix).
+ALL_CHECKS.append("checks/14_wilcoxon_sensitivity.json")
+# DE-vs-gene-set overlap (skips cleanly for organisms not covered by MSigDB).
+ALL_CHECKS.append("checks/15_set_overlap.json")
+# PPI network (STRING) when enabled; degrades to empty + PASS if unreachable.
+if config.get("ppi", {}).get("enabled", True):
+    ALL_CHECKS.append("checks/16_ppi_network.json")
 
 
 rule validate_project:

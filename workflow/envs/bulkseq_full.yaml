@@ -44,3 +44,10 @@ dependencies:
   - r-rcolorbrewer
   - r-svglite
   - r-msigdbr
+  # PPI networks + graph handling (0.6.0): STRING interactions, igraph/ggraph,
+  # cytoscape.js JSON export.
+  - bioconductor-stringdb
+  - r-igraph
+  - r-ggraph
+  - r-tidygraph
+  - r-jsonlite

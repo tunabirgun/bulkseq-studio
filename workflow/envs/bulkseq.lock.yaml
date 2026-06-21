@@ -52,6 +52,7 @@ dependencies:
   - bioconductor-s4vectors=0.48.0=r45h01b2380_1
   - bioconductor-seqinfo=1.0.0=r45hdfd78af_0
   - bioconductor-sparsearray=1.10.8=r45h01b2380_0
+  - bioconductor-stringdb=2.22.0=r45hdfd78af_0
   - bioconductor-summarizedexperiment=1.40.0=r45hdfd78af_0
   - bioconductor-treeio=1.34.0=r45hdfd78af_0
   - bioconductor-tximport=1.38.2=r45hdfd78af_0
@@ -235,9 +236,12 @@ dependencies:
   - r-biocmanager=1.30.27=r45hc72bb7e_0
   - r-bit=4.6.0=r45h54b55ab_1
   - r-bit64=4.8.2=r45h54b55ab_0
+  - r-bitops=1.0_9=r45h54b55ab_1
   - r-blob=1.3.0=r45hc72bb7e_0
   - r-bslib=0.11.0=r45hc72bb7e_0
   - r-cachem=1.1.0=r45h54b55ab_2
+  - r-catools=1.18.3=r45h3697838_1
+  - r-chron=2.3_62=r45h54b55ab_1
   - r-circlize=0.4.18=r45hc72bb7e_0
   - r-cli=3.6.6=r45h3697838_0
   - r-clipr=0.8.1=r45hc72bb7e_0
@@ -285,15 +289,22 @@ dependencies:
   - r-ggnewscale=0.5.2=r45hc72bb7e_1
   - r-ggplot2=4.0.3=r45h785f33e_0
   - r-ggplotify=0.1.3=r45hc72bb7e_1
+  - r-ggraph=2.2.2=r45h3697838_0
   - r-ggrepel=0.9.8=r45h3697838_0
   - r-ggtangle=0.1.2=r45hc72bb7e_0
   - r-ggtext=0.1.2=r45hc72bb7e_4
   - r-globaloptions=0.1.4=r45ha770c72_0
   - r-glue=1.8.1=r45h54b55ab_0
+  - r-gplots=3.3.0=r45hc72bb7e_0
+  - r-graphlayouts=1.2.4=r45h3697838_0
+  - r-gridextra=2.3=r45hc72bb7e_1007
   - r-gridgraphics=0.5_1=r45hc72bb7e_4
   - r-gridtext=0.1.6=r45h3697838_0
   - r-gson=0.1.0=r45hc72bb7e_3
+  - r-gsubfn=0.7=r45hc72bb7e_1006
   - r-gtable=0.3.6=r45hc72bb7e_1
+  - r-gtools=3.9.5=r45h54b55ab_2
+  - r-hash=3.0.1=r45hc72bb7e_6
   - r-highr=0.12=r45hc72bb7e_0
   - r-hms=1.1.4=r45hc72bb7e_0
   - r-htmltools=0.5.9=r45h3697838_0
@@ -308,6 +319,7 @@ dependencies:
   - r-jpeg=0.1_11=r45hd0206f1_1
   - r-jquerylib=0.1.4=r45hc72bb7e_4
   - r-jsonlite=2.0.0=r45h54b55ab_1
+  - r-kernsmooth=2.23_26=r45ha0a88a1_1
   - r-knitr=1.51=r45hc72bb7e_0
   - r-labeling=0.4.3=r45hc72bb7e_2
   - r-lambda.r=1.2.4=r45hc72bb7e_5
@@ -336,12 +348,14 @@ dependencies:
   - r-pillar=1.11.1=r45hc72bb7e_0
   - r-pkgconfig=2.0.3=r45hc72bb7e_5
   - r-plogr=0.2.0=r45hc72bb7e_1007
+  - r-plotrix=3.8_14=r45hc72bb7e_0
   - r-plyr=1.8.9=r45h3697838_3
   - r-png=0.1_9=r45haf2892b_0
   - r-polyclip=1.10_7=r45h3697838_1
   - r-prettyunits=1.2.0=r45hc72bb7e_2
   - r-progress=1.2.3=r45hc72bb7e_2
   - r-promises=1.5.0=r45hc72bb7e_1
+  - r-proto=1.0.0=r45ha770c72_2007
   - r-purrr=1.2.2=r45h54b55ab_0
   - r-r.methodss3=1.8.2=r45hc72bb7e_4
   - r-r.oo=1.27.1=r45hc72bb7e_1
@@ -370,6 +384,7 @@ dependencies:
   - r-shiny=1.13.0=r45h785f33e_0
   - r-snow=0.4_4=r45hc72bb7e_4
   - r-sourcetools=0.1.7_2=r45h3697838_0
+  - r-sqldf=0.4_12=r45hc72bb7e_0
   - r-statmod=1.5.2=r45hb1d0f04_0
   - r-stringi=1.8.7=r45h3d52c89_2
   - r-stringr=1.6.0=r45h785f33e_0
@@ -379,6 +394,7 @@ dependencies:
   - r-textshaping=1.0.5=r45h74f4acd_0
   - r-tibble=3.3.1=r45h54b55ab_0
   - r-tidydr=0.0.6=r45hc72bb7e_1
+  - r-tidygraph=1.3.0=r45h3697838_2
   - r-tidyr=1.3.2=r45h3697838_0
   - r-tidyselect=1.2.1=r45hc72bb7e_2
   - r-tidytree=0.4.7=r45hc72bb7e_0
@@ -389,6 +405,7 @@ dependencies:
   - r-urltools=1.7.3.1=r45h3697838_1
   - r-utf8=1.2.6=r45h54b55ab_1
   - r-vctrs=0.7.3=r45h3697838_0
+  - r-viridis=0.6.5=r45hc72bb7e_2
   - r-viridislite=0.4.3=r45hc72bb7e_0
   - r-vroom=1.7.1=r45h3697838_0
   - r-withr=3.0.2=r45hc72bb7e_1

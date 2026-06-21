@@ -30,6 +30,8 @@ rule enrichment:
         go_up="results/enrichment/go_ora_up.csv",
         go_down="results/enrichment/go_ora_down.csv",
         gsea="results/enrichment/gsea.csv",
+        kegg="results/enrichment/kegg_ora.csv",
+        kegg_gsea="results/enrichment/kegg_gsea.csv",
         objects="results/enrichment/enrichment_objects.rds",
         check="checks/10_enrichment_qc.json",
     params:
@@ -65,6 +67,12 @@ rule enrichment_figures:
         cnet_svg="results/figures/enrichment_cnetplot.svg",
         emap_png="results/figures/enrichment_emapplot.png",
         emap_svg="results/figures/enrichment_emapplot.svg",
+        do_dotplot_png="results/figures/enrichment_do_dotplot.png",
+        do_dotplot_svg="results/figures/enrichment_do_dotplot.svg",
+        kegg_dotplot_png="results/figures/enrichment_kegg_dotplot.png",
+        kegg_dotplot_svg="results/figures/enrichment_kegg_dotplot.svg",
+        kegg_gsea_png="results/figures/enrichment_kegg_gsea.png",
+        kegg_gsea_svg="results/figures/enrichment_kegg_gsea.svg",
     params:
         style=config.get("figures_style", {}),
     benchmark:
@@ -73,3 +81,27 @@ rule enrichment_figures:
         "logs/enrichment_figures.log",
     script:
         "../scripts/make_enrichment_figures.R"
+
+
+# Cytoscape-compatible export of the enrichment networks (term-similarity +
+# gene-concept) as GraphML / SIF / cytoscape.js JSON + node/edge CSVs.
+rule network_enrichment:
+    input:
+        objects="results/enrichment/enrichment_objects.rds",
+    output:
+        emap_graphml="results/networks/enrichment_emap.graphml",
+        emap_sif="results/networks/enrichment_emap.sif",
+        emap_cyjs="results/networks/enrichment_emap.cyjs",
+        emap_nodes="results/networks/enrichment_emap_nodes.csv",
+        emap_edges="results/networks/enrichment_emap_edges.csv",
+        genemap_graphml="results/networks/enrichment_genemap.graphml",
+        genemap_sif="results/networks/enrichment_genemap.sif",
+        genemap_cyjs="results/networks/enrichment_genemap.cyjs",
+        genemap_nodes="results/networks/enrichment_genemap_nodes.csv",
+        genemap_edges="results/networks/enrichment_genemap_edges.csv",
+    benchmark:
+        "benchmarks/network_enrichment.tsv"
+    log:
+        "logs/network_enrichment.log",
+    script:
+        "../scripts/export_network.R"

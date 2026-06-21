@@ -59,6 +59,23 @@ foreach ($attempt in 1..8) {
 }
 if (-not $zipped) { throw "Portable ZIP creation failed after retries (a dist/ file stayed locked)." }
 
+Write-Host "[4/4] Refreshing the repo-root launch copy so it is always the latest build..."
+# Keep BulkSeqStudio.exe + _internal at the repo root in sync with this build, so
+# the click-to-run copy there (e.g. a Desktop shortcut target) is never stale.
+# Best-effort: if the root exe is currently running it is locked, so warn instead
+# of failing the whole build.
+$rootExe = Join-Path $root "BulkSeqStudio.exe"
+$rootInternal = Join-Path $root "_internal"
+try {
+    if (Test-Path $rootExe) { Remove-Item $rootExe -Force -ErrorAction Stop }
+    if (Test-Path $rootInternal) { Remove-Item $rootInternal -Recurse -Force -ErrorAction Stop }
+    Copy-Item (Join-Path $onedir "BulkSeqStudio.exe") $rootExe -Force -ErrorAction Stop
+    Copy-Item (Join-Path $onedir "_internal") $rootInternal -Recurse -Force -ErrorAction Stop
+    Write-Host "  Repo-root copy refreshed to this build."
+} catch {
+    Write-Warning "Could not refresh the repo-root copy (is BulkSeqStudio.exe running? close it and rebuild): $_"
+}
+
 Write-Host ""
 Write-Host "Done."
 Write-Host "  Executable:   dist\BulkSeq Studio\BulkSeqStudio.exe"

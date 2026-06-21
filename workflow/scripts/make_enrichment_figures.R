@@ -71,5 +71,21 @@ render(have_ep && nrows(ego_all) > 1,
        emapplot(pairwise_termsim(ego_all), showCategory = 20),
        out[["emap_png"]], out[["emap_svg"]], no_data)
 
+# Disease-ontology ORA dotplot (human/mouse only; placeholder otherwise).
+render(have_ep && nrows(obj$ego_do) > 0,
+       dotplot(obj$ego_do, showCategory = 15),
+       out[["do_dotplot_png"]], out[["do_dotplot_svg"]],
+       "No disease-ontology terms (human/mouse only)")
+
+# KEGG pathway ORA dotplot and KEGG GSEA running-score (available for any organism
+# with a KEGG code, including fungi/bacteria that have no OrgDb).
+no_kegg <- "No KEGG pathway enrichment (no KEGG code or nothing significant)"
+render(have_ep && nrows(obj$ekegg_all) > 0,
+       dotplot(obj$ekegg_all, showCategory = 15),
+       out[["kegg_dotplot_png"]], out[["kegg_dotplot_svg"]], no_kegg)
+render(have_ep && nrows(obj$kegg_gse) > 0,
+       gseaplot2(obj$kegg_gse, geneSetID = 1, title = as.data.frame(obj$kegg_gse)$Description[1]),
+       out[["kegg_gsea_png"]], out[["kegg_gsea_svg"]], no_kegg)
+
 sink(type = "message")
 close(log_con)

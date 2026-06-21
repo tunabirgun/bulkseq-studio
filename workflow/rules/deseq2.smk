@@ -53,6 +53,8 @@ else:
             session="results/reports/sessionInfo.txt",
             design_check="checks/08_metadata_design_qc.json",
             deseq_check="checks/09_deseq2_qc.json",
+            unchanged="results/deseq2/unchanged_genes.csv",
+            equivalence_check="checks/13_equivalence_qc.json",
         params:
             design=_DE.get("design_formula", "~ condition"),
             ref_factor=_REF_FACTOR,

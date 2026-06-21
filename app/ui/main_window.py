@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSlider,
     QSpinBox,
     QSplitter,
     QTableWidget,
@@ -65,7 +66,7 @@ from app.core.paths import data_path, windows_to_wsl_path, wsl_recommended_workd
 from app.ui.image_viewer import SVG_AVAILABLE, ImageViewer
 from app.ui.metadata_editor import MetadataTable
 from app.ui.readiness_dialog import ReadinessDialog
-from app.ui.theme import IMAGEVIEWER_BG, apply_theme
+from app.ui.theme import IMAGEVIEWER_BG, PALETTES, apply_theme
 
 
 class RunnerThread(QThread):
@@ -163,6 +164,7 @@ class MainWindow(QMainWindow):
         self._build_run_tab()
         self._build_reports_tab()
         self._build_outputs_tab()
+        self._build_ppi_tab()
         # A small status bar at the bottom for transient feedback (e.g. resource
         # detection), so blocking actions show progress instead of looking frozen.
         # The environment check is on-demand (the 'Check Environment' button) so the
@@ -195,6 +197,9 @@ class MainWindow(QMainWindow):
         # A QGraphicsScene ignores widget QSS, so repaint the viewer background.
         if hasattr(self, "figure_viewer"):
             self.figure_viewer.update_theme(IMAGEVIEWER_BG.get(new_mode, IMAGEVIEWER_BG["light"]))
+        # A QWebEngineView ignores app QSS too; push the palette into the page.
+        if hasattr(self, "ppi_viewer"):
+            self.ppi_viewer.update_theme(self._ppi_theme_palette())
 
     def _sync_theme_toggle(self, mode: str) -> None:
         # The button is labelled with the mode it switches TO.
@@ -1191,7 +1196,13 @@ class MainWindow(QMainWindow):
         controls = QHBoxLayout()
         self.output_table_pick = QComboBox()
         self.output_table_pick.addItems(
-            ["results/counts/counts.txt", "results/deseq2/deseq2_results.csv", "results/deseq2/normalized_counts.csv"]
+            ["results/counts/counts.txt", "results/deseq2/deseq2_results.csv",
+             "results/deseq2/normalized_counts.csv", "results/deseq2/unchanged_genes.csv",
+             "results/enrichment/kegg_ora.csv", "results/enrichment/kegg_gsea.csv",
+             "results/stats/wilcoxon_results.csv", "results/stats/set_overlap.csv",
+             "results/networks/enrichment_emap_nodes.csv",
+             "results/networks/enrichment_genemap_nodes.csv",
+             "results/networks/string_ppi_nodes.csv", "results/networks/ppi_hub_genes.csv"]
         )
         load = QPushButton("Load table preview")
         load.clicked.connect(self._load_output_table)
@@ -1292,6 +1303,174 @@ class MainWindow(QMainWindow):
 
         self.tabs.addTab(page, "Outputs")
 
+    def _build_ppi_tab(self) -> None:
+        # A dedicated, interactive STRING PPI network (cytoscape.js in a web view),
+        # separate from the static figure: hover for per-protein detail, drag/zoom,
+        # and customise layout / colour / size / confidence before exporting.
+        from app.ui.ppi_viewer import PpiViewer
+
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        help_label = QLabel(
+            "Interactive protein-protein interaction network (STRING) from the differential-"
+            "expression / genes-of-interest set. Hover a protein for its symbol, expression, "
+            "log2 fold-change, adjusted p-value and topology; drag nodes to rearrange and scroll "
+            "to zoom. Customise the layout, colour, size and confidence, then export PNG or SVG.")
+        help_label.setWordWrap(True)
+        layout.addWidget(help_label)
+
+        row1 = QHBoxLayout()
+        load_btn = QPushButton("Load / refresh network")
+        load_btn.setToolTip("Assemble the network from this project's results and display it.")
+        load_btn.clicked.connect(self._load_ppi_network)
+        self.ppi_layout_pick = QComboBox()
+        self.ppi_layout_pick.addItems(["fcose", "cose", "circle", "concentric", "grid"])
+        self.ppi_layout_pick.currentTextChanged.connect(lambda n: self.ppi_viewer.set_layout(n))
+        self.ppi_color_pick = QComboBox()
+        self.ppi_color_pick.addItems(["log2FoldChange", "module"])
+        self.ppi_color_pick.currentTextChanged.connect(lambda f: self.ppi_viewer.set_color_by(f))
+        self.ppi_size_pick = QComboBox()
+        self.ppi_size_pick.addItems(["degree", "meanExpr", "neglog10padj"])
+        self.ppi_size_pick.currentTextChanged.connect(lambda f: self.ppi_viewer.set_size_by(f))
+        self.ppi_labels_cb = QCheckBox("Labels")
+        self.ppi_labels_cb.setChecked(True)
+        self.ppi_labels_cb.toggled.connect(lambda on: self.ppi_viewer.set_labels(on))
+        row1.addWidget(load_btn)
+        row1.addWidget(QLabel("Layout:"))
+        row1.addWidget(self.ppi_layout_pick)
+        row1.addWidget(QLabel("Colour:"))
+        row1.addWidget(self.ppi_color_pick)
+        row1.addWidget(QLabel("Size:"))
+        row1.addWidget(self.ppi_size_pick)
+        row1.addWidget(self.ppi_labels_cb)
+        row1.addStretch(1)
+        layout.addLayout(row1)
+
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("Confidence ≥"))
+        self.ppi_conf = QSlider(Qt.Orientation.Horizontal)
+        self.ppi_conf.setRange(0, 100)
+        self.ppi_conf.setValue(0)
+        self.ppi_conf.setMaximumWidth(180)
+        self.ppi_conf.setToolTip("Hide interactions below this STRING confidence (combined score). "
+                                 "The minimum is the build threshold; lowering it further requires "
+                                 "rebuilding from STRING with a lower score threshold.")
+        self.ppi_conf.valueChanged.connect(self._ppi_confidence_changed)
+        self.ppi_conf_lbl = QLabel("0.00")
+        rebuild_btn = QPushButton("Rebuild from STRING…")
+        rebuild_btn.setToolTip("Re-run the STRING network with the current score threshold "
+                               "(Outputs → Figure Style). Re-contacts string-db.org.")
+        rebuild_btn.clicked.connect(self._regenerate_ppi)
+        export_png = QPushButton("Export PNG")
+        export_png.clicked.connect(lambda: self._ppi_export("png"))
+        export_svg = QPushButton("Export SVG")
+        export_svg.clicked.connect(lambda: self._ppi_export("svg"))
+        row2.addWidget(self.ppi_conf)
+        row2.addWidget(self.ppi_conf_lbl)
+        row2.addStretch(1)
+        row2.addWidget(rebuild_btn)
+        row2.addWidget(export_png)
+        row2.addWidget(export_svg)
+        layout.addLayout(row2)
+
+        self.ppi_status = QLabel("No network loaded — click “Load / refresh network”.")
+        self.ppi_status.setWordWrap(True)
+        layout.addWidget(self.ppi_status)
+
+        self.ppi_viewer = PpiViewer()
+        self.ppi_viewer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.ppi_viewer.setMinimumHeight(360)
+        self.ppi_viewer.update_theme(self._ppi_theme_palette())
+        layout.addWidget(self.ppi_viewer, 1)
+
+        self.tabs.addTab(page, "PPI Network")
+
+    def _ppi_theme_palette(self) -> dict:
+        mode = self._current_theme_mode()
+        pal = PALETTES.get(mode, PALETTES["light"])
+        return {
+            "bg": IMAGEVIEWER_BG.get(mode, IMAGEVIEWER_BG["light"]),
+            "text": pal.get("TEXT", "#1a1a1a"),
+            "edge": pal.get("BORDER", "#c7c7c7"),
+            "muted": pal.get("MUTED_TEXT", "#8a8a8a"),
+        }
+
+    def _load_ppi_network(self) -> None:
+        if not self._require_project():
+            return
+        assert self.project_root is not None
+        # Fallback: no web engine -> show the static PPI figure.
+        if not self.ppi_viewer.available:
+            png = self.project_root / "results" / "figures" / "ppi_network.png"
+            if png.exists():
+                self.ppi_viewer.load_static(png)
+                self.ppi_status.setText("Interactive view unavailable — showing the static PPI figure.")
+            else:
+                self.ppi_status.setText("No PPI network found for this project yet.")
+            return
+        from app.core.ppi_graph import build_ppi_cytoscape_json
+
+        try:
+            graph = build_ppi_cytoscape_json(self.project_root)
+        except Exception as exc:  # never crash the tab
+            self.ppi_status.setText(f"Could not assemble the network: {exc}")
+            return
+        meta = graph.get("meta", {})
+        n_nodes = int(meta.get("node_count", 0))
+        n_edges = int(meta.get("edge_count", 0))
+        self.ppi_viewer.load_graph(graph["elements"])
+        # The graph is pre-filtered at build time; the slider can only tighten.
+        floor = int(round(float(meta.get("score_floor", 0.0)) * 100))
+        self.ppi_conf.blockSignals(True)
+        self.ppi_conf.setMinimum(floor)
+        self.ppi_conf.setValue(floor)
+        self.ppi_conf.blockSignals(False)
+        self.ppi_conf_lbl.setText(f"{floor / 100:.2f}")
+        if n_nodes == 0:
+            self.ppi_status.setText(
+                "No PPI network for this run — STRING returned no interactions (the organism may "
+                "lack STRING coverage, or its genes have no mapped symbols). The static figure, if any, "
+                "is on the Outputs tab.")
+        else:
+            self.ppi_status.setText(
+                f"{n_nodes} proteins, {n_edges} interactions. Hover a protein for details; "
+                "click to highlight its neighbours; drag and scroll to explore.")
+
+    def _ppi_confidence_changed(self, value: int) -> None:
+        floor = value / 100.0
+        self.ppi_conf_lbl.setText(f"{floor:.2f}")
+        if hasattr(self, "ppi_viewer"):
+            self.ppi_viewer.set_confidence(floor)
+
+    def _ppi_export(self, fmt: str) -> None:
+        if not hasattr(self, "ppi_viewer") or not self.ppi_viewer.available:
+            QMessageBox.information(self, APP_NAME, "Interactive export needs the web view; "
+                                   "use the static figure on the Outputs tab instead.")
+            return
+        default = f"ppi_network.{fmt}"
+        path, _ = QFileDialog.getSaveFileName(self, "Export PPI network", default,
+                                              f"{fmt.upper()} (*.{fmt})")
+        if not path:
+            return
+        self.ppi_viewer.export_image(fmt, lambda data: self._save_ppi_export(path, fmt, data))
+
+    def _save_ppi_export(self, path: str, fmt: str, data) -> None:
+        if not data:
+            QMessageBox.warning(self, APP_NAME, "Nothing to export — load a network first.")
+            return
+        try:
+            if fmt == "png":
+                import base64
+
+                b64 = data.split(",", 1)[1] if "," in data else data
+                Path(path).write_bytes(base64.b64decode(b64))
+            else:
+                Path(path).write_text(data, encoding="utf-8")
+        except Exception as exc:
+            QMessageBox.warning(self, APP_NAME, f"Export failed: {exc}")
+            return
+        self.ppi_status.setText(f"Exported {fmt.upper()} to {path}")
+
     def _build_goi_group(self) -> QWidget:
         # No group title — the enclosing "Genes of Interest" tab already names it.
         group = QWidget()
@@ -1362,6 +1541,25 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.information(self, APP_NAME, f"Saved {n} gene(s). Re-run, or click 'Regenerate figures', to produce the genes-of-interest heatmap and expression plots.")
 
+    def _regenerate_ppi(self) -> None:
+        # Rebuild the STRING PPI network from the existing DESeq2 results with the
+        # current score threshold / hub-label count, without re-aligning or re-DESeq2.
+        if not self._require_project() or self.config is None:
+            return
+        assert self.project_root is not None
+        rds = self.project_root / "results" / "deseq2" / "deseq2_objects.rds"
+        if not rds.exists():
+            QMessageBox.warning(
+                self, APP_NAME,
+                "No DESeq2 results were found for this project yet. Run the pipeline once "
+                "(Run Monitor) to produce them; afterwards this rebuilds the STRING PPI "
+                "network from those results without re-analyzing.")
+            return
+        self.config.ppi.score_threshold = int(self.ppi_score.value())
+        self.config.ppi.hub_label_count = int(self.ppi_hub_labels.value())
+        self.manager.save_config(self.project_root, self.config)
+        self._start_snakemake("ppi")
+
     def _info_label(self, text: str, help_text: str) -> QWidget:
         # A form-row label with a small info button that explains a complex
         # parameter (tooltip on hover, full text on click).
@@ -1392,7 +1590,8 @@ class MainWindow(QMainWindow):
         # control panel without a horizontal scrollbar.
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
         self.fig_palette = QComboBox()
-        self.fig_palette.addItems(["Blue-Red", "Viridis", "Greyscale"])
+        self.fig_palette.addItems(["Blue-Red", "Viridis", "Magma", "Plasma", "Cividis",
+                                   "Spectral", "Red-Yellow-Blue", "Greyscale"])
         self.fig_point_size = QDoubleSpinBox()
         self.fig_point_size.setRange(0.1, 12.0)
         self.fig_point_size.setSingleStep(0.1)
@@ -1452,6 +1651,18 @@ class MainWindow(QMainWindow):
         form.addRow(self._info_label("Height", "Saved figure height (PNG and SVG), in the units selected above."), self.fig_height)
         form.addRow(self._info_label("DPI (PNG)", "Resolution for the raster PNG export. SVG is vector and unaffected. 300 is publication quality. Also converts px width/height to inches."), self.fig_dpi)
         form.addRow(save_style)
+        # --- PPI network (STRING) controls: customise + regenerate in-app ---
+        self.ppi_score = QSpinBox()
+        self.ppi_score.setRange(0, 1000)
+        self.ppi_score.setValue(400)
+        self.ppi_hub_labels = QSpinBox()
+        self.ppi_hub_labels.setRange(0, 100)
+        self.ppi_hub_labels.setValue(15)
+        regen_ppi = QPushButton("Regenerate PPI network")
+        regen_ppi.clicked.connect(self._regenerate_ppi)
+        form.addRow(self._info_label("PPI score threshold", "STRING combined-score cutoff for the protein-protein network (0-1000; 400 = medium, 700 = high confidence). Higher gives a sparser, higher-confidence network."), self.ppi_score)
+        form.addRow(self._info_label("PPI hub labels", "How many top hub proteins (by degree) to label on the PPI network figure."), self.ppi_hub_labels)
+        form.addRow(regen_ppi)
         return group
 
     @staticmethod
@@ -1778,6 +1989,8 @@ class MainWindow(QMainWindow):
         self._configure_dim_spins(unit)
         self.fig_width.setValue(self._dim_from_inches(fig.width_in, unit, fig.dpi))
         self.fig_height.setValue(self._dim_from_inches(fig.height_in, unit, fig.dpi))
+        self.ppi_score.setValue(self.config.ppi.score_threshold)
+        self.ppi_hub_labels.setValue(self.config.ppi.hub_label_count)
         goi_path = self.config.gene_sets.custom_gene_list
         if goi_path and self.project_root is not None and (self.project_root / goi_path).exists():
             self.goi_box.setPlainText((self.project_root / goi_path).read_text(encoding="utf-8").strip())
@@ -2225,11 +2438,12 @@ class MainWindow(QMainWindow):
         self._mapping_halt_decided = False
         self._stop_in_progress = False
         self._set_running_ui(True)
-        if mode in ("run", "resume", "recover", "figures", "goi"):
+        if mode in ("run", "resume", "recover", "figures", "goi", "ppi"):
             self.progress.setValue(0)
             self.progress.setStyleSheet("")
             status = {"figures": "Regenerating figures...",
-                      "goi": "Generating genes-of-interest outputs..."}.get(mode, "Running...")
+                      "goi": "Generating genes-of-interest outputs...",
+                      "ppi": "Rebuilding PPI network..."}.get(mode, "Running...")
             self._set_run_status(status, "#2C6FB6")
             self.phase_label.setText("Current step: starting...")
             self._run_start = time.monotonic()
