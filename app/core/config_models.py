@@ -168,6 +168,20 @@ class EnrichmentConfig(BaseModel):
     kegg_organism: str | None = None
 
 
+class PpiConfig(BaseModel):
+    # Protein-protein interaction network (STRING) built from the DE / genes-of-
+    # interest set. STRINGdb contacts string-db.org on every run (no offline mode),
+    # so the rule degrades to empty outputs + a check when it is unreachable or the
+    # organism has no STRING taxid.
+    enabled: bool = True
+    score_threshold: int = 400  # STRING combined-score cutoff (400 medium, 700 high)
+    taxon: int | None = None    # NCBI taxid override; else derived from the organism
+    seed_source: Literal["de", "goi"] = "de"
+    string_version: str = "12.0"
+    max_seed_genes: int = 400   # cap the DE seed set sent to STRING
+    hub_label_count: int = 15   # how many top hub proteins to label on the figure
+
+
 class FigureConfig(BaseModel):
     # Visual style applied to all DESeq2 figures (workflow/scripts/make_figures.R).
     palette: Literal["Blue-Red", "Viridis", "Greyscale"] = "Blue-Red"
@@ -250,6 +264,7 @@ class AppConfig(BaseModel):
     deseq2: Deseq2Config = Field(default_factory=Deseq2Config)
     gene_sets: GeneSetsConfig = Field(default_factory=GeneSetsConfig)
     enrichment: EnrichmentConfig = Field(default_factory=EnrichmentConfig)
+    ppi: PpiConfig = Field(default_factory=PpiConfig)
     figures_style: FigureConfig = Field(default_factory=FigureConfig)
     resources: ResourcesConfig = Field(default_factory=ResourcesConfig)
     rule_threads: RuleThreads = Field(default_factory=RuleThreads)

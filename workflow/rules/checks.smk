@@ -39,6 +39,9 @@ if WF.get("enrichment", True):
 ALL_CHECKS.append("checks/14_wilcoxon_sensitivity.json")
 # DE-vs-gene-set overlap (skips cleanly for organisms not covered by MSigDB).
 ALL_CHECKS.append("checks/15_set_overlap.json")
+# PPI network (STRING) when enabled; degrades to empty + PASS if unreachable.
+if config.get("ppi", {}).get("enabled", True):
+    ALL_CHECKS.append("checks/16_ppi_network.json")
 
 
 rule validate_project:

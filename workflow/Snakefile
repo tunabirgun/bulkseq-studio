@@ -118,6 +118,7 @@ include: "rules/checks.smk"
 include: "rules/reports.smk"
 include: "rules/coexpression.smk"
 include: "rules/stats.smk"
+include: "rules/ppi.smk"
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +172,14 @@ def final_targets():
         targets.append("results/figures/goi_heatmap.png")
         targets.append("results/figures/goi_expression.png")
         targets.append("results/genes_of_interest/goi_report.txt")
+    if config.get("ppi", {}).get("enabled", True):
+        for ext in ("graphml", "sif", "cyjs"):
+            targets.append(f"results/networks/string_ppi.{ext}")
+        targets.append("results/networks/string_ppi_nodes.csv")
+        targets.append("results/networks/string_ppi_edges.csv")
+        targets.append("results/networks/ppi_hub_genes.csv")
+        targets.append("results/figures/ppi_network.png")
+        targets.append("results/figures/ppi_network.svg")
     return targets
 
 

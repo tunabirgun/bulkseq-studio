@@ -1195,7 +1195,8 @@ class MainWindow(QMainWindow):
              "results/deseq2/normalized_counts.csv", "results/deseq2/unchanged_genes.csv",
              "results/stats/wilcoxon_results.csv", "results/stats/set_overlap.csv",
              "results/networks/enrichment_emap_nodes.csv",
-             "results/networks/enrichment_genemap_nodes.csv"]
+             "results/networks/enrichment_genemap_nodes.csv",
+             "results/networks/string_ppi_nodes.csv", "results/networks/ppi_hub_genes.csv"]
         )
         load = QPushButton("Load table preview")
         load.clicked.connect(self._load_output_table)
