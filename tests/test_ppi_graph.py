@@ -98,6 +98,19 @@ def test_score_floor_zero_when_edges_lack_weights(tmp_path):
     assert g["meta"]["score_floor"] == 0.0
 
 
+def test_join_by_gene_id_when_symbols_absent(tmp_path):
+    # Symbol-less genome (e.g. Fusarium): nodes are gene_ids, DE symbols are NA.
+    nodes = [{"id": "FGSG_001", "module": 1, "degree": 2, "betweenness": 3, "log2FC": 4.2}]
+    deseq = [{"gene_id": "FGSG_001", "symbol": float("nan"), "baseMean": 80.0,
+              "log2FoldChange": 4.2, "padj": 1e-9}]
+    norm = [{"gene_id": "FGSG_001", "s1": 10.0, "s2": 12.0}]
+    _write(tmp_path, nodes, [], deseq, norm)
+    d = build_ppi_cytoscape_json(tmp_path)["elements"]["nodes"][0]["data"]
+    assert d["padj"] == 1e-9          # joined by gene_id, not symbol
+    assert d["baseMean"] == 80.0
+    assert d["meanExpr"] == 11.0
+
+
 def test_dedup_skips_nan_basemean_row(tmp_path):
     nodes = [{"id": "GENE", "module": 1, "degree": 1, "betweenness": 0, "log2FC": 2.0}]
     deseq = [{"gene_id": "g1", "symbol": "GENE", "baseMean": float("nan"), "log2FoldChange": 9.9, "padj": 0.5},

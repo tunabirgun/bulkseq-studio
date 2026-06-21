@@ -55,30 +55,34 @@ def build_ppi_cytoscape_json(project_root: str | Path) -> dict:
     if nodes_df.empty or "id" not in nodes_df.columns:
         return _empty()
 
-    # DE attributes keyed by UPPER(symbol); dedup many-to-one by max baseMean.
-    de_by_sym: dict[str, dict] = {}
-    sym_to_gene: dict[str, str] = {}
+    # DE attributes keyed by UPPER(symbol) AND UPPER(gene_id), so the join works
+    # whether the network nodes are symbols (model organisms) or gene_ids (symbol-less
+    # genomes like Fusarium, whose RefSeq GTF has no symbols). Iterating ascending by
+    # baseMean means the max-baseMean row is written last and wins each key (the
+    # many-to-one dedup); a NaN baseMean sorts first so it never wins.
+    de_by_key: dict[str, dict] = {}
     deseq_path = root / DESEQ_CSV
     if deseq_path.exists():
         try:
             de = pd.read_csv(deseq_path)
         except Exception:
             de = pd.DataFrame()
-        if not de.empty and "symbol" in de.columns:
-            de = de[de["symbol"].notna()].copy()
-            de["__sym"] = de["symbol"].astype(str).str.upper()
+        if not de.empty:
             if "baseMean" in de.columns:
-                # na_position='first' so a NaN baseMean never wins keep='last' (the max).
                 de = de.sort_values("baseMean", na_position="first")
-            de = de.drop_duplicates("__sym", keep="last")
             for _, r in de.iterrows():
-                de_by_sym[r["__sym"]] = {
+                gid = str(r["gene_id"]) if "gene_id" in de.columns and pd.notna(r.get("gene_id")) else None
+                rec = {
                     "log2FoldChange": _num(r.get("log2FoldChange")),
                     "padj": _num(r.get("padj")),
                     "baseMean": _num(r.get("baseMean")),
+                    "gene_id": gid,
                 }
-                if "gene_id" in de.columns and pd.notna(r.get("gene_id")):
-                    sym_to_gene[r["__sym"]] = str(r["gene_id"])
+                if gid:
+                    de_by_key[gid.upper()] = rec
+                sym = r.get("symbol")
+                if "symbol" in de.columns and pd.notna(sym) and str(sym):
+                    de_by_key[str(sym).upper()] = rec
 
     # Mean VST expression per gene_id (row mean across sample columns).
     mean_by_gene: dict[str, float] = {}
@@ -101,10 +105,13 @@ def build_ppi_cytoscape_json(project_root: str | Path) -> dict:
     out_nodes = []
     for _, n in nodes_df.iterrows():
         sym = str(n["id"])
-        usym = sym.upper()
-        de = de_by_sym.get(usym, {})
-        gid = sym_to_gene.get(usym)
+        de = de_by_key.get(sym.upper(), {})
+        # Mean expression by the DE-resolved gene_id; if the node id is itself the
+        # gene_id (symbol-less genomes), that also matches the matrix directly.
+        gid = de.get("gene_id")
         mean_expr = mean_by_gene.get(gid) if gid is not None else None
+        if mean_expr is None:
+            mean_expr = mean_by_gene.get(sym)
         # log2FC already case-joined into the node at build time; fall back to DE.
         node_lfc = _num(n.get("log2FC")) if has_node_lfc else None
         if node_lfc is None:
