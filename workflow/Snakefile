@@ -143,6 +143,10 @@ def final_targets():
             targets.append(f"results/figures/{fig}.svg")
     if WF.get("enrichment", True):
         targets.append("results/enrichment/enrichment_summary.txt")
+        for fig in ("enrichment_dotplot", "enrichment_gsea", "enrichment_ridgeplot",
+                    "enrichment_cnetplot", "enrichment_emapplot"):
+            targets.append(f"results/figures/{fig}.png")
+            targets.append(f"results/figures/{fig}.svg")
     if config.get("gene_sets", {}).get("custom_gene_list"):
         targets.append("results/figures/goi_heatmap.png")
         targets.append("results/figures/goi_expression.png")

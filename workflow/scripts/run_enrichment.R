@@ -26,6 +26,9 @@ writeLines("", out[["go"]])
 writeLines("", out[["go_up"]])
 writeLines("", out[["go_down"]])
 writeLines("", out[["gsea"]])
+# Persist an (empty) objects RDS up front so the enrichment_figures rule always
+# has an input, even when enrichment is skipped or fails. Overwritten on success.
+saveRDS(list(), out[["objects"]])
 summary_lines <- c("Functional enrichment summary", "=============================", "")
 
 # No OrgDb mapping for this organism (e.g. most fungi/bacteria): skip cleanly
@@ -68,7 +71,7 @@ result <- tryCatch({
   }
   run_ora <- function(genes, path) {
     genes <- genes[!is.na(genes)]
-    if (length(genes) < 1) return(0)
+    if (length(genes) < 1) return(NULL)
     # pvalueCutoff follows the user's deseq2.alpha (default 0.05); qvalueCutoff is
     # left at clusterProfiler's enrichGO default (0.20), independent of alpha.
     ego <- tryCatch(enrichGO(gene = genes, universe = universe, OrgDb = orgdb,
@@ -76,17 +79,20 @@ result <- tryCatch({
                     pvalueCutoff = alpha, qvalueCutoff = 0.20,
                     minGSSize = 10, maxGSSize = 500, readable = TRUE),
                     error = function(e) NULL)
-    n <- if (is.null(ego)) 0 else nrow(as.data.frame(ego))
-    if (n > 0) write.csv(as.data.frame(ego), path, row.names = FALSE)
-    n
+    if (!is.null(ego) && nrow(as.data.frame(ego)) > 0) {
+      write.csv(as.data.frame(ego), path, row.names = FALSE)
+    }
+    ego  # return the enrichResult (or NULL) so it can be persisted for figures
   }
 
   up_e <- to_entrez(up_file)
   down_e <- to_entrez(down_file)
   all_sig <- unique(c(up_e, down_e))
-  n_all <- run_ora(all_sig, out[["go"]])
-  n_up <- run_ora(up_e, out[["go_up"]])
-  n_down <- run_ora(down_e, out[["go_down"]])
+  ego_all <- run_ora(all_sig, out[["go"]])
+  ego_up <- run_ora(up_e, out[["go_up"]])
+  ego_down <- run_ora(down_e, out[["go_down"]])
+  n_count <- function(e) if (is.null(e)) 0 else nrow(as.data.frame(e))
+  n_all <- n_count(ego_all); n_up <- n_count(ego_up); n_down <- n_count(ego_down)
 
   gene_list <- res$log2FoldChange
   names(gene_list) <- res$ENTREZID
@@ -103,6 +109,12 @@ result <- tryCatch({
     write.csv(as.data.frame(gse), out[["gsea"]], row.names = FALSE)
     n_gsea <- nrow(as.data.frame(gse))
   }
+
+  # Persist the enrichment objects (+ ranked geneList and OrgDb name) so the
+  # enrichment_figures rule can render dotplot/GSEA/network plots without re-running.
+  saveRDS(list(ego_all = ego_all, ego_up = ego_up, ego_down = ego_down,
+               gse = gse, geneList = gene_list, orgdb = orgdb_name),
+          out[["objects"]])
 
   summary_lines <<- c(summary_lines,
     sprintf("Universe (tested genes): %d", length(universe)),
