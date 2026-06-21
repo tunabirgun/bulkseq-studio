@@ -99,16 +99,30 @@ def _ppi_self_test(app, window) -> None:
 
     from app.ui.ppi_viewer import WEBENGINE_AVAILABLE, PpiViewer
 
+    import json as _json
+
     result = {"webengine": WEBENGINE_AVAILABLE, "version": None, "nodes": None}
+
+    def _report(ok: bool, code: int) -> None:
+        # A windowed (frozen) app has no stdout, so also write a sentinel file and
+        # set the process exit code so a launcher can read PASS/FAIL.
+        result["pass"] = ok
+        line = f"PPI_SELFTEST result={result} {'PASS' if ok else 'FAIL'}"
+        print(line, flush=True)
+        out = os.environ.get("BULKSEQ_SELFTEST_OUT") or str(
+            Path(tempfile.gettempdir()) / "bulkseq_ppi_selftest.json")
+        try:
+            Path(out).write_text(_json.dumps(result), encoding="utf-8")
+        except Exception:
+            pass
+        app.exit(code)
 
     def finish() -> None:
         ok = bool(result["version"]) and result["nodes"] == 3
-        print(f"PPI_SELFTEST result={result} {'PASS' if ok else 'FAIL'}", flush=True)
-        app.quit()
+        _report(ok, 0 if ok else 3)
 
     if not WEBENGINE_AVAILABLE:
-        print(f"PPI_SELFTEST result={result} FAIL (QtWebEngine unavailable)", flush=True)
-        QTimer.singleShot(300, app.quit)
+        QTimer.singleShot(300, lambda: _report(False, 3))
         return
 
     viewer = PpiViewer()
@@ -140,7 +154,7 @@ def _ppi_self_test(app, window) -> None:
         QTimer.singleShot(900, lambda: viewer.stats(got_stats))
 
     viewer.view.loadFinished.connect(on_loaded)
-    QTimer.singleShot(20000, app.quit)  # hard timeout so a hung engine never blocks
+    QTimer.singleShot(20000, lambda: _report(False, 4))  # hard timeout: engine hung
 
 
 def main() -> int:
