@@ -124,6 +124,8 @@ include: "rules/reports.smk"
 def final_targets():
     targets = [
         "results/deseq2/deseq2_results.csv",
+        "results/export/normalized_expression_matrix.csv",
+        "results/export/ranked_genes.rnk",
         "results/reports/run_summary.txt",
         "results/reports/timing_summary.txt",
         "results/reports/software_versions.txt",

@@ -2,6 +2,22 @@
 # Depends on the pipeline sinks so the reports reflect a completed run.
 
 
+# Downstream-interoperability exports (normalized matrix + preranked .rnk) from
+# the existing DE artifacts. Backend-agnostic: assay(vsd) and the `stat` column
+# exist for both DESeq2 and limma.
+rule export_matrices:
+    input:
+        rds="results/deseq2/deseq2_objects.rds",
+        results="results/deseq2/deseq2_results.csv",
+    output:
+        vst="results/export/normalized_expression_matrix.csv",
+        rnk="results/export/ranked_genes.rnk",
+    log:
+        "logs/export_matrices.log",
+    script:
+        "../scripts/export_downstream.R"
+
+
 rule final_reports:
     input:
         sanity="checks/sanity_checks.txt",

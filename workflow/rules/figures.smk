@@ -16,6 +16,14 @@ rule figures:
         volcano_svg="results/figures/volcano.svg",
         heatmap_png="results/figures/top_deg_heatmap.png",
         heatmap_svg="results/figures/top_deg_heatmap.svg",
+        pval_png="results/figures/pvalue_histogram.png",
+        pval_svg="results/figures/pvalue_histogram.svg",
+        disp_png="results/figures/dispersion.png",
+        disp_svg="results/figures/dispersion.svg",
+        cooks_png="results/figures/cooks_distance.png",
+        cooks_svg="results/figures/cooks_distance.svg",
+        libsize_png="results/figures/library_size.png",
+        libsize_svg="results/figures/library_size.svg",
     params:
         # Declared so a figure-style change is a Snakemake rerun trigger (the
         # script reads style from params, not config). Without this, editing the

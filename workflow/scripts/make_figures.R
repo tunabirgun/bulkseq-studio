@@ -92,6 +92,20 @@ save_grid <- function(gtable, png_path, svg_path, w = fig_w, h = fig_h) {
   grid::grid.newpage(); grid::grid.draw(gtable); dev.off()
 }
 
+# Base-graphics figures (plotDispEsts, boxplot) to PNG + SVG.
+save_base <- function(draw_fn, png_path, svg_path, w = fig_w, h = fig_h) {
+  png(png_path, width = w, height = h, units = "in", res = fig_dpi); draw_fn(); dev.off()
+  svglite(svg_path, width = w, height = h); draw_fn(); dev.off()
+}
+
+# A labelled placeholder so a declared output always exists when a figure does
+# not apply (e.g. count-scale diagnostics on the microarray backend).
+save_placeholder <- function(msg, png_path, svg_path) {
+  p <- ggplot() + annotate("text", x = 0, y = 0, label = msg, size = 5) +
+    theme_void()
+  save_gg(p, png_path, svg_path)
+}
+
 # ---- Grouping factor (from the DESeq2 contrast; falls back safely) ----------
 group_var <- "condition"
 de_cfg <- tryCatch(snakemake@config[["deseq2"]], error = function(e) NULL)
@@ -194,6 +208,52 @@ ph2 <- pheatmap(hm, scale = "none", annotation_col = ann, show_rownames = TRUE,
                 color = pal_spec$ramp(255),
                 border_color = NA, fontsize = base_size, fontsize_row = 7, silent = TRUE)
 save_grid(ph2$gtable, out[["heatmap_png"]], out[["heatmap_svg"]], w = fig_w, h = max(fig_h, 7))
+
+# ---- Raw p-value histogram (DE calibration check) ---------------------------
+# A spike near 0 over a flat background indicates a well-calibrated test; a
+# U-shape or hill flags a mis-specified design or residual confounding. Works
+# identically for DESeq2 (results$pvalue) and limma (P.Value -> pvalue).
+pv <- res$pvalue[!is.na(res$pvalue)]
+if (length(pv) > 0) {
+  p_pval <- ggplot(data.frame(pvalue = pv), aes(pvalue)) +
+    geom_histogram(boundary = 0, bins = 50, fill = pal_spec$discrete[1],
+                   colour = "white", linewidth = 0.2) +
+    labs(x = "raw p-value", y = "gene count") +
+    style_theme(theme_bw)
+  save_gg(p_pval, out[["pval_png"]], out[["pval_svg"]])
+} else {
+  save_placeholder("No p-values available", out[["pval_png"]], out[["pval_svg"]])
+}
+
+# ---- Model diagnostics (count backend only) ---------------------------------
+# Dispersion fit, Cook's-distance outlier spread, and per-sample library size
+# all come from the DESeqDataSet. On the microarray (limma) backend dds is a
+# DESeqTransform, so these are emitted as labelled placeholders instead.
+if (!is_intensity) {
+  save_base(function() plotDispEsts(dds), out[["disp_png"]], out[["disp_svg"]])
+  cooks <- tryCatch(assays(dds)[["cooks"]], error = function(e) NULL)
+  if (!is.null(cooks)) {
+    save_base(function() {
+      op <- par(mar = c(8, 4.5, 2, 1)); on.exit(par(op))
+      boxplot(log10(cooks + 1), las = 2, outline = FALSE,
+              ylab = "log10(Cook's distance + 1)", col = pal_spec$discrete[1])
+    }, out[["cooks_png"]], out[["cooks_svg"]])
+  } else {
+    save_placeholder("Cook's distances unavailable", out[["cooks_png"]], out[["cooks_svg"]])
+  }
+  libsz <- colSums(counts(dds))
+  libdf <- data.frame(sample = names(libsz), reads = as.numeric(libsz))
+  p_lib <- ggplot(libdf, aes(reads, reorder(sample, reads))) +
+    geom_col(fill = pal_spec$discrete[1]) +
+    labs(x = "assigned reads (library size)", y = NULL) +
+    style_theme(theme_bw)
+  save_gg(p_lib, out[["libsize_png"]], out[["libsize_svg"]])
+} else {
+  na_msg <- "Diagnostic not applicable (microarray)"
+  save_placeholder(na_msg, out[["disp_png"]], out[["disp_svg"]])
+  save_placeholder(na_msg, out[["cooks_png"]], out[["cooks_svg"]])
+  save_placeholder(na_msg, out[["libsize_png"]], out[["libsize_svg"]])
+}
 
 sink(type = "message")
 close(log_con)
