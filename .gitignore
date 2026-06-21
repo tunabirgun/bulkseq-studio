@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Build / packaging artifacts
+build/
+dist/
+installer_output/
+
+# Stray PyInstaller onedir output at the repo root (from manual runs)
+/BulkSeqStudio.exe
+/_internal/
+
+# Logs / scratch
+build_release.log
+scripts/logs/
+
+# Planning / dev scratch (kept local)
+planning/
+
+# OS
+Thumbs.db
+.DS_Store

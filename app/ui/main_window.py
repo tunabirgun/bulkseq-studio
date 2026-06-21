@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QDesktopServices, QFontDatabase, QPixmap
 from PySide6.QtCore import Qt, QUrl
 
-from app.constants import APP_NAME
+from app.constants import APP_NAME, MIN_UNIQUE_MAPPED_WARN_PCT
 from app.core.benchmark_datasets import create_benchmark_project, load_benchmark_catalog
 from app.core.config_models import AppConfig
 from app.core.input_detection import detect_fastq_inputs
@@ -125,6 +125,8 @@ class MainWindow(QMainWindow):
         self._run_mode: str | None = None
         self._stop_in_progress = False
         self._recovery_offered = False
+        self._mapping_checked: set[str] = set()
+        self._mapping_halt_decided = False
         self._closing = False
         self.run_action_buttons: dict[str, QPushButton] = {}
         self.stop_button: QPushButton | None = None
@@ -1027,6 +1029,12 @@ class MainWindow(QMainWindow):
         ):
             self._recovery_offered = True
             QTimer.singleShot(0, self._offer_auto_recovery)
+        # Early low-mapping guardrail: as each STAR alignment finishes it writes a
+        # *_Log.final.out with the uniquely-mapped %. If a sample maps poorly
+        # (usually a wrong reference or contamination) warn and offer to stop
+        # before more hours are wasted.
+        if not self._mapping_halt_decided and re.search(r"Finished job.*Rule: star_align", line):
+            QTimer.singleShot(0, self._check_alignment_mapping)
 
     def _offer_auto_recovery(self) -> None:
         reply = QMessageBox.question(
@@ -1046,6 +1054,59 @@ class MainWindow(QMainWindow):
             self.runner.unlock(self.config)
         self.log_text.append("Auto-recovery: unlocked directory, resuming with --rerun-incomplete.")
         QTimer.singleShot(200, lambda: self._start_snakemake("recover"))
+
+    def _check_alignment_mapping(self) -> None:
+        # Inspect any STAR Log.final.out files written so far; if a sample's
+        # uniquely-mapped % is below the threshold, warn once and offer to stop.
+        if self._mapping_halt_decided or self.project_root is None:
+            return
+        aligned = self.project_root / "results" / "aligned"
+        if not aligned.exists():
+            return
+        for log in sorted(aligned.glob("*_Log.final.out")):
+            sample = log.name[: -len("_Log.final.out")]
+            if sample in self._mapping_checked:
+                continue
+            pct = self._parse_unique_mapped_pct(log)
+            if pct is None:
+                continue  # STAR has not finished writing this report yet
+            self._mapping_checked.add(sample)
+            if pct < MIN_UNIQUE_MAPPED_WARN_PCT:
+                self._mapping_halt_decided = True
+                self._warn_low_mapping(sample, pct)
+                return
+
+    @staticmethod
+    def _parse_unique_mapped_pct(path: Path) -> float | None:
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            return None
+        m = re.search(r"Uniquely mapped reads %\s*\|\s*([0-9.]+)%", text)
+        return float(m.group(1)) if m else None
+
+    def _warn_low_mapping(self, sample: str, pct: float) -> None:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(APP_NAME)
+        box.setText(
+            f"Low alignment rate\n\nSample {sample} uniquely mapped only {pct:.1f}% of reads "
+            f"(warning threshold {MIN_UNIQUE_MAPPED_WARN_PCT:.0f}%)."
+        )
+        box.setInformativeText(
+            "This usually means the reference does not match the reads (wrong organism), or "
+            "heavy rRNA/adapter contamination. Continuing will likely waste hours and produce "
+            "an unusable result.\n\nStop the run, or continue anyway?"
+        )
+        stop_btn = box.addButton("Stop run", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Continue anyway", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(stop_btn)
+        box.exec()
+        if box.clickedButton() is stop_btn:
+            self.log_text.append(f"Low mapping ({pct:.1f}%) on {sample}: stopping run at user request.")
+            self._stop_run(announce=True)
+        else:
+            self.log_text.append(f"Low mapping ({pct:.1f}%) on {sample}: continuing at user request.")
 
     def _on_run_finished(self, code: int) -> None:
         self.elapsed_timer.stop()
@@ -2124,6 +2185,8 @@ class MainWindow(QMainWindow):
         self.runner_thread.finished_with_code.connect(self._on_run_finished)
         self._run_mode = mode
         self._recovery_offered = False
+        self._mapping_checked = set()
+        self._mapping_halt_decided = False
         self._stop_in_progress = False
         self._set_running_ui(True)
         if mode in ("run", "resume", "recover", "figures", "goi"):
