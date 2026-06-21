@@ -20,6 +20,7 @@ elif COUNT_MATRIX_MODE:
         "checks/07_quantification_qc.json",
         "checks/08_metadata_design_qc.json",
         "checks/09_deseq2_qc.json",
+        "checks/13_equivalence_qc.json",
     ]
 else:
     ALL_CHECKS = [
@@ -30,6 +31,7 @@ else:
         "checks/07_quantification_qc.json",
         "checks/08_metadata_design_qc.json",
         "checks/09_deseq2_qc.json",
+        "checks/13_equivalence_qc.json",
     ]
 if WF.get("enrichment", True):
     ALL_CHECKS.append("checks/10_enrichment_qc.json")

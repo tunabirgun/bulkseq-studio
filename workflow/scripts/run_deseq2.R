@@ -183,6 +183,25 @@ deseq_checks <- list(list(status = if (n_sig > 0) "PASS" else "REVIEW_REQUIRED",
 write_check(snakemake@output[["deseq_check"]], "09_deseq2_qc",
             if (n_sig > 0) "PASS" else "REVIEW_REQUIRED", deseq_checks)
 
+# ---- Equivalence / no-change test (TOST-style) ------------------------------
+# results(altHypothesis="lessAbs") tests H0: |LFC| >= L; padj < alpha is positive
+# evidence the gene's effect is SMALLER than L (not differentially expressed),
+# complementing the usual "is it different" test. lessAbs needs a POSITIVE
+# threshold; lfc_thr may be 0 (the filter is disabled), so fall back to 1.0.
+L_eq <- if (lfc_thr > 0) lfc_thr else 1.0
+res_eq <- results(dds, contrast = c(con_factor, numerator, denominator),
+                  lfcThreshold = L_eq, altHypothesis = "lessAbs", alpha = alpha)
+eq_out <- as.data.frame(res_eq)
+eq_out$gene_id <- rownames(eq_out)
+eq_out$symbol <- unname(annot$symbol[rownames(eq_out)])
+eq_out <- eq_out[!is.na(eq_out$padj) & eq_out$padj < alpha, ]
+eq_out <- eq_out[order(eq_out$padj), ]
+write.csv(eq_out, snakemake@output[["unchanged"]], row.names = FALSE)
+write_check(snakemake@output[["equivalence_check"]], "13_equivalence_qc", "PASS",
+            list(list(status = "PASS",
+              message = sprintf("%d genes equivalent to no change (|log2FC| < %.2g at padj < %.3g, TOST lessAbs).",
+                                nrow(eq_out), L_eq, alpha))))
+
 writeLines(capture.output(sessionInfo()), snakemake@output[["session"]])
 sink(type = "message")
 close(log_con)

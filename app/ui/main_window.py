@@ -1191,7 +1191,8 @@ class MainWindow(QMainWindow):
         controls = QHBoxLayout()
         self.output_table_pick = QComboBox()
         self.output_table_pick.addItems(
-            ["results/counts/counts.txt", "results/deseq2/deseq2_results.csv", "results/deseq2/normalized_counts.csv"]
+            ["results/counts/counts.txt", "results/deseq2/deseq2_results.csv",
+             "results/deseq2/normalized_counts.csv", "results/deseq2/unchanged_genes.csv"]
         )
         load = QPushButton("Load table preview")
         load.clicked.connect(self._load_output_table)

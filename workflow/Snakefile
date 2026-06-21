@@ -141,6 +141,7 @@ def final_targets():
     # Microarray has no counts.txt (intensities, not counts); every other mode does.
     if not MICROARRAY_MODE:
         targets.insert(0, "results/counts/counts.txt")
+        targets.append("results/deseq2/unchanged_genes.csv")
     if not (COUNT_MATRIX_MODE or MICROARRAY_MODE):
         # MultiQC aggregates FastQC/fastp/STAR — irrelevant without alignment.
         targets.insert(0, "results/qc/multiqc/multiqc_report.html")
