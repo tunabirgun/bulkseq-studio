@@ -75,3 +75,27 @@ rule enrichment_figures:
         "logs/enrichment_figures.log",
     script:
         "../scripts/make_enrichment_figures.R"
+
+
+# Cytoscape-compatible export of the enrichment networks (term-similarity +
+# gene-concept) as GraphML / SIF / cytoscape.js JSON + node/edge CSVs.
+rule network_enrichment:
+    input:
+        objects="results/enrichment/enrichment_objects.rds",
+    output:
+        emap_graphml="results/networks/enrichment_emap.graphml",
+        emap_sif="results/networks/enrichment_emap.sif",
+        emap_cyjs="results/networks/enrichment_emap.cyjs",
+        emap_nodes="results/networks/enrichment_emap_nodes.csv",
+        emap_edges="results/networks/enrichment_emap_edges.csv",
+        genemap_graphml="results/networks/enrichment_genemap.graphml",
+        genemap_sif="results/networks/enrichment_genemap.sif",
+        genemap_cyjs="results/networks/enrichment_genemap.cyjs",
+        genemap_nodes="results/networks/enrichment_genemap_nodes.csv",
+        genemap_edges="results/networks/enrichment_genemap_edges.csv",
+    benchmark:
+        "benchmarks/network_enrichment.tsv"
+    log:
+        "logs/network_enrichment.log",
+    script:
+        "../scripts/export_network.R"

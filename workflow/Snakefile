@@ -159,6 +159,11 @@ def final_targets():
                     "enrichment_cnetplot", "enrichment_emapplot", "enrichment_do_dotplot"):
             targets.append(f"results/figures/{fig}.png")
             targets.append(f"results/figures/{fig}.svg")
+        for net in ("enrichment_emap", "enrichment_genemap"):
+            for ext in ("graphml", "sif", "cyjs"):
+                targets.append(f"results/networks/{net}.{ext}")
+            targets.append(f"results/networks/{net}_nodes.csv")
+            targets.append(f"results/networks/{net}_edges.csv")
     if config.get("gene_sets", {}).get("custom_gene_list"):
         targets.append("results/figures/goi_heatmap.png")
         targets.append("results/figures/goi_expression.png")
