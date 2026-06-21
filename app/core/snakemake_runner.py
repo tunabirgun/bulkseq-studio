@@ -79,6 +79,18 @@ def build_snakemake_args(config: AppConfig, mode: str = "run") -> list[str]:
         for offset, target in enumerate(goi_outputs):
             args.insert(1 + offset, target)
         args += ["--forcerun", "genes_of_interest", "--allowed-rules", "genes_of_interest"]
+    elif mode == "ppi":
+        # Rebuild only the STRING PPI network from the existing DESeq2 results with
+        # the current ppi settings (score threshold / hub labels); no re-align,
+        # re-DESeq2, or other rules.
+        ppi_outputs = [
+            "results/networks/string_ppi.graphml",
+            "results/figures/ppi_network.png",
+            "results/networks/ppi_hub_genes.csv",
+        ]
+        for offset, target in enumerate(ppi_outputs):
+            args.insert(1 + offset, target)
+        args += ["--forcerun", "network_string", "--allowed-rules", "network_string"]
     return args
 
 

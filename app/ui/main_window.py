@@ -1367,6 +1367,25 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.information(self, APP_NAME, f"Saved {n} gene(s). Re-run, or click 'Regenerate figures', to produce the genes-of-interest heatmap and expression plots.")
 
+    def _regenerate_ppi(self) -> None:
+        # Rebuild the STRING PPI network from the existing DESeq2 results with the
+        # current score threshold / hub-label count, without re-aligning or re-DESeq2.
+        if not self._require_project() or self.config is None:
+            return
+        assert self.project_root is not None
+        rds = self.project_root / "results" / "deseq2" / "deseq2_objects.rds"
+        if not rds.exists():
+            QMessageBox.warning(
+                self, APP_NAME,
+                "No DESeq2 results were found for this project yet. Run the pipeline once "
+                "(Run Monitor) to produce them; afterwards this rebuilds the STRING PPI "
+                "network from those results without re-analyzing.")
+            return
+        self.config.ppi.score_threshold = int(self.ppi_score.value())
+        self.config.ppi.hub_label_count = int(self.ppi_hub_labels.value())
+        self.manager.save_config(self.project_root, self.config)
+        self._start_snakemake("ppi")
+
     def _info_label(self, text: str, help_text: str) -> QWidget:
         # A form-row label with a small info button that explains a complex
         # parameter (tooltip on hover, full text on click).
@@ -1457,6 +1476,18 @@ class MainWindow(QMainWindow):
         form.addRow(self._info_label("Height", "Saved figure height (PNG and SVG), in the units selected above."), self.fig_height)
         form.addRow(self._info_label("DPI (PNG)", "Resolution for the raster PNG export. SVG is vector and unaffected. 300 is publication quality. Also converts px width/height to inches."), self.fig_dpi)
         form.addRow(save_style)
+        # --- PPI network (STRING) controls: customise + regenerate in-app ---
+        self.ppi_score = QSpinBox()
+        self.ppi_score.setRange(0, 1000)
+        self.ppi_score.setValue(400)
+        self.ppi_hub_labels = QSpinBox()
+        self.ppi_hub_labels.setRange(0, 100)
+        self.ppi_hub_labels.setValue(15)
+        regen_ppi = QPushButton("Regenerate PPI network")
+        regen_ppi.clicked.connect(self._regenerate_ppi)
+        form.addRow(self._info_label("PPI score threshold", "STRING combined-score cutoff for the protein-protein network (0-1000; 400 = medium, 700 = high confidence). Higher gives a sparser, higher-confidence network."), self.ppi_score)
+        form.addRow(self._info_label("PPI hub labels", "How many top hub proteins (by degree) to label on the PPI network figure."), self.ppi_hub_labels)
+        form.addRow(regen_ppi)
         return group
 
     @staticmethod
@@ -1783,6 +1814,8 @@ class MainWindow(QMainWindow):
         self._configure_dim_spins(unit)
         self.fig_width.setValue(self._dim_from_inches(fig.width_in, unit, fig.dpi))
         self.fig_height.setValue(self._dim_from_inches(fig.height_in, unit, fig.dpi))
+        self.ppi_score.setValue(self.config.ppi.score_threshold)
+        self.ppi_hub_labels.setValue(self.config.ppi.hub_label_count)
         goi_path = self.config.gene_sets.custom_gene_list
         if goi_path and self.project_root is not None and (self.project_root / goi_path).exists():
             self.goi_box.setPlainText((self.project_root / goi_path).read_text(encoding="utf-8").strip())
@@ -2230,11 +2263,12 @@ class MainWindow(QMainWindow):
         self._mapping_halt_decided = False
         self._stop_in_progress = False
         self._set_running_ui(True)
-        if mode in ("run", "resume", "recover", "figures", "goi"):
+        if mode in ("run", "resume", "recover", "figures", "goi", "ppi"):
             self.progress.setValue(0)
             self.progress.setStyleSheet("")
             status = {"figures": "Regenerating figures...",
-                      "goi": "Generating genes-of-interest outputs..."}.get(mode, "Running...")
+                      "goi": "Generating genes-of-interest outputs...",
+                      "ppi": "Rebuilding PPI network..."}.get(mode, "Running...")
             self._set_run_status(status, "#2C6FB6")
             self.phase_label.setText("Current step: starting...")
             self._run_start = time.monotonic()
