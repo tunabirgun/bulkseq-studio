@@ -11,6 +11,7 @@ const state = {
   colorBy: "log2FoldChange",  // log2FoldChange | module
   sizeBy: "degree",           // degree | meanExpr | neglog10padj
   labels: true,
+  layout: "fcose",            // current layout name (kept in sync with the Qt combo)
   floor: 0,                   // confidence (edge weight) floor
   theme: { bg: "#ffffff", text: "#1a1a1a", edge: "#c7c7c7", muted: "#8a8a8a" },
 };
@@ -65,24 +66,30 @@ function computeRanges(nodes) {
   };
 }
 
-function styleArray() {
+// Labels are display-only auto-hidden above 220 nodes; this does NOT mutate the
+// user's labels preference, so a later small graph shows them again.
+function labelText(e) {
+  return (state.labels && cy && cy.nodes().length <= 220) ? e.data("symbol") : "";
+}
+function styleArrayFor(theme) {
   return [
     { selector: "node", style: {
         "background-color": nodeColor, "width": nodeSize, "height": nodeSize,
         "border-width": 1, "border-color": "rgba(0,0,0,0.45)",
-        "label": function (e) { return state.labels ? e.data("symbol") : ""; },
-        "font-size": 9, "color": state.theme.text, "text-valign": "center",
+        "label": labelText,
+        "font-size": 9, "color": theme.text, "text-valign": "center",
         "text-halign": "center", "text-outline-width": 2,
-        "text-outline-color": state.theme.bg, "min-zoomed-font-size": 7 } },
+        "text-outline-color": theme.bg, "min-zoomed-font-size": 7 } },
     { selector: "edge", style: {
         "width": function (e) { return 0.5 + (e.data("weight") || 0.4) * 3.5; },
-        "line-color": state.theme.edge, "curve-style": "haystack",
+        "line-color": theme.edge, "curve-style": "haystack",
         "opacity": 0.65 } },
     { selector: "node.faded", style: { "opacity": 0.12 } },
     { selector: "edge.faded", style: { "opacity": 0.05 } },
     { selector: "node.hl", style: { "border-width": 3, "border-color": "#1a73e8" } },
   ];
 }
+function styleArray() { return styleArrayFor(state.theme); }
 
 function pruneToBudget(elements) {
   const nodes = elements.nodes || [];
@@ -99,14 +106,31 @@ function layoutOpts(name, n) {
   if (name === "concentric") return { name: "concentric", animate: false,
         concentric: function (e) { return e.data("degree") || 1; }, levelWidth: function () { return 2; } };
   if (name === "grid") return { name: "grid", animate: false };
-  // fcose default: draft quality (skips the slow spectral init) keeps it sub-second.
+  // fcose draft (skips the slow spectral init) keeps it sub-second. The seeded RNG
+  // (reset in relayout) reduces run-to-run drift; the canonical reproducible network
+  // figure is the static results/figures/ppi_network.png (igraph, set.seed).
   return { name: "fcose", quality: "draft", animate: false, randomize: true,
            nodeRepulsion: 6000, idealEdgeLength: 70, packComponents: true };
 }
 
+// fcose draws random initial positions from Math.random (some of it asynchronously),
+// so install a seeded PRNG that is reset before each layout and never restored. This
+// makes a re-render and the exported figure reproducible, per the project's
+// "every figure regenerable" rule; a viewer needs no true randomness.
+var __rngSeed = 42;
+Math.random = function () {
+  __rngSeed = (__rngSeed + 0x6D2B79F5) | 0;
+  var t = Math.imul(__rngSeed ^ (__rngSeed >>> 15), 1 | __rngSeed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
 function relayout(name) {
   if (!cy) return;
-  cy.layout(layoutOpts(name || "fcose", cy.nodes().length)).run();
+  if (name) state.layout = name;
+  __rngSeed = 42;  // reset the seeded RNG each layout to reduce run-to-run drift
+  var lay = cy.layout(layoutOpts(state.layout, cy.nodes().length));
+  lay.one("layoutstop", function () { cy.fit(undefined, 40); });
+  lay.run();
 }
 
 const tip = function () { return document.getElementById("tip"); };
@@ -158,7 +182,6 @@ window.PPI = {
     empty.style.display = "none";
     elements = pruneToBudget(elements);
     computeRanges(elements.nodes);
-    if (elements.nodes.length > 220) state.labels = false;
     if (cy) cy.destroy();
     cy = cytoscape({
       container: document.getElementById("cy"),
@@ -166,7 +189,7 @@ window.PPI = {
       wheelSensitivity: 0.2, layout: { name: "preset" },
     });
     bindInteractions();
-    relayout("fcose");
+    relayout(state.layout);
     return JSON.stringify({ nodes: cy.nodes().length, edges: cy.edges().length });
   },
   setLayout: function (name) { relayout(name); },
@@ -182,10 +205,19 @@ window.PPI = {
     document.body.style.background = state.theme.bg;
     if (cy) cy.style(styleArray());
   },
-  exportImage: function (fmt) {
+  exportImage: function (fmt, bg) {
     if (!cy) return "";
-    if (fmt === "svg") { return cy.svg({ full: true, bg: "#ffffff" }); }
-    return cy.png({ full: true, scale: 2, bg: "#ffffff" });  // data URL
+    // Export always uses a light style (dark labels) so text stays legible; the
+    // canvas background is the user's choice: white, or transparent (omit bg).
+    var transparent = (bg === "transparent");
+    cy.style(styleArrayFor({ bg: "#ffffff", text: "#1a1a1a", edge: "#c7c7c7", muted: "#8a8a8a" }));
+    var opts = { full: true };
+    if (!transparent) opts.bg = "#ffffff";
+    var out;
+    if (fmt === "svg") { out = cy.svg(opts); }
+    else { opts.scale = 2; out = cy.png(opts); }
+    cy.style(styleArray());  // restore the live theme
+    return out;
   },
   stats: function () { return cy ? JSON.stringify({ nodes: cy.nodes().length, edges: cy.edges().length }) : "{}"; },
   version: function () { return cytoscape.version; },

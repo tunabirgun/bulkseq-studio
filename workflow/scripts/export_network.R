@@ -22,7 +22,14 @@ have_ep <- requireNamespace("enrichplot", quietly = TRUE)
 write_network <- function(g, graphml, sif, cyjs, nodes_csv, edges_csv) {
   empty <- is.null(g) || !have_ig || igraph::vcount(g) == 0
   if (empty) {
-    file.create(graphml)
+    # Valid empty GraphML (not a 0-byte file) so degraded runs still import.
+    if (have_ig) {
+      igraph::write_graph(igraph::make_empty_graph(directed = FALSE), graphml, format = "graphml")
+    } else {
+      writeLines(paste0('<?xml version="1.0" encoding="UTF-8"?>\n',
+                        '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+                        '<graph edgedefault="undirected"></graph></graphml>'), graphml)
+    }
     writeLines(character(0), sif)
     writeLines('{"elements":{"nodes":[],"edges":[]}}', cyjs)
     write.csv(data.frame(id = character(0)), nodes_csv, row.names = FALSE)

@@ -61,7 +61,14 @@ def build_snakemake_args(config: AppConfig, mode: str = "run") -> list[str]:
         # DESeq2 even if an upstream output's mtime looks stale. The GOI target is
         # included only when it exists as a rule (custom_gene_list set), matching
         # the `if _GOI:` rule guard.
-        targets = ["figures"]
+        # All style-consuming rules, so "Regenerate figures" restyles the whole figure
+        # set, not just the core DESeq2 figures. Optional rules are gated on their config
+        # so they are only forced when their inputs exist (else MissingInputException).
+        targets = ["figures", "sample_correlation", "wilcoxon_sensitivity", "set_overlap"]
+        if config.workflow.enrichment:
+            targets.append("enrichment_figures")
+        if config.ppi.enabled:
+            targets.append("network_string")
         if config.gene_sets.custom_gene_list:
             targets.append("genes_of_interest")
         args += ["--forcerun", *targets, "--allowed-rules", *targets]

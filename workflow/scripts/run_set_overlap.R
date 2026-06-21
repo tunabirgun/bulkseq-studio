@@ -57,6 +57,13 @@ if (is.null(spec)) {
     up <- tryCatch(read.csv(snakemake@input[["up"]], stringsAsFactors = FALSE), error = function(e) data.frame())
     down <- tryCatch(read.csv(snakemake@input[["down"]], stringsAsFactors = FALSE), error = function(e) data.frame())
     de <- unique(c(up$symbol, down$symbol)); de <- de[!is.na(de) & nzchar(de)]
+    # Count-matrix mode has no GTF, so symbols are all NA; user count matrices are
+    # commonly keyed by symbol, so fall back to gene_id (MSigDB TERM2GENE is by
+    # gene_symbol, so this only finds overlap when the IDs are themselves symbols).
+    if (length(universe) < 1 || length(de) < 1) {
+      universe <- unique(res$gene_id[!is.na(res$gene_id) & nzchar(res$gene_id)])
+      de <- unique(c(up$gene_id, down$gene_id)); de <- de[!is.na(de) & nzchar(de)]
+    }
     if (length(de) < 1) {
       placeholder("Set-overlap: no DE genes with symbols")
       message <- "Set-overlap skipped: no DE genes carry a gene symbol."

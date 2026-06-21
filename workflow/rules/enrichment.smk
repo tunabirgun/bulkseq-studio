@@ -38,7 +38,11 @@ rule enrichment:
         # `or` (not dict default) so an explicit null override from the config
         # falls back to the organism mapping instead of disabling enrichment.
         orgdb=_ENR.get("orgdb") or _MAPPED[0],
-        keytype=_ENR.get("keytype") or _MAPPED[1],
+        # Microarray ingestion keys the canonical results by gene SYMBOL (GPL probe
+        # annotation), so default the bitr keytype to SYMBOL in microarray mode
+        # instead of the organism's RNA-seq default (e.g. ENSEMBL), which would map
+        # nothing. The GUI also sets this, but a scripted/hand-edited config might not.
+        keytype=_ENR.get("keytype") or ("SYMBOL" if MICROARRAY_MODE else _MAPPED[1]),
         kegg=_ENR.get("kegg_organism") or _MAPPED[2],
         alpha=config.get("deseq2", {}).get("alpha", 0.05),
     benchmark:

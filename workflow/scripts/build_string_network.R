@@ -41,14 +41,24 @@ placeholder_fig <- function(msg) {
   ggsave(out[["png"]], p, width = fig_w, height = fig_h, dpi = fig_dpi)
   ggsave(out[["svg"]], p, width = fig_w, height = fig_h)
 }
+empty_graphml <- function(path) {
+  # A valid empty GraphML (igraph writer), so degraded runs still import in
+  # Cytoscape/igraph instead of shipping a 0-byte file that ParseErrors.
+  tryCatch(igraph::write_graph(igraph::make_empty_graph(directed = FALSE), path, format = "graphml"),
+           error = function(e) writeLines(paste0(
+             '<?xml version="1.0" encoding="UTF-8"?>\n',
+             '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+             '<graph edgedefault="undirected"></graph></graphml>'), path))
+}
 skip <- function(msg) {
-  file.create(out[["graphml"]]); writeLines(character(0), out[["sif"]])
+  empty_graphml(out[["graphml"]]); writeLines(character(0), out[["sif"]])
   writeLines('{"elements":{"nodes":[],"edges":[]}}', out[["cyjs"]])
   write.csv(data.frame(id = character(0)), out[["nodes"]], row.names = FALSE)
   write.csv(data.frame(source = character(0), target = character(0)), out[["edges"]], row.names = FALSE)
   write.csv(data.frame(symbol = character(0), degree = integer(0)), out[["hubs"]], row.names = FALSE)
   placeholder_fig(msg)
-  write_check("PASS", msg)
+  # WARNING (not PASS) so a dropped/empty network surfaces in the run-health rollup.
+  write_check("WARNING", msg)
 }
 
 tax <- NA_integer_
@@ -64,15 +74,23 @@ if (!is.na(taxon_override)) {
 
 ok <- tryCatch({
   if (is.na(tax)) stop(sprintf("no STRING taxid for organism '%s'", organism))
+  seed_from_gene_id <- FALSE
   if (identical(seed_source, "goi") && nzchar(goi_path) && file.exists(goi_path)) {
     seed <- trimws(readLines(goi_path, warn = FALSE)); seed <- seed[nzchar(seed) & !startsWith(seed, "#")]
   } else {
     up <- tryCatch(read.csv(snakemake@input[["up"]], stringsAsFactors = FALSE), error = function(e) data.frame())
     down <- tryCatch(read.csv(snakemake@input[["down"]], stringsAsFactors = FALSE), error = function(e) data.frame())
     seed <- unique(c(up$symbol, down$symbol))
+    seed <- seed[!is.na(seed) & nzchar(seed)]
+    # Symbol-less genomes (e.g. Fusarium and other locus-tag annotations) have all-NA
+    # symbols; fall back to gene_id, which STRING resolves directly (e.g. FGSG_* tags).
+    if (length(seed) < 2) {
+      seed <- unique(c(up$gene_id, down$gene_id))
+      seed_from_gene_id <- TRUE
+    }
   }
   seed <- seed[!is.na(seed) & nzchar(seed)]
-  if (length(seed) < 2) stop("fewer than 2 seed genes with symbols")
+  if (length(seed) < 2) stop("fewer than 2 seed genes (no usable symbols or gene IDs)")
   if (length(seed) > max_seed) seed <- head(seed, max_seed)
 
   cache_dir <- "results/networks/string_cache"; dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
@@ -95,8 +113,11 @@ ok <- tryCatch({
   V(g)$degree <- igraph::degree(g)
   V(g)$betweenness <- igraph::betweenness(g)
   resdf <- read.csv(snakemake@input[["results"]], stringsAsFactors = FALSE, check.names = FALSE)
-  # Case-insensitive join: STRING may return a different symbol case than the DE table.
-  lfc_map <- setNames(resdf$log2FoldChange, toupper(as.character(resdf$symbol)))
+  # Case-insensitive join keyed on whichever id seeded the network (symbol, else
+  # gene_id), so nodes are not all-NA log2FC for locus-tag genomes. STRING may also
+  # return a different symbol case than the DE table.
+  key_col <- if (seed_from_gene_id) resdf$gene_id else resdf$symbol
+  lfc_map <- setNames(resdf$log2FoldChange, toupper(as.character(key_col)))
   V(g)$log2FC <- unname(lfc_map[toupper(V(g)$name)])
 
   igraph::write_graph(g, out[["graphml"]], format = "graphml")

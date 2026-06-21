@@ -126,12 +126,12 @@ class PpiViewer(QWidget):
         if self._ready:
             self._run("setTheme", palette)
 
-    def export_image(self, fmt: str, callback) -> None:
+    def export_image(self, fmt: str, bg: str, callback) -> None:
         if self.view is None or not self._ready:
             callback("")
             return
         self.view.page().runJavaScript(
-            f"window.PPI ? PPI.exportImage({json.dumps(fmt)}) : ''", callback)
+            f"window.PPI ? PPI.exportImage({json.dumps(fmt)}, {json.dumps(bg)}) : ''", callback)
 
     # --- self-test helpers ----------------------------------------------
     def probe_version(self, callback) -> None:

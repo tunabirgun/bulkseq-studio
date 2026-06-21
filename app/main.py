@@ -115,7 +115,9 @@ def _ppi_self_test(app, window) -> None:
             Path(out).write_text(_json.dumps(result), encoding="utf-8")
         except Exception:
             pass
-        app.exit(code)
+        # Defer the exit so it is delivered even when _report runs from the early
+        # guard path (before app.exec() has started); a bare app.exit() there is lost.
+        QTimer.singleShot(0, lambda: app.exit(code))
 
     def finish() -> None:
         ok = bool(result["version"]) and result["nodes"] == 3
@@ -125,7 +127,19 @@ def _ppi_self_test(app, window) -> None:
         QTimer.singleShot(300, lambda: _report(False, 3))
         return
 
-    viewer = PpiViewer()
+    try:
+        viewer = PpiViewer()
+    except Exception as exc:
+        print(f"PPI_SELFTEST construction error: {exc}", flush=True)
+        _report(False, 3)
+        return
+    # QtWebEngine imported but the viewer has no live web view (e.g. viewer.html not
+    # bundled): fail cleanly with a sentinel + exit code instead of dereferencing
+    # viewer.view (None) and hanging on the excepthook's modal dialog.
+    if not viewer.available:
+        _report(False, 3)
+        return
+    app._selftest_viewer = viewer  # keep a reference alive across the event loop
     viewer.resize(480, 360)
     viewer.show()
 

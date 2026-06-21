@@ -1361,6 +1361,9 @@ class MainWindow(QMainWindow):
         rebuild_btn.setToolTip("Re-run the STRING network with the current score threshold "
                                "(Outputs → Figure Style). Re-contacts string-db.org.")
         rebuild_btn.clicked.connect(self._regenerate_ppi)
+        self.ppi_export_bg = QComboBox()
+        self.ppi_export_bg.addItems(["White", "Transparent"])
+        self.ppi_export_bg.setToolTip("Background of the exported PNG/SVG (labels stay dark either way).")
         export_png = QPushButton("Export PNG")
         export_png.clicked.connect(lambda: self._ppi_export("png"))
         export_svg = QPushButton("Export SVG")
@@ -1369,6 +1372,8 @@ class MainWindow(QMainWindow):
         row2.addWidget(self.ppi_conf_lbl)
         row2.addStretch(1)
         row2.addWidget(rebuild_btn)
+        row2.addWidget(QLabel("Export bg:"))
+        row2.addWidget(self.ppi_export_bg)
         row2.addWidget(export_png)
         row2.addWidget(export_svg)
         layout.addLayout(row2)
@@ -1452,7 +1457,8 @@ class MainWindow(QMainWindow):
                                               f"{fmt.upper()} (*.{fmt})")
         if not path:
             return
-        self.ppi_viewer.export_image(fmt, lambda data: self._save_ppi_export(path, fmt, data))
+        bg = "transparent" if self.ppi_export_bg.currentText() == "Transparent" else "white"
+        self.ppi_viewer.export_image(fmt, bg, lambda data: self._save_ppi_export(path, fmt, data))
 
     def _save_ppi_export(self, path: str, fmt: str, data) -> None:
         if not data:

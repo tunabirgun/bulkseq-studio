@@ -72,3 +72,39 @@ def test_empty_nodes_file_is_valid(tmp_path):
     g = build_ppi_cytoscape_json(tmp_path)
     assert g["meta"]["node_count"] == 0
     json.dumps(g, allow_nan=False)
+
+
+def test_score_floor_is_data_minimum_not_sentinel(tmp_path):
+    nodes = [{"id": "A", "module": 1, "degree": 1, "betweenness": 0, "log2FC": 1.0},
+             {"id": "B", "module": 1, "degree": 1, "betweenness": 0, "log2FC": -1.0}]
+    # raw STRING combined scores (>1): floor must be the true minimum, not a 1.0 sentinel
+    edges = [{"source": "A", "target": "B", "weight": 700},
+             {"source": "B", "target": "A", "weight": 900}]
+    _write(tmp_path, nodes, edges)
+    g = build_ppi_cytoscape_json(tmp_path)
+    assert g["meta"]["score_floor"] == 700.0
+
+
+def test_score_floor_zero_when_edges_lack_weights(tmp_path):
+    nodes = [{"id": "A", "module": 1, "degree": 1, "betweenness": 0, "log2FC": 1.0},
+             {"id": "B", "module": 1, "degree": 1, "betweenness": 0, "log2FC": -1.0}]
+    (tmp_path / "results" / "networks").mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(nodes).to_csv(tmp_path / "results" / "networks" / "string_ppi_nodes.csv", index=False)
+    pd.DataFrame([{"source": "A", "target": "B"}]).to_csv(
+        tmp_path / "results" / "networks" / "string_ppi_edges.csv", index=False)
+    g = build_ppi_cytoscape_json(tmp_path)
+    # non-empty edges with no weights -> floor 0.0 so the slider never hides every edge
+    assert g["meta"]["edge_count"] == 1
+    assert g["meta"]["score_floor"] == 0.0
+
+
+def test_dedup_skips_nan_basemean_row(tmp_path):
+    nodes = [{"id": "GENE", "module": 1, "degree": 1, "betweenness": 0, "log2FC": 2.0}]
+    deseq = [{"gene_id": "g1", "symbol": "GENE", "baseMean": float("nan"), "log2FoldChange": 9.9, "padj": 0.5},
+             {"gene_id": "g2", "symbol": "GENE", "baseMean": 100.0, "log2FoldChange": 2.0, "padj": 1e-3}]
+    norm = [{"gene_id": "g2", "s1": 5.0, "s2": 7.0}]
+    _write(tmp_path, nodes, [], deseq, norm)
+    d = {n["data"]["id"]: n["data"] for n in build_ppi_cytoscape_json(tmp_path)["elements"]["nodes"]}["GENE"]
+    assert d["padj"] == 1e-3          # the valid row wins, not the NaN-baseMean row
+    assert d["baseMean"] == 100.0
+    assert d["meanExpr"] == 6.0

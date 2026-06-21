@@ -67,9 +67,9 @@ def build_ppi_cytoscape_json(project_root: str | Path) -> dict:
         if not de.empty and "symbol" in de.columns:
             de = de[de["symbol"].notna()].copy()
             de["__sym"] = de["symbol"].astype(str).str.upper()
-            sort_col = "baseMean" if "baseMean" in de.columns else None
-            if sort_col:
-                de = de.sort_values(sort_col)
+            if "baseMean" in de.columns:
+                # na_position='first' so a NaN baseMean never wins keep='last' (the max).
+                de = de.sort_values("baseMean", na_position="first")
             de = de.drop_duplicates("__sym", keep="last")
             for _, r in de.iterrows():
                 de_by_sym[r["__sym"]] = {
@@ -121,7 +121,7 @@ def build_ppi_cytoscape_json(project_root: str | Path) -> dict:
         }})
 
     out_edges = []
-    floor = 1.0
+    weights = []
     edges_path = root / EDGES_CSV
     if edges_path.exists():
         try:
@@ -135,9 +135,10 @@ def build_ppi_cytoscape_json(project_root: str | Path) -> dict:
             out_edges.append({"data": {
                 "source": str(e["source"]), "target": str(e["target"]), "weight": w}})
             if isinstance(w, (int, float)):
-                floor = min(floor, w)
-    if not out_edges:
-        floor = 0.0
+                weights.append(w)
+    # The confidence slider floors at the true minimum edge weight (the build
+    # threshold); never use a 1.0 sentinel, which would hide every edge.
+    floor = min(weights) if weights else 0.0
 
     return {"elements": {"nodes": out_nodes, "edges": out_edges},
             "meta": {"node_count": len(out_nodes), "edge_count": len(out_edges),
