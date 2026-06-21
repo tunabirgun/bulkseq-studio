@@ -90,7 +90,65 @@ def _make_splash(mode: str) -> QSplashScreen:
     return QSplashScreen(pix)
 
 
+def _ppi_self_test(app, window) -> None:
+    # Verify the bundled QtWebEngine/Chromium actually launches and renders in a
+    # (frozen) build: load the PPI viewer, inject a tiny graph, read back the
+    # cytoscape version + node count, print a PASS/FAIL line, then quit. This is
+    # the only check that exercises QtWebEngineProcess + the vendored JS path.
+    from PySide6.QtCore import QTimer
+
+    from app.ui.ppi_viewer import WEBENGINE_AVAILABLE, PpiViewer
+
+    result = {"webengine": WEBENGINE_AVAILABLE, "version": None, "nodes": None}
+
+    def finish() -> None:
+        ok = bool(result["version"]) and result["nodes"] == 3
+        print(f"PPI_SELFTEST result={result} {'PASS' if ok else 'FAIL'}", flush=True)
+        app.quit()
+
+    if not WEBENGINE_AVAILABLE:
+        print(f"PPI_SELFTEST result={result} FAIL (QtWebEngine unavailable)", flush=True)
+        QTimer.singleShot(300, app.quit)
+        return
+
+    viewer = PpiViewer()
+    viewer.resize(480, 360)
+    viewer.show()
+
+    def on_loaded(loaded: bool) -> None:
+        viewer.load_graph({
+            "nodes": [
+                {"data": {"id": "A", "symbol": "A", "degree": 2, "log2FoldChange": 1.5}},
+                {"data": {"id": "B", "symbol": "B", "degree": 1, "log2FoldChange": -2.0}},
+                {"data": {"id": "C", "symbol": "C", "degree": 1}},
+            ],
+            "edges": [
+                {"data": {"source": "A", "target": "B", "weight": 0.9}},
+                {"data": {"source": "A", "target": "C", "weight": 0.5}},
+            ],
+        })
+
+        def got_stats(s: str) -> None:
+            try:
+                import json as _json
+
+                result["nodes"] = _json.loads(s).get("nodes")
+            except Exception:
+                pass
+            viewer.probe_version(lambda v: (result.__setitem__("version", v), finish()))
+
+        QTimer.singleShot(900, lambda: viewer.stats(got_stats))
+
+    viewer.view.loadFinished.connect(on_loaded)
+    QTimer.singleShot(20000, app.quit)  # hard timeout so a hung engine never blocks
+
+
 def main() -> int:
+    # QtWebEngine reads these at engine init (QApplication construction), so they
+    # must be set first. Conservative flags that rendered reliably under flaky GPU
+    # drivers and in the frozen sandbox; software GL is the safe default.
+    os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --no-sandbox --in-process-gpu")
+    os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
     app = QApplication(sys.argv)
     _install_excepthook()  # log + surface unhandled errors instead of crashing
     # One shared QSettings identity backs theme, window geometry, and splitter state.
@@ -121,12 +179,12 @@ def main() -> int:
     window.show()
     if splash is not None:
         splash.finish(window)
-    # Self-test mode: construct the window, pump the event loop briefly, then exit.
-    # Used to verify a packaged (frozen) build launches without import/path errors.
+    # Self-test mode: construct the window, then verify the bundled QtWebEngine
+    # actually renders the PPI viewer before exiting. Used to confirm a packaged
+    # (frozen) build launches without import/path errors and ships a working
+    # Chromium helper.
     if os.environ.get("BULKSEQ_SELFTEST") == "1":
-        from PySide6.QtCore import QTimer
-
-        QTimer.singleShot(1000, app.quit)
+        _ppi_self_test(app, window)
     return app.exec()
 
 
