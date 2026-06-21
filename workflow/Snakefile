@@ -78,6 +78,16 @@ COUNT_MATRIX = INPUT.get("count_matrix")
 # with limma; no alignment/reference/counts. limma emits the DESeq2-shaped
 # artifacts so figures/enrichment/GOI are shared.
 MICROARRAY_MODE = INPUT.get("type") == "microarray"
+# Single-end FASTQ is not yet supported on the alignment route (only fastp_pe
+# exists); reject it up front with a clear message instead of dead-ending at the
+# trim step. Count-matrix / microarray modes have no layout and are unaffected.
+if not (COUNT_MATRIX_MODE or MICROARRAY_MODE) and not ALL_PAIRED:
+    _se_samples = [s for s in SAMPLES if not is_paired(s)]
+    raise ValueError(
+        "Single-end FASTQ input is not yet supported (paired-end only). "
+        f"Single-end sample(s): {', '.join(_se_samples)}. Provide paired-end "
+        "reads, or use the count-matrix or GEO microarray input mode."
+    )
 GENOME_FA = "references/genome.fa"
 ANNOTATION_GTF = "references/annotation.gtf"
 STAR_INDEX = "references/star_index"

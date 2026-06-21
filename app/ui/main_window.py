@@ -61,7 +61,7 @@ from app.core.snakemake_runner import (
     build_snakemake_command,
 )
 from app.core.timing import write_timing_summary
-from app.core.paths import data_path, wsl_recommended_workdir
+from app.core.paths import data_path, windows_to_wsl_path, wsl_recommended_workdir
 from app.ui.image_viewer import SVG_AVAILABLE, ImageViewer
 from app.ui.metadata_editor import MetadataTable
 from app.ui.readiness_dialog import ReadinessDialog
@@ -443,7 +443,10 @@ class MainWindow(QMainWindow):
             sample_ids = [clean(c) for c in sample_cols]
             # Copy the matrix into the project and switch to count-matrix mode.
             dest = self.project_root / "config" / "counts_matrix.txt"
-            dest.write_bytes(src.read_bytes())
+            # Write the parsed table as canonical TSV. ingest_counts.py picks its
+            # separator from the file extension (.csv -> comma, else tab), so a
+            # raw-byte copy of a CSV into a .txt name would be misread as TSV.
+            df.to_csv(dest, sep="\t", index=False)
             samples = dataframe_from_rows([
                 {"sample_id": sid, "condition": "unknown", "layout": "n/a", "fastq_1": ""}
                 for sid in sample_ids
@@ -668,8 +671,11 @@ class MainWindow(QMainWindow):
         annotation_md5 = md5sum(annotation)
         self.config.reference.mode = "custom"
         self.config.reference.organism_name = self.ref_organism.text().strip() or "custom"
-        self.config.reference.genome_fasta = str(genome)
-        self.config.reference.annotation_file = str(annotation)
+        # Store WSL-resolvable paths: reference staging and validate_reference.py
+        # run inside WSL, where a Windows path (C:\...) would not exist. The md5s
+        # above were computed on the native paths (readable on the Windows side).
+        self.config.reference.genome_fasta = windows_to_wsl_path(genome)
+        self.config.reference.annotation_file = windows_to_wsl_path(annotation)
         self.config.reference.annotation_format = self.ref_format.currentText()  # type: ignore[assignment]
         self.config.reference.genome_md5 = genome_md5
         self.config.reference.annotation_md5 = annotation_md5
@@ -1757,7 +1763,15 @@ class MainWindow(QMainWindow):
         assert self.project_root is not None
         save_metadata(df, self.project_root / "config" / "samples.auto_generated.tsv")
         save_metadata(df, self.project_root / "config" / "samples.tsv")
+        # Selecting FASTQs switches the project back to the alignment route. Clear
+        # any prior count-matrix / microarray mode so the run takes the fastq
+        # branch (the SRA/count-matrix/GEO handlers set their own type the same way).
+        self.config.input.type = "fastq"
+        self.config.input.count_matrix = None
+        self.config.microarray.gse_accession = None
+        self.manager.save_config(self.project_root, self.config)
         self.metadata_table.load_dataframe(df)
+        self._apply_input_mode_ui()
         self.input_preview.setPlainText(df.to_string(index=False))
 
     def _import_metadata(self) -> None:
@@ -2052,6 +2066,28 @@ class MainWindow(QMainWindow):
                     "annotation. Then start the run again.",
                 )
                 return False
+            # Single-end FASTQ is not yet supported on the alignment route; block
+            # early instead of letting the run dead-end at the trim step.
+            if not no_reference_mode and self.project_root is not None:
+                samples_path = self.project_root / "config" / "samples.tsv"
+                if samples_path.exists():
+                    try:
+                        sdf = pd.read_csv(samples_path, sep="\t", dtype=str).fillna("")
+                        se = (
+                            sdf.loc[sdf["layout"].str.lower() == "single", "sample_id"].tolist()
+                            if "layout" in sdf.columns else []
+                        )
+                    except Exception:
+                        se = []
+                    if se:
+                        QMessageBox.warning(
+                            self, APP_NAME,
+                            "Single-end FASTQ input is not yet supported (paired-end only).\n\n"
+                            f"Single-end sample(s): {', '.join(se)}.\n"
+                            "Provide paired-end reads, or use the count-matrix or GEO "
+                            "microarray input mode.",
+                        )
+                        return False
             goi = self.config.gene_sets.custom_gene_list
             if goi and self.project_root is not None and not (self.project_root / goi).exists():
                 QMessageBox.warning(

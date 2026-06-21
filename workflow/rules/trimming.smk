@@ -1,5 +1,6 @@
 # Adapter and quality trimming with fastp (protocol section 6.4).
-# Paired-end is the implemented route; single-end is a TODO (protocol 6.16).
+# Paired-end is the implemented route; single-end is rejected up front by the
+# Snakefile guard (and the GUI run gate) rather than dead-ending mid-DAG.
 
 _FASTP = config.get("fastp", {})
 

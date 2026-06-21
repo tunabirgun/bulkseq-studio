@@ -2,27 +2,45 @@
 # genome-size-aware parameters (protocol section 6.8).
 
 
+def _stage_reference(src, url, dest):
+    # mode == "custom": copy the user-supplied file (gzipped or plain) into the
+    # project. Otherwise download it from the configured URL. Runs inside WSL, so
+    # `src` is the WSL-resolvable path stored by the GUI at lock time.
+    import gzip
+    import shutil
+    import urllib.request
+
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    if REF.get("mode") == "custom":
+        if not src:
+            raise ValueError("custom reference selected but the source path is not set in config.")
+        if not os.path.exists(src):
+            raise FileNotFoundError(f"Custom reference file not found inside WSL: {src}")
+        if str(src).endswith(".gz"):
+            with gzip.open(src, "rb") as f_in, open(dest, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
+        else:
+            shutil.copyfile(src, dest)
+        return
+    if not url:
+        raise ValueError("reference URL is not set in config (and mode is not 'custom').")
+    tmp = dest + ".gz"
+    urllib.request.urlretrieve(url, tmp)
+    with gzip.open(tmp, "rb") as f_in, open(dest, "wb") as f_out:
+        shutil.copyfileobj(f_in, f_out)
+    os.remove(tmp)
+
+
 rule download_genome:
     output:
         GENOME_FA,
     params:
         url=REF.get("genome_fasta_url", ""),
+        src=REF.get("genome_fasta", ""),
     log:
         "logs/download_genome.log",
     run:
-        import gzip
-        import shutil
-        import urllib.request
-
-        url = params.url
-        if not url:
-            raise ValueError("reference.genome_fasta_url is not set in config.")
-        os.makedirs(os.path.dirname(output[0]), exist_ok=True)
-        tmp = output[0] + ".gz"
-        urllib.request.urlretrieve(url, tmp)
-        with gzip.open(tmp, "rb") as f_in, open(output[0], "wb") as f_out:
-            shutil.copyfileobj(f_in, f_out)
-        os.remove(tmp)
+        _stage_reference(params.src, params.url, output[0])
 
 
 rule download_gtf:
@@ -30,22 +48,11 @@ rule download_gtf:
         ANNOTATION_GTF,
     params:
         url=REF.get("annotation_gtf_url", ""),
+        src=REF.get("annotation_file", ""),
     log:
         "logs/download_gtf.log",
     run:
-        import gzip
-        import shutil
-        import urllib.request
-
-        url = params.url
-        if not url:
-            raise ValueError("reference.annotation_gtf_url is not set in config.")
-        os.makedirs(os.path.dirname(output[0]), exist_ok=True)
-        tmp = output[0] + ".gz"
-        urllib.request.urlretrieve(url, tmp)
-        with gzip.open(tmp, "rb") as f_in, open(output[0], "wb") as f_out:
-            shutil.copyfileobj(f_in, f_out)
-        os.remove(tmp)
+        _stage_reference(params.src, params.url, output[0])
 
 
 rule reference_check:
