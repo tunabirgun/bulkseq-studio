@@ -1159,6 +1159,11 @@ class MainWindow(QMainWindow):
             self.progress.setStyleSheet("")
             self._set_run_status("Completed", "#2E7D32")
             self.phase_label.setText("Finished")
+            # A completed run / "Regenerate figures" writes new PNGs into
+            # results/figures; re-scan so the Outputs figure picker shows them
+            # without the user having to click "Refresh figures" first.
+            if self.project_root is not None and hasattr(self, "figure_pick"):
+                self._refresh_gallery()
         else:
             # Non-zero: do not imply success. Red bar, red status, keep partial %.
             self.progress.setStyleSheet("QProgressBar::chunk { background-color: #C0392B; }")
