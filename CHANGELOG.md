@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.2 — 2026-06-22
+
+### Fixed
+
+- **The Outputs figure list now refreshes automatically when a run finishes.** A
+  completed pipeline run or **Regenerate figures** previously left the figure dropdown
+  stale — the (static) table list still updated, but newly written figures, including
+  the enrichment dotplots, only appeared after a manual **Refresh figures**. The run-
+  completion handler now re-scans `results/figures/` on success.
+
 ## 0.7.1 — 2026-06-22
 
 ### Changed
