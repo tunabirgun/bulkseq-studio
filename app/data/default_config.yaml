@@ -149,7 +149,7 @@ figures_style:
   enrich_emap_category: 15
   enrich_label_wrap: 40
   gsea_line_color: ""
-  ppi_layout: stress
+  ppi_layout: fr
   ppi_node_max_size: 11.0
   size_overrides: {}
   rasterize_points: false

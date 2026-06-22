@@ -225,7 +225,7 @@ class FigureConfig(BaseModel):
     enrich_emap_category: int = 15
     enrich_label_wrap: int = 40
     gsea_line_color: str = ""             # "" = palette-derived
-    ppi_layout: str = "stress"
+    ppi_layout: str = "fr"  # force-directed (Fruchterman-Reingold) default
     ppi_node_max_size: float = 11.0
     size_overrides: dict[str, tuple[float, float]] = Field(default_factory=dict)
     rasterize_points: bool = False        # OPTIONAL ggrastr (gated, default off)

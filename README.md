@@ -32,11 +32,11 @@ The default **STAR → featureCounts → DESeq2 → enrichment → figures** rou
 
 From data to results in one window — bring in a study, configure the analysis, run it while watching progress by phase, then browse tables and publication figures. The same workflow in dark mode:
 
-![BulkSeq Studio workflow, dark theme](docs/screenshot-overview-dark.png)
+![BulkSeq Studio Outputs browser — KEGG pathway enrichment, dark theme](docs/screenshot-overview-dark.png)
 
 The interactive PPI Network tab — hover a protein for its expression and fold-change, recolour and resize the nodes, filter by confidence, and export:
 
-![Interactive PPI network](docs/screenshot-ppi-interactive.png)
+![Interactive PPI network — hub proteins sized by degree on a force-directed layout](docs/screenshot-ppi-interactive.png)
 
 ## Requirements
 

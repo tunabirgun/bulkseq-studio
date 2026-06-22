@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.1 — 2026-06-22
+
+### Changed
+
+- **The PPI network figure now defaults to a force-directed layout** (Fruchterman-
+  Reingold, `fr`) instead of stress majorization, so high-degree **hub proteins are
+  visually prominent** (pulled to the centre, drawn large by degree) rather than packed
+  into a strip. The interactive PPI viewer was already force-directed (fcose).
+- Refreshed the documentation screenshots (de-squeezed volcano, KEGG pathway
+  enrichment, and the PPI hub network).
+
 ## 0.7.0 — 2026-06-22
 
 Enrichment now works for every catalogued organism, a g:Profiler backend adds

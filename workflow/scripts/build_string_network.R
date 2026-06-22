@@ -40,7 +40,7 @@ font_family <- as.character(getp("font_family", ""))
 label_bold <- isTRUE(as.logical(getp("label_bold", FALSE)))
 palette_name <- as.character(getp("palette", "Blue-Red"))
 node_max_size <- as.numeric(getp("ppi_node_max_size", 11))
-ppi_layout <- as.character(getp("ppi_layout", "stress"))
+ppi_layout <- as.character(getp("ppi_layout", "fr"))
 
 pal_spec <- palette_spec(palette_name)
 base_family <- if (nzchar(font_family)) font_family else NULL

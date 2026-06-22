@@ -1686,8 +1686,8 @@ class MainWindow(QMainWindow):
         self.fig_enrich_show.setValue(15)
         self.fig_ppi_layout = QComboBox()
         self.fig_ppi_layout.setEditable(True)  # accept layouts the R side may add
-        self.fig_ppi_layout.addItems(["stress", "fr", "kk", "drl", "circle", "grid"])
-        self.fig_ppi_layout.setCurrentText("stress")
+        self.fig_ppi_layout.addItems(["fr", "stress", "kk", "drl", "circle", "grid"])
+        self.fig_ppi_layout.setCurrentText("fr")
         save_style = QPushButton("Save figure style")
         save_style.clicked.connect(self._save_figure_style)
         form.addRow(self._info_label("Palette", "Colour scheme for all figures. Blue-Red is diverging; Viridis is colour-blind friendly; Greyscale prints well in mono."), self.fig_palette)
@@ -1708,7 +1708,7 @@ class MainWindow(QMainWindow):
         form.addRow(self.fig_pca_fixed_aspect)
         form.addRow(self._info_label("Heatmap z limit", "Symmetric cap on the row z-scores in the top-DEG heatmap; values beyond +/- this map to the extreme colours."), self.fig_heatmap_zlim)
         form.addRow(self._info_label("Enrichment categories shown", "Number of terms shown in the enrichment dot/ridge/KEGG plots."), self.fig_enrich_show)
-        form.addRow(self._info_label("PPI layout", "Graph layout algorithm for the PPI network figure (graphlayouts). 'stress' is the default; 'fr' is force-directed."), self.fig_ppi_layout)
+        form.addRow(self._info_label("PPI layout", "Graph layout algorithm for the PPI network figure (graphlayouts). 'fr' (Fruchterman-Reingold) is force-directed and the default; 'stress' is a compact alternative."), self.fig_ppi_layout)
         form.addRow(save_style)
         # --- PPI network (STRING) controls: customise + regenerate in-app ---
         self.ppi_score = QSpinBox()
@@ -1791,7 +1791,7 @@ class MainWindow(QMainWindow):
         style.pca_fixed_aspect = self.fig_pca_fixed_aspect.isChecked()
         style.heatmap_zlim = self.fig_heatmap_zlim.value()
         style.enrich_show_category = self.fig_enrich_show.value()
-        style.ppi_layout = self.fig_ppi_layout.currentText().strip() or "stress"
+        style.ppi_layout = self.fig_ppi_layout.currentText().strip() or "fr"
         self.manager.save_config(self.project_root, self.config)
         return True
 
@@ -2059,7 +2059,7 @@ class MainWindow(QMainWindow):
         self.fig_pca_fixed_aspect.setChecked(fig.pca_fixed_aspect)
         self.fig_heatmap_zlim.setValue(fig.heatmap_zlim)
         self.fig_enrich_show.setValue(fig.enrich_show_category)
-        self.fig_ppi_layout.setCurrentText(fig.ppi_layout or "stress")
+        self.fig_ppi_layout.setCurrentText(fig.ppi_layout or "fr")
         self.ppi_score.setValue(self.config.ppi.score_threshold)
         self.ppi_hub_labels.setValue(self.config.ppi.hub_label_count)
         goi_path = self.config.gene_sets.custom_gene_list
