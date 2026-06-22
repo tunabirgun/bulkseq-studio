@@ -297,7 +297,7 @@ class MainWindow(QMainWindow):
         create.setProperty("primary", True)
         create.clicked.connect(self._create_project)
         benchmark = QPushButton("Create Benchmark Project")
-        benchmark.clicked.connect(self._create_benchmark_project)
+        benchmark.clicked.connect(lambda: self._create_benchmark_project())
         open_existing = QPushButton("Open Existing Project")
         open_existing.clicked.connect(self._open_project)
         readiness = QPushButton("Check Environment")
@@ -2196,7 +2196,7 @@ class MainWindow(QMainWindow):
             f"Created {root}\n" + self._format_workdir_messages(messages)
         )
 
-    def _create_benchmark_project(self) -> None:
+    def _create_benchmark_project(self, benchmark_id: str | None = None) -> None:
         workdir = Path(self.workdir.text().strip() or str(Path.home() / "BulkSeqProjects"))
         messages = validate_working_directory(workdir, use_wsl=self.use_wsl.isChecked())
         if any(m.get("status") == "FAIL" for m in messages):
@@ -2206,7 +2206,22 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, APP_NAME, self._format_workdir_messages(messages))
             return
         catalog = load_benchmark_catalog()
-        benchmark_id = str(catalog[0]["id"])
+        if not catalog:
+            QMessageBox.warning(self, APP_NAME, "No benchmark datasets are bundled.")
+            return
+        if benchmark_id is not None:
+            benchmark = next((b for b in catalog if b["id"] == benchmark_id), catalog[0])
+        elif len(catalog) > 1:
+            # Let the user choose which bundled dataset to scaffold.
+            labels = [f"{b['name']} — {b['organism_name']}" for b in catalog]
+            choice, ok = QInputDialog.getItem(
+                self, APP_NAME, "Choose a benchmark dataset:", labels, 0, False)
+            if not ok:
+                return
+            benchmark = catalog[labels.index(choice)]
+        else:
+            benchmark = catalog[0]
+        benchmark_id = str(benchmark["id"])
         try:
             root = create_benchmark_project(benchmark_id, workdir, self.project_name.text() or benchmark_id)
         except (OSError, ValueError) as exc:
@@ -2216,8 +2231,8 @@ class MainWindow(QMainWindow):
         self._load_project(root)
         self.project_status.setPlainText(
             f"Created benchmark project: {root}\n"
-            f"Dataset: {catalog[0]['name']}\n"
-            f"Accessions: {', '.join(sample['original_accession'] for sample in catalog[0]['samples'])}\n"
+            f"Dataset: {benchmark['name']} ({benchmark['organism_name']})\n"
+            f"Accessions: {', '.join(sample['original_accession'] for sample in benchmark['samples'])}\n"
             + self._format_workdir_messages(messages)
         )
 

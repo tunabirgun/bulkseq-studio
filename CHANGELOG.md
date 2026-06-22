@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Second bundled benchmark — *Saccharomyces cerevisiae* WT vs *ume6Δ*** (PRJNA630199 /
+  SRP260000, R64-1-1): a small, fast-genome paired-end RNA-seq benchmark on a different
+  organism than the Drosophila pasilla set, exercising the g:Profiler + KEGG enrichment
+  route. *Create Benchmark Project* now shows a picker when more than one benchmark is
+  bundled, and each benchmark's contrast, reference level and read layout are read from
+  its dataset entry (previously hardcoded to pasilla). Verified: the project scaffolds
+  with the organism's enrichment IDs resolved and its full pipeline DAG resolves end-to-end.
+
 ## 0.8.0 — 2026-06-22
 
 An interface and reliability release. A multi-perspective GUI audit (debugger,

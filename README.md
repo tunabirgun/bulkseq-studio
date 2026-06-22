@@ -110,6 +110,8 @@ The pipeline is validated end-to-end on two real datasets:
 
 Both runs reproduce byte-for-byte across pipeline revisions, confirming the analysis is deterministic.
 
+**Bundled benchmark projects.** Two one-click datasets are available from *Create Benchmark Project* on the Project tab: the Drosophila pasilla subset above, and a *Saccharomyces cerevisiae* wild-type vs *ume6Δ* subset (PRJNA630199 / SRP260000; R64-1-1, Ensembl) — a small, fast genome on a different organism that exercises the g:Profiler + KEGG enrichment route. Each scaffolds an SRA-mode project (samples, contrast, reference) that downloads its reads and runs the full pipeline; the yeast project's pipeline DAG is verified to resolve end-to-end (download → STAR → featureCounts → DESeq2 → enrichment → networks).
+
 ## Project layout
 
 | Path | Contents |

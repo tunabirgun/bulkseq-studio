@@ -4,6 +4,12 @@ benchmarks:
     organism_name: Drosophila melanogaster
     reference_preset: Drosophila melanogaster
     genome_size_category: custom
+    contrast:
+      name: cg8144_rnai_vs_untreated
+      factor: condition
+      numerator: cg8144_rnai
+      denominator: untreated
+      reference_level: untreated
     reference:
       source: Ensembl
       release: "111"
@@ -72,3 +78,84 @@ benchmarks:
         base_count: 471570994
         fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR031/SRR031726/SRR031726_1.fastq.gz
         fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR031/SRR031726/SRR031726_2.fastq.gz
+  - id: sc_ume6_paired
+    name: Yeast WT vs ume6 delete paired-end subset
+    organism_name: Saccharomyces cerevisiae
+    reference_preset: Saccharomyces cerevisiae
+    genome_size_category: yeast
+    contrast:
+      name: ume6_delta_vs_WT
+      factor: condition
+      numerator: ume6_delta
+      denominator: WT
+      reference_level: WT
+    reference:
+      source: Ensembl
+      release: "111"
+      assembly: R64-1-1
+      annotation_format: gtf
+      genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/saccharomyces_cerevisiae/dna/Saccharomyces_cerevisiae.R64-1-1.dna.toplevel.fa.gz
+      annotation_gtf_url: https://ftp.ensembl.org/pub/release-111/gtf/saccharomyces_cerevisiae/Saccharomyces_cerevisiae.R64-1-1.111.gtf.gz
+    source_study: PRJNA630199 (SRP260000)
+    study_title: Basis of Specificity for a Conserved Promiscuous Chromatin Remodeling Protein [RNA-Seq]
+    description: >
+      Four-sample paired-end subset of a Saccharomyces cerevisiae RNA-seq
+      experiment: two wild-type and two independent UME6 deletion isolates
+      (clones 2-479 and 2-508). Ume6 is a transcriptional repressor that recruits
+      the Rpd3L histone-deacetylase complex to early-meiotic gene promoters, so
+      ume6 deletion derepresses those genes, giving a strong, well-characterised
+      differential signal. The small (~12 Mb) genome makes this a fast end-to-end
+      benchmark on a different organism than the Drosophila pasilla set.
+    notes:
+      - One ENA run per biological sample (two WT, two ume6-delta isolates) for a quick benchmark; the full study also includes rpd3-delta and rpd3-delta ume6-delta genotypes.
+      - Yeast enrichment runs via g:Profiler (GO/Reactome) and KEGG (organism code sce); org.Sc.sgd.db is not installed in the WSL env, so the GO route falls through to g:Profiler rather than clusterProfiler.
+      - Use allow_pending_sra validation until the FASTQ files are downloaded.
+    samples:
+      - sample_id: WT_1
+        condition: WT
+        replicate: 1
+        batch: srp260000
+        layout: paired
+        original_accession: SRR11684203
+        geo_accession: GSM4512952
+        experiment_accession: SRX8244992
+        read_count: 13352420
+        base_count: 1121603280
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/003/SRR11684203/SRR11684203_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/003/SRR11684203/SRR11684203_2.fastq.gz
+      - sample_id: WT_2
+        condition: WT
+        replicate: 2
+        batch: srp260000
+        layout: paired
+        original_accession: SRR11684204
+        geo_accession: GSM4512953
+        experiment_accession: SRX8244993
+        read_count: 31714781
+        base_count: 2664041604
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/004/SRR11684204/SRR11684204_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/004/SRR11684204/SRR11684204_2.fastq.gz
+      - sample_id: ume6_delta_1
+        condition: ume6_delta
+        replicate: 1
+        batch: srp260000
+        layout: paired
+        original_accession: SRR11684205
+        geo_accession: GSM4512954
+        experiment_accession: SRX8244994
+        read_count: 10391059
+        base_count: 872848956
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/005/SRR11684205/SRR11684205_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/005/SRR11684205/SRR11684205_2.fastq.gz
+      - sample_id: ume6_delta_2
+        condition: ume6_delta
+        replicate: 2
+        batch: srp260000
+        layout: paired
+        original_accession: SRR11684207
+        geo_accession: GSM4512956
+        experiment_accession: SRX8244996
+        read_count: 12092808
+        base_count: 1015795872
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/007/SRR11684207/SRR11684207_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/007/SRR11684207/SRR11684207_2.fastq.gz

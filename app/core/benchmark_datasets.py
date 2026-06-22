@@ -38,7 +38,8 @@ def create_benchmark_project(benchmark_id: str, working_directory: Path, project
 
     cfg = manager.load_config(root)
     cfg.input.type = "sra"
-    cfg.input.layout = "paired"
+    layouts = {str(sample.get("layout", "paired")) for sample in benchmark["samples"]}
+    cfg.input.layout = layouts.pop() if len(layouts) == 1 else "mixed"  # type: ignore[assignment]
     cfg.reference.mode = "preset"
     cfg.reference.organism_name = str(benchmark["organism_name"])
     cfg.reference.genome_size_category = str(benchmark.get("genome_size_category", "custom"))
@@ -63,12 +64,22 @@ def create_benchmark_project(benchmark_id: str, working_directory: Path, project
         cfg.reference.annotation_gtf_url = ref.get("annotation_gtf_url")
     cfg.workflow.aligner = "STAR"
     cfg.workflow.quantifier = "featureCounts"
-    cfg.deseq2.design_formula = "~ condition"
-    cfg.deseq2.reference_level = {"condition": "untreated"}
-    cfg.deseq2.contrasts[0].name = "cg8144_rnai_vs_untreated"
-    cfg.deseq2.contrasts[0].factor = "condition"
-    cfg.deseq2.contrasts[0].numerator = "cg8144_rnai"
-    cfg.deseq2.contrasts[0].denominator = "untreated"
+    # Differential-expression contrast from the benchmark entry (not hardcoded), so
+    # each benchmark sets its own factor/levels. reference_level defaults to the
+    # denominator (the control) when not given.
+    contrast = benchmark.get("contrast", {})
+    factor = str(contrast.get("factor", "condition"))
+    numerator = str(contrast.get("numerator", ""))
+    denominator = str(contrast.get("denominator", ""))
+    reference_level = str(contrast.get("reference_level") or denominator)
+    cfg.deseq2.design_formula = f"~ {factor}"
+    if reference_level:
+        cfg.deseq2.reference_level = {factor: reference_level}
+    c0 = cfg.deseq2.contrasts[0]
+    c0.factor = factor
+    c0.numerator = numerator
+    c0.denominator = denominator
+    c0.name = str(contrast.get("name") or f"{numerator}_vs_{denominator}")
     manager.save_config(root, cfg)
     return root
 

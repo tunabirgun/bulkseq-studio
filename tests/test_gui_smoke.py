@@ -26,7 +26,7 @@ def test_main_window_benchmark_smoke() -> None:
     window.workdir.setText(str(workdir))
     window.project_name.setText("pasilla_gui")
 
-    window._create_benchmark_project()
+    window._create_benchmark_project("pasilla_paired_subset")
     assert window.project_root == workdir.resolve() / "pasilla_gui"
     assert window.metadata_table.rowCount() == 4
     assert "Created benchmark project" in window.project_status.toPlainText()
@@ -59,7 +59,7 @@ def test_config_round_trip_through_widgets() -> None:
     workdir = Path("manual_test_gui") / uuid4().hex
     window.workdir.setText(str(workdir))
     window.project_name.setText("rt")
-    window._create_benchmark_project()
+    window._create_benchmark_project("pasilla_paired_subset")
     root = window.project_root
     assert root is not None
 
@@ -87,11 +87,11 @@ def test_approve_review_resets_on_project_switch() -> None:
     base = Path("manual_test_gui") / uuid4().hex
     window.workdir.setText(str(base / "a"))
     window.project_name.setText("proj_a")
-    window._create_benchmark_project()
+    window._create_benchmark_project("pasilla_paired_subset")
     window.approve_review.setChecked(True)
     window.workdir.setText(str(base / "b"))
     window.project_name.setText("proj_b")
-    window._create_benchmark_project()
+    window._create_benchmark_project("pasilla_paired_subset")
     assert window.approve_review.isChecked() is False
     window.close()
 
@@ -105,7 +105,7 @@ def test_enrichment_without_organism_flags_review() -> None:
     window = MainWindow()
     window.workdir.setText(str(Path("manual_test_gui") / uuid4().hex))
     window.project_name.setText("trap")
-    window._create_benchmark_project()
+    window._create_benchmark_project("pasilla_paired_subset")
     window.config.workflow.enrichment = True
     window.config.enrichment.kegg_organism = None
     window.config.enrichment.orgdb = None
