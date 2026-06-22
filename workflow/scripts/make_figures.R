@@ -9,8 +9,12 @@ suppressMessages({
   library(ggrepel)
   library(pheatmap)
   library(RColorBrewer)
+  library(scales)
   library(svglite)
 })
+
+# Shared palette/theme/getp/save_gg helpers (sourced; resolved via scriptdir).
+source(file.path(snakemake@scriptdir, "figure_style.R"))
 
 log_con <- file(snakemake@log[[1]], open = "wt")
 sink(log_con, type = "message")
@@ -39,10 +43,7 @@ if (is.null(style) || !is.list(style)) {
   style <- tryCatch(snakemake@config[["figures_style"]], error = function(e) NULL)
 }
 if (is.null(style) || !is.list(style)) style <- list()
-getp <- function(key, default) {
-  v <- style[[key]]
-  if (is.null(v) || (is.character(v) && length(v) == 1 && !nzchar(v) && !is.character(default))) default else v
-}
+getp <- make_getp(style)
 
 palette_name <- as.character(getp("palette", "Blue-Red"))
 point_size   <- as.numeric(getp("point_size", 2.5))
@@ -57,62 +58,29 @@ fig_w        <- as.numeric(getp("width_in", 6))
 fig_h        <- as.numeric(getp("height_in", 5))
 fig_dpi      <- as.integer(getp("dpi", 300))
 
-# ---- Palette helper ---------------------------------------------------------
-# One named palette drives both discrete scales (PCA, volcano) and continuous
-# colour ramps (sample-distance and top-DEG heatmaps). Viridis stops are
-# hardcoded so no extra package is required in the env.
-VIRIDIS_STOPS <- c("#440154", "#414487", "#2A788E", "#22A884", "#7AD151", "#FDE725")
-MAGMA_STOPS <- c("#000004", "#51127C", "#B63679", "#FB8861", "#FCFDBF")
-PLASMA_STOPS <- c("#0D0887", "#7E03A8", "#CC4778", "#F89540", "#F0F921")
-CIVIDIS_STOPS <- c("#00204D", "#414D6B", "#7C7B78", "#BCAF6F", "#FFEA46")
-.uniform_spec <- function(stops) {
-  list(discrete = stops, ramp = colorRampPalette(stops), diverging = colorRampPalette(stops))
-}
-palette_spec <- function(name) {
-  if (identical(name, "Greyscale")) {
-    list(discrete = c("#1A1A1A", "#7F7F7F", "#BFBFBF", "#4D4D4D", "#A6A6A6"),
-         ramp = colorRampPalette(c("#F7F7F7", "#525252", "#000000")),
-         diverging = colorRampPalette(rev(brewer.pal(9, "Greys"))))
-  } else if (identical(name, "Viridis")) {
-    list(discrete = c("#440154", "#21908C", "#FDE725", "#3B528B", "#5DC863"),
-         ramp = colorRampPalette(VIRIDIS_STOPS),
-         diverging = colorRampPalette(VIRIDIS_STOPS))
-  } else if (identical(name, "Magma")) {
-    .uniform_spec(MAGMA_STOPS)
-  } else if (identical(name, "Plasma")) {
-    .uniform_spec(PLASMA_STOPS)
-  } else if (identical(name, "Cividis")) {
-    .uniform_spec(CIVIDIS_STOPS)
-  } else if (identical(name, "Spectral")) {
-    list(discrete = brewer.pal(8, "Dark2"),
-         ramp = colorRampPalette(rev(brewer.pal(11, "Spectral"))),
-         diverging = colorRampPalette(brewer.pal(11, "Spectral")))
-  } else if (identical(name, "Red-Yellow-Blue")) {
-    list(discrete = brewer.pal(8, "Set2"),
-         ramp = colorRampPalette(rev(brewer.pal(11, "RdYlBu"))),
-         diverging = colorRampPalette(brewer.pal(11, "RdYlBu")))
-  } else {
-    list(discrete = c("#2C7BB6", "#C0392B", "#2E7D32", "#B26A00", "#6A1B9A"),
-         ramp = colorRampPalette(c("#2C7BB6", "white", "#C0392B")),
-         diverging = colorRampPalette(rev(brewer.pal(9, "Greys"))))
-  }
-}
-pal_spec <- palette_spec(palette_name)
+# New figure-style fields (W2). All read NULL-safe so older configs still run.
+scatter_alpha_fg <- as.numeric(getp("scatter_alpha_fg", 0.8))
+scatter_alpha_bg <- as.numeric(getp("scatter_alpha_bg", 0.25))
+pca_fixed_aspect <- isTRUE(as.logical(getp("pca_fixed_aspect", FALSE)))
+heatmap_zlim     <- as.numeric(getp("heatmap_zlim", 2.5))
+heatmap_cell_h   <- as.numeric(getp("heatmap_cell_height", 12))
+heatmap_fs_row   <- as.integer(getp("heatmap_fontsize_row", 0))  # 0 = auto (base - 4)
 
-# ---- Shared theme -----------------------------------------------------------
+# Per-figure canvas size overrides: key -> c(w_in, h_in). Falls back to global.
+size_overrides <- tryCatch(getp("size_overrides", list()), error = function(e) list())
+if (is.null(size_overrides) || !is.list(size_overrides)) size_overrides <- list()
+fig_dim <- function(key) {
+  v <- size_overrides[[key]]
+  if (is.null(v) || length(v) < 2) return(c(fig_w, fig_h))
+  c(as.numeric(v[[1]]), as.numeric(v[[2]]))
+}
+
+# Palette roles + theme + ggplot save come from figure_style.R.
+pal_spec    <- palette_spec(palette_name)
 base_family <- if (nzchar(font_family)) font_family else NULL
-style_theme <- function(base = theme_bw) {
-  t <- if (is.null(base_family)) base(base_size = base_size) else base(base_size = base_size, base_family = base_family)
-  extra <- theme()
-  if (label_bold) extra <- extra + theme(axis.text = element_text(face = "bold"))
-  if (title_bold) extra <- extra + theme(axis.title = element_text(face = "bold"))
-  t + extra
-}
-
-save_gg <- function(plot, png_path, svg_path, w = fig_w, h = fig_h) {
-  ggsave(png_path, plot, width = w, height = h, dpi = fig_dpi)
-  ggsave(svg_path, plot, width = w, height = h)
-}
+style_theme <- make_style_theme(base_size = base_size, base_family = base_family,
+                                label_bold = label_bold, title_bold = title_bold)
+save_gg     <- make_save_gg(fig_w = fig_w, fig_h = fig_h, fig_dpi = fig_dpi)
 
 save_grid <- function(gtable, png_path, svg_path, w = fig_w, h = fig_h) {
   png(png_path, width = w, height = h, units = "in", res = fig_dpi)
@@ -161,24 +129,39 @@ pca <- plotPCA(vsd, intgroup = group_var, ntop = pca_ntop, returnData = TRUE)
 pv <- round(100 * attr(pca, "percentVar"))
 p_pca <- ggplot(pca, aes(PC1, PC2, colour = group)) +
   geom_point(size = point_size, alpha = 0.9) +
-  geom_text_repel(aes(label = name), size = 3, seed = 1, show.legend = FALSE) +
-  scale_colour_manual(values = pal_spec$discrete) +
+  geom_text_repel(aes(label = name), family = base_family, size = 3, seed = 1,
+                  min.segment.length = 0, box.padding = 0.5, point.padding = 0.3,
+                  max.overlaps = Inf, segment.colour = "grey55", show.legend = FALSE) +
+  scale_colour_manual(values = pal_spec$discrete, name = group_var) +
+  scale_x_continuous(expand = expansion(mult = 0.08)) +
+  scale_y_continuous(expand = expansion(mult = 0.08)) +
   labs(x = paste0("PC1 (", pv[1], "%)"), y = paste0("PC2 (", pv[2], "%)")) +
   style_theme(theme_bw)
-# No coord_fixed(): when PC1 dominates (e.g. 98% vs 1%) a 1:1 aspect squeezes the
-# plot into a thin band, so let the points fill the (near-square) panel instead.
-save_gg(p_pca, out[["pca_png"]], out[["pca_svg"]])
+# coord_fixed preserves Euclidean score distances (config toggle); skip it when a
+# single PC dominates so the panel is not squeezed into a thin band.
+if (pca_fixed_aspect) p_pca <- p_pca + coord_fixed()
+pca_dim <- fig_dim("pca")
+save_gg(p_pca, out[["pca_png"]], out[["pca_svg"]], w = pca_dim[1], h = pca_dim[2])
 
 # ---- Sample-distance heatmap -----------------------------------------------
 sampleDists <- dist(t(assay(vsd)), method = "euclidean")
 mat <- as.matrix(sampleDists)
-rownames(mat) <- colnames(mat) <- paste(colData(vsd)[[group_var]], colnames(vsd), sep = " | ")
-cols <- pal_spec$diverging(255)
+# Short sample IDs on the matrix; the group factor moves to an annotation track.
+rownames(mat) <- colnames(mat) <- colnames(vsd)
+dist_ann <- as.data.frame(colData(vsd)[, group_var, drop = FALSE])
+ann_levels <- unique(as.character(dist_ann[[group_var]]))
+ann_cols <- setNames(pal_spec$discrete[seq_along(ann_levels)], ann_levels)
+# Distance is non-negative and sequential, not diverging (no false midpoint).
+cols <- pal_spec$seq(255)
 ph <- pheatmap(mat, clustering_distance_rows = sampleDists,
                clustering_distance_cols = sampleDists,
                clustering_method = "ward.D2", col = cols,
+               annotation_col = dist_ann,
+               annotation_colors = setNames(list(ann_cols), group_var),
+               annotation_names_col = FALSE, angle_col = 45,
                fontsize = base_size, silent = TRUE)
-save_grid(ph$gtable, out[["dist_png"]], out[["dist_svg"]])
+dist_dim <- fig_dim("sample_distance")
+save_grid(ph$gtable, out[["dist_png"]], out[["dist_svg"]], w = dist_dim[1], h = dist_dim[2])
 
 # ---- MA plot ----------------------------------------------------------------
 # The MA plot is dense; scale the configured point size down so it stays legible.
@@ -186,17 +169,30 @@ ma_point <- max(0.3, point_size * 0.4)
 ma <- as.data.frame(resLFC)
 ma <- ma[!is.na(ma$padj), ]
 ma$sig <- ma$padj < alpha_thr
-p_ma <- ggplot(ma, aes(baseMean, log2FoldChange, colour = sig)) +
-  geom_point(size = ma_point, alpha = 0.6) +
-  geom_hline(yintercept = 0, colour = "grey40") +
-  scale_colour_manual(values = c("FALSE" = "grey75", "TRUE" = pal_spec$discrete[1]),
-                      name = sprintf("padj < %.3g", alpha_thr)) +
+# Colour each point by local 2D density (base R densCols) so the dense band
+# regains a gradient while individual outliers stay visible. x is log-scaled for
+# counts, so density is computed on log10(baseMean) there.
+xv <- if (is_intensity) ma$baseMean else log10(pmax(ma$baseMean, .Machine$double.eps))
+ma$dens <- grDevices::densCols(xv, ma$log2FoldChange,
+                               colramp = colorRampPalette(pal_spec$seq(7)))
+ma_sig <- ma[ma$sig, ]
+p_ma <- ggplot(ma, aes(baseMean, log2FoldChange)) +
+  geom_point(aes(colour = dens), size = ma_point, alpha = scatter_alpha_fg) +
+  scale_colour_identity() +
+  ggnewscale::new_scale_colour() +
+  geom_point(data = ma_sig, aes(colour = sprintf("padj < %.3g", alpha_thr)),
+             shape = 21, fill = NA, size = ma_point + 0.4, stroke = 0.3, alpha = scatter_alpha_fg) +
+  scale_colour_manual(values = setNames(pal_spec$discrete[2], sprintf("padj < %.3g", alpha_thr)),
+                      name = NULL) +
+  geom_smooth(method = "loess", span = 0.3, se = FALSE, colour = "grey25", linewidth = 0.5) +
+  geom_hline(yintercept = 0, colour = "grey40", linewidth = 0.4) +
   labs(x = if (is_intensity) "average log2 expression" else "mean of normalised counts",
        y = "log2 fold change") +
   style_theme(theme_bw)
 # Counts span orders of magnitude (log x); log2 intensities do not.
-if (!is_intensity) p_ma <- p_ma + scale_x_log10()
-save_gg(p_ma, out[["ma_png"]], out[["ma_svg"]])
+if (!is_intensity) p_ma <- p_ma + scale_x_log10(labels = scales::label_log())
+ma_dim <- fig_dim("ma_plot")
+save_gg(p_ma, out[["ma_png"]], out[["ma_svg"]], w = ma_dim[1], h = ma_dim[2])
 
 # ---- Volcano ----------------------------------------------------------------
 vol <- as.data.frame(resLFC)
@@ -204,23 +200,83 @@ vol$gene <- rownames(vol)
 vol$label <- label_for(vol$gene)
 vol <- vol[!is.na(vol$padj), ]
 vol$neglog10padj <- -log10(vol$padj)
+
+# padj can underflow to 0 (most-significant genes) -> -log10 = Inf. Clamp to a
+# finite ceiling, but compute the auto-cap quantile on the PRE-clamp finite
+# subset: when >0.5% of genes underflow (e.g. fghs, 1.4%), the floored points
+# would otherwise drag the 99.5th percentile onto the floor and silently disable
+# the cap (do_cap = floor > floor = FALSE), re-squeezing the panel.
+ufloor <- as.numeric(getp("volcano_neglogp_floor", 320))  # ~ -log10(double min)
+was_inf <- !is.finite(vol$neglog10padj)
+vol$neglog10padj[was_inf] <- ufloor
+
+# Y cap: 0 = auto (quantile over finite-padj genes), then squish with pmin.
+ycap <- as.numeric(getp("volcano_y_cap", 0))
+if (ycap <= 0) {
+  finite_y <- vol$neglog10padj[!was_inf]
+  if (!length(finite_y)) finite_y <- vol$neglog10padj  # all-underflow guard
+  ycap <- as.numeric(stats::quantile(finite_y, getp("volcano_y_cap_quantile", 0.995)))
+}
+# Cap only when underflow exists (Inf must be squished) or a finite outlier exceeds
+# the cap by the headroom margin, so clean datasets (no extreme tail) stay un-capped.
+do_cap <- any(was_inf) ||
+  max(vol$neglog10padj) > ycap * (1 + as.numeric(getp("volcano_cap_headroom", 0.10)))
+vol$y_plot <- if (do_cap) pmin(vol$neglog10padj, ycap) else vol$neglog10padj
+vol$capped <- do_cap & vol$neglog10padj > ycap
+
 vol$direction <- "n.s."
-vol$direction[vol$padj < alpha_thr & vol$log2FoldChange >= lfc_thr] <- "Up"
+vol$direction[vol$padj < alpha_thr & vol$log2FoldChange >=  lfc_thr] <- "Up"
 vol$direction[vol$padj < alpha_thr & vol$log2FoldChange <= -lfc_thr] <- "Down"
 lab <- vol[vol$direction != "n.s.", ]
 lab <- head(lab[order(lab$padj), ], volcano_top)
+
 pal <- c(Up = pal_spec$discrete[2], Down = pal_spec$discrete[1], "n.s." = "grey80")
 shp <- c(Up = 17, Down = 16, "n.s." = 16)
-p_vol <- ggplot(vol, aes(log2FoldChange, neglog10padj)) +
-  geom_vline(xintercept = c(-lfc_thr, lfc_thr), linetype = "dashed", colour = "grey60", linewidth = 0.3) +
-  geom_hline(yintercept = -log10(alpha_thr), linetype = "dashed", colour = "grey60", linewidth = 0.3) +
-  geom_point(aes(colour = direction, shape = direction), size = point_size, alpha = 0.8) +
-  geom_text_repel(data = lab, aes(label = label), size = 3, seed = 42, max.overlaps = Inf) +
+
+# Density-readable core: faint n.s. under, smaller/softer significant on top.
+sig_size  <- max(0.6, point_size * as.numeric(getp("volcano_point_scale", 0.55)))
+sig_alpha <- as.numeric(getp("volcano_point_alpha", 0.55))
+
+xm   <- max(abs(vol$log2FoldChange))
+ytop <- if (do_cap) {
+  ycap * (1 + as.numeric(getp("volcano_cap_headroom", 0.10)))
+} else max(vol$y_plot)
+
+p_vol <- ggplot(vol, aes(log2FoldChange, y_plot)) +
+  geom_vline(xintercept = c(-lfc_thr, lfc_thr), linetype = "dashed",
+             colour = "grey60", linewidth = 0.3) +
+  geom_hline(yintercept = -log10(alpha_thr), linetype = "dashed",
+             colour = "grey60", linewidth = 0.3) +
+  geom_point(data = subset(vol, direction == "n.s." & !capped),
+             colour = "grey80", shape = 16,
+             size = max(0.5, sig_size * 0.8), alpha = 0.4) +
+  geom_point(data = subset(vol, direction != "n.s." & !capped),
+             aes(colour = direction, shape = direction),
+             size = sig_size, alpha = sig_alpha)
+
+# Hollow up-triangle marks points pushed to the cap line (no data hidden).
+if (any(vol$capped)) {
+  p_vol <- p_vol +
+    geom_point(data = subset(vol, capped), shape = 24, fill = "white",
+               colour = "grey20", size = sig_size + 0.6, stroke = 0.4, alpha = 0.95)
+}
+
+p_vol <- p_vol +
+  geom_text_repel(data = lab, aes(label = label, colour = direction),
+                  family = base_family, size = 3, seed = 42,
+                  max.overlaps = volcano_top + 5, box.padding = 0.5,
+                  point.padding = 0.3, min.segment.length = 0,
+                  segment.size = 0.3, segment.colour = "grey55",
+                  force = 3, force_pull = 0.5,
+                  ylim = c(-log10(alpha_thr), ytop), show.legend = FALSE) +
   scale_colour_manual(values = pal, name = NULL) +
   scale_shape_manual(values = shp, name = NULL) +
-  labs(x = "log2 fold change", y = "-log10 adjusted p") +
-  style_theme(theme_classic) + theme(legend.position = "top")
-save_gg(p_vol, out[["volcano_png"]], out[["volcano_svg"]])
+  coord_cartesian(xlim = c(-xm, xm), ylim = c(0, ytop), clip = "off") +
+  labs(x = "log2 fold change",
+       y = if (do_cap) "-log10 adjusted p (axis capped)" else "-log10 adjusted p") +
+  style_theme(theme_bw) + theme(legend.position = "top")
+vol_dim <- fig_dim("volcano")
+save_gg(p_vol, out[["volcano_png"]], out[["volcano_svg"]], w = vol_dim[1], h = vol_dim[2])
 
 # ---- Top-DEG heatmap --------------------------------------------------------
 # Drop NA padj first (order() puts NA last, so a naive head() would pull in NA
@@ -233,12 +289,30 @@ top_names <- rownames(res)[head(ord, n_top)]
 hm <- assay(vsd)[top_names, , drop = FALSE]
 rownames(hm) <- label_for(top_names)
 hm <- t(scale(t(hm)))
+# Signed row z-scores need a zero-anchored diverging ramp with symmetric breaks,
+# so z=0 maps to the neutral colour (not the data midpoint). Cap at +/- zlim.
+zlim <- heatmap_zlim
+hm <- pmin(pmax(hm, -zlim), zlim)
+hm_breaks <- seq(-zlim, zlim, length.out = 256)
 ann <- as.data.frame(colData(dds)[, group_var, drop = FALSE])
+hm_levels <- unique(as.character(ann[[group_var]]))
+hm_ann_cols <- setNames(pal_spec$discrete[seq_along(hm_levels)], hm_levels)
+fs_row <- if (heatmap_fs_row > 0) heatmap_fs_row else max(4, base_size - 4)
 ph2 <- pheatmap(hm, scale = "none", annotation_col = ann, show_rownames = TRUE,
                 clustering_method = "ward.D2",
-                color = pal_spec$ramp(255),
-                border_color = NA, fontsize = base_size, fontsize_row = 7, silent = TRUE)
-save_grid(ph2$gtable, out[["heatmap_png"]], out[["heatmap_svg"]], w = fig_w, h = max(fig_h, 7))
+                color = pal_spec$div(255), breaks = hm_breaks,
+                legend_breaks = c(-zlim, 0, zlim),
+                legend_labels = c(sprintf("%.1f", -zlim), "0  (row z-score)", sprintf("%.1f", zlim)),
+                annotation_colors = setNames(list(hm_ann_cols), group_var),
+                annotation_names_col = FALSE, cellheight = heatmap_cell_h,
+                border_color = NA, fontsize = base_size, fontsize_row = fs_row, silent = TRUE)
+# Drive height from the row count so labels never collide and the canvas scales
+# with heatmap_top_n; honour an explicit size override when set.
+hm_h <- (n_top * heatmap_cell_h) / 72 + 2
+hm_dim <- if (!is.null(size_overrides[["top_deg_heatmap"]])) {
+  fig_dim("top_deg_heatmap")
+} else c(fig_w, max(hm_h, fig_h))
+save_grid(ph2$gtable, out[["heatmap_png"]], out[["heatmap_svg"]], w = hm_dim[1], h = hm_dim[2])
 
 # ---- Raw p-value histogram (DE calibration check) ---------------------------
 # A spike near 0 over a flat background indicates a well-calibrated test; a
@@ -248,7 +322,9 @@ pv <- res$pvalue[!is.na(res$pvalue)]
 if (length(pv) > 0) {
   p_pval <- ggplot(data.frame(pvalue = pv), aes(pvalue)) +
     geom_histogram(boundary = 0, bins = 50, fill = pal_spec$discrete[1],
-                   colour = "white", linewidth = 0.2) +
+                   colour = "white", linewidth = 0.2, alpha = 0.9) +
+    geom_vline(xintercept = alpha_thr, linetype = "dashed", colour = "grey40",
+               linewidth = 0.3) +
     labs(x = "raw p-value", y = "gene count") +
     style_theme(theme_bw)
   save_gg(p_pval, out[["pval_png"]], out[["pval_svg"]])
@@ -261,24 +337,59 @@ if (length(pv) > 0) {
 # all come from the DESeqDataSet. On the microarray (limma) backend dds is a
 # DESeqTransform, so these are emitted as labelled placeholders instead.
 if (!is_intensity) {
-  save_base(function() plotDispEsts(dds), out[["disp_png"]], out[["disp_svg"]])
+  # Dispersion: faithful ggplot re-expression of plotDispEsts (gene-wise estimate,
+  # fitted trend, final shrunken value, flagged outliers) so it inherits the
+  # shared theme/palette/font instead of base graphics.
+  disp_df <- as.data.frame(mcols(dds))
+  disp_df <- disp_df[!is.na(disp_df$dispGeneEst) & disp_df$baseMean > 0, ]
+  disp_out <- if ("dispOutlier" %in% colnames(disp_df)) (disp_df$dispOutlier %in% TRUE) else rep(FALSE, nrow(disp_df))
+  p_disp <- ggplot(disp_df, aes(baseMean, dispGeneEst)) +
+    geom_point(colour = "grey55", size = ma_point, alpha = 0.5) +
+    geom_point(aes(y = dispersion), colour = pal_spec$discrete[1], size = ma_point, alpha = 0.6) +
+    geom_point(aes(y = dispFit), colour = pal_spec$discrete[2], size = max(0.3, ma_point * 0.8)) +
+    scale_x_log10(labels = scales::label_log()) +
+    scale_y_log10(labels = scales::label_log()) +
+    labs(x = "mean of normalised counts", y = "dispersion") +
+    style_theme(theme_bw)
+  if (any(disp_out)) {
+    p_disp <- p_disp +
+      geom_point(data = disp_df[disp_out, ], aes(y = dispGeneEst),
+                 shape = 21, fill = NA, colour = pal_spec$discrete[1],
+                 size = ma_point + 1, stroke = 0.4)
+  }
+  disp_dim <- fig_dim("dispersion")
+  save_gg(p_disp, out[["disp_png"]], out[["disp_svg"]], w = disp_dim[1], h = disp_dim[2])
+
   cooks <- tryCatch(assays(dds)[["cooks"]], error = function(e) NULL)
   if (!is.null(cooks)) {
-    save_base(function() {
-      op <- par(mar = c(8, 4.5, 2, 1)); on.exit(par(op))
-      boxplot(log10(cooks + 1), las = 2, outline = FALSE,
-              ylab = "log10(Cook's distance + 1)", col = pal_spec$discrete[1])
-    }, out[["cooks_png"]], out[["cooks_svg"]])
+    # Reshape Cook's distances to long form; plot log10 on a log axis (DESeq2
+    # vignette idiom) without the ad-hoc +1 that compressed the low end.
+    ck <- as.data.frame(cooks)
+    ck_long <- utils::stack(ck)
+    ck_long <- ck_long[is.finite(ck_long$values) & ck_long$values > 0, ]
+    colnames(ck_long) <- c("cooks", "sample")
+    p_cooks <- ggplot(ck_long, aes(sample, cooks)) +
+      geom_boxplot(outlier.shape = NA, fill = pal_spec$discrete[1], alpha = 0.65,
+                   colour = "grey25", linewidth = 0.3) +
+      scale_y_log10(labels = scales::label_log()) +
+      labs(x = NULL, y = "Cook's distance") +
+      style_theme(theme_bw) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    cooks_dim <- fig_dim("cooks_distance")
+    save_gg(p_cooks, out[["cooks_png"]], out[["cooks_svg"]], w = cooks_dim[1], h = cooks_dim[2])
   } else {
     save_placeholder("Cook's distances unavailable", out[["cooks_png"]], out[["cooks_svg"]])
   }
   libsz <- colSums(counts(dds))
   libdf <- data.frame(sample = names(libsz), reads = as.numeric(libsz))
   p_lib <- ggplot(libdf, aes(reads, reorder(sample, reads))) +
-    geom_col(fill = pal_spec$discrete[1]) +
+    geom_col(fill = pal_spec$discrete[1], alpha = 0.85, colour = "grey30", linewidth = 0.2) +
+    scale_x_continuous(labels = scales::label_number(scale_cut = scales::cut_short_scale()),
+                       expand = expansion(mult = c(0, 0.05))) +
     labs(x = "assigned reads (library size)", y = NULL) +
     style_theme(theme_bw)
-  save_gg(p_lib, out[["libsize_png"]], out[["libsize_svg"]])
+  lib_dim <- fig_dim("library_size")
+  save_gg(p_lib, out[["libsize_png"]], out[["libsize_svg"]], w = lib_dim[1], h = lib_dim[2])
 } else {
   na_msg <- "Diagnostic not applicable (microarray)"
   save_placeholder(na_msg, out[["disp_png"]], out[["disp_svg"]])

@@ -9,7 +9,12 @@ suppressMessages({
   library(msigdbr)
   library(ggplot2)
   library(svglite)
+  library(scales)
+  library(RColorBrewer)
 })
+
+# Shared palette/theme/getp helpers (sourced; resolved via scriptdir).
+source(file.path(snakemake@scriptdir, "figure_style.R"))
 
 log_con <- file(snakemake@log[[1]], open = "wt")
 sink(log_con, type = "message")
@@ -19,9 +24,20 @@ organism <- tolower(as.character(snakemake@params[["organism"]]))
 alpha <- as.numeric(snakemake@params[["alpha"]])
 style <- tryCatch(snakemake@params[["style"]], error = function(e) NULL)
 if (!is.list(style)) style <- list()
-getp <- function(k, d) { v <- style[[k]]; if (is.null(v)) d else v }
+getp <- make_getp(style)
 fig_w <- as.numeric(getp("width_in", 7)); fig_h <- as.numeric(getp("height_in", 6))
 fig_dpi <- as.integer(getp("dpi", 300))
+base_size <- as.numeric(getp("base_font_size", 12))
+font_family <- as.character(getp("font_family", ""))
+label_bold <- isTRUE(as.logical(getp("label_bold", FALSE)))
+title_bold <- isTRUE(as.logical(getp("title_bold", FALSE)))
+palette_name <- as.character(getp("palette", "Blue-Red"))
+show_cat <- as.integer(getp("enrich_show_category", 15))
+label_wrap <- as.integer(getp("enrich_label_wrap", 40))
+pal_spec <- palette_spec(palette_name)
+base_family <- if (nzchar(font_family)) font_family else NULL
+style_theme <- make_style_theme(base_size = base_size, base_family = base_family,
+                                label_bold = label_bold, title_bold = title_bold)
 
 write_check <- function(status, message) {
   msg <- gsub('"', '\\\\"', message)
@@ -30,8 +46,8 @@ write_check <- function(status, message) {
 }
 placeholder <- function(msg) {
   p <- ggplot() + annotate("text", x = 0, y = 0, label = msg, size = 5) + theme_void()
-  ggsave(out[["png"]], p, width = fig_w, height = fig_h, dpi = fig_dpi)
-  ggsave(out[["svg"]], p, width = fig_w, height = fig_h)
+  ggsave(out[["png"]], p, width = fig_w, height = fig_h, units = "in", dpi = fig_dpi)
+  ggsave(out[["svg"]], p, width = fig_w, height = fig_h, units = "in")
 }
 writeLines("ID,Description,note", out[["csv"]])  # default; overwritten on success
 
@@ -72,9 +88,20 @@ if (is.null(spec)) {
       edf <- if (is.null(eo)) data.frame() else as.data.frame(eo)
       if (nrow(edf) > 0) {
         write.csv(edf, out[["csv"]], row.names = FALSE)
-        dp <- enrichplot::dotplot(eo, showCategory = 15)
-        ggsave(out[["png"]], dp, width = fig_w, height = fig_h, dpi = fig_dpi)
-        ggsave(out[["svg"]], dp, width = fig_w, height = fig_h)
+        # Sequential p.adjust ramp (reversed so most significant is darkest), long
+        # Hallmark names wrapped, no embedded title. Description (set NAME) kept.
+        n_show <- min(show_cat, nrow(edf))
+        dp <- enrichplot::dotplot(eo, showCategory = n_show,
+                                  label_format = function(lbl) scales::label_wrap(label_wrap)(lbl)) +
+          scale_colour_gradientn(colours = pal_spec$seq(255), name = "p.adjust",
+                                 transform = "reverse") +
+          labs(title = NULL) +
+          style_theme(theme_bw)
+        # Canvas height scales with the number of plotted sets so the dot does not
+        # float in an oversized panel; capped so very large sets stay readable.
+        ov_h <- max(fig_h, 1.2 + 0.32 * n_show)
+        ggsave(out[["png"]], dp, width = fig_w, height = ov_h, units = "in", dpi = fig_dpi)
+        ggsave(out[["svg"]], dp, width = fig_w, height = ov_h, units = "in")
       } else {
         placeholder("No significant MSigDB Hallmark overlap")
       }

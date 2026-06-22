@@ -10,6 +10,11 @@ references:
     taxon_id: 9606
     source: Ensembl
     assembly_accession: GCA_000001405
+    orgdb: org.Hs.eg.db
+    enrichment_keytype: ENSEMBL
+    kegg_organism: hsa
+    string_taxon: 9606
+    gprofiler_organism: hsapiens
     assembly_name: GRCh38
     annotation_source: Ensembl
     genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
@@ -28,6 +33,11 @@ references:
     taxon_id: 10090
     source: Ensembl
     assembly_accession: GCA_000001635
+    orgdb: org.Mm.eg.db
+    enrichment_keytype: ENSEMBL
+    kegg_organism: mmu
+    string_taxon: 10090
+    gprofiler_organism: mmusculus
     assembly_name: GRCm39
     annotation_source: Ensembl
     genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/mus_musculus/dna/Mus_musculus.GRCm39.dna.primary_assembly.fa.gz
@@ -46,6 +56,11 @@ references:
     taxon_id: 4932
     source: Ensembl
     assembly_accession: GCA_000146045.2
+    orgdb: org.Sc.sgd.db
+    enrichment_keytype: ENSEMBL
+    kegg_organism: sce
+    string_taxon: 4932
+    gprofiler_organism: scerevisiae
     assembly_name: R64-1-1
     annotation_source: Ensembl
     genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/saccharomyces_cerevisiae/dna/Saccharomyces_cerevisiae.R64-1-1.dna.toplevel.fa.gz
@@ -64,6 +79,11 @@ references:
     taxon_id: 4896
     source: NCBI RefSeq
     assembly_accession: GCF_000002945.1
+    orgdb: null
+    enrichment_keytype: ncbi-geneid
+    kegg_organism: spo
+    string_taxon: 284812
+    gprofiler_organism: spombe
     assembly_name: ASM294v2
     annotation_source: NCBI RefSeq
     genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/002/945/GCF_000002945.1_ASM294v2/GCF_000002945.1_ASM294v2_genomic.fna.gz
@@ -82,6 +102,11 @@ references:
     taxon_id: 5518
     source: NCBI RefSeq
     assembly_accession: GCF_000240135.3
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: fgr
+    string_taxon: 229533
+    gprofiler_organism: fgraminearum
     assembly_name: ASM24013v3
     annotation_source: NCBI RefSeq
     genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/240/135/GCF_000240135.3_ASM24013v3/GCF_000240135.3_ASM24013v3_genomic.fna.gz
@@ -100,6 +125,11 @@ references:
     taxon_id: 5516
     source: GenBank (no RefSeq)
     assembly_accession: GCA_900074845.1
+    orgdb: null
+    enrichment_keytype: null
+    kegg_organism: null
+    string_taxon: null
+    gprofiler_organism: fculmorum
     assembly_name: FCUK99
     annotation_source: none (GenBank assembly ships GFF, not GTF)
     genome_fasta_url: null
@@ -118,6 +148,11 @@ references:
     taxon_id: 426428
     source: NCBI RefSeq
     assembly_accession: GCF_000149955.1
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: fox
+    string_taxon: 426428
+    gprofiler_organism: foxysporum
     assembly_name: ASM14995v2
     annotation_source: NCBI RefSeq
     genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/149/955/GCF_000149955.1_ASM14995v2/GCF_000149955.1_ASM14995v2_genomic.fna.gz
@@ -136,6 +171,11 @@ references:
     taxon_id: 1028729
     source: NCBI RefSeq
     assembly_accession: GCF_000303195.2
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: fpu
+    string_taxon: null
+    gprofiler_organism: fpseudograminearum
     assembly_name: FP7
     annotation_source: NCBI RefSeq
     genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/303/195/GCF_000303195.2_FP7/GCF_000303195.2_FP7_genomic.fna.gz
@@ -154,6 +194,11 @@ references:
     taxon_id: 334819
     source: NCBI RefSeq
     assembly_accession: GCF_000149555.1
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: fvr
+    string_taxon: 334819
+    gprofiler_organism: fverticillioides
     assembly_name: ASM14955v1
     annotation_source: NCBI RefSeq
     genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/149/555/GCF_000149555.1_ASM14955v1/GCF_000149555.1_ASM14955v1_genomic.fna.gz
@@ -172,6 +217,11 @@ references:
     taxon_id: 3702
     source: NCBI RefSeq
     assembly_accession: GCF_000001735.4
+    orgdb: org.At.tair.db
+    enrichment_keytype: TAIR
+    kegg_organism: ath
+    string_taxon: 3702
+    gprofiler_organism: athaliana
     assembly_name: TAIR10.1
     annotation_source: NCBI RefSeq
     genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/735/GCF_000001735.4_TAIR10.1/GCF_000001735.4_TAIR10.1_genomic.fna.gz
@@ -190,6 +240,11 @@ references:
     taxon_id: 7227
     source: Ensembl
     assembly_accession: GCA_000001215.4
+    orgdb: org.Dm.eg.db
+    enrichment_keytype: FLYBASE
+    kegg_organism: dme
+    string_taxon: 7227
+    gprofiler_organism: dmelanogaster
     assembly_name: BDGP6.46
     annotation_source: Ensembl
     genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/drosophila_melanogaster/dna/Drosophila_melanogaster.BDGP6.46.dna.toplevel.fa.gz
@@ -208,6 +263,11 @@ references:
     taxon_id: 6239
     source: Ensembl
     assembly_accession: GCA_000002985.3
+    orgdb: org.Ce.eg.db
+    enrichment_keytype: ENSEMBL
+    kegg_organism: cel
+    string_taxon: 6239
+    gprofiler_organism: celegans
     assembly_name: WBcel235
     annotation_source: Ensembl
     genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/caenorhabditis_elegans/dna/Caenorhabditis_elegans.WBcel235.dna.toplevel.fa.gz
@@ -226,6 +286,11 @@ references:
     taxon_id: 7955
     source: Ensembl
     assembly_accession: GCA_000002035.4
+    orgdb: org.Dr.eg.db
+    enrichment_keytype: ENSEMBL
+    kegg_organism: dre
+    string_taxon: 7955
+    gprofiler_organism: drerio
     assembly_name: GRCz11
     annotation_source: Ensembl
     genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/danio_rerio/dna/Danio_rerio.GRCz11.dna.primary_assembly.fa.gz
@@ -244,6 +309,11 @@ references:
     taxon_id: 237561
     source: NCBI RefSeq
     assembly_accession: GCF_000182965.3
+    orgdb: null
+    enrichment_keytype: null
+    kegg_organism: cal
+    string_taxon: 237561
+    gprofiler_organism: calbicans
     assembly_name: ASM18296v3
     annotation_source: NCBI RefSeq
     genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/182/965/GCF_000182965.3_ASM18296v3/GCF_000182965.3_ASM18296v3_genomic.fna.gz
@@ -262,6 +332,11 @@ references:
     taxon_id: 367110
     source: NCBI RefSeq
     assembly_accession: GCF_000182925.2
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: ncr
+    string_taxon: 367110
+    gprofiler_organism: ncrassa
     assembly_name: NC12
     annotation_source: NCBI RefSeq
     genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/182/925/GCF_000182925.2_NC12/GCF_000182925.2_NC12_genomic.fna.gz
@@ -280,6 +355,11 @@ references:
     taxon_id: 227321
     source: NCBI RefSeq
     assembly_accession: GCF_000011425.1
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: ani
+    string_taxon: 227321
+    gprofiler_organism: anidulans
     assembly_name: ASM1142v1
     annotation_source: NCBI RefSeq
     genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/011/425/GCF_000011425.1_ASM1142v1/GCF_000011425.1_ASM1142v1_genomic.fna.gz
@@ -298,6 +378,11 @@ references:
     taxon_id: 330879
     source: NCBI RefSeq
     assembly_accession: GCF_000002655.1
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: afm
+    string_taxon: 330879
+    gprofiler_organism: afumigatus
     assembly_name: ASM265v1
     annotation_source: NCBI RefSeq
     genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/002/655/GCF_000002655.1_ASM265v1/GCF_000002655.1_ASM265v1_genomic.fna.gz
@@ -316,6 +401,11 @@ references:
     taxon_id: 235443
     source: NCBI RefSeq
     assembly_accession: GCF_000149245.1
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: cng
+    string_taxon: null
+    gprofiler_organism: cneoformans
     assembly_name: CNA3
     annotation_source: NCBI RefSeq
     genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/149/245/GCF_000149245.1_CNA3/GCF_000149245.1_CNA3_genomic.fna.gz
@@ -334,6 +424,11 @@ references:
     taxon_id: 332648
     source: NCBI RefSeq
     assembly_accession: GCF_000143535.2
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: bfu
+    string_taxon: null
+    gprofiler_organism: bcinerea
     assembly_name: ASM14353v4
     annotation_source: NCBI RefSeq
     genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/143/535/GCF_000143535.2_ASM14353v4/GCF_000143535.2_ASM14353v4_genomic.fna.gz
@@ -352,6 +447,11 @@ references:
     taxon_id: 242507
     source: NCBI RefSeq
     assembly_accession: GCF_000002495.2
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: mgr
+    string_taxon: 242507
+    gprofiler_organism: moryzae
     assembly_name: MG8
     annotation_source: NCBI RefSeq
     genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/002/495/GCF_000002495.2_MG8/GCF_000002495.2_MG8_genomic.fna.gz
@@ -370,6 +470,11 @@ references:
     taxon_id: 511145
     source: NCBI RefSeq
     assembly_accession: GCF_000005845.2
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: eco
+    string_taxon: 511145
+    gprofiler_organism: null
     assembly_name: ASM584v2
     annotation_source: NCBI RefSeq
     genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/005/845/GCF_000005845.2_ASM584v2/GCF_000005845.2_ASM584v2_genomic.fna.gz
@@ -388,6 +493,11 @@ references:
     taxon_id: 224308
     source: NCBI RefSeq
     assembly_accession: GCF_000009045.1
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: bsu
+    string_taxon: 224308
+    gprofiler_organism: null
     assembly_name: ASM904v1
     annotation_source: NCBI RefSeq
     genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/009/045/GCF_000009045.1_ASM904v1/GCF_000009045.1_ASM904v1_genomic.fna.gz

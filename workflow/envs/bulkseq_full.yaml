@@ -39,11 +39,15 @@ dependencies:
   - bioconductor-org.mm.eg.db
   - r-ggplot2
   - r-ggrepel
+  - r-ggridges
   - r-ggtext
   - r-pheatmap
   - r-rcolorbrewer
   - r-svglite
   - r-msigdbr
+  # g:Profiler GO/KEGG/Reactome ORA + ID conversion for organisms without a
+  # Bioconductor OrgDb (fungi, bacteria, yeast/worm/zebrafish/Arabidopsis) (0.7.0).
+  - r-gprofiler2
   # PPI networks + graph handling (0.6.0): STRING interactions, igraph/ggraph,
   # cytoscape.js JSON export.
   - bioconductor-stringdb

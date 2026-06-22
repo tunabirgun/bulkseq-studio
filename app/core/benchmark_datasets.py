@@ -9,6 +9,7 @@ import yaml
 from app.core.metadata import save_metadata
 from app.core.paths import data_path
 from app.core.project import ProjectManager
+from app.core.reference_manager import catalog_entry_for_organism
 
 
 def load_benchmark_catalog() -> list[dict[str, Any]]:
@@ -41,6 +42,15 @@ def create_benchmark_project(benchmark_id: str, working_directory: Path, project
     cfg.reference.mode = "preset"
     cfg.reference.organism_name = str(benchmark["organism_name"])
     cfg.reference.genome_size_category = str(benchmark.get("genome_size_category", "custom"))
+    # Seed the per-organism enrichment/PPI ids from the catalog so benchmark
+    # projects match GUI presets (SRA mode, so keytype follows the catalog).
+    entry = catalog_entry_for_organism(cfg.reference.organism_name)
+    if entry is not None:
+        cfg.enrichment.orgdb = entry.get("orgdb") or None
+        cfg.enrichment.keytype = entry.get("enrichment_keytype") or None
+        cfg.enrichment.kegg_organism = entry.get("kegg_organism") or None
+        cfg.enrichment.gprofiler_organism = entry.get("gprofiler_organism") or None
+        cfg.ppi.taxon = entry.get("string_taxon")
     ref = benchmark.get("reference", {})
     if ref:
         cfg.reference.source = ref.get("source")

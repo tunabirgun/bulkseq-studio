@@ -100,6 +100,22 @@ enrichment:
   orgdb: null
   keytype: null
   kegg_organism: null
+  # backend: clusterprofiler keeps the auto OrgDb->gprofiler->none chain; set to
+  # gprofiler to force the g:Profiler GO route. gprofiler_organism is the g:Profiler
+  # id (e.g. hsapiens), distinct from the KEGG code; null falls back to the catalog.
+  backend: clusterprofiler
+  gprofiler_organism: null
+ppi:
+  # STRING PPI network. taxon is the curated STRING taxid (null => derived from the
+  # organism); the rule degrades to empty outputs when STRING is unreachable or the
+  # organism has no STRING taxid.
+  enabled: true
+  score_threshold: 400
+  taxon: null
+  seed_source: de
+  string_version: "12.0"
+  max_seed_genes: 400
+  hub_label_count: 15
 figures_style:
   palette: Blue-Red
   point_size: 2.5
@@ -113,6 +129,30 @@ figures_style:
   width_in: 6.0
   height_in: 5.0
   dpi: 300
+  # Volcano de-squeeze + shared-style fields (W2). 0 = auto where noted.
+  volcano_y_cap: 0.0
+  volcano_y_cap_quantile: 0.995
+  volcano_cap_headroom: 0.10
+  volcano_neglogp_floor: 320.0
+  volcano_point_scale: 0.55
+  volcano_point_alpha: 0.55
+  scatter_alpha_fg: 0.8
+  scatter_alpha_bg: 0.25
+  pca_fixed_aspect: false
+  heatmap_zlim: 2.5
+  heatmap_cell_height: 12.0
+  heatmap_fontsize_row: 0
+  heatmap_number_fontsize: 0
+  heatmap_number_format: "%.2f"
+  enrich_show_category: 15
+  enrich_cnet_category: 5
+  enrich_emap_category: 15
+  enrich_label_wrap: 40
+  gsea_line_color: ""
+  ppi_layout: stress
+  ppi_node_max_size: 11.0
+  size_overrides: {}
+  rasterize_points: false
 resources:
   profile: balanced
   total_threads: 4

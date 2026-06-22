@@ -166,6 +166,10 @@ class EnrichmentConfig(BaseModel):
     orgdb: str | None = None
     keytype: str | None = None
     kegg_organism: str | None = None
+    # backend default 'clusterprofiler' keeps the auto OrgDb->gprofiler->none chain;
+    # setting 'gprofiler' forces the g:Profiler GO route even when an OrgDb loads.
+    backend: Literal["clusterprofiler", "gprofiler"] = "clusterprofiler"
+    gprofiler_organism: str | None = None
 
 
 class PpiConfig(BaseModel):
@@ -200,15 +204,43 @@ class FigureConfig(BaseModel):
     # UI display unit for the width/height fields; width_in/height_in stay the
     # canonical inches the R export uses (px is converted via dpi).
     dimension_unit: Literal["in", "cm", "px"] = "in"
+    # Volcano de-squeeze (W2). volcano_y_cap 0 = auto (quantile); fractions/alphas
+    # are read NULL-safe by getp() in make_figures.R, so defaults reproduce behaviour.
+    volcano_y_cap: float = 0.0            # 0 = auto cap via quantile
+    volcano_y_cap_quantile: float = 0.995
+    volcano_cap_headroom: float = 0.10
+    volcano_neglogp_floor: float = 320.0  # finite clamp for padj==0/Inf
+    volcano_point_scale: float = 0.55     # sig point size = point_size x this
+    volcano_point_alpha: float = 0.55
+    scatter_alpha_fg: float = 0.8
+    scatter_alpha_bg: float = 0.25
+    pca_fixed_aspect: bool = False  # opt-in; coord_fixed squeezes PC1-dominant PCA
+    heatmap_zlim: float = 2.5             # symmetric z cap (top-DEG)
+    heatmap_cell_height: float = 12.0     # pt/row, pins heatmap aspect
+    heatmap_fontsize_row: int = 0         # 0 = auto (base-4)
+    heatmap_number_fontsize: int = 0      # 0 = auto (0.6 x base)
+    heatmap_number_format: str = "%.2f"
+    enrich_show_category: int = 15
+    enrich_cnet_category: int = 5
+    enrich_emap_category: int = 15
+    enrich_label_wrap: int = 40
+    gsea_line_color: str = ""             # "" = palette-derived
+    ppi_layout: str = "stress"
+    ppi_node_max_size: float = 11.0
+    size_overrides: dict[str, tuple[float, float]] = Field(default_factory=dict)
+    rasterize_points: bool = False        # OPTIONAL ggrastr (gated, default off)
 
-    @field_validator("point_size", "width_in", "height_in")
+    @field_validator("point_size", "width_in", "height_in",
+                     "heatmap_zlim", "heatmap_cell_height", "ppi_node_max_size")
     @classmethod
     def positive_float(cls, value: float) -> float:
         if value <= 0:
             raise ValueError("Figure dimensions and point size must be positive.")
         return value
 
-    @field_validator("base_font_size", "dpi", "volcano_top_n", "heatmap_top_n", "pca_ntop")
+    @field_validator("base_font_size", "dpi", "volcano_top_n", "heatmap_top_n", "pca_ntop",
+                     "enrich_show_category", "enrich_cnet_category", "enrich_emap_category",
+                     "enrich_label_wrap")
     @classmethod
     def positive_int(cls, value: int) -> int:
         if value <= 0:

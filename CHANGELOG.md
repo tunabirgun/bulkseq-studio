@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.7.0 — 2026-06-22
+
+Enrichment now works for every catalogued organism, a g:Profiler backend adds
+GO/Reactome for species without a Bioconductor OrgDb, and the figure set was
+reworked for legibility. Validated on *F. graminearum* (GSE78885 heat-shock and an
+FgEXOSC1 RNA-seq set), Drosophila pasilla, and *S. cerevisiae*.
+
+### Added
+
+- **Per-organism enrichment + PPI identifiers for all 22 reference presets.** Each
+  catalogue entry now carries a KEGG organism code, a STRING-valid taxon, a
+  Bioconductor OrgDb (where one exists), and a g:Profiler organism. Selecting a
+  preset, a GEO organism, or a benchmark now populates `enrichment.*` and
+  `ppi.taxon` automatically, so KEGG ORA + GSEA run for any organism with a KEGG
+  code — including the fungi and bacteria that previously produced no enrichment.
+- **g:Profiler GO backend (`gprofiler2`).** Organisms with no Bioconductor OrgDb
+  (*S. cerevisiae*, *S. pombe*, *Aspergillus*, *Neurospora*, *Candida*,
+  *Magnaporthe*, …) now get GO:BP / KEGG / Reactome over-representation via
+  g:Profiler on a tested-gene background. clusterProfiler stays the default where an
+  OrgDb is installed.
+
+### Fixed
+
+- **Four "supported" organisms silently produced zero enrichment.** Arabidopsis,
+  yeast, worm and zebrafish mapped to Bioconductor OrgDbs that are not in the
+  environment, so `library()` failed and the KEGG branch was never reached. The GO
+  route now falls through OrgDb → g:Profiler → KEGG, recovering enrichment for them.
+- **Wrong STRING taxids.** *F. graminearum* PH-1 used species taxid 5518 (a 404 in
+  STRING v12); it now uses the strain taxid 229533. *S. pombe* uses 284812. Species
+  with no STRING v12 entry degrade to an honest empty-network warning.
+- **S. pombe gene ids were corrupted** by the version-strip (`SPOM_SPAC212.11` →
+  `SPOM_SPAC212`); the strip is now restricted to Ensembl-style version suffixes.
+- **Silent empty enrichment is now loud.** When ~0 of N gene ids map (wrong keytype
+  or KEGG code), the check reports `REVIEW_REQUIRED` instead of an empty `PASS`.
+
+### Changed (figures)
+
+- **Volcano de-squeeze.** The y-axis caps at the bulk's range; extreme / `padj == 0`
+  genes are clamped to the cap and drawn as hollow boundary markers with the axis
+  labelled "(axis capped)", so the DEG cloud fills the panel instead of being crushed
+  under a few ultra-significant genes. Points gain density-readable size/alpha and
+  labels get leader lines.
+- **One palette, three honest roles** (categorical / sequential / diverging) shared
+  by every figure via a new `figure_style.R`. Z-score heatmaps use a zero-centred
+  diverging ramp with symmetric breaks; distance and correlation use sequential.
+- **Per-figure rework:** MA density colouring with a significance legend; dispersion
+  and Cook's re-expressed as themed ggplots; PCA aspect no longer squeezes a dominant
+  PC1; KEGG/GO dot-plots show wrapped pathway names on the shared palette; the GSEA
+  ridgeplot renders again (built from leading-edge fold changes); Wilcoxon
+  concordance is a 2-D density rather than a black smear; the PPI figure gains a
+  stress layout, a node-degree legend and repelled hub labels.
+- **Outputs preview re-fits** on resize/show, fixing the squeezed thumbnail.
+- ~20 new `figures_style` settings expose the volcano cap, palette roles, heatmap
+  scaling and enrichment category counts; all default to the upgraded behaviour.
+
 ## 0.6.2 — 2026-06-22
 
 ### Fixed

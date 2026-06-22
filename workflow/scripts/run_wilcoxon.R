@@ -8,7 +8,12 @@ suppressMessages({
   library(SummarizedExperiment)
   library(ggplot2)
   library(svglite)
+  library(scales)
+  library(RColorBrewer)
 })
+
+# Shared palette/theme/getp/save_gg helpers (sourced; resolved via scriptdir).
+source(file.path(snakemake@scriptdir, "figure_style.R"))
 
 log_con <- file(snakemake@log[[1]], open = "wt")
 sink(log_con, type = "message")
@@ -23,9 +28,18 @@ den <- snakemake@params[["denominator"]]
 
 style <- tryCatch(snakemake@params[["style"]], error = function(e) NULL)
 if (!is.list(style)) style <- list()
-getp <- function(k, d) { v <- style[[k]]; if (is.null(v)) d else v }
+getp <- make_getp(style)
 fig_w <- as.numeric(getp("width_in", 6)); fig_h <- as.numeric(getp("height_in", 5))
 fig_dpi <- as.integer(getp("dpi", 300)); base_size <- as.numeric(getp("base_font_size", 12))
+font_family <- as.character(getp("font_family", ""))
+label_bold <- isTRUE(as.logical(getp("label_bold", FALSE)))
+title_bold <- isTRUE(as.logical(getp("title_bold", FALSE)))
+palette_name <- as.character(getp("palette", "Blue-Red"))
+pal_spec <- palette_spec(palette_name)
+base_family <- if (nzchar(font_family)) font_family else NULL
+style_theme <- make_style_theme(base_size = base_size, base_family = base_family,
+                                label_bold = label_bold, title_bold = title_bold)
+save_gg <- make_save_gg(fig_w = fig_w, fig_h = fig_h, fig_dpi = fig_dpi)
 
 write_check <- function(path, status, message) {
   msg <- gsub('"', '\\\\"', message)
@@ -71,15 +85,18 @@ df <- data.frame(gene_id = rownames(m),
 df <- df[order(df$wilcox_padj), ]
 write.csv(df, out[["csv"]], row.names = FALSE)
 
-# Concordance: DE statistic vs Wilcoxon evidence (NOT thresholded calls).
+# Concordance: DE statistic vs Wilcoxon evidence (NOT thresholded calls). The
+# thousands of genes overplot as a black smear, so bin the density (gene count per
+# 2D cell on a log fill) rather than jitter (banding is intrinsic at small n).
 pd <- df[!is.na(df$wilcox_p) & !is.na(df$de_stat), ]
 pd$neglp <- -log10(pd$wilcox_p)
 p <- ggplot(pd, aes(de_stat, neglp)) +
-  geom_point(alpha = 0.4, size = 1.2) +
-  labs(x = "DESeq2 / limma statistic", y = "-log10 Wilcoxon p (sensitivity)") +
-  theme_bw(base_size = base_size)
-ggsave(out[["png"]], p, width = fig_w, height = fig_h, dpi = fig_dpi)
-ggsave(out[["svg"]], p, width = fig_w, height = fig_h)
+  geom_bin2d(bins = 60) +
+  scale_fill_gradientn(colours = pal_spec$seq(256), transform = "log10", name = "genes") +
+  labs(x = "DESeq2 / limma statistic",
+       y = expression(-log[10]~"Wilcoxon rank-sum p")) +
+  style_theme(theme_bw)
+save_gg(p, out[["png"]], out[["svg"]])
 
 small <- n_min < 5
 status <- if (small) "WARNING" else "PASS"

@@ -50,7 +50,7 @@ from app.core.input_detection import detect_fastq_inputs
 from app.core.metadata import dataframe_from_rows, load_metadata, save_metadata, validate_metadata
 from app.core.project import ProjectManager, validate_working_directory
 from app.core.provenance import write_run_summary
-from app.core.reference_manager import load_reference_catalog, md5sum, validate_reference
+from app.core.reference_manager import catalog_entry_for_organism, load_reference_catalog, md5sum, validate_reference
 from app.core.resources import detect_system, recommend_profile
 from app.core.sra_metadata import fetch_ena_metadata, metadata_to_samples
 from app.core.geo_metadata import fetch_geo_series
@@ -385,6 +385,15 @@ class MainWindow(QMainWindow):
         self.config.microarray.source = "geo_series_matrix"
         if organism:
             self.config.reference.organism_name = organism
+            # Pull the organism's enrichment/PPI ids from the catalog when the GEO
+            # organism string matches a preset (e.g. Fusarium-GEO -> KEGG fgr, taxon
+            # 229533). keytype stays SYMBOL below; no match leaves the ids None.
+            entry = catalog_entry_for_organism(organism)
+            if entry is not None:
+                self.config.enrichment.orgdb = entry.get("orgdb") or None
+                self.config.enrichment.kegg_organism = entry.get("kegg_organism") or None
+                self.config.enrichment.gprofiler_organism = entry.get("gprofiler_organism") or None
+                self.config.ppi.taxon = entry.get("string_taxon")
         # GPL annotation maps probes to gene symbols, so enrichment uses SYMBOL.
         self.config.enrichment.keytype = "SYMBOL"
         self.manager.save_config(self.project_root, self.config)
@@ -678,6 +687,17 @@ class MainWindow(QMainWindow):
         annotation_md5 = md5sum(annotation)
         self.config.reference.mode = "custom"
         self.config.reference.organism_name = self.ref_organism.text().strip() or "custom"
+        # If the custom organism name matches a catalog preset, seed its enrichment/
+        # PPI ids; an unknown name leaves them None (the smk fallback applies).
+        entry = catalog_entry_for_organism(self.config.reference.organism_name)
+        if entry is not None:
+            enr = self.config.enrichment
+            enr.orgdb = entry.get("orgdb") or None
+            enr.kegg_organism = entry.get("kegg_organism") or None
+            enr.gprofiler_organism = entry.get("gprofiler_organism") or None
+            self.config.ppi.taxon = entry.get("string_taxon")
+            if self.config.input.type != "microarray":
+                enr.keytype = entry.get("enrichment_keytype") or None
         # Store WSL-resolvable paths: reference staging and validate_reference.py
         # run inside WSL, where a Windows path (C:\...) would not exist. The md5s
         # above were computed on the native paths (readable on the Windows side).
@@ -1641,6 +1661,33 @@ class MainWindow(QMainWindow):
         self.fig_dim_unit.addItems(["in", "cm", "px"])
         self._fig_dim_unit_prev = "in"
         self.fig_dim_unit.currentTextChanged.connect(self._on_fig_unit_changed)
+        # Curated subset of the W2 figure-tuning fields. The rest stay config-file
+        # driven (defaults in default_config.yaml).
+        self.fig_volcano_ycap = QDoubleSpinBox()
+        self.fig_volcano_ycap.setRange(0.0, 400.0)
+        self.fig_volcano_ycap.setSingleStep(5.0)
+        self.fig_volcano_ycap.setDecimals(1)
+        self.fig_volcano_ycap.setValue(0.0)
+        self.fig_volcano_ycap.setSpecialValueText("auto")  # 0 = auto (quantile)
+        self.fig_volcano_alpha = QDoubleSpinBox()
+        self.fig_volcano_alpha.setRange(0.05, 1.0)
+        self.fig_volcano_alpha.setSingleStep(0.05)
+        self.fig_volcano_alpha.setDecimals(2)
+        self.fig_volcano_alpha.setValue(0.55)
+        self.fig_pca_fixed_aspect = QCheckBox("Fix PCA aspect ratio")
+        self.fig_pca_fixed_aspect.setChecked(False)
+        self.fig_heatmap_zlim = QDoubleSpinBox()
+        self.fig_heatmap_zlim.setRange(0.1, 10.0)
+        self.fig_heatmap_zlim.setSingleStep(0.5)
+        self.fig_heatmap_zlim.setDecimals(1)
+        self.fig_heatmap_zlim.setValue(2.5)
+        self.fig_enrich_show = QSpinBox()
+        self.fig_enrich_show.setRange(1, 100)
+        self.fig_enrich_show.setValue(15)
+        self.fig_ppi_layout = QComboBox()
+        self.fig_ppi_layout.setEditable(True)  # accept layouts the R side may add
+        self.fig_ppi_layout.addItems(["stress", "fr", "kk", "drl", "circle", "grid"])
+        self.fig_ppi_layout.setCurrentText("stress")
         save_style = QPushButton("Save figure style")
         save_style.clicked.connect(self._save_figure_style)
         form.addRow(self._info_label("Palette", "Colour scheme for all figures. Blue-Red is diverging; Viridis is colour-blind friendly; Greyscale prints well in mono."), self.fig_palette)
@@ -1656,6 +1703,12 @@ class MainWindow(QMainWindow):
         form.addRow(self._info_label("Width", "Saved figure width (PNG and SVG), in the units selected above."), self.fig_width)
         form.addRow(self._info_label("Height", "Saved figure height (PNG and SVG), in the units selected above."), self.fig_height)
         form.addRow(self._info_label("DPI (PNG)", "Resolution for the raster PNG export. SVG is vector and unaffected. 300 is publication quality. Also converts px width/height to inches."), self.fig_dpi)
+        form.addRow(self._info_label("Volcano y cap", "Upper limit for the volcano -log10(adjusted p) axis. 'auto' (0) caps at the 99.5th percentile so a few hyper-significant genes do not squash the rest."), self.fig_volcano_ycap)
+        form.addRow(self._info_label("Volcano point alpha", "Opacity of the significant points in the volcano plot (0-1). Lower values reveal density in the dense core."), self.fig_volcano_alpha)
+        form.addRow(self.fig_pca_fixed_aspect)
+        form.addRow(self._info_label("Heatmap z limit", "Symmetric cap on the row z-scores in the top-DEG heatmap; values beyond +/- this map to the extreme colours."), self.fig_heatmap_zlim)
+        form.addRow(self._info_label("Enrichment categories shown", "Number of terms shown in the enrichment dot/ridge/KEGG plots."), self.fig_enrich_show)
+        form.addRow(self._info_label("PPI layout", "Graph layout algorithm for the PPI network figure (graphlayouts). 'stress' is the default; 'fr' is force-directed."), self.fig_ppi_layout)
         form.addRow(save_style)
         # --- PPI network (STRING) controls: customise + regenerate in-app ---
         self.ppi_score = QSpinBox()
@@ -1733,6 +1786,12 @@ class MainWindow(QMainWindow):
         style.height_in = round(self._dim_to_inches(self.fig_height.value(), unit, dpi), 4)
         style.dpi = dpi
         style.dimension_unit = unit  # type: ignore[assignment]
+        style.volcano_y_cap = self.fig_volcano_ycap.value()
+        style.volcano_point_alpha = self.fig_volcano_alpha.value()
+        style.pca_fixed_aspect = self.fig_pca_fixed_aspect.isChecked()
+        style.heatmap_zlim = self.fig_heatmap_zlim.value()
+        style.enrich_show_category = self.fig_enrich_show.value()
+        style.ppi_layout = self.fig_ppi_layout.currentText().strip() or "stress"
         self.manager.save_config(self.project_root, self.config)
         return True
 
@@ -1995,6 +2054,12 @@ class MainWindow(QMainWindow):
         self._configure_dim_spins(unit)
         self.fig_width.setValue(self._dim_from_inches(fig.width_in, unit, fig.dpi))
         self.fig_height.setValue(self._dim_from_inches(fig.height_in, unit, fig.dpi))
+        self.fig_volcano_ycap.setValue(fig.volcano_y_cap)
+        self.fig_volcano_alpha.setValue(fig.volcano_point_alpha)
+        self.fig_pca_fixed_aspect.setChecked(fig.pca_fixed_aspect)
+        self.fig_heatmap_zlim.setValue(fig.heatmap_zlim)
+        self.fig_enrich_show.setValue(fig.enrich_show_category)
+        self.fig_ppi_layout.setCurrentText(fig.ppi_layout or "stress")
         self.ppi_score.setValue(self.config.ppi.score_threshold)
         self.ppi_hub_labels.setValue(self.config.ppi.hub_label_count)
         goi_path = self.config.gene_sets.custom_gene_list
@@ -2007,6 +2072,20 @@ class MainWindow(QMainWindow):
             if self.reference_list.item(i).text().startswith(f"{organism} "):
                 self.reference_list.setCurrentRow(i)
                 break
+        # Backfill the per-organism enrichment/PPI ids on reopen for projects saved
+        # before this feature. Only fill when None (don't override an intentional
+        # None); keytype is omitted so count-matrix's deliberate None is preserved.
+        entry = catalog_entry_for_organism(organism)
+        if entry is not None:
+            enr = self.config.enrichment
+            if enr.orgdb is None:
+                enr.orgdb = entry.get("orgdb") or None
+            if enr.kegg_organism is None:
+                enr.kegg_organism = entry.get("kegg_organism") or None
+            if enr.gprofiler_organism is None:
+                enr.gprofiler_organism = entry.get("gprofiler_organism") or None
+            if self.config.ppi.taxon is None:
+                self.config.ppi.taxon = entry.get("string_taxon")
         # Restore the custom-reference fields so reopening a project does not show
         # them blank (which would invite an accidental empty re-lock).
         ref = self.config.reference
@@ -2148,6 +2227,15 @@ class MainWindow(QMainWindow):
         ref = self.config.reference
         ref.mode = "preset"
         ref.organism_name = str(entry["organism_name"])
+        # Propagate the per-organism enrichment/PPI identifiers the workflow reads.
+        enr = self.config.enrichment
+        enr.orgdb = entry.get("orgdb") or None
+        enr.kegg_organism = entry.get("kegg_organism") or None
+        enr.gprofiler_organism = entry.get("gprofiler_organism") or None
+        self.config.ppi.taxon = entry.get("string_taxon")
+        # Don't clobber the microarray SYMBOL keytype (mirrors the L468 guard).
+        if self.config.input.type != "microarray":
+            enr.keytype = entry.get("enrichment_keytype") or None
         ref.strain = str(entry.get("strain") or "")
         ref.genome_size_category = str(entry.get("genome_size_category") or "custom")
         ref.source = str(entry.get("source") or "")

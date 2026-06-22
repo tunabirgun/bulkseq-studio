@@ -15,6 +15,8 @@ down_file <- snakemake@input[["down"]]
 orgdb_name <- snakemake@params[["orgdb"]]
 keytype <- snakemake@params[["keytype"]]
 kegg_org <- snakemake@params[["kegg"]]
+backend <- snakemake@params[["backend"]]
+gprofiler_org <- snakemake@params[["gprofiler_organism"]]
 alpha <- as.numeric(snakemake@params[["alpha"]])
 out <- snakemake@output
 
@@ -26,6 +28,16 @@ write_check <- function(path, status, message) {
 }
 nrows <- function(x) if (is.null(x)) 0 else tryCatch(nrow(as.data.frame(x)), error = function(e) 0)
 
+# Strip a trailing version suffix ONLY from Ensembl-style ids (ENSG00000123.4 ->
+# ENSG00000123). A naive sub("\\..*$","",id) corrupts PomBase ids whose ordinal is
+# a structural dot (SPOM_SPAC212.11 -> SPOM_SPAC212), so the strip is gated on shape:
+# locus tags (FGSG_*, ANIA_*, SPOM_*), TAIR (AT#G#####) and ORF ids pass through.
+strip_version <- function(id) {
+  v <- grepl("^ENS", id)
+  id[v] <- sub("\\.\\d+$", "", id[v])
+  id
+}
+
 # Always create the output files first so the rule succeeds even on failure.
 for (k in c("go", "go_up", "go_down", "gsea", "kegg", "kegg_gsea")) writeLines("", out[[k]])
 # Persist an (empty) objects RDS up front so the enrichment_figures rule always
@@ -33,28 +45,30 @@ for (k in c("go", "go_up", "go_down", "gsea", "kegg", "kegg_gsea")) writeLines("
 saveRDS(list(), out[["objects"]])
 summary_lines <- c("Functional enrichment summary", "=============================", "")
 
-has_orgdb <- !is.null(orgdb_name) && nzchar(orgdb_name)
-has_kegg  <- !is.null(kegg_org)  && nzchar(kegg_org)
+has_orgdb     <- !is.null(orgdb_name)    && nzchar(orgdb_name)
+has_kegg      <- !is.null(kegg_org)      && nzchar(kegg_org)
+has_gprofiler <- !is.null(gprofiler_org) && nzchar(gprofiler_org)
 
-# Neither GO nor KEGG mapped (e.g. an organism with no OrgDb and no KEGG code):
+# No usable enrichment route (no OrgDb, no KEGG code, no g:Profiler organism):
 # skip cleanly rather than risk running against the wrong species' database.
-if (!has_orgdb && !has_kegg) {
+if (!has_orgdb && !has_kegg && !has_gprofiler) {
   writeLines(c(summary_lines,
-               "Skipped: no Bioconductor OrgDb and no KEGG code mapped for this organism.",
+               "Skipped: no Bioconductor OrgDb, no KEGG code and no g:Profiler organism mapped.",
                "GO supports human, mouse, fly, worm, zebrafish, yeast, Arabidopsis;",
-               "KEGG needs a KEGG organism code (set enrichment.kegg_organism, e.g. 'fgr')."),
+               "KEGG needs a KEGG organism code (set enrichment.kegg_organism, e.g. 'fgr');",
+               "g:Profiler needs enrichment.gprofiler_organism (e.g. 'anidulans')."),
              out[["summary"]])
   write_check(out[["check"]], "PASS",
               "Enrichment skipped: organism not mapped (gene-level DE is unaffected).")
   sink(type = "message"); close(log_con); quit(save = "no", status = 0)
 }
 
-# Read a deseq2 up/down CSV and return its gene_id column (version stripped).
+# Read a deseq2 up/down CSV and return its gene_id column (Ensembl version stripped).
 read_ids_csv <- function(path) {
   if (!file.exists(path)) return(character(0))
   df <- tryCatch(read.csv(path, stringsAsFactors = FALSE), error = function(e) NULL)
   if (is.null(df) || !"gene_id" %in% names(df) || nrow(df) == 0) return(character(0))
-  unique(sub("\\..*$", "", df$gene_id))
+  unique(strip_version(df$gene_id))
 }
 
 # KEGG ORA (combined significant set) + GSEA (ranked list). `kegg_keytype` is
@@ -82,18 +96,53 @@ run_kegg <- function(genes_all, ranked, kegg_keytype) {
   list(ekegg_all = ek, kegg_gse = kg, n_ora = nrows(ek), n_gsea = nrows(kg))
 }
 
-if (has_orgdb) {
-  result <- tryCatch({
+# GO-route selection. clusterProfiler KEGG is always-on (the proven path) and is the
+# SOLE source of ekegg_all/kegg_gse for EVERY route, so the figures rule keeps rendering
+# the KEGG S4 plots regardless of backend. The GO route is chosen as:
+#   1. OrgDb   — backend != "gprofiler" AND OrgDb loads AND bitr maps > 0 ids
+#   2. gProf   — else if backend == "gprofiler" OR a g:Profiler organism is set
+#   3. none    — KEGG-only (e.g. Fusarium graminearum: g:Profiler rejects FGSG_ ids)
+# Routes 1/3 set gprofiler_table = NULL; route 2 sets gse/kegg via clusterProfiler still.
+
+# Probe the OrgDb: load the package and map the result ids. On any failure (package
+# not installed, ~0 ids mapped) orgdb_ok stays FALSE so the run falls through to the
+# g:Profiler or KEGG-only route instead of aborting (W1 load-bearing fix).
+orgdb_ok <- FALSE
+orgdb_probe <- NULL
+if (has_orgdb && !identical(backend, "gprofiler")) {
+  orgdb_probe <- tryCatch({
     suppressMessages({
       library(clusterProfiler)
       library(orgdb_name, character.only = TRUE)
     })
     orgdb <- get(orgdb_name)
-
     res <- read.csv(results_file, stringsAsFactors = FALSE)
     res <- res[!is.na(res$padj), ]
-    ids <- sub("\\..*$", "", res$gene_id)  # strip version suffix if any
+    ids <- strip_version(res$gene_id)
     map <- bitr(ids, fromType = keytype, toType = "ENTREZID", OrgDb = orgdb)
+    n_mapped <- length(unique(map[[keytype]][!is.na(map$ENTREZID)]))
+    list(orgdb = orgdb, res = res, ids = ids, map = map,
+         n_in = length(unique(ids)), n_mapped = n_mapped)
+  }, error = function(e) {
+    message("OrgDb route unavailable (", orgdb_name, "): ", conditionMessage(e))
+    NULL
+  })
+  if (!is.null(orgdb_probe) && orgdb_probe$n_mapped > 0) {
+    orgdb_ok <- TRUE
+  } else if (!is.null(orgdb_probe)) {
+    # OrgDb loaded but ~0 ids mapped: do not silently run an empty GO route. Fall
+    # through to KEGG/g:Profiler; the ID-conversion message is recorded if no route hits.
+    message(sprintf("OrgDb bitr mapped %d/%d ids for keytype %s; falling through.",
+                    orgdb_probe$n_mapped, orgdb_probe$n_in, keytype))
+  }
+}
+
+if (orgdb_ok) {
+  result <- tryCatch({
+    orgdb <- orgdb_probe$orgdb
+    res <- orgdb_probe$res
+    ids <- orgdb_probe$ids
+    map <- orgdb_probe$map
     res$base_id <- ids
     res$ENTREZID <- map$ENTREZID[match(ids, map[[keytype]])]
     res <- res[!is.na(res$ENTREZID), ]
@@ -105,7 +154,7 @@ if (has_orgdb) {
       if (!file.exists(path)) return(character(0))
       df <- tryCatch(read.csv(path, stringsAsFactors = FALSE), error = function(e) NULL)
       if (is.null(df) || !"gene_id" %in% names(df) || nrow(df) == 0) return(character(0))
-      base <- sub("\\..*$", "", df$gene_id)
+      base <- strip_version(df$gene_id)
       unique(res$ENTREZID[match(base, res$base_id)])
     }
     run_ora <- function(genes, path) {
@@ -163,10 +212,12 @@ if (has_orgdb) {
 
     # Persist the enrichment objects (+ ranked geneList and OrgDb name) so the
     # enrichment_figures rule can render dotplot/GSEA/network plots without re-running.
+    # backend/gprofiler_table let the figures rule switch on obj$backend uniformly.
     saveRDS(list(ego_all = ego_all, ego_up = ego_up, ego_down = ego_down,
                  gse = gse, ego_do = ego_do,
                  ekegg_all = kegg$ekegg_all, kegg_gse = kegg$kegg_gse,
-                 geneList = gene_list, orgdb = orgdb_name),
+                 geneList = gene_list, orgdb = orgdb_name,
+                 backend = "clusterprofiler", gprofiler_table = NULL),
             out[["objects"]])
 
     summary_lines <<- c(summary_lines,
@@ -184,15 +235,106 @@ if (has_orgdb) {
     list(status = "REVIEW_REQUIRED",
          message = paste("Enrichment could not run:", conditionMessage(e)))
   })
+} else if (identical(backend, "gprofiler") || has_gprofiler) {
+  # g:Profiler GO route: no usable OrgDb but a g:Profiler organism is set (or the
+  # user forced backend="gprofiler"). gost provides GO:BP ORA only; clusterProfiler
+  # enrichKEGG/gseKEGG below remains the sole source of the KEGG S4 objects so the
+  # figures rule renders the KEGG dotplot/GSEA unchanged. gost is ORA-only -> GSEA
+  # keys (gse) stay NULL. Figures labelled by term Description, never raw ids.
+  result <- tryCatch({
+    suppressMessages({ library(clusterProfiler) })
+    res <- read.csv(results_file, stringsAsFactors = FALSE)
+    res <- res[!is.na(res$padj) & !is.na(res$log2FoldChange), ]
+    res$base_id <- strip_version(res$gene_id)
+    gene_list <- res$log2FoldChange
+    names(gene_list) <- res$base_id
+    gene_list <- sort(gene_list[!duplicated(names(gene_list))], decreasing = TRUE)
+    tested_genes <- unique(res$base_id)  # tested-gene background for gost custom_bg
+
+    up_ids <- read_ids_csv(up_file)
+    down_ids <- read_ids_csv(down_file)
+    all_ids <- unique(c(up_ids, down_ids))
+
+    # gprofiler2 is a Stage-2 env addition and may be absent: wrap the load + gost
+    # so a missing package or a network failure degrades to KEGG-only, never crashes.
+    gp <- tryCatch({
+      suppressMessages(library(gprofiler2))
+      query <- all_ids
+      gg <- gost(query = query, organism = gprofiler_org,
+                 sources = c("GO:BP", "KEGG", "REAC"),
+                 custom_bg = tested_genes, significant = TRUE,
+                 user_threshold = alpha, correction_method = "g_SCS")
+      # On a namespace mismatch (gost returns nothing because g:Profiler did not
+      # recognise the query ids), retry once after gconvert maps the query into the
+      # g:Profiler internal namespace.
+      if (is.null(gg$result) || nrow(gg$result) == 0) {
+        conv <- tryCatch(gconvert(query = query, organism = gprofiler_org),
+                         error = function(e) NULL)
+        if (!is.null(conv) && nrow(conv) > 0) {
+          q2 <- unique(conv$target[!is.na(conv$target)])
+          if (length(q2) > 0)
+            gg <- gost(query = q2, organism = gprofiler_org,
+                       sources = c("GO:BP", "KEGG", "REAC"),
+                       custom_bg = tested_genes, significant = TRUE,
+                       user_threshold = alpha, correction_method = "g_SCS")
+        }
+      }
+      gg
+    }, error = function(e) {
+      message("g:Profiler gost unavailable: ", conditionMessage(e)); NULL
+    })
+
+    gprofiler_table <- if (!is.null(gp) && !is.null(gp$result) && nrow(gp$result) > 0)
+                         gp$result else NULL
+    # GO:BP ORA rows -> go_ora.csv. The gost result uses `term_name` as the term
+    # Description; keep that column so downstream figures label by name, not GO id.
+    n_go <- 0
+    if (!is.null(gprofiler_table)) {
+      go_rows <- gprofiler_table[gprofiler_table$source == "GO:BP", , drop = FALSE]
+      n_go <- nrow(go_rows)
+      if (n_go > 0) write.csv(go_rows, out[["go"]], row.names = FALSE)
+    }
+
+    # KEGG ORA + GSEA via clusterProfiler on the raw locus-tag ids (always-on tail).
+    kegg <- if (has_kegg) run_kegg(all_ids, gene_list, "kegg")
+            else list(ekegg_all = NULL, kegg_gse = NULL, n_ora = 0, n_gsea = 0)
+
+    saveRDS(list(ego_all = NULL, ego_up = NULL, ego_down = NULL,
+                 gse = NULL, ego_do = NULL,
+                 ekegg_all = kegg$ekegg_all, kegg_gse = kegg$kegg_gse,
+                 geneList = gene_list, orgdb = "",
+                 backend = "gprofiler", gprofiler_table = gprofiler_table),
+            out[["objects"]])
+
+    summary_lines <<- c(summary_lines,
+      sprintf("GO route: g:Profiler (organism %s).", gprofiler_org),
+      sprintf("GO BP terms (gost ORA): %d", n_go),
+      sprintf("KEGG organism: %s", if (has_kegg) kegg_org else "(none)"),
+      sprintf("Significant genes (ORA input): %d", length(all_ids)),
+      sprintf("KEGG pathways: %d (ORA), %d (GSEA)", kegg$n_ora, kegg$n_gsea))
+    n_total <- n_go + kegg$n_ora + kegg$n_gsea
+    if (n_total == 0)
+      list(status = "REVIEW_REQUIRED",
+           message = sprintf("g:Profiler/KEGG enrichment empty: 0 GO terms (gost %s) and 0 KEGG pathways (%s) — check gene id namespace.",
+                             gprofiler_org, if (has_kegg) kegg_org else "no code"))
+    else
+      list(status = "PASS",
+           message = sprintf("g:Profiler GO=%d terms; KEGG ORA=%d, GSEA=%d.",
+                             n_go, kegg$n_ora, kegg$n_gsea))
+  }, error = function(e) {
+    summary_lines <<- c(summary_lines, paste("g:Profiler enrichment failed:", conditionMessage(e)))
+    list(status = "REVIEW_REQUIRED",
+         message = paste("g:Profiler enrichment could not run:", conditionMessage(e)))
+  })
 } else {
-  # KEGG-only path: no OrgDb for this organism, but a KEGG code exists. KEGG keys
-  # genes by their native locus-tag ids (e.g. FGSG_xxxxx for Fusarium), so the
+  # KEGG-only path: no OrgDb and no g:Profiler organism, but a KEGG code exists. KEGG
+  # keys genes by their native locus-tag ids (e.g. FGSG_xxxxx for Fusarium), so the
   # deseq2 gene ids are passed straight through with keyType = "kegg".
   result <- tryCatch({
     suppressMessages({ library(clusterProfiler) })
     res <- read.csv(results_file, stringsAsFactors = FALSE)
     res <- res[!is.na(res$padj) & !is.na(res$log2FoldChange), ]
-    res$base_id <- sub("\\..*$", "", res$gene_id)
+    res$base_id <- strip_version(res$gene_id)
     gene_list <- res$log2FoldChange
     names(gene_list) <- res$base_id
     gene_list <- sort(gene_list[!duplicated(names(gene_list))], decreasing = TRUE)
@@ -206,7 +348,8 @@ if (has_orgdb) {
     saveRDS(list(ego_all = NULL, ego_up = NULL, ego_down = NULL,
                  gse = NULL, ego_do = NULL,
                  ekegg_all = kegg$ekegg_all, kegg_gse = kegg$kegg_gse,
-                 geneList = gene_list, orgdb = ""),
+                 geneList = gene_list, orgdb = "",
+                 backend = "clusterprofiler", gprofiler_table = NULL),
             out[["objects"]])
 
     summary_lines <<- c(summary_lines,
@@ -215,9 +358,16 @@ if (has_orgdb) {
       sprintf("Ranked genes (GSEA input): %d", length(gene_list)),
       sprintf("Significant genes (ORA input): %d", length(all_ids)),
       sprintf("KEGG pathways: %d (ORA), %d (GSEA)", kegg$n_ora, kegg$n_gsea))
-    list(status = if (kegg$n_ora > 0 || kegg$n_gsea > 0) "PASS" else "REVIEW_REQUIRED",
-         message = sprintf("KEGG-only enrichment (no OrgDb): ORA=%d pathways, GSEA=%d sets.",
-                           kegg$n_ora, kegg$n_gsea))
+    # ID-conversion guard: 0 KEGG hits with non-trivial input means the raw ids are
+    # almost certainly the wrong namespace for keyType="kegg" -> fail loud, not green-empty.
+    if (kegg$n_ora == 0 && kegg$n_gsea == 0)
+      list(status = "REVIEW_REQUIRED",
+           message = sprintf("KEGG-only enrichment empty: 0/%d gene ids mapped for KEGG code %s (keyType=kegg) — wrong identifier namespace?",
+                             length(all_ids), kegg_org))
+    else
+      list(status = "PASS",
+           message = sprintf("KEGG-only enrichment (no OrgDb): ORA=%d pathways, GSEA=%d sets.",
+                             kegg$n_ora, kegg$n_gsea))
   }, error = function(e) {
     summary_lines <<- c(summary_lines, paste("KEGG enrichment failed:", conditionMessage(e)))
     list(status = "REVIEW_REQUIRED",

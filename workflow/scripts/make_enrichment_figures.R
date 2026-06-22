@@ -6,7 +6,12 @@
 suppressMessages({
   library(ggplot2)
   library(svglite)
+  library(scales)
+  library(RColorBrewer)
 })
+
+# Shared palette/theme/getp/save_gg helpers (sourced; resolved via scriptdir).
+source(file.path(snakemake@scriptdir, "figure_style.R"))
 
 log_con <- file(snakemake@log[[1]], open = "wt")
 sink(log_con, type = "message")
@@ -16,14 +21,34 @@ out <- snakemake@output
 
 style <- tryCatch(snakemake@params[["style"]], error = function(e) NULL)
 if (!is.list(style)) style <- list()
-getp <- function(k, d) { v <- style[[k]]; if (is.null(v)) d else v }
+getp <- make_getp(style)
 fig_w <- as.numeric(getp("width_in", 7))
 fig_h <- as.numeric(getp("height_in", 6))
 fig_dpi <- as.integer(getp("dpi", 300))
+base_size <- as.numeric(getp("base_font_size", 12))
+font_family <- as.character(getp("font_family", ""))
+label_bold <- isTRUE(as.logical(getp("label_bold", FALSE)))
+title_bold <- isTRUE(as.logical(getp("title_bold", FALSE)))
 
-save_gg <- function(p, png_path, svg_path, w = fig_w, h = fig_h) {
-  ggsave(png_path, p, width = w, height = h, dpi = fig_dpi, limitsize = FALSE)
-  ggsave(svg_path, p, width = w, height = h, limitsize = FALSE)
+# Enrichment-specific config (NULL-safe; defaults reproduce prior behaviour).
+palette_name <- as.character(getp("palette", "Blue-Red"))
+show_cat <- as.integer(getp("enrich_show_category", 15))
+cnet_cat <- as.integer(getp("enrich_cnet_category", 5))
+emap_cat <- as.integer(getp("enrich_emap_category", 15))
+label_wrap <- as.integer(getp("enrich_label_wrap", 40))
+gsea_line_color <- as.character(getp("gsea_line_color", ""))
+
+pal_spec <- palette_spec(palette_name)
+base_family <- if (nzchar(font_family)) font_family else NULL
+style_theme <- make_style_theme(base_size = base_size, base_family = base_family,
+                                label_bold = label_bold, title_bold = title_bold)
+save_gg <- make_save_gg(fig_w = fig_w, fig_h = fig_h, fig_dpi = fig_dpi)
+
+# Large enrichplot canvases (emap/cnet) can exceed ggsave's 50-inch guard, so the
+# enrichplot path uses a limitsize-tolerant save; the shared save_gg covers the rest.
+save_big <- function(p, png_path, svg_path, w = fig_w, h = fig_h) {
+  ggsave(png_path, p, width = w, height = h, units = "in", dpi = fig_dpi, limitsize = FALSE)
+  ggsave(svg_path, p, width = w, height = h, units = "in", limitsize = FALSE)
 }
 placeholder <- function(msg, png_path, svg_path) {
   save_gg(ggplot() + annotate("text", x = 0, y = 0, label = msg, size = 5) + theme_void(),
@@ -31,60 +56,140 @@ placeholder <- function(msg, png_path, svg_path) {
 }
 nrows <- function(x) if (is.null(x)) 0 else tryCatch(nrow(as.data.frame(x)), error = function(e) 0)
 
+# Route an enrichplot S4 dotplot through the shared palette + theme: p.adjust on the
+# sequential ramp (reversed so most significant is darkest, matching the gost/set-
+# overlap dotplots), long terms wrapped, no embedded title. Description (pathway
+# NAME) labels are kept by enrichplot -- never raw GO/KEGG ids.
+themed_dotplot <- function(x, n) {
+  dotplot(x, showCategory = n,
+          label_format = function(lbl) scales::label_wrap(label_wrap)(lbl)) +
+    scale_color_gradientn(colours = pal_spec$seq(255), name = "p.adjust",
+                          transform = "reverse") +
+    labs(title = NULL) +
+    style_theme(theme_bw)
+}
+
 # Render `expr` to PNG+SVG; placeholder when `ok` is FALSE or the plot errors.
 # `expr` is lazily evaluated, so it never runs when there is no data.
 render <- function(ok, expr, png_path, svg_path, empty_msg) {
   if (!isTRUE(ok)) { placeholder(empty_msg, png_path, svg_path); return(invisible()) }
   p <- tryCatch(expr, error = function(e) { message("plot failed: ", conditionMessage(e)); NULL })
   if (is.null(p)) placeholder("Figure could not be generated", png_path, svg_path)
-  else save_gg(p, png_path, svg_path)
+  else save_big(p, png_path, svg_path)
 }
 
 have_ep <- requireNamespace("enrichplot", quietly = TRUE)
 no_data <- "No enrichment results (organism unmapped or nothing significant)"
+no_kegg <- "No KEGG pathway enrichment (no KEGG code or nothing significant)"
 if (have_ep) suppressMessages(library(enrichplot))
 
-ego_all <- obj$ego_all
-gse <- obj$gse
-geneList <- obj$geneList
+backend <- tryCatch(as.character(obj$backend), error = function(e) NA_character_)
+gp_tab <- tryCatch(obj$gprofiler_table, error = function(e) NULL)
 
-# ORA dotplot (combined up+down GO BP terms).
-render(have_ep && nrows(ego_all) > 0,
-       dotplot(ego_all, showCategory = 15),
-       out[["dotplot_png"]], out[["dotplot_svg"]], no_data)
+# Manual ORA dotplot from a g:Profiler gost $result subset (no S4 object exists for
+# the gost backend). Mirrors the enrichplot dotplot: term NAME on y, GeneRatio
+# (intersection_size/term_size) on x, p.adjust on the sequential ramp (reversed so
+# significant is darkest), Count as size. Falls back to a placeholder when the
+# source rows are absent.
+gp_dotplot <- function(df, src, n) {
+  if (is.null(df) || !is.data.frame(df) || nrow(df) == 0) return(NULL)
+  d <- df[!is.na(df$source) & df$source == src, , drop = FALSE]
+  if (nrow(d) == 0) return(NULL)
+  d <- d[order(d$p_value), , drop = FALSE]
+  d <- head(d, n)
+  d$Count <- if ("intersection_size" %in% names(d)) d$intersection_size else NA_integer_
+  d$GeneRatio <- if (all(c("intersection_size", "term_size") %in% names(d)))
+    d$intersection_size / d$term_size else NA_real_
+  d$term <- factor(d$term_name, levels = rev(d$term_name))
+  ggplot(d, aes(x = GeneRatio, y = term)) +
+    geom_point(aes(size = Count, colour = p_value)) +
+    scale_colour_gradientn(colours = pal_spec$seq(255), name = "p.adjust",
+                           transform = "reverse") +
+    scale_size_area(name = "Count") +
+    scale_y_discrete(labels = scales::label_wrap(label_wrap)) +
+    labs(x = "GeneRatio", y = NULL, title = NULL) +
+    style_theme(theme_bw)
+}
 
-# GSEA running-score for the top gene set, and a ridgeplot of the leading sets.
-render(have_ep && nrows(gse) > 0,
-       gseaplot2(gse, geneSetID = 1, title = as.data.frame(gse)$Description[1]),
-       out[["gsea_png"]], out[["gsea_svg"]], no_data)
-render(have_ep && nrows(gse) > 0,
-       ridgeplot(gse, showCategory = 15),
-       out[["ridge_png"]], out[["ridge_svg"]], no_data)
+# Running-score line colour (shared by GO + KEGG GSEA, both backends).
+gsea_col <- if (nzchar(gsea_line_color)) gsea_line_color else pal_spec$discrete[2]
 
-# Gene-concept network (fold-change coloured when possible) and term-similarity map.
-set.seed(42)
-render(have_ep && nrows(ego_all) > 0,
-       tryCatch(cnetplot(ego_all, showCategory = 5, foldChange = geneList),
-                error = function(e) cnetplot(ego_all, showCategory = 5)),
-       out[["cnet_png"]], out[["cnet_svg"]], no_data)
-render(have_ep && nrows(ego_all) > 1,
-       emapplot(pairwise_termsim(ego_all), showCategory = 20),
-       out[["emap_png"]], out[["emap_svg"]], no_data)
+# GO-derived figures fork on the backend: g:Profiler has no S4 object, so the GO
+# dotplot is built manually from gost $result and the S4-only GO figures (GSEA,
+# ridgeplot, cnet, emap, DO) degrade to placeholders. The clusterProfiler/OrgDb
+# path keeps the enrichplot S4 figures.
+if (identical(backend, "gprofiler")) {
+  render(TRUE, gp_dotplot(gp_tab, "GO:BP", show_cat),
+         out[["dotplot_png"]], out[["dotplot_svg"]],
+         "No GO:BP enrichment (g:Profiler returned no terms)")
+  placeholder("GSEA not available (g:Profiler is ORA-only)", out[["gsea_png"]], out[["gsea_svg"]])
+  placeholder("Ridgeplot not available (g:Profiler is ORA-only)", out[["ridge_png"]], out[["ridge_svg"]])
+  placeholder("Gene-concept network not available (g:Profiler backend)", out[["cnet_png"]], out[["cnet_svg"]])
+  placeholder("Term-similarity map not available (g:Profiler backend)", out[["emap_png"]], out[["emap_svg"]])
+  placeholder("No disease-ontology terms (human/mouse only)", out[["do_dotplot_png"]], out[["do_dotplot_svg"]])
+} else {
+  ego_all <- obj$ego_all
+  gse <- obj$gse
+  geneList <- obj$geneList
 
-# Disease-ontology ORA dotplot (human/mouse only; placeholder otherwise).
-render(have_ep && nrows(obj$ego_do) > 0,
-       dotplot(obj$ego_do, showCategory = 15),
-       out[["do_dotplot_png"]], out[["do_dotplot_svg"]],
-       "No disease-ontology terms (human/mouse only)")
+  # ORA dotplot (combined up+down GO BP terms).
+  render(have_ep && nrows(ego_all) > 0,
+         themed_dotplot(ego_all, show_cat),
+         out[["dotplot_png"]], out[["dotplot_svg"]], no_data)
 
-# KEGG pathway ORA dotplot and KEGG GSEA running-score (available for any organism
-# with a KEGG code, including fungi/bacteria that have no OrgDb).
-no_kegg <- "No KEGG pathway enrichment (no KEGG code or nothing significant)"
+  # GSEA running-score for the top gene set, and a ridgeplot of the leading sets.
+  # No embedded title (caption lives in text); running-score line from the palette.
+  render(have_ep && nrows(gse) > 0,
+         gseaplot2(gse, geneSetID = 1, base_size = base_size, color = gsea_col),
+         out[["gsea_png"]], out[["gsea_svg"]], no_data)
+  # enrichplot::ridgeplot hits an "object 'selected'" bug on these gseaResults, so
+  # build leading-edge fold-change ridges directly from core_enrichment + geneList.
+  ridge_plot <- if (have_ep && nrows(gse) > 0) tryCatch({
+    rd <- as.data.frame(gse)
+    rd <- head(rd[order(rd$p.adjust), ], min(show_cat, nrow(rd)))
+    parts <- lapply(seq_len(nrow(rd)), function(i) {
+      g <- strsplit(rd$core_enrichment[i], "/", fixed = TRUE)[[1]]
+      fc <- geneList[g]; fc <- fc[is.finite(fc)]
+      if (!length(fc)) NULL else data.frame(term = rd$Description[i], fc = as.numeric(fc))
+    })
+    dd <- do.call(rbind, parts)
+    if (is.null(dd) || !nrow(dd)) NULL else
+      ggplot(dd, aes(x = fc, y = reorder(term, fc, FUN = stats::median), fill = after_stat(x))) +
+        ggridges::geom_density_ridges_gradient(scale = 1.3, rel_min_height = 0.01,
+                                               linewidth = 0.3, colour = "grey40") +
+        scale_fill_gradientn(colours = pal_spec$div(255), name = "log2 FC") +
+        labs(x = "core-enrichment log2 fold change", y = NULL) +
+        style_theme(theme_bw)
+  }, error = function(e) { message("ridge build failed: ", conditionMessage(e)); NULL }) else NULL
+  render(!is.null(ridge_plot), ridge_plot, out[["ridge_png"]], out[["ridge_svg"]],
+         "Ridgeplot unavailable (no leading-edge fold changes)")
+
+  # Gene-concept network (fold-change coloured when possible) and term-similarity map.
+  set.seed(42)
+  render(have_ep && nrows(ego_all) > 0,
+         tryCatch(cnetplot(ego_all, showCategory = cnet_cat, node_label = "category", foldChange = geneList),
+                  error = function(e) cnetplot(ego_all, showCategory = cnet_cat, node_label = "category")),
+         out[["cnet_png"]], out[["cnet_svg"]], no_data)
+  render(have_ep && nrows(ego_all) > 1,
+         emapplot(pairwise_termsim(ego_all), showCategory = emap_cat),
+         out[["emap_png"]], out[["emap_svg"]], no_data)
+
+  # Disease-ontology ORA dotplot (human/mouse only; placeholder otherwise).
+  render(have_ep && nrows(obj$ego_do) > 0,
+         themed_dotplot(obj$ego_do, show_cat),
+         out[["do_dotplot_png"]], out[["do_dotplot_svg"]],
+         "No disease-ontology terms (human/mouse only)")
+}
+
+# KEGG ORA dotplot + KEGG GSEA running-score are BACKEND-AGNOSTIC: clusterProfiler
+# enrichKEGG/gseKEGG runs on every route (OrgDb, KEGG-only, AND g:Profiler), so
+# ekegg_all/kegg_gse are real S4 objects regardless of backend. Render the S4 path
+# unconditionally; never rebuild KEGG from gost or placeholder it on g:Profiler.
 render(have_ep && nrows(obj$ekegg_all) > 0,
-       dotplot(obj$ekegg_all, showCategory = 15),
+       themed_dotplot(obj$ekegg_all, show_cat),
        out[["kegg_dotplot_png"]], out[["kegg_dotplot_svg"]], no_kegg)
 render(have_ep && nrows(obj$kegg_gse) > 0,
-       gseaplot2(obj$kegg_gse, geneSetID = 1, title = as.data.frame(obj$kegg_gse)$Description[1]),
+       gseaplot2(obj$kegg_gse, geneSetID = 1, base_size = base_size, color = gsea_col),
        out[["kegg_gsea_png"]], out[["kegg_gsea_svg"]], no_kegg)
 
 sink(type = "message")

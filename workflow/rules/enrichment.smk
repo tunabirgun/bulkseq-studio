@@ -44,6 +44,11 @@ rule enrichment:
         # nothing. The GUI also sets this, but a scripted/hand-edited config might not.
         keytype=_ENR.get("keytype") or ("SYMBOL" if MICROARRAY_MODE else _MAPPED[1]),
         kegg=_ENR.get("kegg_organism") or _MAPPED[2],
+        # backend selects the GO route: 'clusterprofiler' = auto OrgDb->gprofiler->none;
+        # 'gprofiler' forces the g:Profiler GO route. gprofiler_organism is the
+        # g:Profiler organism id (e.g. hsapiens, anidulans), distinct from the KEGG code.
+        backend=_ENR.get("backend", "clusterprofiler"),
+        gprofiler_organism=_ENR.get("gprofiler_organism") or "",
         alpha=config.get("deseq2", {}).get("alpha", 0.05),
     benchmark:
         "benchmarks/enrichment.tsv"

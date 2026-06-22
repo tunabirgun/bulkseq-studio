@@ -15,6 +15,21 @@ def load_reference_catalog() -> list[dict[str, object]]:
     return payload.get("references", [])
 
 
+def catalog_entry_for_organism(organism_name: str | None) -> dict[str, object] | None:
+    # Case-insensitive match on organism_name so GUI/programmatic organism-write
+    # sites can pull the per-organism enrichment/PPI identifiers from the catalog.
+    if not organism_name:
+        return None
+    target = organism_name.strip().casefold()
+    if not target or target == "unset":
+        return None
+    for entry in load_reference_catalog():
+        name = str(entry.get("organism_name", "")).strip().casefold()
+        if name and name == target:
+            return entry
+    return None
+
+
 def validate_reference(genome_fasta: Path, annotation: Path) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = []
     if not genome_fasta.exists():

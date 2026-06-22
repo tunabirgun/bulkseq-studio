@@ -7,7 +7,12 @@ suppressMessages({
   library(pheatmap)
   library(svglite)
   library(RColorBrewer)
+  library(ggplot2)
+  library(scales)
 })
+
+# Shared palette/theme/getp helpers (sourced; resolved via scriptdir).
+source(file.path(snakemake@scriptdir, "figure_style.R"))
 
 log_con <- file(snakemake@log[[1]], open = "wt")
 sink(log_con, type = "message")
@@ -19,11 +24,15 @@ m <- SummarizedExperiment::assay(vsd)
 
 style <- tryCatch(snakemake@params[["style"]], error = function(e) NULL)
 if (!is.list(style)) style <- list()
-getp <- function(k, d) { v <- style[[k]]; if (is.null(v)) d else v }
+getp <- make_getp(style)
 fig_w <- as.numeric(getp("width_in", 6))
 fig_h <- as.numeric(getp("height_in", 5))
 fig_dpi <- as.integer(getp("dpi", 300))
 base_size <- as.numeric(getp("base_font_size", 12))
+palette_name <- as.character(getp("palette", "Blue-Red"))
+number_fmt <- as.character(getp("heatmap_number_format", "%.2f"))
+number_fs <- as.integer(getp("heatmap_number_fontsize", 0))  # 0 = auto (0.6x base)
+pal_spec <- palette_spec(palette_name)
 
 # Annotate columns by the contrast factor (falls back to the first colData column).
 group_var <- "condition"
@@ -51,10 +60,27 @@ save_corr <- function(method, png_path, svg_path, csv_path) {
     cm <- cor(m, method = method, use = "pairwise.complete.obs")
     write.csv(cm, csv_path)
     cluster <- !anyNA(cm)  # hclust cannot handle NA distances
+    # Correlations here are all positive (no zero crossover), so a sequential ramp
+    # over the observed range is honest; RdBu would imply a false zero-correlation
+    # midpoint. Annotation track colours come from the shared discrete palette.
+    rng <- range(cm[is.finite(cm)])
+    # NA breaks -> pheatmap auto-bins; avoids non-increasing breaks on a constant matrix.
+    brks <- if (is.finite(rng[1]) && rng[2] > rng[1]) seq(rng[1], rng[2], length.out = 256) else NA
+    # In-cell numbers get unreadable past ~12 samples; suppress them then.
+    show_num <- ncol(cm) <= 12
+    num_fs <- if (number_fs > 0) number_fs else max(5, round(0.6 * base_size))
+    # Annotation track colours: map each level of the grouping factor onto the
+    # shared discrete palette, keyed by the annotation column name (pheatmap form).
+    ann_lvls <- unique(as.character(ann[[1]]))
+    ann_colmap <- setNames(pal_spec$discrete[((seq_along(ann_lvls) - 1) %% length(pal_spec$discrete)) + 1], ann_lvls)
+    ann_colors <- setNames(list(ann_colmap), colnames(ann))
     ph <- pheatmap(cm, clustering_method = "ward.D2",
                    cluster_rows = cluster, cluster_cols = cluster,
-                   display_numbers = TRUE, annotation_col = ann, fontsize = base_size,
-                   color = colorRampPalette(rev(brewer.pal(9, "RdBu")))(255), silent = TRUE)
+                   display_numbers = show_num, number_format = number_fmt,
+                   fontsize_number = num_fs, angle_col = 45,
+                   annotation_col = ann, annotation_colors = ann_colors,
+                   fontsize = base_size, breaks = brks,
+                   color = pal_spec$seq(255), main = NA, silent = TRUE)
     png(png_path, width = fig_w, height = fig_h, units = "in", res = fig_dpi)
     grid::grid.newpage(); grid::grid.draw(ph$gtable); dev.off()
     svglite(svg_path, width = fig_w, height = fig_h)

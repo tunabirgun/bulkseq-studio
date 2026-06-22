@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 
@@ -38,12 +38,17 @@ class ImageViewer(QGraphicsView):
         self.setMinimumHeight(360)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._has_image = False
+        # Tracks whether the user has zoomed/panned manually; once True we stop
+        # auto-fitting on resize/show so we do not stomp their chosen zoom.
+        self._user_zoomed = False
 
     def set_image(self, path: str | Path) -> None:
         p = str(path)
         self._scene.clear()
         self._item = None
         self._has_image = False
+        # A freshly loaded image always auto-fits, even if the previous one was zoomed.
+        self._user_zoomed = False
         if SVG_AVAILABLE and p.lower().endswith(".svg"):
             item = QGraphicsSvgItem(p)
             renderer = item.renderer()
@@ -59,6 +64,10 @@ class ImageViewer(QGraphicsView):
             self._scene.addItem(self._item)
             self._scene.setSceneRect(self._item.boundingRect())
             self.fit()
+            # Figures often load while the Outputs splitters are still settling, so
+            # the first fit runs against a stale viewport. Re-fit once the event loop
+            # has applied the final geometry.
+            QTimer.singleShot(0, self.fit)
 
     def update_theme(self, bg_hex: str) -> None:
         # A QGraphicsScene does not inherit widget QSS, so set its background
@@ -74,13 +83,28 @@ class ImageViewer(QGraphicsView):
         if self._has_image and self._item is not None:
             self.resetTransform()
             self.fitInView(self._item, Qt.AspectRatioMode.KeepAspectRatio)
+            # An explicit fit re-enables auto-fit tracking on resize/show.
+            self._user_zoomed = False
 
     def actual_size(self) -> None:
         if self._has_image:
             self.resetTransform()
+            # A deliberate 100% zoom should not snap back on the next resize.
+            self._user_zoomed = True
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self._has_image and not self._user_zoomed:
+            self.fit()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self._has_image and not self._user_zoomed:
+            self.fit()
 
     def wheelEvent(self, event) -> None:
         if not self._has_image:
             return
+        self._user_zoomed = True
         factor = 1.25 if event.angleDelta().y() > 0 else 0.8
         self.scale(factor, factor)

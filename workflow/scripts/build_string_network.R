@@ -12,7 +12,12 @@ suppressMessages({
   library(jsonlite)
   library(ggplot2)
   library(svglite)
+  library(scales)
+  library(RColorBrewer)
 })
+
+# Shared palette/theme/getp/save_gg helpers (sourced; resolved via scriptdir).
+source(file.path(snakemake@scriptdir, "figure_style.R"))
 
 log_con <- file(snakemake@log[[1]], open = "wt")
 sink(log_con, type = "message")
@@ -28,8 +33,19 @@ hub_n <- as.integer(snakemake@params[["hub_labels"]]); if (is.na(hub_n) || hub_n
 goi_path <- as.character(snakemake@params[["goi"]])
 
 style <- tryCatch(snakemake@params[["style"]], error = function(e) NULL); if (!is.list(style)) style <- list()
-getp <- function(k, d) { v <- style[[k]]; if (is.null(v)) d else v }
+getp <- make_getp(style)
 fig_w <- as.numeric(getp("width_in", 7)); fig_h <- as.numeric(getp("height_in", 6)); fig_dpi <- as.integer(getp("dpi", 300))
+base_size <- as.numeric(getp("base_font_size", 12))
+font_family <- as.character(getp("font_family", ""))
+label_bold <- isTRUE(as.logical(getp("label_bold", FALSE)))
+palette_name <- as.character(getp("palette", "Blue-Red"))
+node_max_size <- as.numeric(getp("ppi_node_max_size", 11))
+ppi_layout <- as.character(getp("ppi_layout", "stress"))
+
+pal_spec <- palette_spec(palette_name)
+base_family <- if (nzchar(font_family)) font_family else NULL
+style_theme <- make_style_theme(base_size = base_size, base_family = base_family,
+                                label_bold = label_bold)
 
 write_check <- function(status, message) {
   msg <- gsub('"', '\\\\"', message)
@@ -38,8 +54,8 @@ write_check <- function(status, message) {
 }
 placeholder_fig <- function(msg) {
   p <- ggplot() + annotate("text", x = 0, y = 0, label = msg, size = 5) + theme_void()
-  ggsave(out[["png"]], p, width = fig_w, height = fig_h, dpi = fig_dpi)
-  ggsave(out[["svg"]], p, width = fig_w, height = fig_h)
+  ggsave(out[["png"]], p, width = fig_w, height = fig_h, units = "in", dpi = fig_dpi)
+  ggsave(out[["svg"]], p, width = fig_w, height = fig_h, units = "in")
 }
 empty_graphml <- function(path) {
   # A valid empty GraphML (igraph writer), so degraded runs still import in
@@ -135,9 +151,11 @@ ok <- tryCatch({
   names(hub_df)[1] <- "symbol"
   write.csv(hub_df, out[["hubs"]], row.names = FALSE)
 
-  # Polished network figure: nodes coloured by log2FC (diverging), sized by degree,
-  # weighted curved edges, only the top hub proteins labelled (repelled). Rendered
-  # with ggraph; falls back to a base igraph plot if ggraph errors.
+  # Polished network figure: nodes coloured by log2FC, area-sized by degree, straight
+  # weighted edges, only the top hub proteins labelled (repelled). The fill ramp is
+  # data-driven: a zero-centred diverging ramp when log2FC spans both signs, else a
+  # one-sided sequential ramp (so one-sided sets, e.g. all-up Fusarium hubs, do not
+  # waste half a diverging scale). Rendered with ggraph; falls back to base igraph.
   n_label <- min(hub_n, igraph::vcount(g))
   vlab <- rep(NA_character_, igraph::vcount(g))
   if (n_label > 0) {
@@ -145,22 +163,43 @@ ok <- tryCatch({
     vlab[top_idx] <- V(g)$name[top_idx]
   }
   V(g)$label <- vlab
+  lfc <- V(g)$log2FC
+  fin <- lfc[is.finite(lfc)]
+  bidirectional <- length(fin) > 0 && any(fin > 0) && any(fin < 0)
+  lab_face <- if (label_bold) "bold" else "plain"
+  lab_size <- base_size / .pt * 0.75  # points -> mm, near the prior 3.1 at base 12
   set.seed(42)
   fig_ok <- tryCatch({
     suppressMessages({ library(ggraph); library(tidygraph) })
     tg <- tidygraph::as_tbl_graph(g)
-    p <- ggraph(tg, layout = "fr") +
-      geom_edge_arc(aes(width = weight), strength = 0.08, colour = "grey75", alpha = 0.5, show.legend = FALSE) +
+    lay <- tryCatch(ggraph(tg, layout = ppi_layout),
+                    error = function(e) ggraph(tg, layout = "fr"))
+    if (bidirectional) {
+      zlim <- max(abs(fin))
+      fill_scale <- scale_fill_gradientn(colours = pal_spec$div(255), limits = c(-zlim, zlim),
+                                         na.value = "grey75", name = "log2FC")
+    } else {
+      fill_scale <- scale_fill_gradientn(colours = pal_spec$seq(255),
+                                         na.value = "grey75", name = "log2FC")
+    }
+    # Build label-geom args; only pass `family` when a font is set (ggplot warns on
+    # an empty `family` aesthetic otherwise).
+    lab_args <- list(mapping = aes(label = label), size = lab_size, fontface = lab_face,
+                     repel = TRUE, fill = scales::alpha("white", 0.75), label.size = 0,
+                     min.segment.length = 0, box.padding = 0.4, seed = 42,
+                     max.overlaps = Inf, na.rm = TRUE)
+    if (!is.null(base_family)) lab_args$family <- base_family
+    p <- lay +
+      geom_edge_link(aes(edge_width = weight), colour = "grey75", alpha = 0.5, show.legend = FALSE) +
       scale_edge_width(range = c(0.2, 1.3)) +
       geom_node_point(aes(size = degree, fill = log2FC), shape = 21, colour = "white", stroke = 0.4) +
-      scale_size(range = c(2, 11), guide = "none") +
-      scale_fill_gradient2(low = "#2C7BB6", mid = "grey92", high = "#C0392B",
-                           midpoint = 0, na.value = "grey75", name = "log2FC") +
-      geom_node_text(aes(label = label), size = 3.1, fontface = "bold", repel = TRUE,
-                     max.overlaps = 30, na.rm = TRUE) +
-      theme_void() + theme(legend.position = "right")
-    ggsave(out[["png"]], p, width = fig_w, height = fig_h, dpi = fig_dpi)
-    ggsave(out[["svg"]], p, width = fig_w, height = fig_h)
+      scale_size_area(max_size = node_max_size, name = "Node degree") +
+      fill_scale +
+      do.call(ggraph::geom_node_label, lab_args) +
+      style_theme(theme_void) +
+      theme(legend.position = "right", panel.grid = element_blank())
+    ggsave(out[["png"]], p, width = fig_w, height = fig_h, units = "in", dpi = fig_dpi)
+    ggsave(out[["svg"]], p, width = fig_w, height = fig_h, units = "in")
     TRUE
   }, error = function(e) { message("ggraph figure failed, using base plot: ", conditionMessage(e)); FALSE })
   if (!fig_ok) {
