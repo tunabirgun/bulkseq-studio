@@ -24,9 +24,9 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 - **Downstream exports** — a normalized-expression matrix (VST counts, or log2 intensities for microarray) as CSV, plus a stat-ranked `.rnk` for preranked GSEA, alongside the DESeq2/limma results table.
 - **Low-mapping safeguard** — if a sample aligns poorly (uniquely-mapped rate below a threshold, usually a wrong reference or contamination), the run pauses and asks whether to stop or continue, instead of silently wasting hours.
 - **Reproducibility built in** — every run records a default-vs-used parameter diff, software versions, an environment lock hash, the reference accession/MD5, and R `sessionInfo`. The conda environment is pinned in `workflow/envs/bulkseq.lock.yaml`.
-- **Light & dark themes**, a resizable Outputs workspace, and a window that remembers its size.
+- **A polished, accessible desktop UI** — light and dark themes (WCAG-AA contrast), grouped settings cards with a clear primary action per tab, plain-language controls, empty-state guidance, a resizable Outputs workspace that remembers its size, keyboard shortcuts (Ctrl+O open, F5 dry-run, F9 run), and a recent-projects list.
 
-The default **STAR → featureCounts → DESeq2 → enrichment → figures** route (and the count-matrix and **GEO microarray → limma** routes) are implemented and validated (see [Validation](#validation)). HISAT2, Salmon/tximport, SortMeRNA, htseq-count, and edgeR/limma-voom for RNA-seq are defined as alternatives but are not the validated path.
+The default **STAR → featureCounts → DESeq2 → enrichment → figures** route (and the count-matrix and **GEO microarray → limma** routes) are implemented and validated (see [Validation](#validation)). HISAT2, Salmon/tximport, SortMeRNA, htseq-count, and edgeR/limma-voom for RNA-seq are scaffolded but not yet implemented; the not-yet-available aligner and quantifier options appear disabled in the GUI so a run cannot start down an unfinished path.
 
 ## Screenshots
 

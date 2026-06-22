@@ -9,7 +9,8 @@ from PySide6.QtWidgets import QApplication, QLabel
 # Two palettes drive a light and a dark theme. Every token below has an entry in
 # both maps; the QSS template references them as $TOKEN so the literal { } braces
 # of the style sheet never collide with substitution (string.Template only
-# touches the $placeholders). All pairs target WCAG-AA contrast.
+# touches the $placeholders). Text/background pairs meet WCAG-AA contrast
+# (>=4.5:1), verified by computation (see CHANGELOG 0.8.0).
 
 LIGHT_PALETTE: dict[str, str] = {
     "PRIMARY": "#2C6FB6",
@@ -33,13 +34,13 @@ LIGHT_PALETTE: dict[str, str] = {
     "BUTTON_BG_HOVER": "#F0F4F9",
     "BUTTON_BG_PRESSED": "#E4EBF3",
     "BUTTON_BG_DISABLED": "#F0F2F5",
-    "BUTTON_TEXT_DISABLED": "#79838F",
+    "BUTTON_TEXT_DISABLED": "#5A6472",
     "BUTTON_BORDER_HOVER": "#C3CDD8",
     "BUTTON_BORDER_PRESSED": "#B6C2CF",
     "INPUT_BG": "#FFFFFF",
     "INPUT_BG_READONLY": "#F7F9FB",
     "INPUT_BG_DISABLED": "#F0F2F5",
-    "INPUT_TEXT_DISABLED": "#79838F",
+    "INPUT_TEXT_DISABLED": "#5A6472",
     "INPUT_BORDER_DISABLED": "#E1E6EC",
     "SPINBOX_BUTTON_BG": "#F0F4F9",
     "SPINBOX_BUTTON_HOVER": "#E4EBF3",
@@ -49,7 +50,7 @@ LIGHT_PALETTE: dict[str, str] = {
     "TABLE_SELECTION_BG": "#D9E6F4",
     "TABLE_SELECTION_TEXT": "#1F2933",
     "TABLE_HEADER_BG": "#ECF0F5",
-    "TABLE_HEADER_TEXT": "#6B7785",
+    "TABLE_HEADER_TEXT": "#505D6B",
     "LIST_ITEM_HOVER_BG": "#F0F4F9",
     "CHECKBOX_BORDER": "#C3CDD8",
     "CHECKBOX_BG": "#FFFFFF",
@@ -60,7 +61,7 @@ LIGHT_PALETTE: dict[str, str] = {
     "TOOLTIP_BG": "#1F2933",
     "TOOLTIP_TEXT": "#FFFFFF",
     "SUCCESS": "#2E7D32",
-    "WARNING": "#B26A00",
+    "WARNING": "#8B5200",
     "ERROR": "#C0392B",
     "REVIEW": "#6A1B9A",
 }
@@ -71,7 +72,7 @@ DARK_PALETTE: dict[str, str] = {
     "PRIMARY_PRESSED": "#3A6FA8",
     "ON_PRIMARY": "#0E1A24",
     "PRIMARY_DISABLED_BG": "#4A5F8A",
-    "PRIMARY_DISABLED_TEXT": "#C5D5E8",
+    "PRIMARY_DISABLED_TEXT": "#D8E6F4",
     "BACKGROUND": "#1A1D23",
     "SURFACE": "#242A33",
     "BORDER": "#3D4450",
@@ -140,7 +141,7 @@ BASE_FONT_POINT_SIZE = 10
 
 # Status string -> accent hex, per mode.
 _STATUS_COLORS = {
-    "light": {"PASS": "#2E7D32", "WARNING": "#B26A00", "REVIEW_REQUIRED": "#6A1B9A", "FAIL": "#C0392B"},
+    "light": {"PASS": "#2E7D32", "WARNING": "#8B5200", "REVIEW_REQUIRED": "#6A1B9A", "FAIL": "#C0392B"},
     "dark": {"PASS": "#4CAF50", "WARNING": "#FFA726", "REVIEW_REQUIRED": "#BA68C8", "FAIL": "#EF5350"},
 }
 
@@ -151,7 +152,7 @@ _STATUS_PILL_BG = {
 }
 
 # Image-viewer scene background per mode (a QGraphicsScene ignores widget QSS).
-IMAGEVIEWER_BG = {"light": "#F5F7FA", "dark": "#1A1D23"}
+IMAGEVIEWER_BG = {"light": "#ECEFF3", "dark": "#34383F"}
 
 
 # Complete application style template. Literal { } braces are QSS; $TOKEN markers

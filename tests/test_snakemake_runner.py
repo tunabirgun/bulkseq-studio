@@ -43,6 +43,27 @@ def test_wsl_command_activates_micromamba_env() -> None:
     assert command.command[:3] == ["wsl", "--", "bash"]
 
 
+def test_figures_mode_gates_optional_targets_on_input_existence(tmp_path) -> None:
+    # Optional figure rules must be forced only when their upstream input exists;
+    # forcing one whose input is absent raises MissingInputException and fails the
+    # whole "Regenerate figures" run.
+    cfg = default_config("demo", tmp_path)
+    cfg.workflow.enrichment = True
+    cfg.ppi.enabled = True
+    no_inputs = build_snakemake_command(tmp_path, cfg, mode="figures").command
+    assert "figures" in no_inputs
+    assert "enrichment_figures" not in no_inputs
+    assert "network_string" not in no_inputs
+
+    (tmp_path / "results" / "enrichment").mkdir(parents=True)
+    (tmp_path / "results" / "enrichment" / "enrichment_objects.rds").write_text("x")
+    (tmp_path / "results" / "deseq2").mkdir(parents=True)
+    (tmp_path / "results" / "deseq2" / "deseq2_results.csv").write_text("x")
+    with_inputs = build_snakemake_command(tmp_path, cfg, mode="figures").command
+    assert "enrichment_figures" in with_inputs
+    assert "network_string" in with_inputs
+
+
 def test_native_command_has_no_use_conda() -> None:
     # No rule declares a conda: directive; --use-conda would be a no-op and is
     # intentionally omitted.

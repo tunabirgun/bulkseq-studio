@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.8.0 — 2026-06-22
+
+An interface and reliability release. A multi-perspective GUI audit (debugger,
+visual, newbie and professional lenses) produced 47 findings; the confirmed ones
+were fixed after verifying each against the code, and the aesthetic layer was
+reworked. The interactive PPI viewer state-sync was audited and left unchanged —
+the reported "desync" was a false positive; the 0.6.1 display-only fix is intact.
+
+### Fixed (reliability)
+
+- **Closing the window during a run no longer crashes.** `closeEvent` now stops the
+  pipeline and waits for the runner thread instead of letting Qt destroy a live
+  thread (and orphan the WSL process tree).
+- **Opening another project mid-run is blocked,** and opening a project now clears
+  the previous project's log, status, figures, table and network instead of leaving
+  them on screen (cross-project state bleed).
+- **The run-approval tick (REVIEW_REQUIRED) resets when you open a project,** so an
+  approval from one project can no longer let an unreviewed run start in another.
+- **"Regenerate figures" no longer fails with MissingInputException.** Optional figure
+  targets (enrichment, PPI, genes-of-interest) are forced only when their input files
+  exist on disk, not merely when their config flag is on.
+- **The Outputs figure picker keeps your current selection** across a refresh / post-run
+  rescan instead of jumping back to the first figure, and shows a placeholder when a
+  project has no figures yet.
+- **SRA metadata fetch and report generation run off the UI thread,** so large studies
+  and WSL tool-version probes no longer freeze the window.
+- Pixel figure dimensions stay physically consistent when DPI changes; malformed output
+  CSVs no longer crash the table preview; the low-mapping STAR guardrail fires again on
+  Snakemake 9 log output; project names with filesystem-unsafe characters are rejected.
+
+### Fixed (the enrichment trap)
+
+- **Count-matrix and microarray modes now tell you to pick an organism.** The Reference
+  Manager banner is an amber callout explaining that selecting an organism enables
+  GO/KEGG enrichment and the STRING PPI network; the count-matrix import message and an
+  inline Workflow-Settings note say the same. A run with enrichment enabled and no
+  organism configured asks for confirmation and is flagged REVIEW_REQUIRED in the checks.
+- **HISAT2 / Salmon (aligner) and STAR_GeneCounts / Salmon_tximport (quantifier) are
+  disabled** in their dropdowns — only the STAR + featureCounts route is implemented, so
+  they no longer silently dead-end or no-op a run.
+
+### Changed (interface)
+
+- **WCAG-AA contrast.** Light table-header text, disabled input/button text, the warning
+  accent, and the dark disabled-primary text were darkened/lightened to meet 4.5:1
+  (verified by computation).
+- **Workflow Settings** is grouped into three cards (alignment & read processing /
+  differential expression / outputs) instead of one flat 14-field list, with a primary,
+  right-aligned Save.
+- **One clear primary action per tab** (New Project, Use Selected Preset, Detect and
+  Recommend, Estimate Runtime, Run checks, Start Run, Generate Reports, Load network).
+- **The PPI controls read in plain language** — "Force-directed (fCoSE)", "log₂ fold
+  change", "Node degree" — and Export PNG/SVG stay disabled until a network is loaded.
+- Empty panels carry placeholder guidance; the dark-mode figure canvas is a softer grey
+  so white figures don't glare; a "what's next" message points to Outputs/PPI after a run.
+
+### Added
+
+- Keyboard shortcuts: Ctrl+O (open project), F5 (dry run), F9 (start run).
+- A recent-projects picker on the Project tab.
+
 ## 0.7.2 — 2026-06-22
 
 ### Fixed

@@ -31,7 +31,23 @@ class SnakemakeCommand:
     run_tag: str | None = None
 
 
-def build_snakemake_args(config: AppConfig, mode: str = "run") -> list[str]:
+def _target_input_exists(project_root: Path | None, rel_path: str) -> bool:
+    """True if an optional figures-mode target's input file is present on disk.
+
+    Forcing a rule whose input does not exist raises MissingInputException and
+    fails the whole "Regenerate figures" run, so optional targets are gated on
+    their real input rather than only the config flag. When project_root is
+    unknown (None), assume present so callers that do not pass it (e.g. tests
+    asserting arg structure) keep the previous behaviour.
+    """
+    if project_root is None:
+        return True
+    return (Path(project_root) / rel_path).exists()
+
+
+def build_snakemake_args(
+    config: AppConfig, mode: str = "run", project_root: Path | None = None
+) -> list[str]:
     """Snakemake argument vector, independent of how it is launched."""
     args = [
         "snakemake",
@@ -65,11 +81,17 @@ def build_snakemake_args(config: AppConfig, mode: str = "run") -> list[str]:
         # set, not just the core DESeq2 figures. Optional rules are gated on their config
         # so they are only forced when their inputs exist (else MissingInputException).
         targets = ["figures", "sample_correlation", "wilcoxon_sensitivity", "set_overlap"]
-        if config.workflow.enrichment:
+        if config.workflow.enrichment and _target_input_exists(
+            project_root, "results/enrichment/enrichment_objects.rds"
+        ):
             targets.append("enrichment_figures")
-        if config.ppi.enabled:
+        if config.ppi.enabled and _target_input_exists(
+            project_root, "results/deseq2/deseq2_results.csv"
+        ):
             targets.append("network_string")
-        if config.gene_sets.custom_gene_list:
+        if config.gene_sets.custom_gene_list and _target_input_exists(
+            project_root, "results/deseq2/deseq2_objects.rds"
+        ):
             targets.append("genes_of_interest")
         args += ["--forcerun", *targets, "--allowed-rules", *targets]
     elif mode == "goi":
@@ -136,7 +158,7 @@ def build_snakemake_command(
     process tree (which survives killing the Windows wsl.exe relay) can be found
     and terminated by :func:`build_wsl_kill_command`.
     """
-    args = build_snakemake_args(config, mode)
+    args = build_snakemake_args(config, mode, project_root)
     if use_wsl:
         wsl_root = windows_to_wsl_path(project_root)
         inner = _wrap_wsl(args, wsl_root, run_tag)

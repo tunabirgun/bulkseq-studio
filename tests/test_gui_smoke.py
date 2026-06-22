@@ -41,6 +41,12 @@ def test_main_window_benchmark_smoke() -> None:
     assert "range:" in window.runtime_text.toPlainText()
 
     window._generate_reports()
+    # Report generation now runs off the UI thread (it probes WSL tool versions);
+    # wait for the worker so the files are on disk before asserting.
+    worker = getattr(window, "_reports_worker", None)
+    if worker is not None:
+        worker.wait(60000)
+    QApplication.processEvents()
     assert (window.project_root / "results" / "reports" / "run_summary.txt").exists()
     assert (window.project_root / "results" / "reports" / "timing_summary.txt").exists()
 
@@ -70,4 +76,42 @@ def test_config_round_trip_through_widgets() -> None:
     reloaded = window.manager.load_config(root)
     assert reloaded.deseq2.design_formula == "~ batch + condition"
     assert abs(reloaded.deseq2.alpha - 0.1) < 1e-9
+    window.close()
+
+
+def test_approve_review_resets_on_project_switch() -> None:
+    # The run-approval gate is per project; a stale tick must not bleed across
+    # opens or an unreviewed run could start.
+    _app()
+    window = MainWindow()
+    base = Path("manual_test_gui") / uuid4().hex
+    window.workdir.setText(str(base / "a"))
+    window.project_name.setText("proj_a")
+    window._create_benchmark_project()
+    window.approve_review.setChecked(True)
+    window.workdir.setText(str(base / "b"))
+    window.project_name.setText("proj_b")
+    window._create_benchmark_project()
+    assert window.approve_review.isChecked() is False
+    window.close()
+
+
+def test_enrichment_without_organism_flags_review() -> None:
+    # Enrichment enabled with no organism id (the count-matrix trap) must surface
+    # as REVIEW_REQUIRED so the run gate forces the user to acknowledge it.
+    import json
+
+    _app()
+    window = MainWindow()
+    window.workdir.setText(str(Path("manual_test_gui") / uuid4().hex))
+    window.project_name.setText("trap")
+    window._create_benchmark_project()
+    window.config.workflow.enrichment = True
+    window.config.enrichment.kegg_organism = None
+    window.config.enrichment.orgdb = None
+    window.config.enrichment.gprofiler_organism = None
+    window._run_sanity_checks()
+    payload = json.loads(
+        (window.project_root / "checks" / "01_input_validation.json").read_text(encoding="utf-8"))
+    assert payload["status"] == "REVIEW_REQUIRED"
     window.close()

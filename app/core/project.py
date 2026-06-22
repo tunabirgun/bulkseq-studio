@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -7,7 +8,7 @@ from typing import Any
 
 import yaml
 
-from app.constants import APP_VERSION, PROJECT_DIRS, WORKFLOW_VERSION
+from app.constants import APP_VERSION, PROJECT_DIRS, SAFE_ID_PATTERN, WORKFLOW_VERSION
 from app.core.config_models import AppConfig, default_config
 from app.core.paths import data_path, is_wsl_unc_path, workflow_root
 
@@ -49,6 +50,13 @@ class ProjectManager:
         safe_name = project_name.strip().replace(" ", "_")
         if not safe_name:
             raise ValueError("Project name cannot be empty.")
+        # Reject names with characters that break Snakemake wildcards or the
+        # filesystem path (slash, colon, #, parentheses, …) rather than silently
+        # creating an unusable directory.
+        if not re.fullmatch(SAFE_ID_PATTERN, safe_name):
+            raise ValueError(
+                "Project name may only contain letters, numbers, '_', '-' and '.' "
+                f"(spaces become underscores). Got: {project_name!r}")
         root = working_directory.expanduser().resolve() / safe_name
         for relative in PROJECT_DIRS:
             (root / relative).mkdir(parents=True, exist_ok=True)

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 APP_NAME = "BulkSeq Studio"
-APP_VERSION = "0.7.2"
-WORKFLOW_VERSION = "0.7.2"
+APP_VERSION = "0.8.0"
+WORKFLOW_VERSION = "0.8.0"
 
 # Below this STAR uniquely-mapped %, the Run Monitor warns and offers to stop the
 # run; a wrong reference or contaminated reads otherwise waste hours of alignment.
@@ -29,6 +29,8 @@ PROJECT_DIRS = [
     "results/microarray",
     "results/deseq2",
     "results/enrichment",
+    "results/networks",
+    "results/stats",
     "results/figures",
     "results/reports",
     "logs",

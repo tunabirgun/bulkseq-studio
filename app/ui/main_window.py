@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtGui import QDesktopServices, QFontDatabase, QPixmap
+from PySide6.QtGui import QDesktopServices, QFontDatabase, QKeySequence, QPixmap, QShortcut
 from PySide6.QtCore import Qt, QUrl
 
 from app.constants import APP_NAME, MIN_UNIQUE_MAPPED_WARN_PCT
@@ -178,9 +178,19 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 "Ready — on the Project tab, click 'Check Environment' to verify your WSL setup."
             )
+        self._install_shortcuts()
         # Prefer the WSL-native filesystem by default (resolved in the background so
         # startup stays instant); the user can still pick a Windows folder.
         self._autodetect_wsl_workdir()
+
+    def _install_shortcuts(self) -> None:
+        # Keyboard shortcuts for the highest-frequency actions (no menu bar).
+        for seq, slot in (
+            (QKeySequence("Ctrl+O"), self._open_project),
+            (QKeySequence("F5"), lambda: self._start_snakemake("dry-run")),
+            (QKeySequence("F9"), lambda: self._start_snakemake("run")),
+        ):
+            QShortcut(seq, self, activated=slot)
 
     # ---- Theme toggle ------------------------------------------------------
     def _current_theme_mode(self) -> str:
@@ -236,12 +246,19 @@ class MainWindow(QMainWindow):
         # touching widgets that are being torn down.
         self._closing = True
         self._save_geometry_state()
+        # Stop an active pipeline run before teardown: a still-running QThread
+        # destroyed by Qt crashes, and the WSL process tree would be orphaned.
+        if self.runner is not None and self.runner.is_running():
+            self._stop_run(announce=False)
         # Let short-lived background probes finish so QThread isn't destroyed while
         # running (which would crash). These are bounded WSL/resource queries.
-        for attr in ("_wsl_autodetect_worker", "_wsl_workdir_worker", "_detect_worker", "_geo_worker"):
+        for attr in ("_wsl_autodetect_worker", "_wsl_workdir_worker", "_detect_worker",
+                     "_geo_worker", "_sra_worker", "_reports_worker"):
             worker = getattr(self, attr, None)
             if worker is not None and worker.isRunning():
                 worker.wait(3000)
+        if self.runner_thread is not None and self.runner_thread.isRunning():
+            self.runner_thread.wait(5000)
         super().closeEvent(event)
 
     def _scrollable(self, page: QWidget) -> QScrollArea:
@@ -277,6 +294,7 @@ class MainWindow(QMainWindow):
         )
         workdir_hint.setWordWrap(True)
         create = QPushButton("New Project")
+        create.setProperty("primary", True)
         create.clicked.connect(self._create_project)
         benchmark = QPushButton("Create Benchmark Project")
         benchmark.clicked.connect(self._create_benchmark_project)
@@ -284,15 +302,44 @@ class MainWindow(QMainWindow):
         open_existing.clicked.connect(self._open_project)
         readiness = QPushButton("Check Environment")
         readiness.clicked.connect(self.show_readiness_dialog)
+        self.recent_pick = QComboBox()
+        self.recent_pick.setToolTip("Projects you have opened before.")
+        recent_open = QPushButton("Open recent")
+        recent_open.clicked.connect(self._open_recent_project)
+        recent_row = QHBoxLayout()
+        recent_row.addWidget(self.recent_pick, 1)
+        recent_row.addWidget(recent_open)
         self.project_status = QTextEdit()
         self.project_status.setReadOnly(True)
+        self.project_status.setPlaceholderText(
+            "Create a new project or open an existing one. Status and next steps appear here.")
         layout.addRow("Project name", self.project_name)
         layout.addRow("Working directory", workdir_row)
         layout.addRow("", workdir_hint)
         layout.addRow(create, open_existing)
         layout.addRow(benchmark, readiness)
+        layout.addRow("Recent projects", recent_row)
         layout.addRow("Status", self.project_status)
+        self._refresh_recent_projects()
         self.tabs.addTab(self._scrollable(page), "Project")
+
+    def _refresh_recent_projects(self) -> None:
+        if not hasattr(self, "recent_pick"):
+            return
+        s = QSettings()
+        recent = s.value("recent_projects", []) or []
+        if isinstance(recent, str):
+            recent = [recent]
+        self.recent_pick.blockSignals(True)
+        self.recent_pick.clear()
+        self.recent_pick.addItems([str(p) for p in recent])
+        self.recent_pick.blockSignals(False)
+        self.recent_pick.setEnabled(bool(recent))
+
+    def _open_recent_project(self) -> None:
+        path = self.recent_pick.currentText().strip() if hasattr(self, "recent_pick") else ""
+        if path:
+            self._load_project(Path(path))
 
     def _build_input_tab(self) -> None:
         page = QWidget()
@@ -310,6 +357,8 @@ class MainWindow(QMainWindow):
             buttons.addWidget(b)
         self.input_preview = QTextEdit()
         self.input_preview.setReadOnly(True)
+        self.input_preview.setPlaceholderText(
+            "Pick an input mode above. A summary of the imported samples and the next steps appears here.")
         layout.addWidget(QLabel("SRA / ENA accessions"))
         layout.addWidget(self.sra_box)
         layout.addLayout(buttons)
@@ -418,14 +467,22 @@ class MainWindow(QMainWindow):
         if getattr(self, "reference_mode_banner", None) is not None:
             if mode == "microarray":
                 self.reference_mode_banner.setText(
-                    "Microarray mode: no reference genome is needed (limma works on intensities).")
+                    "Microarray mode: alignment is skipped (limma works on intensities). "
+                    "You still need to select your organism below — it enables GO/KEGG "
+                    "enrichment and the STRING PPI network. Without a selection, enrichment "
+                    "and PPI are skipped.")
                 self.reference_mode_banner.setVisible(True)
             elif mode == "count_matrix":
                 self.reference_mode_banner.setText(
-                    "Count-matrix mode: no reference genome is needed (alignment is skipped).")
+                    "Count-matrix mode: alignment is skipped. You still need to select your "
+                    "organism below — it enables GO/KEGG enrichment and the STRING PPI network. "
+                    "Without a selection, enrichment and PPI are skipped.")
                 self.reference_mode_banner.setVisible(True)
             else:
                 self.reference_mode_banner.setVisible(False)
+        self._refresh_output_table_pick()
+        self._update_enrichment_warning()
+        self._update_organism_label()
 
     def _import_count_matrix(self) -> None:
         if not self._require_project() or self.config is None:
@@ -471,6 +528,9 @@ class MainWindow(QMainWindow):
             self.metadata_table.load_dataframe(samples)
             self.config.input.type = "count_matrix"
             self.config.input.count_matrix = "config/counts_matrix.txt"
+            # Switching to count-matrix mode: drop any stale microarray accession so
+            # a later save doesn't write a GSE that no longer applies.
+            self.config.microarray.gse_accession = None
             # Clear a microarray-only SYMBOL keytype so it can't carry into a
             # count-matrix run (whose ids are usually ENSEMBL); fall back to the
             # organism mapping.
@@ -479,10 +539,20 @@ class MainWindow(QMainWindow):
             self.manager.save_config(self.project_root, self.config)
         finally:
             QApplication.restoreOverrideCursor()
+        if hasattr(self, "gse_box"):
+            self.gse_box.clear()
+        self._apply_input_mode_ui()
+        organism = self.config.reference.organism_name
+        has_org = bool(self.config.enrichment.kegg_organism or self.config.enrichment.orgdb)
+        org_note = (
+            f"\n\nEnrichment/PPI organism: {organism}." if has_org else
+            "\n\nFor GO/KEGG enrichment and the STRING PPI network, open the Reference "
+            "Manager tab and select your organism — without it, enrichment and PPI are skipped.")
         self.input_preview.setPlainText(
             f"Count-matrix mode: {len(sample_ids)} samples — {', '.join(sample_ids)}\n\n"
             "Next: assign each sample a condition on the Metadata tab, set the contrast on "
             "Workflow Settings, then Start Run. Alignment is skipped."
+            + org_note
         )
         self.statusBar().showMessage(f"Count matrix imported: {len(sample_ids)} samples. Assign conditions on the Metadata tab.", 8000)
 
@@ -494,13 +564,29 @@ class MainWindow(QMainWindow):
         if not accessions:
             QMessageBox.warning(self, APP_NAME, "Paste at least one accession first.")
             return
-        self.input_preview.setPlainText("Querying ENA…")
-        QApplication.processEvents()
-        try:
-            meta = fetch_ena_metadata(accessions)
-        except Exception as exc:  # network/parse errors
-            QMessageBox.warning(self, APP_NAME, f"ENA query failed: {exc}")
+        if getattr(self, "_sra_worker", None) is not None and self._sra_worker.isRunning():
             return
+        # The ENA Portal query can take tens of seconds for a large study, so run it
+        # off the UI thread (like the GEO fetch) instead of freezing the window.
+        self.input_preview.setPlainText("Querying ENA…")
+        self.statusBar().showMessage("Fetching metadata from ENA…")
+        worker = BackgroundWorker(lambda: fetch_ena_metadata(accessions))
+        worker.done.connect(lambda meta: self._on_sra_fetched(accessions, meta))
+        worker.failed.connect(self._on_sra_failed)
+        self._sra_worker = worker
+        worker.start()
+
+    def _on_sra_failed(self, exc: object) -> None:
+        if getattr(self, "_closing", False):
+            return
+        self.statusBar().clearMessage()
+        self.input_preview.setPlainText("")
+        QMessageBox.warning(self, APP_NAME, f"ENA query failed: {exc}")
+
+    def _on_sra_fetched(self, accessions: list, meta: object) -> None:
+        if getattr(self, "_closing", False) or self.project_root is None:
+            return
+        self.statusBar().clearMessage()
         samples = metadata_to_samples(meta)
         if samples.empty:
             self.input_preview.setPlainText("No runs found for those accessions.")
@@ -514,6 +600,7 @@ class MainWindow(QMainWindow):
             layouts = set(samples["layout"])
             self.config.input.layout = layouts.pop() if len(layouts) == 1 else "mixed"  # type: ignore[assignment]
             self.manager.save_config(self.project_root, self.config)
+            self._apply_input_mode_ui()
         self.tabs.setCurrentIndex(self.tabs.indexOf(self.metadata_table.parentWidget()))
         self.input_preview.setPlainText(
             f"Built {len(samples)} sample(s). Set conditions in the Metadata tab, then run.\n\n"
@@ -610,12 +697,21 @@ class MainWindow(QMainWindow):
         for entry in load_reference_catalog():
             self.reference_list.addItem(f"{entry['organism_name']} | {entry.get('strain')} | {entry.get('genome_size_category')}")
         choose = QPushButton("Use Selected Preset")
+        choose.setProperty("primary", True)
         choose.clicked.connect(self._select_reference)
         self.reference_mode_banner = QLabel("")
         self.reference_mode_banner.setWordWrap(True)
-        self.reference_mode_banner.setStyleSheet("font-weight: bold;")
+        # Amber callout so the count-matrix/microarray guidance reads as an
+        # advisory the user should act on, not a greyed-out aside.
+        self.reference_mode_banner.setStyleSheet(
+            "font-weight: 600; color: #8B5200; background: #FBEEDA; "
+            "border: 1px solid #E5C99A; border-radius: 4px; padding: 6px;")
         self.reference_mode_banner.setVisible(False)
+        self.current_organism_label = QLabel("Selected organism: — none —")
+        self.current_organism_label.setWordWrap(True)
+        self.current_organism_label.setStyleSheet("font-weight: 600;")
         layout.addWidget(self.reference_mode_banner)
+        layout.addWidget(self.current_organism_label)
         layout.addWidget(QLabel("Available presets"))
         layout.addWidget(self.reference_list)
         layout.addWidget(choose)
@@ -724,16 +820,29 @@ class MainWindow(QMainWindow):
 
     def _build_workflow_tab(self) -> None:
         page = QWidget()
-        layout = QFormLayout(page)
+        layout = QVBoxLayout(page)
         self.aligner = QComboBox()
         self.aligner.addItems(["STAR", "HISAT2", "Salmon"])
+        # Only STAR is implemented; show HISAT2/Salmon but make them unselectable so
+        # a run can't be started on an aligner that dead-ends mid-pipeline.
+        self._disable_combo_items(self.aligner, {"HISAT2", "Salmon"}, " (not yet available)")
         self.quantifier = QComboBox()
         self.quantifier.addItems(["featureCounts", "STAR_GeneCounts", "Salmon_tximport"])
+        # Only featureCounts is wired (no rule reads config.workflow.quantifier), so
+        # disable the others rather than letting them silently no-op.
+        self._disable_combo_items(self.quantifier, {"STAR_GeneCounts", "Salmon_tximport"}, " (not yet available)")
         self.trim = QCheckBox()
         self.trim.setChecked(True)
         self.rrna = QCheckBox()
         self.enrichment = QCheckBox()
         self.enrichment.setChecked(True)
+        self.enrichment.toggled.connect(lambda _=False: self._update_enrichment_warning())
+        self.enrichment_warn = QLabel(
+            "⚠ No organism is configured — select one on the Reference Manager tab, "
+            "or GO/KEGG enrichment and the STRING PPI network will be skipped.")
+        self.enrichment_warn.setWordWrap(True)
+        self.enrichment_warn.setStyleSheet("color: #8B5200;")
+        self.enrichment_warn.setVisible(False)
         self.figures = QCheckBox()
         self.figures.setChecked(True)
         # fastp parameters
@@ -753,6 +862,10 @@ class MainWindow(QMainWindow):
         self.denominator.setEditable(True)
         self.reference_level = QComboBox()
         self.reference_level.setEditable(True)
+        self.contrast_info = QLabel("")
+        self.contrast_info.setWordWrap(True)
+        self.contrast_info.setStyleSheet("color: #5A6472;")
+        self.contrast_info.setVisible(False)
         refresh = QPushButton("Refresh conditions from metadata")
         refresh.clicked.connect(self._refresh_conditions)
         self.alpha = QDoubleSpinBox()
@@ -766,26 +879,49 @@ class MainWindow(QMainWindow):
         self.lfc_threshold.setDecimals(2)
         self.lfc_threshold.setValue(1.0)
         save = QPushButton("Save Workflow Settings")
+        save.setProperty("primary", True)
         save.clicked.connect(self._save_workflow_settings)
-        layout.addRow(self._info_label("Aligner", "Read aligner. STAR is the fully implemented route; HISAT2/Salmon are scaffolded."), self.aligner)
-        layout.addRow(self._info_label("Quantifier", "How aligned reads are summarised to gene counts. featureCounts is the implemented route."), self.quantifier)
-        layout.addRow("fastp trimming", self.trim)
-        layout.addRow(self._info_label("fastp quality (-q)", "Minimum acceptable per-base Phred quality. Bases below this count as low quality. fastp default 15."), self.fastp_q)
-        layout.addRow(self._info_label("fastp min length (-l)", "Reads shorter than this (after trimming) are discarded. Protocol default 36."), self.fastp_len)
-        layout.addRow(self._info_label("fastp poly-G (-g)", "Trim poly-G tails, an artefact of 2-colour chemistry (NextSeq/NovaSeq). Leave off for HiSeq/MiSeq."), self.trim_poly_g)
-        layout.addRow("rRNA filtering", self.rrna)
-        layout.addRow("Enrichment", self.enrichment)
-        layout.addRow("Figures", self.figures)
-        layout.addRow(self._info_label("DESeq2 design", "R model formula. The last term is the effect of interest; put known batch effects before it, e.g. '~ batch + condition'."), self.design)
-        layout.addRow(refresh)
-        layout.addRow(self._info_label("Contrast factor", "The metadata column compared in the differential test (usually 'condition')."), self.contrast_factor)
-        layout.addRow(self._info_label("Numerator (treated)", "The group whose change is measured. log2 fold change is numerator relative to denominator."), self.numerator)
-        layout.addRow(self._info_label("Denominator (reference)", "The baseline group. Positive log2 fold change = higher in the numerator than this."), self.denominator)
-        layout.addRow(self._info_label("Reference level", "The factor's baseline level (normally the same as the denominator); DESeq2 releveled to this."), self.reference_level)
-        layout.addRow(self._info_label("Alpha (padj/FDR)", "Significance threshold on the Benjamini-Hochberg adjusted p-value (false discovery rate). Default 0.05."), self.alpha)
-        layout.addRow(self._info_label("log2FC threshold", "Minimum absolute log2 fold change for a gene to count as up/down-regulated. |log2FC| >= this AND padj < alpha. Default 1.0 (a 2-fold change)."), self.lfc_threshold)
-        layout.addRow(QLabel("featureCounts strandedness is auto-inferred per protocol."))
-        layout.addRow(save)
+
+        # Group the 14 settings into three labelled cards (Alignment & read
+        # processing / Differential expression / Outputs) so the tab reads as
+        # sections rather than one flat field list.
+        align_group = QGroupBox("Alignment and read processing")
+        align_form = QFormLayout(align_group)
+        align_form.addRow(self._info_label("Aligner", "Read aligner. STAR is the fully implemented route; HISAT2/Salmon are scaffolded."), self.aligner)
+        align_form.addRow(self._info_label("Quantifier", "How aligned reads are summarised to gene counts. featureCounts is the implemented route."), self.quantifier)
+        align_form.addRow("fastp trimming", self.trim)
+        align_form.addRow(self._info_label("fastp quality (-q)", "Minimum acceptable per-base Phred quality. Bases below this count as low quality. fastp default 15."), self.fastp_q)
+        align_form.addRow(self._info_label("fastp min length (-l)", "Reads shorter than this (after trimming) are discarded. Protocol default 36."), self.fastp_len)
+        align_form.addRow(self._info_label("fastp poly-G (-g)", "Trim poly-G tails, an artefact of 2-colour chemistry (NextSeq/NovaSeq). Leave off for HiSeq/MiSeq."), self.trim_poly_g)
+        align_form.addRow("rRNA filtering", self.rrna)
+        layout.addWidget(align_group)
+
+        de_group = QGroupBox("Differential expression")
+        de_form = QFormLayout(de_group)
+        de_form.addRow(self._info_label("DESeq2 design", "R model formula. The last term is the effect of interest; put known batch effects before it, e.g. '~ batch + condition'."), self.design)
+        de_form.addRow(refresh)
+        de_form.addRow(self._info_label("Contrast factor", "The metadata column compared in the differential test (usually 'condition')."), self.contrast_factor)
+        de_form.addRow(self._info_label("Numerator (treated)", "The group whose change is measured. log2 fold change is numerator relative to denominator."), self.numerator)
+        de_form.addRow(self._info_label("Denominator (reference)", "The baseline group. Positive log2 fold change = higher in the numerator than this."), self.denominator)
+        de_form.addRow(self._info_label("Reference level", "The factor's baseline level (normally the same as the denominator); DESeq2 releveled to this."), self.reference_level)
+        de_form.addRow("", self.contrast_info)
+        de_form.addRow(self._info_label("Alpha (padj/FDR)", "Significance threshold on the Benjamini-Hochberg adjusted p-value (false discovery rate). Default 0.05."), self.alpha)
+        de_form.addRow(self._info_label("log2FC threshold", "Minimum absolute log2 fold change for a gene to count as up/down-regulated. |log2FC| >= this AND padj < alpha. Default 1.0 (a 2-fold change)."), self.lfc_threshold)
+        de_form.addRow(QLabel("featureCounts strandedness is auto-inferred per protocol."))
+        layout.addWidget(de_group)
+
+        out_group = QGroupBox("Outputs")
+        out_form = QFormLayout(out_group)
+        out_form.addRow("Enrichment", self.enrichment)
+        out_form.addRow("", self.enrichment_warn)
+        out_form.addRow("Figures", self.figures)
+        layout.addWidget(out_group)
+
+        save_row = QHBoxLayout()
+        save_row.addStretch(1)
+        save_row.addWidget(save)
+        layout.addLayout(save_row)
+        layout.addStretch(1)
         self.tabs.addTab(self._scrollable(page), "Workflow Settings")
 
     def _refresh_conditions(self) -> None:
@@ -834,6 +970,7 @@ class MainWindow(QMainWindow):
         self.recommendation_label = QLabel()
         self.recommendation_label.setWordWrap(True)
         detect = QPushButton("Detect and Recommend")
+        detect.setProperty("primary", True)
         detect.clicked.connect(self._detect_resources)
         system_layout.addWidget(self.system_info_label)
         system_layout.addWidget(self.recommendation_label)
@@ -847,6 +984,7 @@ class MainWindow(QMainWindow):
         profile_form = QFormLayout(profile_group)
         self.profile = QComboBox()
         self.profile.addItems(["balanced", "low", "high", "custom"])  # lowercase: matches config
+        self.profile.currentTextChanged.connect(self._on_profile_changed)
         profile_help = (
             "Balanced uses about 75% of your CPU and memory and suits most runs. "
             "Low is conservative if you are using other programs at the same time. "
@@ -872,7 +1010,6 @@ class MainWindow(QMainWindow):
                              "RAM allocated to the pipeline. Alignment (STAR) is the most memory-intensive step."),
             self.ram)
         save = QPushButton("Save Resources")
-        save.setProperty("primary", True)
         save.clicked.connect(self._save_resources)
         manual_form.addRow(save)
         layout.addWidget(manual_group)
@@ -884,20 +1021,27 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         estimate = QPushButton("Estimate Runtime")
+        estimate.setProperty("primary", True)
         estimate.clicked.connect(self._estimate_runtime)
         self.runtime_busy = self._busy_bar()
         self.runtime_text = QTextEdit()
         self.runtime_text.setReadOnly(True)
-        layout.addWidget(estimate)
+        self.runtime_text.setPlaceholderText(
+            "Click Estimate Runtime for a wall-clock estimate based on your sample count and settings.")
+        estimate_row = QHBoxLayout()
+        estimate_row.addWidget(estimate)
+        estimate_row.addStretch(1)
+        layout.addLayout(estimate_row)
         layout.addWidget(self.runtime_busy)
         layout.addWidget(self.runtime_text)
-        self.tabs.addTab(self._scrollable(page), "Runtime Estimate")
+        self.tabs.addTab(self._scrollable(page), "Runtime")
 
     def _build_sanity_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
         buttons = QHBoxLayout()
         run = QPushButton("Run Project and Metadata Checks")
+        run.setProperty("primary", True)
         run.clicked.connect(self._run_sanity_checks)
         refresh = QPushButton("Refresh Phase Checks")
         refresh.clicked.connect(self._refresh_phase_checks)
@@ -907,6 +1051,8 @@ class MainWindow(QMainWindow):
         self.sanity_busy = self._busy_bar()
         self.sanity_text = QTextEdit()
         self.sanity_text.setReadOnly(True)
+        self.sanity_text.setPlaceholderText(
+            "Run the project and metadata checks before starting, to catch configuration issues early.")
         layout.addLayout(buttons)
         layout.addWidget(self.approve_review)
         layout.addWidget(self.sanity_busy)
@@ -927,6 +1073,8 @@ class MainWindow(QMainWindow):
         for text, mode in [("Dry Run", "dry-run"), ("Start Run", "run"), ("Resume", "resume"), ("Unlock", "unlock")]:
             button = QPushButton(text)
             button.setToolTip(run_tips.get(mode, ""))
+            if mode == "run":
+                button.setProperty("primary", True)
             button.clicked.connect(lambda _checked=False, m=mode: self._start_snakemake(m))
             self.run_action_buttons[mode] = button
             buttons.addWidget(button)
@@ -954,13 +1102,14 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel("Idle")
         # Plain-language "current phase" line so non-CLI users can follow along;
         # the raw Snakemake log below is for power users.
-        self.phase_label = QLabel("")
+        self.phase_label = QLabel("Ready — open a project, configure it, then click Start Run.")
         phase_font = self.phase_label.font()
         phase_font.setPointSize(phase_font.pointSize() + 2)
         phase_font.setBold(True)
         self.phase_label.setFont(phase_font)
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
+        self.log_text.setPlaceholderText("The Snakemake log streams here once a run starts.")
         progress_row = QHBoxLayout()
         progress_row.addWidget(self.progress)
         progress_row.addWidget(self.elapsed_label)
@@ -973,6 +1122,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.command_text)
         layout.addWidget(QLabel("Detailed log"))
         layout.addWidget(self.log_text)
+        self.run_monitor_page = page
         self.tabs.addTab(page, "Run Monitor")
 
     def _set_run_status(self, text: str, color: str | None = None) -> None:
@@ -1050,6 +1200,8 @@ class MainWindow(QMainWindow):
         # Surface a plain-language phase when Snakemake announces a job's rule.
         rule_match = re.search(r"(?:^|\s)(?:local|check)?rule\s+([A-Za-z0-9_]+)\s*:", line)
         if rule_match:
+            if rule_match.group(1) == "star_align":
+                self._saw_star_align = True
             phase = self._friendly_phase(rule_match.group(1))
             if phase:
                 self.phase_label.setText(f"Current step: {phase}")
@@ -1064,7 +1216,12 @@ class MainWindow(QMainWindow):
         # *_Log.final.out with the uniquely-mapped %. If a sample maps poorly
         # (usually a wrong reference or contamination) warn and offer to stop
         # before more hours are wasted.
-        if not self._mapping_halt_decided and re.search(r"Finished job.*Rule: star_align", line):
+        # Snakemake 9 prints the rule header and "Finished job N." on separate lines,
+        # so the old single-line regex never matched. Trigger the mapping check on
+        # any job completion once a star_align rule has been announced; the check
+        # itself is idempotent and scans the STAR Log.final.out files on disk.
+        if (not self._mapping_halt_decided and getattr(self, "_saw_star_align", False)
+                and "Finished job" in line):
             QTimer.singleShot(0, self._check_alignment_mapping)
 
     def _offer_auto_recovery(self) -> None:
@@ -1079,12 +1236,14 @@ class MainWindow(QMainWindow):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        # Ensure the wedged run is fully gone before unlocking/resuming.
+        # Ensure the wedged run is fully gone before unlocking/resuming. Flag the
+        # pending resume so _on_run_finished launches it once the killed process is
+        # actually reaped — a fixed timer raced the "run already active" guard.
+        self._pending_recover = True
+        self.log_text.append("Auto-recovery: stopping the wedged run, then unlocking to resume…")
         self._stop_run(announce=False)
         if self.runner is not None and self.config is not None:
             self.runner.unlock(self.config)
-        self.log_text.append("Auto-recovery: unlocked directory, resuming with --rerun-incomplete.")
-        QTimer.singleShot(200, lambda: self._start_snakemake("recover"))
 
     def _check_alignment_mapping(self) -> None:
         # Inspect any STAR Log.final.out files written so far; if a sample's
@@ -1145,12 +1304,21 @@ class MainWindow(QMainWindow):
         if getattr(self, "_run_start_wall", None) and not getattr(self, "_run_finish_wall", None):
             self._run_finish_wall = datetime.now().isoformat(timespec="seconds")
         was_stop = self._stop_in_progress
+        was_mode = self._run_mode
         self._set_running_ui(False)
         self._stop_in_progress = False
         self._run_mode = None
+        # Auto-recovery: the wedged run has now fully exited, so it is safe to
+        # unlock+resume without racing the "run already active" guard. This runs
+        # before the was_stop branch because the recovery deliberately stopped it.
+        if getattr(self, "_pending_recover", False):
+            self._pending_recover = False
+            self.log_text.append("Auto-recovery: previous run exited; resuming with --rerun-incomplete.")
+            QTimer.singleShot(0, lambda: self._start_snakemake("recover"))
+            return
         if was_stop:
             self.progress.setStyleSheet("")
-            self._set_run_status("Stopped", "#B26A00")
+            self._set_run_status("Stopped", "#8B5200")
             self.phase_label.setText("")
             self.log_text.append("Run stopped.")
             return
@@ -1161,9 +1329,19 @@ class MainWindow(QMainWindow):
             self.phase_label.setText("Finished")
             # A completed run / "Regenerate figures" writes new PNGs into
             # results/figures; re-scan so the Outputs figure picker shows them
-            # without the user having to click "Refresh figures" first.
-            if self.project_root is not None and hasattr(self, "figure_pick"):
+            # without the user having to click "Refresh figures" first. A PPI-only
+            # rebuild or a dry-run/unlock writes no such figures, so skip those.
+            if (self.project_root is not None and hasattr(self, "figure_pick")
+                    and was_mode in ("run", "resume", "recover", "figures", "goi")):
                 self._refresh_gallery()
+            if was_mode in ("run", "resume", "recover"):
+                self.statusBar().showMessage(
+                    "Run complete. View figures and tables on the Outputs tab, and the "
+                    "interactive network on the PPI Network tab.", 20000)
+            # A "Rebuild from STRING" produces a new network; reload it into the
+            # interactive viewer so it reflects the rebuild instead of the old graph.
+            if was_mode == "ppi" and self.project_root is not None:
+                self._load_ppi_network()
         else:
             # Non-zero: do not imply success. Red bar, red status, keep partial %.
             self.progress.setStyleSheet("QProgressBar::chunk { background-color: #C0392B; }")
@@ -1179,7 +1357,7 @@ class MainWindow(QMainWindow):
             self.stop_button.setEnabled(False)
         if announce:
             self.log_text.append("Stopping run and releasing WSL processes...")
-            self._set_run_status("Stopping...", "#B26A00")
+            self._set_run_status("Stopping...", "#8B5200")
         # Kills the whole WSL process tree (not just the wsl.exe relay) and reaps
         # the local handle; _on_run_finished then resets state for the next run.
         self.runner.stop()
@@ -1201,10 +1379,16 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         generate = QPushButton("Generate Reports")
+        generate.setProperty("primary", True)
         generate.clicked.connect(self._generate_reports)
         self.report_text = QTextEdit()
         self.report_text.setReadOnly(True)
-        layout.addWidget(generate)
+        self.report_text.setPlaceholderText(
+            "Run the pipeline, then click Generate Reports for the run summary, timing and sanity checks.")
+        generate_row = QHBoxLayout()
+        generate_row.addWidget(generate)
+        generate_row.addStretch(1)
+        layout.addLayout(generate_row)
         layout.addWidget(self.report_text)
         self.tabs.addTab(self._scrollable(page), "Reports")
 
@@ -1346,17 +1530,28 @@ class MainWindow(QMainWindow):
 
         row1 = QHBoxLayout()
         load_btn = QPushButton("Load / refresh network")
+        load_btn.setProperty("primary", True)
         load_btn.setToolTip("Assemble the network from this project's results and display it.")
         load_btn.clicked.connect(self._load_ppi_network)
+        # Friendly display labels mapped to the internal cytoscape.js values (held
+        # as userData) so a biologist sees "Force-directed", not "fcose".
         self.ppi_layout_pick = QComboBox()
-        self.ppi_layout_pick.addItems(["fcose", "cose", "circle", "concentric", "grid"])
-        self.ppi_layout_pick.currentTextChanged.connect(lambda n: self.ppi_viewer.set_layout(n))
+        for label, val in [("Force-directed (fCoSE)", "fcose"), ("Compact (CoSE)", "cose"),
+                           ("Circle", "circle"), ("Concentric", "concentric"), ("Grid", "grid")]:
+            self.ppi_layout_pick.addItem(label, val)
+        self.ppi_layout_pick.currentIndexChanged.connect(
+            lambda _i: self.ppi_viewer.set_layout(self.ppi_layout_pick.currentData()))
         self.ppi_color_pick = QComboBox()
-        self.ppi_color_pick.addItems(["log2FoldChange", "module"])
-        self.ppi_color_pick.currentTextChanged.connect(lambda f: self.ppi_viewer.set_color_by(f))
+        for label, val in [("log₂ fold change", "log2FoldChange"), ("Module / cluster", "module")]:
+            self.ppi_color_pick.addItem(label, val)
+        self.ppi_color_pick.currentIndexChanged.connect(
+            lambda _i: self.ppi_viewer.set_color_by(self.ppi_color_pick.currentData()))
         self.ppi_size_pick = QComboBox()
-        self.ppi_size_pick.addItems(["degree", "meanExpr", "neglog10padj"])
-        self.ppi_size_pick.currentTextChanged.connect(lambda f: self.ppi_viewer.set_size_by(f))
+        for label, val in [("Node degree", "degree"), ("Mean expression", "meanExpr"),
+                           ("−log₁₀ adj. p", "neglog10padj")]:
+            self.ppi_size_pick.addItem(label, val)
+        self.ppi_size_pick.currentIndexChanged.connect(
+            lambda _i: self.ppi_viewer.set_size_by(self.ppi_size_pick.currentData()))
         self.ppi_labels_cb = QCheckBox("Labels")
         self.ppi_labels_cb.setChecked(True)
         self.ppi_labels_cb.toggled.connect(lambda on: self.ppi_viewer.set_labels(on))
@@ -1390,9 +1585,15 @@ class MainWindow(QMainWindow):
         self.ppi_export_bg.addItems(["White", "Transparent"])
         self.ppi_export_bg.setToolTip("Background of the exported PNG/SVG (labels stay dark either way).")
         export_png = QPushButton("Export PNG")
+        export_png.setEnabled(False)
+        export_png.setToolTip("Load a network first.")
         export_png.clicked.connect(lambda: self._ppi_export("png"))
         export_svg = QPushButton("Export SVG")
+        export_svg.setEnabled(False)
+        export_svg.setToolTip("Load a network first.")
         export_svg.clicked.connect(lambda: self._ppi_export("svg"))
+        self.ppi_export_png = export_png
+        self.ppi_export_svg = export_svg
         row2.addWidget(self.ppi_conf)
         row2.addWidget(self.ppi_conf_lbl)
         row2.addStretch(1)
@@ -1456,7 +1657,13 @@ class MainWindow(QMainWindow):
         self.ppi_conf.setValue(floor)
         self.ppi_conf.blockSignals(False)
         self.ppi_conf_lbl.setText(f"{floor / 100:.2f}")
-        if n_nodes == 0:
+        has_network = n_nodes > 0
+        if hasattr(self, "ppi_export_png"):
+            self.ppi_export_png.setEnabled(has_network)
+            self.ppi_export_svg.setEnabled(has_network)
+            self.ppi_export_png.setToolTip("" if has_network else "Load a network first.")
+            self.ppi_export_svg.setToolTip("" if has_network else "Load a network first.")
+        if not has_network:
             self.ppi_status.setText(
                 "No PPI network for this run — STRING returned no interactions (the organism may "
                 "lack STRING coverage, or its genes have no mapped symbols). The static figure, if any, "
@@ -1662,6 +1869,8 @@ class MainWindow(QMainWindow):
         self.fig_dpi = QSpinBox()
         self.fig_dpi.setRange(72, 1200)
         self.fig_dpi.setValue(300)
+        self._fig_dpi_prev = 300
+        self.fig_dpi.valueChanged.connect(self._on_fig_dpi_changed)
         self.fig_dim_unit = QComboBox()
         self.fig_dim_unit.addItems(["in", "cm", "px"])
         self._fig_dim_unit_prev = "in"
@@ -1768,6 +1977,20 @@ class MainWindow(QMainWindow):
         self.fig_height.setValue(self._dim_from_inches(h_in, new_unit, dpi))
         self._fig_dim_unit_prev = new_unit
 
+    def _on_fig_dpi_changed(self, new_dpi: int) -> None:
+        # In pixel mode the canonical size is inches = px / dpi, so changing DPI
+        # without adjusting the px display would silently rescale the saved figure.
+        # Recompute the px values to hold the physical size constant.
+        old_dpi = getattr(self, "_fig_dpi_prev", new_dpi)
+        self._fig_dpi_prev = new_dpi
+        if self.fig_dim_unit.currentText() != "px" or old_dpi == new_dpi or new_dpi <= 0:
+            return
+        for spin in (self.fig_width, self.fig_height):
+            inches = spin.value() / max(old_dpi, 1)
+            spin.blockSignals(True)
+            spin.setValue(inches * new_dpi)
+            spin.blockSignals(False)
+
     def _apply_figure_style(self) -> bool:
         # Copy the style controls into config and persist (no dialog). Returns
         # False if there is no open project.
@@ -1833,7 +2056,15 @@ class MainWindow(QMainWindow):
             self.output_table.setItem(0, 0, QTableWidgetItem(f"Not found yet: {path.name} (run the pipeline first)"))
             return
         sep = "," if path.suffix == ".csv" else "\t"
-        df = pd.read_csv(path, sep=sep, comment="#", dtype=str, nrows=200).fillna("")
+        try:
+            df = pd.read_csv(path, sep=sep, comment="#", dtype=str, nrows=200).fillna("")
+        except Exception as exc:  # truncated / locked / malformed file
+            self.output_table.setRowCount(0)
+            self.output_table.setColumnCount(1)
+            self.output_table.setHorizontalHeaderLabels(["info"])
+            self.output_table.setRowCount(1)
+            self.output_table.setItem(0, 0, QTableWidgetItem(f"Could not read {path.name}: {exc}"))
+            return
         self.output_table.setColumnCount(len(df.columns))
         self.output_table.setHorizontalHeaderLabels([str(c) for c in df.columns])
         self.output_table.setRowCount(len(df))
@@ -1842,21 +2073,29 @@ class MainWindow(QMainWindow):
                 self.output_table.setItem(r, c, QTableWidgetItem(str(df.iat[r, c])))
 
     def _refresh_gallery(self) -> None:
+        prev = self.figure_pick.currentText()
         self.figure_pick.blockSignals(True)
         self.figure_pick.clear()
         figures = []
         if self.project_root is not None:
             figures = sorted((self.project_root / "results" / "figures").glob("*.png"))
-        self.figure_pick.addItems([f.name for f in figures])
-        self.figure_pick.blockSignals(False)
         if figures:
-            self.figure_pick.setCurrentIndex(0)
-            self._show_selected_figure(figures[0].name)
+            self.figure_pick.setEnabled(True)
+            self.figure_pick.addItems([f.name for f in figures])
+            # Keep the user on the figure they were viewing across a refresh /
+            # post-run rescan; fall back to the first only if it's gone.
+            idx = self.figure_pick.findText(prev)
+            self.figure_pick.setCurrentIndex(idx if idx >= 0 else 0)
+            self.figure_pick.blockSignals(False)
+            self._show_selected_figure(self.figure_pick.currentText())
         else:
+            self.figure_pick.addItem("(no figures yet — run the pipeline first)")
+            self.figure_pick.setEnabled(False)
+            self.figure_pick.blockSignals(False)
             self.figure_viewer.clear()
 
     def _show_selected_figure(self, name: str) -> None:
-        if not name or self.project_root is None:
+        if not name or name.startswith("(no figures") or self.project_root is None:
             return
         path = self.project_root / "results" / "figures" / name
         # When the vector toggle is on, prefer the matching .svg (crisp at any zoom).
@@ -1864,6 +2103,8 @@ class MainWindow(QMainWindow):
             svg = path.with_suffix(".svg")
             if svg.exists():
                 path = svg
+            else:
+                self.statusBar().showMessage(f"No SVG for {name}; showing the PNG.", 3000)
         if path.exists():
             self.figure_viewer.set_image(path)
 
@@ -1986,6 +2227,15 @@ class MainWindow(QMainWindow):
             self._load_project(Path(directory))
 
     def _load_project(self, root: Path) -> None:
+        # Opening (or creating) another project while a run is live would repoint
+        # project_root under the running thread, whose log/finished signals would
+        # then write into the new project. Block until the run is stopped.
+        if self._run_active or (self.runner is not None and self.runner.is_running()):
+            QMessageBox.warning(
+                self, APP_NAME,
+                "A run is currently active. Stop it on the Run Monitor tab before "
+                "opening or creating another project.")
+            return
         # Validate before mutating state so opening a non-project folder cannot
         # leave self.project_root pointing at an invalid directory.
         config_path = root / "config" / "config.yaml"
@@ -2004,11 +2254,54 @@ class MainWindow(QMainWindow):
             return
         self.project_root = root
         self.config = config
+        # Drop the previous project's transient state (log, status, figures,
+        # network) before showing the new one.
+        self._clear_transient_ui()
         self._populate_widgets_from_config()
         samples = root / "config" / "samples.tsv"
         if samples.exists():
             self.metadata_table.load_tsv(samples)
+        self._refresh_gallery()
+        self._remember_recent_project(root)
         self.project_status.setPlainText(f"Open project: {root}")
+
+    def _clear_transient_ui(self) -> None:
+        # Reset run/output widgets so a previously opened project's log, status,
+        # figures and network do not linger after switching projects.
+        self.log_text.clear()
+        self.command_text.clear()
+        self._set_run_status("Idle")
+        self.phase_label.setText("Ready — configure your project, then click Start Run.")
+        self.progress.setValue(0)
+        self.progress.setStyleSheet("")
+        self.elapsed_label.setText("Elapsed: 00:00:00")
+        self.input_preview.clear()
+        self.output_table.setRowCount(0)
+        self.report_text.clear()
+        self.runtime_text.clear()
+        # The run-approval gate and the previous project's sanity output must not
+        # carry over: approval is per project (a stale tick could let an unreviewed
+        # run start).
+        self.approve_review.setChecked(False)
+        self.sanity_text.clear()
+        self.ppi_status.setText("No network loaded — click “Load / refresh network”.")
+        if hasattr(self, "ppi_export_png"):
+            self.ppi_export_png.setEnabled(False)
+            self.ppi_export_svg.setEnabled(False)
+
+    def _remember_recent_project(self, root: Path) -> None:
+        # Keep up to 8 most-recently-opened project paths in QSettings for the
+        # Project tab's recent-projects picker.
+        s = QSettings()
+        recent = s.value("recent_projects", []) or []
+        if isinstance(recent, str):
+            recent = [recent]
+        rp = str(root)
+        recent = [p for p in recent if p != rp]
+        recent.insert(0, rp)
+        s.setValue("recent_projects", recent[:8])
+        if hasattr(self, "_refresh_recent_projects"):
+            self._refresh_recent_projects()
 
     def _populate_widgets_from_config(self) -> None:
         # Repopulate every editable widget from the loaded config so a Save on any
@@ -2029,11 +2322,21 @@ class MainWindow(QMainWindow):
         self.alpha.setValue(self.config.deseq2.alpha)
         self.lfc_threshold.setValue(self.config.deseq2.lfc_threshold)
         self._refresh_conditions()
-        contrast = self.config.deseq2.contrasts[0] if self.config.deseq2.contrasts else None
+        contrasts = self.config.deseq2.contrasts
+        contrast = contrasts[0] if contrasts else None
         if contrast:
             self.contrast_factor.setText(contrast.factor)
             self.numerator.setCurrentText(contrast.numerator)
             self.denominator.setCurrentText(contrast.denominator)
+        if hasattr(self, "contrast_info"):
+            if contrasts and len(contrasts) > 1:
+                others = ", ".join(f"{c.numerator} vs {c.denominator}" for c in contrasts[1:])
+                self.contrast_info.setText(
+                    f"Editing contrast 1 of {len(contrasts)}. The others are preserved on "
+                    f"save: {others}.")
+                self.contrast_info.setVisible(True)
+            else:
+                self.contrast_info.setVisible(False)
         ref_level = self.config.deseq2.reference_level
         if ref_level:
             self.reference_level.setCurrentText(next(iter(ref_level.values())))
@@ -2050,7 +2353,12 @@ class MainWindow(QMainWindow):
         self.fig_volcano_top.setValue(fig.volcano_top_n)
         self.fig_heatmap_top.setValue(fig.heatmap_top_n)
         self.fig_pca_ntop.setValue(fig.pca_ntop)
+        # Block the DPI signal so loading a project doesn't trigger the px-rescale
+        # handler against the previous project's unit; sync _fig_dpi_prev after.
+        self.fig_dpi.blockSignals(True)
         self.fig_dpi.setValue(fig.dpi)
+        self.fig_dpi.blockSignals(False)
+        self._fig_dpi_prev = fig.dpi
         unit = getattr(fig, "dimension_unit", "in") or "in"
         self.fig_dim_unit.blockSignals(True)
         self.fig_dim_unit.setCurrentText(unit)
@@ -2076,6 +2384,7 @@ class MainWindow(QMainWindow):
         for i in range(self.reference_list.count()):
             if self.reference_list.item(i).text().startswith(f"{organism} "):
                 self.reference_list.setCurrentRow(i)
+                self.reference_list.scrollToItem(self.reference_list.item(i))
                 break
         # Backfill the per-organism enrichment/PPI ids on reopen for projects saved
         # before this feature. Only fill when None (don't override an intentional
@@ -2213,7 +2522,8 @@ class MainWindow(QMainWindow):
         self.metadata_messages.setPlainText("Saved config/samples.tsv")
 
     def _validate_metadata(self) -> None:
-        allow_pending_sra = self.config is not None and self.config.input.type == "sra"
+        allow_pending_sra = self.config is not None and self.config.input.type in (
+            "sra", "count_matrix", "microarray")
         messages = validate_metadata(
             self.metadata_table.to_dataframe(),
             allow_pending_sra=allow_pending_sra,
@@ -2277,10 +2587,33 @@ class MainWindow(QMainWindow):
         details = "\n".join(f"{k}: {v}" for k, v in entry.items())
         prefix = "Reference set: " if ref.genome_fasta_url else ""
         self.reference_details.setPlainText(f"{prefix}{note}\n\nAssembly: {entry.get('assembly_accession')} ({entry.get('assembly_name')})  release: {entry.get('release')}\n\n{details}")
+        self._update_organism_label()
+        self._update_enrichment_warning()
 
-    def _save_workflow_settings(self) -> None:
+    def _workflow_settings_problem(self) -> str | None:
+        # Catch contrasts DESeq2 will reject, before they reach the run.
+        num = self.numerator.currentText().strip()
+        den = self.denominator.currentText().strip()
+        if num and den and num == den:
+            return (f"Numerator and denominator are both '{num}'. DESeq2 needs two "
+                    "different groups for a contrast.")
+        factor = self.contrast_factor.text().strip() or "condition"
+        cols = list(self.metadata_table.column_names()) if hasattr(self.metadata_table, "column_names") else []
+        if cols and factor not in cols:
+            return (f"Contrast factor '{factor}' is not a metadata column. "
+                    f"Available columns: {', '.join(cols)}.")
+        return None
+
+    def _save_workflow_settings(self, validate: bool = True) -> bool:
         if self.config is None or self.project_root is None:
-            return
+            return False
+        # Only the differential-expression modes use the contrast, so don't let a
+        # stale numerator/denominator block Unlock / recovery / figure regeneration.
+        if validate:
+            problem = self._workflow_settings_problem()
+            if problem:
+                QMessageBox.warning(self, APP_NAME, problem + "\n\nWorkflow settings were not saved.")
+                return False
         self.config.workflow.aligner = self.aligner.currentText()  # type: ignore[assignment]
         self.config.workflow.quantifier = self.quantifier.currentText()  # type: ignore[assignment]
         self.config.workflow.trimming = self.trim.isChecked()
@@ -2303,6 +2636,7 @@ class MainWindow(QMainWindow):
             contrast.denominator = self.denominator.currentText().strip() or contrast.denominator
             contrast.name = f"{contrast.numerator}_vs_{contrast.denominator}"
         self.manager.save_config(self.project_root, self.config)
+        return True
 
     def _detect_resources(self) -> None:
         # Detection probes WSL/conda (~seconds), so run it off-thread; the busy bar
@@ -2327,9 +2661,21 @@ class MainWindow(QMainWindow):
         self.resources_busy.setVisible(False)
         self.statusBar().showMessage(f"Resource detection failed: {exc}", 8000)
 
+    def _on_profile_changed(self, profile: str) -> None:
+        # Recompute cores/RAM for the chosen preset using the last detected system,
+        # so switching profile reflects immediately instead of staying stale until
+        # the next Detect. Custom keeps whatever the user typed.
+        system = getattr(self, "_last_system", None)
+        if system is None or profile == "custom":
+            return
+        rec = recommend_profile(system, profile)
+        self.cores.setValue(int(rec["total_threads"]))
+        self.ram.setValue(int(rec["total_memory_gb"]))
+
     def _on_detect_done(self, result: object) -> None:
         self.resources_busy.setVisible(False)
         system, rec = result
+        self._last_system = system
         self.cores.setValue(int(rec["total_threads"]))
         self.ram.setValue(int(rec["total_memory_gb"]))
         info = (
@@ -2380,16 +2726,23 @@ class MainWindow(QMainWindow):
         self.sanity_busy.setVisible(True)
         QApplication.processEvents()
         try:
-            allow_pending_sra = self.config is not None and self.config.input.type == "sra"
+            allow_pending_sra = self.config is not None and self.config.input.type in (
+                "sra", "count_matrix", "microarray")
             messages = validate_metadata(
                 self.metadata_table.to_dataframe(),
                 allow_pending_sra=allow_pending_sra,
                 design_variables=self._design_variables(),
             )
+            messages = list(messages) + self._enrichment_config_messages()
             write_check(self.project_root, "01_input_validation", messages)
             text = self._format_messages(messages)
-            self.sanity_text.setPlainText(text)
+            # Show the aggregate phase-check summary, then the per-message detail
+            # below it (the summary previously overwrote the detail entirely).
             self._refresh_phase_checks()
+            if text:
+                self.sanity_text.append("")
+                self.sanity_text.append("Latest validation detail:")
+                self.sanity_text.append(text)
         finally:
             self.sanity_busy.setVisible(False)
 
@@ -2503,10 +2856,17 @@ class MainWindow(QMainWindow):
             return
         if mode in ("run", "resume", "recover") and not self._run_gate_ok():
             return
+        # Backstop the enrichment trap directly at run start (the sanity-check gate
+        # only fires if the user ran checks first). Not for recovery.
+        if mode in ("run", "resume") and not self._confirm_enrichment_config():
+            return
         # Persist the in-memory metadata table so the run uses current edits;
         # Snakemake reads config/samples.tsv from disk, not the GUI table.
         save_metadata(self.metadata_table.to_dataframe(), self.project_root / "config" / "samples.tsv")
-        self._save_workflow_settings()
+        # Validate the contrast only for the differential-expression modes; unlock,
+        # dry-run and the figure/ppi/goi regenerations reuse existing DE results.
+        if not self._save_workflow_settings(validate=mode in ("run", "resume", "recover")):
+            return  # invalid contrast; the user was warned
         self._save_resources()
         run_tag = _new_run_tag() if self.use_wsl.isChecked() else None
         command = build_snakemake_command(
@@ -2535,9 +2895,14 @@ class MainWindow(QMainWindow):
         self._recovery_offered = False
         self._mapping_checked = set()
         self._mapping_halt_decided = False
+        self._saw_star_align = False
         self._stop_in_progress = False
         self._set_running_ui(True)
         if mode in ("run", "resume", "recover", "figures", "goi", "ppi"):
+            # Sub-runs launched from the Outputs / PPI tabs report progress here, so
+            # bring the Run Monitor forward — otherwise the click looks like a no-op.
+            if hasattr(self, "run_monitor_page"):
+                self.tabs.setCurrentWidget(self.run_monitor_page)
             self.progress.setValue(0)
             self.progress.setStyleSheet("")
             status = {"figures": "Regenerating figures...",
@@ -2553,6 +2918,7 @@ class MainWindow(QMainWindow):
                 self._run_finish_wall = None
             self.elapsed_timer.start(1000)
         else:
+            self.phase_label.setText("")  # clear a stale phase from the previous run
             self._set_run_status("Running..." if mode == "dry-run" else "Unlocking...", "#2C6FB6")
         self.runner_thread.start()
 
@@ -2561,19 +2927,38 @@ class MainWindow(QMainWindow):
             return
         assert self.project_root is not None
         reports = self.project_root / "results" / "reports"
-        # If a real pipeline run already produced reports, display those; otherwise
-        # generate the lightweight GUI-side summaries.
-        if not (reports / "run_summary.txt").exists():
-            estimate = estimate_runtime(self.config, self.metadata_table.to_dataframe()) if self.config else None
-            write_timing_summary(
-                self.project_root, estimate,
-                run_started=getattr(self, "_run_start_wall", None),
-                run_finished=getattr(self, "_run_finish_wall", None),
-            )
-            # Probe tool versions inside the WSL env (that is where they live);
-            # a local probe would report every tool as unavailable.
-            use_wsl = getattr(self, "use_wsl", None) is not None and self.use_wsl.isChecked()
-            write_run_summary(self.project_root, data_path("default_config.yaml"), use_wsl=use_wsl)
+        # If a real pipeline run already produced reports, display those immediately.
+        if (reports / "run_summary.txt").exists():
+            self._display_reports()
+            return
+        if getattr(self, "_reports_worker", None) is not None and self._reports_worker.isRunning():
+            return
+        # Building the GUI-side summary probes WSL tool versions (subprocess calls
+        # that can take many seconds on a cold WSL), so do it off the UI thread.
+        self.report_text.setPlainText("Generating reports…")
+        cfg = self.config
+        root = self.project_root
+        df = self.metadata_table.to_dataframe()
+        started = getattr(self, "_run_start_wall", None)
+        finished = getattr(self, "_run_finish_wall", None)
+        use_wsl = getattr(self, "use_wsl", None) is not None and self.use_wsl.isChecked()
+
+        def work():
+            estimate = estimate_runtime(cfg, df) if cfg else None
+            write_timing_summary(root, estimate, run_started=started, run_finished=finished)
+            write_run_summary(root, data_path("default_config.yaml"), use_wsl=use_wsl)
+            return True
+
+        worker = BackgroundWorker(work)
+        worker.done.connect(lambda _=None: self._display_reports())
+        worker.failed.connect(lambda exc: self.report_text.setPlainText(f"Could not generate reports: {exc}"))
+        self._reports_worker = worker
+        worker.start()
+
+    def _display_reports(self) -> None:
+        if getattr(self, "_closing", False) or self.project_root is None:
+            return
+        reports = self.project_root / "results" / "reports"
         sections = []
         for name in ("run_summary.txt", "timing_summary.txt"):
             path = reports / name
@@ -2583,6 +2968,87 @@ class MainWindow(QMainWindow):
         if sanity.exists():
             sections.append(f"===== sanity_checks.txt =====\n{sanity.read_text(encoding='utf-8')}")
         self.report_text.setPlainText("\n\n".join(sections) if sections else "No reports generated yet.")
+
+    def _disable_combo_items(self, combo: QComboBox, labels: set[str], suffix: str = "") -> None:
+        # Show but disable scaffolded options so they can't be selected; append a
+        # suffix to make the unavailability obvious in the dropdown.
+        model = combo.model()
+        for i in range(combo.count()):
+            if combo.itemText(i) in labels:
+                item = model.item(i) if hasattr(model, "item") else None
+                if item is not None:
+                    item.setEnabled(False)
+                if suffix:
+                    combo.setItemText(i, combo.itemText(i) + suffix)
+
+    def _refresh_output_table_pick(self) -> None:
+        # Mode-aware table list: alignment-only counts.txt is meaningless for
+        # count-matrix/microarray runs, so only offer it for the fastq/sra route.
+        if not hasattr(self, "output_table_pick"):
+            return
+        itype = self.config.input.type if self.config is not None else "sra"
+        items = ["results/deseq2/deseq2_results.csv",
+                 "results/deseq2/normalized_counts.csv",
+                 "results/deseq2/unchanged_genes.csv"]
+        if itype in ("sra", "fastq"):
+            items.insert(0, "results/counts/counts.txt")
+        items += ["results/enrichment/kegg_ora.csv", "results/enrichment/kegg_gsea.csv",
+                  "results/stats/wilcoxon_results.csv", "results/stats/set_overlap.csv",
+                  "results/networks/enrichment_emap_nodes.csv",
+                  "results/networks/enrichment_genemap_nodes.csv",
+                  "results/networks/string_ppi_nodes.csv", "results/networks/ppi_hub_genes.csv"]
+        current = self.output_table_pick.currentText()
+        self.output_table_pick.blockSignals(True)
+        self.output_table_pick.clear()
+        self.output_table_pick.addItems(items)
+        idx = self.output_table_pick.findText(current)
+        self.output_table_pick.setCurrentIndex(idx if idx >= 0 else 0)
+        self.output_table_pick.blockSignals(False)
+
+    def _update_enrichment_warning(self) -> None:
+        if not hasattr(self, "enrichment_warn"):
+            return
+        enr = self.config.enrichment if self.config is not None else None
+        show = (self.enrichment.isChecked() and enr is not None
+                and not enr.kegg_organism and not enr.orgdb)
+        self.enrichment_warn.setVisible(show)
+
+    def _update_organism_label(self) -> None:
+        if not hasattr(self, "current_organism_label"):
+            return
+        name = self.config.reference.organism_name if self.config is not None else None
+        self.current_organism_label.setText(f"Selected organism: {name or '— none —'}")
+
+    def _enrichment_config_messages(self) -> list[dict[str, str]]:
+        # Surface the silent count-matrix/microarray enrichment trap: enrichment is
+        # enabled but no organism id is set, so GO/KEGG/PPI would be skipped.
+        if self.config is None or not self.config.workflow.enrichment:
+            return []
+        enr = self.config.enrichment
+        if not enr.kegg_organism and not enr.orgdb:
+            return [{"status": "REVIEW_REQUIRED",
+                     "message": "Enrichment is enabled but no organism is configured "
+                                "(no KEGG code or OrgDb). GO/KEGG enrichment and the STRING "
+                                "PPI network will be skipped. Select your organism on the "
+                                "Reference Manager tab, or disable Enrichment."}]
+        return []
+
+    def _confirm_enrichment_config(self) -> bool:
+        # Enrichment on with no organism id silently produces nothing; confirm rather
+        # than let the user discover the empty result only after the run finishes.
+        if self.config is None or not self.config.workflow.enrichment:
+            return True
+        enr = self.config.enrichment
+        if enr.kegg_organism or enr.orgdb:
+            return True
+        reply = QMessageBox.question(
+            self, APP_NAME,
+            "Enrichment is enabled but no organism is configured, so GO/KEGG enrichment "
+            "and the STRING PPI network will be skipped.\n\nSelect your organism on the "
+            "Reference Manager tab first, or continue without enrichment?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        return reply == QMessageBox.StandardButton.Yes
 
     def _require_project(self) -> bool:
         if self.project_root is None:
