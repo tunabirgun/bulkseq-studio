@@ -79,12 +79,30 @@ render <- function(ok, expr, png_path, svg_path, empty_msg) {
 }
 
 have_ep <- requireNamespace("enrichplot", quietly = TRUE)
-no_data <- "No enrichment results (organism unmapped or nothing significant)"
-no_kegg <- "No KEGG pathway enrichment (no KEGG code or nothing significant)"
 if (have_ep) suppressMessages(library(enrichplot))
 
 backend <- tryCatch(as.character(obj$backend), error = function(e) NA_character_)
 gp_tab <- tryCatch(obj$gprofiler_table, error = function(e) NULL)
+
+# Empty-figure messages, split by cause so an empty plot is not misread as failure:
+# the route ran but nothing cleared the cutoff, vs the organism has no annotation
+# database / KEGG code, vs enrichment was skipped or did not complete. orgdb / kegg
+# are read from the persisted objects; a pre-0.8.3 RDS has no `kegg` field, so KEGG
+# falls back to the original combined wording (backward compatible).
+orgdb_name <- tryCatch(as.character(obj$orgdb), error = function(e) character(0))
+kegg_code  <- tryCatch(as.character(obj$kegg), error = function(e) character(0))
+enrich_ran     <- length(backend) > 0 && !is.na(backend[1]) && nzchar(backend[1])
+have_orgdb     <- length(orgdb_name) > 0 && nzchar(orgdb_name[1])
+kegg_present   <- "kegg" %in% names(obj)
+have_kegg_code <- kegg_present && length(kegg_code) > 0 && nzchar(kegg_code[1])
+no_go <- if (!enrich_ran) "No GO enrichment (analysis was skipped or did not complete)" else
+         if (have_orgdb)  "No GO BP terms passed the significance cutoff" else
+                          "No GO enrichment: no annotation database (OrgDb) for this organism"
+no_gsea <- "No significant GO GSEA gene sets"
+no_kegg <- if (!enrich_ran)    "No KEGG enrichment (analysis was skipped or did not complete)" else
+           if (!kegg_present)  "No KEGG pathway enrichment (no KEGG code or nothing significant)" else
+           if (have_kegg_code) "No KEGG pathways passed the significance cutoff" else
+                               "No KEGG enrichment: no KEGG organism code for this organism"
 
 # Manual ORA dotplot from a g:Profiler gost $result subset (no S4 object exists for
 # the gost backend). Mirrors the enrichplot dotplot: term NAME on y, GeneRatio
@@ -132,16 +150,27 @@ if (identical(backend, "gprofiler")) {
   gse <- obj$gse
   geneList <- obj$geneList
 
-  # ORA dotplot (combined up+down GO BP terms).
-  render(have_ep && nrows(ego_all) > 0,
-         themed_dotplot(ego_all, show_cat),
-         out[["dotplot_png"]], out[["dotplot_svg"]], no_data)
+  # ORA dotplot: combined up+down GO BP terms by default. On small designs the
+  # combined hypergeometric test can return nothing while one direction still has
+  # terms, so fall back to the up- (then down-) regulated set and record the
+  # provenance in a caption instead of rendering an empty placeholder.
+  dot_obj <- ego_all; dot_cap <- NULL
+  if (nrows(dot_obj) == 0 && nrows(obj$ego_up) > 0) {
+    dot_obj <- obj$ego_up
+    dot_cap <- "Up-regulated genes only (combined up+down set had no enriched GO BP terms)"
+  } else if (nrows(dot_obj) == 0 && nrows(obj$ego_down) > 0) {
+    dot_obj <- obj$ego_down
+    dot_cap <- "Down-regulated genes only (combined up+down set had no enriched GO BP terms)"
+  }
+  render(have_ep && nrows(dot_obj) > 0,
+         themed_dotplot(dot_obj, show_cat) + labs(caption = dot_cap),
+         out[["dotplot_png"]], out[["dotplot_svg"]], no_go)
 
   # GSEA running-score for the top gene set, and a ridgeplot of the leading sets.
   # No embedded title (caption lives in text); running-score line from the palette.
   render(have_ep && nrows(gse) > 0,
          gseaplot2(gse, geneSetID = 1, base_size = base_size, color = gsea_col),
-         out[["gsea_png"]], out[["gsea_svg"]], no_data)
+         out[["gsea_png"]], out[["gsea_svg"]], no_gsea)
   # enrichplot::ridgeplot hits an "object 'selected'" bug on these gseaResults, so
   # build leading-edge fold-change ridges directly from core_enrichment + geneList.
   ridge_plot <- if (have_ep && nrows(gse) > 0) tryCatch({
@@ -169,10 +198,10 @@ if (identical(backend, "gprofiler")) {
   render(have_ep && nrows(ego_all) > 0,
          tryCatch(cnetplot(ego_all, showCategory = cnet_cat, node_label = "category", foldChange = geneList),
                   error = function(e) cnetplot(ego_all, showCategory = cnet_cat, node_label = "category")),
-         out[["cnet_png"]], out[["cnet_svg"]], no_data)
+         out[["cnet_png"]], out[["cnet_svg"]], no_go)
   render(have_ep && nrows(ego_all) > 1,
          emapplot(pairwise_termsim(ego_all), showCategory = emap_cat),
-         out[["emap_png"]], out[["emap_svg"]], no_data)
+         out[["emap_png"]], out[["emap_svg"]], no_go)
 
   # Disease-ontology ORA dotplot (human/mouse only; placeholder otherwise).
   render(have_ep && nrows(obj$ego_do) > 0,

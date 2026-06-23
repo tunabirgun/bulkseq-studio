@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.8.3 — 2026-06-23
+
+### Fixed
+
+- **Enrichment dotplots no longer look empty when only one direction is enriched.**
+  The GO over-representation dotplot showed the combined (up + down) result; on small
+  designs the combined hypergeometric test can return no terms while the up- or
+  down-regulated set alone does. The bundled pasilla benchmark is one such case: zero
+  combined GO BP terms but six from the up-regulated genes, so the figure rendered an
+  empty placeholder despite real enrichment existing. The dotplot now falls back to the
+  up- (then down-) regulated terms when the combined set is empty and adds a caption
+  stating which set is shown. The placeholder text is split by cause: "No GO BP terms
+  passed the significance cutoff" (the analysis ran), "no annotation database (OrgDb)
+  for this organism", and "analysis was skipped or did not complete", replacing the
+  single ambiguous "organism unmapped or nothing significant" wording; the KEGG
+  placeholder is split the same way. The KEGG organism code is now stored with the
+  enrichment objects so the figures can tell "no KEGG code" from "nothing significant".
+  Figures regenerated from objects written by earlier versions still render, using the
+  previous KEGG wording. GSEA, ridgeline, gene-concept and term-similarity figures are
+  unchanged.
+
 ## 0.8.2 — 2026-06-23
 
 ### Fixed

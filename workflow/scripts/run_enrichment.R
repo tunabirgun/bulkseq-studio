@@ -217,6 +217,7 @@ if (orgdb_ok) {
                  gse = gse, ego_do = ego_do,
                  ekegg_all = kegg$ekegg_all, kegg_gse = kegg$kegg_gse,
                  geneList = gene_list, orgdb = orgdb_name,
+                 kegg = if (has_kegg) kegg_org else "",
                  backend = "clusterprofiler", gprofiler_table = NULL),
             out[["objects"]])
 
@@ -303,6 +304,7 @@ if (orgdb_ok) {
                  gse = NULL, ego_do = NULL,
                  ekegg_all = kegg$ekegg_all, kegg_gse = kegg$kegg_gse,
                  geneList = gene_list, orgdb = "",
+                 kegg = if (has_kegg) kegg_org else "",
                  backend = "gprofiler", gprofiler_table = gprofiler_table),
             out[["objects"]])
 
@@ -349,6 +351,7 @@ if (orgdb_ok) {
                  gse = NULL, ego_do = NULL,
                  ekegg_all = kegg$ekegg_all, kegg_gse = kegg$kegg_gse,
                  geneList = gene_list, orgdb = "",
+                 kegg = if (has_kegg) kegg_org else "",
                  backend = "clusterprofiler", gprofiler_table = NULL),
             out[["objects"]])
 
