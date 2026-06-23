@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.2 — 2026-06-23
+
+### Fixed
+
+- **First-time WSL setup no longer dead-ends asking for a sudo password.** On a clean
+  WSL distribution that lacked `curl` or `bzip2`, the setup script ran `sudo apt-get`
+  to install them, but the GUI runs the installer with no terminal, so sudo had
+  nowhere to read a password and the install failed before micromamba was ever
+  installed. The bootstrap now downloads and unpacks micromamba with the `python3`
+  standard library (present on a default Ubuntu WSL), so the normal path needs no
+  system packages and no sudo. `curl`/`wget`+`bzip2` and, only with already-passwordless
+  sudo, `apt` remain as fallbacks for minimal distributions; if none apply the script
+  prints the exact command to run by hand instead of failing silently. The setup
+  screen wording dropped the "may ask for your WSL sudo password" note and now points
+  to the log's recovery instructions when an install exits non-zero. Verified by running
+  the real script in a clean WSL HOME: micromamba and the full core environment
+  (Snakemake, STAR, featureCounts, samtools, fastp, FastQC, MultiQC) install end-to-end
+  with no sudo.
+
 ## 0.8.1 — 2026-06-22
 
 ### Added

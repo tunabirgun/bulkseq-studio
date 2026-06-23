@@ -569,7 +569,8 @@ class ReadinessDialog(QDialog):
                 STATE_ACTION,
                 "The bulkseq environment is missing or incomplete. This installs Snakemake, "
                 "SRA tools, FastQC, MultiQC, fastp, STAR, HISAT2, Salmon, featureCounts and "
-                "samtools. It can take a while and may ask for your WSL sudo password.",
+                "samtools. It can take a while and runs in your WSL user account — no sudo "
+                "password needed.",
                 action_label="Install / repair core environment",
                 action_handler=self.install_wsl_bioenv,
                 action_enabled=not self._installing,
@@ -658,7 +659,8 @@ class ReadinessDialog(QDialog):
         self.stop_install_button.setEnabled(True)
         self._log(
             f"Installing WSL bioinformatics environment profile: {profile}. This can take a "
-            "long time and may ask for your WSL sudo password.\n"
+            "long time and installs into your WSL user account; it does not need a sudo "
+            "password.\n"
         )
         self.wsl_install_thread = WslBioenvInstallThread(profile)
         self.wsl_install_thread.line.connect(self.text.append)
@@ -668,6 +670,12 @@ class ReadinessDialog(QDialog):
     def _wsl_bioenv_finished(self, code: int) -> None:
         self._installing = False
         self._log(f"WSL bioinformatics installer finished with exit code {code}.\n")
+        if code != 0:
+            self._log(
+                "Setup did not finish cleanly. Open \"Show details / log\" and look for an "
+                "ACTION REQUIRED note near the end of the log — it lists the exact WSL command "
+                "to run if a prerequisite must be installed manually.\n"
+            )
         self.stop_install_button.setEnabled(False)
         self.stop_install_button.setVisible(False)
         self.refresh()
