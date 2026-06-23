@@ -104,6 +104,39 @@ class ProjectManager:
         )
 
     @staticmethod
+    def _version_tuple(version: str) -> tuple[int, ...]:
+        # Parse "0.8.4" -> (0, 8, 4); non-numeric chunks degrade to 0 so a malformed
+        # version compares as older rather than raising.
+        parts = []
+        for chunk in str(version).split("."):
+            digits = "".join(ch for ch in chunk if ch.isdigit())
+            parts.append(int(digits) if digits else 0)
+        return tuple(parts)
+
+    def workflow_version_of(self, project_root: Path) -> str | None:
+        # The workflow version recorded when the project's workflow/ was last copied.
+        meta = project_root / "workflow" / "workflow_metadata.yaml"
+        if not meta.exists():
+            return None
+        try:
+            data = yaml.safe_load(meta.read_text(encoding="utf-8")) or {}
+        except Exception:
+            return None
+        recorded = data.get("workflow_version")
+        return str(recorded) if recorded else None
+
+    def sync_workflow_if_outdated(self, project_root: Path) -> str | None:
+        # An existing project keeps its own copy of workflow/, so a workflow fix
+        # shipped in an app update does not reach it on its own. Re-copy the bundled
+        # workflow when the project's recorded version is missing or older than this
+        # build's; return the version synced to, or None when already current.
+        recorded = self.workflow_version_of(project_root)
+        if recorded is not None and self._version_tuple(recorded) >= self._version_tuple(WORKFLOW_VERSION):
+            return None
+        self.copy_workflow_metadata(project_root)
+        return WORKFLOW_VERSION
+
+    @staticmethod
     def _write_yaml(path: Path, data: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")

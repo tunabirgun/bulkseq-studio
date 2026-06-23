@@ -2869,6 +2869,16 @@ class MainWindow(QMainWindow):
         if self._run_active or (self.runner is not None and self.runner.is_running()):
             self.log_text.append("A run is already active. Stop it before starting another.")
             return
+        # An existing project keeps its own copy of workflow/, so a workflow fix from an
+        # app update would not reach it. Re-sync the bundled scripts when the project's
+        # recorded workflow_version is older than this build's, before any run or figure
+        # regeneration. Best-effort: never block a run if the copy fails.
+        try:
+            synced = self.manager.sync_workflow_if_outdated(self.project_root)
+            if synced:
+                self.log_text.append(f"Updated project workflow scripts to match this app version ({synced}).")
+        except Exception as exc:
+            self.log_text.append(f"Could not refresh project workflow scripts: {exc}")
         if mode in ("run", "resume", "recover") and not self._run_gate_ok():
             return
         # Backstop the enrichment trap directly at run start (the sanity-check gate

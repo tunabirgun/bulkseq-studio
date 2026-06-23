@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.8.4 — 2026-06-23
+
+### Fixed
+
+- **Workflow fixes now reach existing projects after an app update.** A project keeps
+  its own copy of `workflow/`, copied once when the project is created, and runs
+  Snakemake against that copy. So a workflow fix shipped in a new app version (such as
+  the 0.8.3 enrichment dotplot fallback) did not appear in a project made by an earlier
+  version, even after updating the app. Before each run or figure regeneration, the app
+  now compares the project's recorded `workflow_version` against the installed version
+  and re-copies the bundled `workflow/` when the project's copy is older, recording the
+  new version. A line in the run log notes when this happens. The check is a no-op when
+  the project is already current, and a failed copy never blocks the run. After
+  installing this version, open an existing project and click "Regenerate figures" (or
+  start a run) to pick up the 0.8.3 enrichment fix without recreating the project.
+
 ## 0.8.3 — 2026-06-23
 
 ### Fixed
