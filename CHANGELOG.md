@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.9.0 — 2026-06-24
+
+### Added
+
+- **Rice (Oryza sativa) reference preset and a salt-stress benchmark.** Added the Japonica
+  IRGSP-1.0 NCBI RefSeq preset and a bundled benchmark, `rice_cy1000_salt_paired` — a
+  six-sample paired-end subset (three control, three 5-day salt) of the super-hybrid rice
+  CY1000 experiment (DDBJ PRJDB38133). Validated end to end: ~87–92% uniquely mapped per
+  sample, 12,171 DE genes (padj < 0.05), KEGG ORA/GSEA + g:Profiler GO enrichment, and a
+  58-node STRING PPI network. The enriched terms reproduce the canonical rice salt-stress
+  response (ROS detoxification and glutathione metabolism, ABA / plant-hormone signalling,
+  ion and amino-acid transport, with photosynthesis and primary carbon metabolism
+  down-regulated). This is the first crop preset; it establishes the NCBI-RefSeq crop route.
+
+### Fixed
+
+- **g:Profiler enrichment no longer fails on result serialization.** Writing the gost result
+  table failed with "unimplemented type 'list' in 'EncodeElement'" because g:Profiler returns
+  list-valued columns (e.g. `parents`); the error aborted the whole route, leaving GO *and*
+  KEGG empty for every organism without a Bioconductor OrgDb. Non-atomic columns are now
+  dropped before the CSV is written (the full table is kept for the figures).
+- **NCBI RefSeq crop gene ids map to KEGG and STRING.** RefSeq gene ids are `LOC<GeneID>`
+  (e.g. `LOC4326813`), while KEGG (`osa:4326813`) and STRING key on the bare NCBI GeneID. A
+  shape-gated `LOC`-prefix strip in the enrichment and STRING-network steps maps them
+  correctly, without touching MSU-style `LOC_Os` locus tags.
+- **Benchmark loader accepts datasets without GEO accessions.** DDBJ DRR runs have no GEO /
+  experiment accession; those fields and `base_count` are now optional when scaffolding a
+  benchmark project.
+
 ## 0.8.4 — 2026-06-23
 
 ### Fixed

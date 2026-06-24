@@ -101,10 +101,12 @@ def _samples_dataframe(benchmark: dict[str, Any]) -> pd.DataFrame:
                 "replicate": sample["replicate"],
                 "batch": sample["batch"],
                 "organism": benchmark["organism_name"],
-                "geo_accession": sample["geo_accession"],
-                "experiment_accession": sample["experiment_accession"],
-                "read_count": sample["read_count"],
-                "base_count": sample["base_count"],
+                # GEO/experiment accessions and base_count are GEO/ENA-centric and
+                # absent for some sources (e.g. DDBJ DRR runs), so they are optional.
+                "geo_accession": sample.get("geo_accession", ""),
+                "experiment_accession": sample.get("experiment_accession", ""),
+                "read_count": sample.get("read_count", ""),
+                "base_count": sample.get("base_count", ""),
                 "fastq_1_url": sample["fastq_1_url"],
                 "fastq_2_url": sample["fastq_2_url"],
             }

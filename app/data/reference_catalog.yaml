@@ -234,6 +234,35 @@ references:
     notes: Model plant; small genome (~120 Mb).
     recommended_aligner_settings: plant genome; STAR defaults.
     genome_size_category: plant
+  - organism_name: Oryza sativa Japonica Group
+    scientific_name: Oryza sativa Japonica Group
+    strain: Nipponbare
+    taxon_id: 39947
+    source: NCBI RefSeq
+    assembly_accession: GCF_001433935.1
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: osa
+    string_taxon: 39947
+    gprofiler_organism: osativa
+    assembly_name: IRGSP-1.0
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/001/433/935/GCF_001433935.1_IRGSP-1.0/GCF_001433935.1_IRGSP-1.0_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/001/433/935/GCF_001433935.1_IRGSP-1.0/GCF_001433935.1_IRGSP-1.0_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq IRGSP-1.0
+    date: null
+    notes: >
+      Rice (~375 Mb; STAR peak ~8 GB). NCBI RefSeq chosen over Ensembl Plants so the
+      gene_id is LOC<GeneID> (e.g. LOC4326813); run_enrichment.R strips the LOC prefix to
+      the bare NCBI GeneID that KEGG osa is keyed by (osa:4326813). RAP-DB Os..g.. ids
+      (Ensembl Plants) are not KEGG keys and would empty the KEGG route. No Bioconductor
+      OrgDb, so GO comes from g:Profiler (osativa) and KEGG ORA+GSEA via osa. count_matrix
+      input must use NCBI GeneIDs (bare or LOC-prefixed). STRING taxon 39947 (Japonica).
+    recommended_aligner_settings: STAR; genomeSAindexNbases auto-computes to 13 for this 375 Mb genome; sjdbOverhang = readLength-1.
+    genome_size_category: plant
   - organism_name: Drosophila melanogaster
     scientific_name: Drosophila melanogaster
     strain: BDGP6

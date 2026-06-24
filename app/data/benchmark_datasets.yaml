@@ -159,3 +159,97 @@ benchmarks:
         base_count: 1015795872
         fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/007/SRR11684207/SRR11684207_1.fastq.gz
         fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/007/SRR11684207/SRR11684207_2.fastq.gz
+  - id: rice_cy1000_salt_paired
+    name: Rice CY1000 salt-stress paired-end subset
+    organism_name: Oryza sativa Japonica Group
+    reference_preset: Oryza sativa Japonica Group
+    genome_size_category: plant
+    contrast:
+      name: cy1000_salt_vs_control
+      factor: condition
+      numerator: salt
+      denominator: control
+      reference_level: control
+    reference:
+      source: NCBI RefSeq
+      release: RefSeq IRGSP-1.0
+      assembly: IRGSP-1.0
+      annotation_format: gtf
+      genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/001/433/935/GCF_001433935.1_IRGSP-1.0/GCF_001433935.1_IRGSP-1.0_genomic.fna.gz
+      annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/001/433/935/GCF_001433935.1_IRGSP-1.0/GCF_001433935.1_IRGSP-1.0_genomic.gtf.gz
+    source_study: PRJDB38133 (umbrella PRJCA018101)
+    study_title: Molecular mechanism of heterosis and salt tolerance in super hybrid rice CY1000
+    description: >
+      Six-sample paired-end subset of the super-hybrid rice CY1000 salt-stress RNA-seq
+      experiment: three control and three 5-day NaCl salt-stress biological replicates of
+      the CY1000 genotype. The full DDBJ deposit is a 3-genotype x 2-condition x 3-replicate
+      factorial (18 runs, DRR805002-DRR805019); this subset is the CY1000-only salt-vs-control
+      arm, the cleanest single-contrast slice. Reads are mapped to the japonica IRGSP-1.0
+      reference, aligning with the osa KEGG / osativa g:Profiler / STRING 39947 resources.
+    notes:
+      - PRJDB38133 has no associated publication; validate directionally against canonical rice salt-stress biology (ion transporters OsHKT1;5/OsSOS1/OsNHX1 up, osmolyte/LEA genes up, ROS scavenging up; ABA signalling and ion-homeostasis pathways enriched), not against published DEG counts.
+      - Rice uses the NCBI RefSeq IRGSP-1.0 preset (gene_id LOC<GeneID>) so the always-on KEGG osa route works after the LOC-strip in run_enrichment.R. The Ensembl Plants RAP-DB GTF would break KEGG and must not be substituted.
+      - No Bioconductor OrgDb for rice; GO comes from g:Profiler (osativa). KEGG ORA+GSEA run via osa.
+      - Indica/hybrid reads on the japonica reference; expect a mapping-rate dip at divergent loci and check markers by Os/LOC gene id, not symbol.
+      - Use allow_pending_sra validation until the FASTQ files are downloaded. Subset download ~25 GB.
+    samples:
+      - sample_id: rCY1000_1
+        condition: control
+        replicate: 1
+        batch: prjdb38133
+        layout: paired
+        original_accession: DRR805002
+        read_count: 25969262
+        base_count: 7790778600
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805002/DRR805002_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805002/DRR805002_2.fastq.gz
+      - sample_id: rCY1000_2
+        condition: control
+        replicate: 2
+        batch: prjdb38133
+        layout: paired
+        original_accession: DRR805003
+        read_count: 28270315
+        base_count: 8481094500
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805003/DRR805003_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805003/DRR805003_2.fastq.gz
+      - sample_id: rCY1000_3
+        condition: control
+        replicate: 3
+        batch: prjdb38133
+        layout: paired
+        original_accession: DRR805004
+        read_count: 31252661
+        base_count: 9375798300
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805004/DRR805004_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805004/DRR805004_2.fastq.gz
+      - sample_id: rCY1000_5d_1
+        condition: salt
+        replicate: 1
+        batch: prjdb38133
+        layout: paired
+        original_accession: DRR805005
+        read_count: 19161439
+        base_count: 5748431700
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805005/DRR805005_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805005/DRR805005_2.fastq.gz
+      - sample_id: rCY1000_5d_2
+        condition: salt
+        replicate: 2
+        batch: prjdb38133
+        layout: paired
+        original_accession: DRR805006
+        read_count: 35777394
+        base_count: 10733218200
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805006/DRR805006_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805006/DRR805006_2.fastq.gz
+      - sample_id: rCY1000_5d_3
+        condition: salt
+        replicate: 3
+        batch: prjdb38133
+        layout: paired
+        original_accession: DRR805007
+        read_count: 34123273
+        base_count: 10236981900
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805007/DRR805007_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805007/DRR805007_2.fastq.gz

@@ -35,6 +35,12 @@ nrows <- function(x) if (is.null(x)) 0 else tryCatch(nrow(as.data.frame(x)), err
 strip_version <- function(id) {
   v <- grepl("^ENS", id)
   id[v] <- sub("\\.\\d+$", "", id[v])
+  # NCBI RefSeq crop/plant gene ids are LOC<GeneID> (e.g. rice LOC4326813); KEGG keys
+  # on the bare NCBI GeneID (osa:4326813), so strip the LOC prefix. Shape-gated to
+  # LOC + digits only, so MSU/TIGR locus tags (LOC_Os01g01010, underscore) and any
+  # other id pass through unchanged.
+  l <- grepl("^LOC[0-9]+$", id)
+  id[l] <- sub("^LOC", "", id[l])
   id
 }
 
@@ -293,7 +299,14 @@ if (orgdb_ok) {
     if (!is.null(gprofiler_table)) {
       go_rows <- gprofiler_table[gprofiler_table$source == "GO:BP", , drop = FALSE]
       n_go <- nrow(go_rows)
-      if (n_go > 0) write.csv(go_rows, out[["go"]], row.names = FALSE)
+      # gost results carry list-columns (e.g. `parents`) that write.csv cannot
+      # serialize ("unimplemented type 'list' in 'EncodeElement'"); the error would
+      # otherwise abort the whole route, including the always-on KEGG block below.
+      # Keep only atomic columns for the CSV (the full table is kept in the RDS).
+      if (n_go > 0) {
+        atomic <- vapply(go_rows, is.atomic, logical(1))
+        write.csv(go_rows[, atomic, drop = FALSE], out[["go"]], row.names = FALSE)
+      }
     }
 
     # KEGG ORA + GSEA via clusterProfiler on the raw locus-tag ids (always-on tail).

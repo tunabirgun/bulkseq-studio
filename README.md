@@ -103,14 +103,15 @@ snakemake --cores 8 --resources mem_mb=24000 --configfile config/config.yaml
 
 ## Validation
 
-The pipeline is validated end-to-end on two real datasets:
+The pipeline is validated end-to-end on three real datasets:
 
 - **Drosophila — pasilla** (Ensembl): 467 DE genes, the *pasilla* gene strongly down-regulated, all sanity checks PASS. The four-sample subset ships as a one-click benchmark project (`examples/benchmarks/pasilla_paired_subset`).
 - **Fusarium graminearum — spore vs mycelium** (SRP039087; PH-1, NCBI RefSeq): clean PC1 = 98% separation, 5,734 DE genes (2,723 up / 2,478 down at |log2FC| > 1), top hits at log2FC 11–14, consistent with the known conidium↔mycelium developmental transition.
+- **Oryza sativa (rice) — salt stress** (PRJDB38133; super-hybrid CY1000, IRGSP-1.0 NCBI RefSeq): 12,171 DE genes (5,732 up / 6,439 down at padj < 0.05) on the six-sample control vs 5-day salt subset; KEGG ORA/GSEA + g:Profiler GO enrichment and a 58-node STRING PPI network reproduce the canonical salt-stress response (ROS detoxification and glutathione metabolism, ABA / plant-hormone signalling, ion and amino-acid transport; photosynthesis and primary carbon metabolism down-regulated).
 
-Both runs reproduce byte-for-byte across pipeline revisions, confirming the analysis is deterministic.
+The pasilla and Fusarium runs reproduce byte-for-byte across pipeline revisions, confirming the analysis is deterministic.
 
-**Bundled benchmark projects.** Two one-click datasets are available from *Create Benchmark Project* on the Project tab: the Drosophila pasilla subset above, and a *Saccharomyces cerevisiae* wild-type vs *ume6Δ* subset (PRJNA630199 / SRP260000; R64-1-1, Ensembl) — a small, fast genome on a different organism that exercises the g:Profiler + KEGG enrichment route. Each scaffolds an SRA-mode project (samples, contrast, reference) that downloads its reads and runs the full pipeline; the yeast project's pipeline DAG is verified to resolve end-to-end (download → STAR → featureCounts → DESeq2 → enrichment → networks).
+**Bundled benchmark projects.** Three one-click datasets are available from *Create Benchmark Project* on the Project tab: the Drosophila pasilla subset above, a *Saccharomyces cerevisiae* wild-type vs *ume6Δ* subset (PRJNA630199 / SRP260000; R64-1-1, Ensembl) — a small, fast genome on a different organism that exercises the g:Profiler + KEGG enrichment route — and an *Oryza sativa* (rice) super-hybrid CY1000 control vs 5-day salt-stress subset (PRJDB38133; IRGSP-1.0 NCBI RefSeq) that exercises the crop route (KEGG `osa` via the NCBI-RefSeq `LOC<GeneID>` strip, g:Profiler `osativa`, STRING taxid 39947). Each scaffolds an SRA-mode project (samples, contrast, reference) that downloads its reads and runs the full pipeline; the yeast project's pipeline DAG is verified to resolve end-to-end (download → STAR → featureCounts → DESeq2 → enrichment → networks).
 
 ## Project layout
 

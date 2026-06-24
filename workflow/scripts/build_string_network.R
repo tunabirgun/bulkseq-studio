@@ -77,6 +77,11 @@ skip <- function(msg) {
   write_check("WARNING", msg)
 }
 
+# NCBI RefSeq crop gene ids are LOC<GeneID>; STRING (like KEGG) maps the bare NCBI
+# GeneID, not the LOC-prefixed form, so strip the prefix before mapping. Shape-gated
+# to LOC + digits, so locus tags (LOC_Os.., FGSG_..) and symbols pass through.
+strip_loc <- function(x) { i <- grepl("^LOC[0-9]+$", x); x[i] <- sub("^LOC", "", x[i]); x }
+
 tax <- NA_integer_
 if (!is.na(taxon_override)) {
   tax <- taxon_override
@@ -108,6 +113,7 @@ ok <- tryCatch({
   seed <- seed[!is.na(seed) & nzchar(seed)]
   if (length(seed) < 2) stop("fewer than 2 seed genes (no usable symbols or gene IDs)")
   if (length(seed) > max_seed) seed <- head(seed, max_seed)
+  seed <- strip_loc(seed)  # NCBI RefSeq LOC<GeneID> -> bare GeneID that STRING maps
 
   cache_dir <- "results/networks/string_cache"; dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
   sdb <- STRINGdb$new(version = string_version, species = tax, score_threshold = score_thr, input_directory = cache_dir)
@@ -132,7 +138,7 @@ ok <- tryCatch({
   # Case-insensitive join keyed on whichever id seeded the network (symbol, else
   # gene_id), so nodes are not all-NA log2FC for locus-tag genomes. STRING may also
   # return a different symbol case than the DE table.
-  key_col <- if (seed_from_gene_id) resdf$gene_id else resdf$symbol
+  key_col <- if (seed_from_gene_id) strip_loc(resdf$gene_id) else resdf$symbol
   lfc_map <- setNames(resdf$log2FoldChange, toupper(as.character(key_col)))
   V(g)$log2FC <- unname(lfc_map[toupper(V(g)$name)])
 
