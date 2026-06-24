@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.10.1 — 2026-06-24
+
+### Added
+
+- **Seven more crop reference presets (NCBI RefSeq).** Maize (*Zea mays* B73, Zm-B73-NAM-5.0),
+  bread wheat (*Triticum aestivum* Chinese Spring, IWGSC CS RefSeq v2.1), soybean (*Glycine max*
+  Williams 82, v4.0), barley (*Hordeum vulgare* Morex, MorexV3), sorghum (*Sorghum bicolor*
+  BTx623, NCBIv3), tomato (*Solanum lycopersicum* Heinz 1706, SLM_r2.1) and potato (*Solanum
+  tuberosum* DM1-3 516 R44, SolTub_3.0). All sourced from NCBI RefSeq so the gene_id
+  (`LOC<GeneID>`) keys KEGG and STRING via the same LOC strip as rice; GO comes from g:Profiler
+  (crops have no Bioconductor OrgDb). The KEGG / g:Profiler / STRING codes and the genome + GTF
+  URLs were verified against the live KEGG, g:Profiler, STRING and NCBI Datasets services, and
+  the `LOC<GeneID>` gene-id convention was confirmed on the maize and tomato annotations.
+  Wheat (~14.5 Gb) and barley (~4.5 Gb) are flagged in their notes as not STAR-feasible under
+  the ~40 GB WSL2 cap (use count-matrix mode or a high-memory node).
+
 ## 0.10.0 — 2026-06-24
 
 ### Added

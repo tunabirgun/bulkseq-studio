@@ -263,6 +263,195 @@ references:
       input must use NCBI GeneIDs (bare or LOC-prefixed). STRING taxon 39947 (Japonica).
     recommended_aligner_settings: STAR; genomeSAindexNbases auto-computes to 13 for this 375 Mb genome; sjdbOverhang = readLength-1.
     genome_size_category: plant
+  - organism_name: Zea mays
+    scientific_name: Zea mays
+    strain: B73
+    taxon_id: 4577
+    source: NCBI RefSeq
+    assembly_accession: GCF_902167145.1
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: zma
+    string_taxon: 4577
+    gprofiler_organism: zmays
+    assembly_name: Zm-B73-REFERENCE-NAM-5.0
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/902/167/145/GCF_902167145.1_Zm-B73-REFERENCE-NAM-5.0/GCF_902167145.1_Zm-B73-REFERENCE-NAM-5.0_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/902/167/145/GCF_902167145.1_Zm-B73-REFERENCE-NAM-5.0/GCF_902167145.1_Zm-B73-REFERENCE-NAM-5.0_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq Zm-B73-REFERENCE-NAM-5.0
+    date: null
+    notes: >
+      Maize B73 (~2.18 Gb). gene_id = LOC<GeneID> (e.g. LOC103644366); the LOC strip in
+      run_enrichment.R yields the bare NCBI GeneID that KEGG zma is keyed by, and STRING
+      (taxon 4577) and g:Profiler (zmays) resolve it too. No Bioconductor OrgDb, so GO comes
+      from g:Profiler and KEGG ORA+GSEA run via zma. STAR peaks ~28-32 GB at defaults:
+      feasible under the ~40 GB WSL2 cap but run ONE STAR job; add --genomeSAsparseD 2 under
+      memory pressure.
+    recommended_aligner_settings: STAR single job; add --genomeSAsparseD 2 if memory-tight; sjdbOverhang = readLength-1.
+    genome_size_category: plant
+  - organism_name: Triticum aestivum
+    scientific_name: Triticum aestivum
+    strain: Chinese Spring
+    taxon_id: 4565
+    source: NCBI RefSeq
+    assembly_accession: GCF_018294505.1
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: taes
+    string_taxon: 4565
+    gprofiler_organism: taestivum
+    assembly_name: IWGSC_CS_RefSeq_v2.1
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/018/294/505/GCF_018294505.1_IWGSC_CS_RefSeq_v2.1/GCF_018294505.1_IWGSC_CS_RefSeq_v2.1_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/018/294/505/GCF_018294505.1_IWGSC_CS_RefSeq_v2.1/GCF_018294505.1_IWGSC_CS_RefSeq_v2.1_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq IWGSC_CS_RefSeq_v2.1
+    date: null
+    notes: >
+      Bread wheat Chinese Spring, IWGSC CS RefSeq v2.1 (~14.5 Gb allohexaploid). gene_id =
+      LOC<GeneID> (KEGG taes key after the LOC strip; g:Profiler taestivum; STRING 4565). No
+      OrgDb, so GO comes from g:Profiler. WARNING: a full STAR index needs ~150 GB RAM and is
+      NOT feasible under the ~40 GB WSL2 cap or the 80 GB host -- use count_matrix mode, or
+      HISAT2/salmon on a >=128 GB node.
+    recommended_aligner_settings: NOT STAR at 40 GB; use count_matrix mode, or HISAT2/salmon on a high-memory node.
+    genome_size_category: plant
+  - organism_name: Glycine max
+    scientific_name: Glycine max
+    strain: Williams 82
+    taxon_id: 3847
+    source: NCBI RefSeq
+    assembly_accession: GCF_000004515.6
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: gmx
+    string_taxon: 3847
+    gprofiler_organism: gmax
+    assembly_name: Glycine_max_v4.0
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/004/515/GCF_000004515.6_Glycine_max_v4.0/GCF_000004515.6_Glycine_max_v4.0_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/004/515/GCF_000004515.6_Glycine_max_v4.0/GCF_000004515.6_Glycine_max_v4.0_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq Glycine_max_v4.0
+    date: null
+    notes: >
+      Soybean Williams 82, Glycine_max_v4.0 (~1 Gb). gene_id = LOC<GeneID> (KEGG gmx key after
+      the LOC strip; g:Profiler gmax; STRING 3847). No OrgDb, so GO comes from g:Profiler.
+      STAR peaks ~12-16 GB, comfortably within the 40 GB WSL2 cap.
+    recommended_aligner_settings: STAR defaults; sjdbOverhang = readLength-1.
+    genome_size_category: plant
+  - organism_name: Hordeum vulgare
+    scientific_name: Hordeum vulgare subsp. vulgare
+    strain: Morex
+    taxon_id: 112509
+    source: NCBI RefSeq
+    assembly_accession: GCF_904849725.1
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: hvg
+    string_taxon: 112509
+    gprofiler_organism: hvulgare
+    assembly_name: MorexV3_pseudomolecules_assembly
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/904/849/725/GCF_904849725.1_MorexV3_pseudomolecules_assembly/GCF_904849725.1_MorexV3_pseudomolecules_assembly_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/904/849/725/GCF_904849725.1_MorexV3_pseudomolecules_assembly/GCF_904849725.1_MorexV3_pseudomolecules_assembly_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq MorexV3_pseudomolecules_assembly
+    date: null
+    notes: >
+      Barley Morex, MorexV3 (~4.5 Gb, larger than human). gene_id = LOC<GeneID> (KEGG code hvg
+      after the LOC strip -- NOT hvu, which is a bacterium; g:Profiler hvulgare; STRING/taxon
+      112509, subsp. vulgare). No OrgDb, so GO comes from g:Profiler. WARNING: a STAR index is
+      ~44 GB at defaults, exceeding the ~40 GB WSL2 cap; feasible only with --genomeSAsparseD 2
+      (tight) or a raised cap, otherwise use count_matrix mode.
+    recommended_aligner_settings: STAR --genomeSAsparseD 2 (tight) or raise the WSL2 cap; else count_matrix mode.
+    genome_size_category: plant
+  - organism_name: Sorghum bicolor
+    scientific_name: Sorghum bicolor
+    strain: BTx623
+    taxon_id: 4558
+    source: NCBI RefSeq
+    assembly_accession: GCF_000003195.3
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: sbi
+    string_taxon: 4558
+    gprofiler_organism: sbicolor
+    assembly_name: Sorghum_bicolor_NCBIv3
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/003/195/GCF_000003195.3_Sorghum_bicolor_NCBIv3/GCF_000003195.3_Sorghum_bicolor_NCBIv3_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/003/195/GCF_000003195.3_Sorghum_bicolor_NCBIv3/GCF_000003195.3_Sorghum_bicolor_NCBIv3_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq Sorghum_bicolor_NCBIv3
+    date: null
+    notes: >
+      Sorghum BTx623, NCBIv3 (~0.7 Gb). gene_id = LOC<GeneID> (KEGG sbi key after the LOC
+      strip; g:Profiler sbicolor; STRING 4558). No OrgDb, so GO comes from g:Profiler. STAR
+      peaks ~8-12 GB, well within the 40 GB WSL2 cap.
+    recommended_aligner_settings: STAR defaults; sjdbOverhang = readLength-1.
+    genome_size_category: plant
+  - organism_name: Solanum lycopersicum
+    scientific_name: Solanum lycopersicum
+    strain: Heinz 1706
+    taxon_id: 4081
+    source: NCBI RefSeq
+    assembly_accession: GCF_036512215.1
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: sly
+    string_taxon: 4081
+    gprofiler_organism: slycopersicum
+    assembly_name: SLM_r2.1
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/036/512/215/GCF_036512215.1_SLM_r2.1/GCF_036512215.1_SLM_r2.1_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/036/512/215/GCF_036512215.1_SLM_r2.1/GCF_036512215.1_SLM_r2.1_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq SLM_r2.1
+    date: null
+    notes: >
+      Tomato Heinz 1706, SLM_r2.1 (~0.83 Gb; current NCBI RefSeq reference, supersedes SL3.1).
+      gene_id = LOC<GeneID> (KEGG sly key after the LOC strip; g:Profiler slycopersicum; STRING
+      4081). No OrgDb, so GO comes from g:Profiler. STAR peaks ~12-16 GB, feasible.
+    recommended_aligner_settings: STAR defaults; sjdbOverhang = readLength-1.
+    genome_size_category: plant
+  - organism_name: Solanum tuberosum
+    scientific_name: Solanum tuberosum
+    strain: DM1-3 516 R44
+    taxon_id: 4113
+    source: NCBI RefSeq
+    assembly_accession: GCF_000226075.1
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: sot
+    string_taxon: 4113
+    gprofiler_organism: stuberosum
+    assembly_name: SolTub_3.0
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/226/075/GCF_000226075.1_SolTub_3.0/GCF_000226075.1_SolTub_3.0_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/226/075/GCF_000226075.1_SolTub_3.0/GCF_000226075.1_SolTub_3.0_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq SolTub_3.0
+    date: null
+    notes: >
+      Potato DM1-3 516 R44, SolTub_3.0 (~0.7 Gb). gene_id = LOC<GeneID> (KEGG sot key after the
+      LOC strip; g:Profiler stuberosum; STRING 4113). No OrgDb, so GO comes from g:Profiler.
+      STAR peaks ~12 GB, feasible.
+    recommended_aligner_settings: STAR defaults; sjdbOverhang = readLength-1.
+    genome_size_category: plant
   - organism_name: Drosophila melanogaster
     scientific_name: Drosophila melanogaster
     strain: BDGP6
