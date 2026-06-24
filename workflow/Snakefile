@@ -84,6 +84,12 @@ MICROARRAY_MODE = INPUT.get("type") == "microarray"
 # raw/normalized counts (PCA, sample correlation, count heatmaps, GOI) are gated off.
 DE_RESULTS_MODE = INPUT.get("type") == "deseq2_results"
 DE_RESULTS_TABLE = INPUT.get("deseq2_results")
+# Aligner / quantifier (fastq/sra modes only). STAR or HISAT2 -> sorted BAM -> featureCounts;
+# Salmon -> transcript-level quantification -> tximport (no BAM). All three converge on the
+# canonical results/counts/counts.txt so DESeq2 and the whole downstream are identical.
+ALIGNER = (WF.get("aligner") or "STAR").upper()
+USE_HISAT2 = ALIGNER == "HISAT2"
+USE_SALMON = ALIGNER == "SALMON"
 # Single-end FASTQ is not yet supported on the alignment route (only fastp_pe
 # exists); reject it up front with a clear message instead of dead-ending at the
 # trim step. Count-matrix / microarray / deseq2-results modes have no layout.
@@ -97,6 +103,10 @@ if not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE) and not ALL_PAI
 GENOME_FA = "references/genome.fa"
 ANNOTATION_GTF = "references/annotation.gtf"
 STAR_INDEX = "references/star_index"
+HISAT2_INDEX_DIR = "references/hisat2_index"
+HISAT2_INDEX = "references/hisat2_index/genome"  # bowtie/hisat2 index prefix
+TRANSCRIPTOME_FA = "references/transcripts.fa"
+SALMON_INDEX = "references/salmon_index"
 
 
 def rule_threads(name, default=4):

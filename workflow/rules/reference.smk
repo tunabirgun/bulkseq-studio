@@ -107,3 +107,78 @@ rule star_index:
              --sjdbOverhang $OH --genomeSAindexNbases $NBASES \
              --runThreadN {threads} >> {log} 2>&1
         """
+
+
+# HISAT2 graph index (much lower RAM than STAR; viable for large crop genomes).
+rule hisat2_index:
+    input:
+        fa=GENOME_FA,
+        check="checks/05_reference_validation.json",
+    output:
+        directory(HISAT2_INDEX_DIR),
+    threads:
+        rule_threads("hisat2_index", 8)
+    resources:
+        mem_mb=rule_mem_mb("hisat2_index", 16),
+    benchmark:
+        "benchmarks/hisat2_index.tsv"
+    log:
+        "logs/hisat2_index.log",
+    shell:
+        "mkdir -p {output} && hisat2-build -p {threads} {input.fa:q} {output}/genome > {log} 2>&1"
+
+
+# Transcriptome FASTA from genome + GTF (for the Salmon route), then the Salmon index.
+rule make_transcriptome:
+    input:
+        fa=GENOME_FA,
+        gtf=ANNOTATION_GTF,
+        check="checks/05_reference_validation.json",
+    output:
+        fa=TRANSCRIPTOME_FA,
+        tx2gene="references/tx2gene.tsv",
+    log:
+        "logs/make_transcriptome.log",
+    shell:
+        # NCBI RefSeq GTFs carry transcript_id "" on `gene` feature lines, which gffread
+        # rejects ("no valid ID found for GFF record"). Drop gene lines first -- gffread
+        # builds transcripts from the transcript/exon/CDS records; Ensembl GTFs are
+        # unaffected. The tx2gene table is emitted by gffread itself (@id,@geneid) so its
+        # transcript names match the FASTA/Salmon index exactly -- robust to RefSeq dual
+        # XM_/gnl|WGS transcript records that a raw-GTF parse would mismatch.
+        # Drop gene lines (empty transcript_id) and unknown-strand "?" records (trans-spliced
+        # organelle genes, e.g. chloroplast rps12, which gffread refuses to parse). Then
+        # gtf_clean.pl neutralizes semicolons embedded inside quoted attribute values (NCBI
+        # gene symbols such as "CYCB1;1" in soybean/tomato/potato, which gffread mis-reads as
+        # the attribute separator). gffread then builds transcripts from the cleaned records.
+        # gffread can emit non-unique "unassigned_transcript_N" names for unnamed
+        # organellar/tRNA records, which salmon's indexer rejects. Build to .raw, then
+        # dedup_transcriptome.sh drops duplicate-named records (keeping FASTA + tx2gene
+        # in sync); no-op for already-unique transcriptomes (Ensembl, most assemblies).
+        "awk -F'\\t' '$3 != \"gene\" && $7 != \"?\"' {input.gtf:q} | "
+        "perl workflow/scripts/gtf_clean.pl > {output.fa:q}.nogene.gtf && "
+        "gffread -w {output.fa:q}.raw -g {input.fa:q} {output.fa:q}.nogene.gtf > {log} 2>&1 && "
+        "gffread {output.fa:q}.nogene.gtf --table @id,@geneid > {output.tx2gene:q}.raw 2>> {log} && "
+        "bash workflow/scripts/dedup_transcriptome.sh {output.fa:q}.raw {output.tx2gene:q}.raw {output.fa:q} {output.tx2gene:q} && "
+        "rm -f {output.fa:q}.nogene.gtf {output.fa:q}.raw {output.tx2gene:q}.raw"
+
+
+rule salmon_index:
+    input:
+        txome=TRANSCRIPTOME_FA,
+    output:
+        directory(SALMON_INDEX),
+    threads:
+        rule_threads("salmon_index", 8)
+    resources:
+        mem_mb=rule_mem_mb("salmon_index", 16),
+    benchmark:
+        "benchmarks/salmon_index.tsv"
+    log:
+        "logs/salmon_index.log",
+    shell:
+        # --keepDuplicates: some NCBI RefSeq annotations list identical transcripts twice
+        # (RefSeq XM_ + the original WGS model). Without this, salmon collapses the pair and
+        # may keep the copy whose name is absent from tx2gene, zeroing those genes; keeping
+        # both lets the tx2gene-named copy carry the counts. No-op for clean assemblies.
+        "salmon index -t {input.txome:q} -i {output:q} -k 31 -p {threads} --keepDuplicates > {log} 2>&1"

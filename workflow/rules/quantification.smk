@@ -1,5 +1,6 @@
-# Gene-level quantification with featureCounts using the inferred strandedness
-# (protocol section 6.12). A single matrix over all BAMs.
+# Gene-level quantification (protocol section 6.12). Three routes, all converging on
+# the canonical results/counts/counts.txt: featureCounts on BAMs (STAR/HISAT2), Salmon
+# pseudo-alignment + tximport (no BAM), or ingest of a user-supplied counts matrix.
 
 _FC = config.get("featurecounts", {})
 
@@ -20,6 +21,43 @@ if COUNT_MATRIX_MODE:
         shell:
             "python workflow/scripts/ingest_counts.py --matrix {input.matrix:q} "
             "--samples {input.samples:q} --out {output.counts:q} --summary {output.summary:q} > {log:q} 2>&1"
+
+elif USE_SALMON:
+
+    # Salmon mapping-based quantification straight from the trimmed FASTQ (no BAM).
+    rule salmon_quant:
+        input:
+            index=SALMON_INDEX,
+            r1="results/trimmed/{sample}_1.trim.fastq.gz",
+            r2="results/trimmed/{sample}_2.trim.fastq.gz",
+        output:
+            quant="results/salmon/{sample}/quant.sf",
+        threads:
+            rule_threads("salmon_quant", 8)
+        resources:
+            mem_mb=rule_mem_mb("salmon_quant", 8),
+        benchmark:
+            "benchmarks/salmon_quant_{sample}.tsv"
+        log:
+            "logs/salmon_quant_{sample}.log",
+        shell:
+            "salmon quant -i {input.index:q} -l A -1 {input.r1:q} -2 {input.r2:q} "
+            "-p {threads} --validateMappings --gcBias "
+            "-o results/salmon/{wildcards.sample} > {log} 2>&1"
+
+    # tximport (lengthScaledTPM) -> gene-level counts in featureCounts layout so DESeq2
+    # and everything downstream are unchanged.
+    rule salmon_tximport:
+        input:
+            quants=expand("results/salmon/{sample}/quant.sf", sample=SAMPLES),
+            tx2gene="references/tx2gene.tsv",
+        output:
+            counts="results/counts/counts.txt",
+            summary="results/counts/counts.txt.summary",
+        log:
+            "logs/salmon_tximport.log",
+        script:
+            "../scripts/salmon_tximport.R"
 
 else:
 

@@ -913,19 +913,27 @@ class MainWindow(QMainWindow):
             "Custom reference selected and locked:\n" + yaml.safe_dump(lock, sort_keys=False)
         )
 
+    def _on_aligner_changed(self, name: str) -> None:
+        # The quantifier is determined by the aligner: Salmon uses tximport, STAR/HISAT2
+        # use featureCounts. Keep the (read-only) quantifier combo in sync.
+        if hasattr(self, "quantifier"):
+            self.quantifier.setCurrentText("Salmon_tximport" if name == "Salmon" else "featureCounts")
+
     def _build_workflow_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
         self.aligner = QComboBox()
         self.aligner.addItems(["STAR", "HISAT2", "Salmon"])
-        # Only STAR is implemented; show HISAT2/Salmon but make them unselectable so
-        # a run can't be started on an aligner that dead-ends mid-pipeline.
-        self._disable_combo_items(self.aligner, {"HISAT2", "Salmon"}, " (not yet available)")
+        # STAR and HISAT2 align to a sorted BAM -> featureCounts; Salmon quantifies
+        # transcripts directly (tximport). All three converge on the same gene counts
+        # -> DESeq2 and the identical downstream.
+        self.aligner.currentTextChanged.connect(self._on_aligner_changed)
         self.quantifier = QComboBox()
         self.quantifier.addItems(["featureCounts", "STAR_GeneCounts", "Salmon_tximport"])
-        # Only featureCounts is wired (no rule reads config.workflow.quantifier), so
-        # disable the others rather than letting them silently no-op.
-        self._disable_combo_items(self.quantifier, {"STAR_GeneCounts", "Salmon_tximport"}, " (not yet available)")
+        # STAR_GeneCounts is not wired; the quantifier follows the aligner (featureCounts
+        # for STAR/HISAT2, Salmon_tximport for Salmon) and is shown read-only.
+        self._disable_combo_items(self.quantifier, {"STAR_GeneCounts"}, " (not yet available)")
+        self.quantifier.setEnabled(False)
         self.trim = QCheckBox()
         self.trim.setChecked(True)
         self.rrna = QCheckBox()
@@ -982,8 +990,8 @@ class MainWindow(QMainWindow):
         # sections rather than one flat field list.
         align_group = QGroupBox("Alignment and read processing")
         align_form = QFormLayout(align_group)
-        align_form.addRow(self._info_label("Aligner", "Read aligner. STAR is the fully implemented route; HISAT2/Salmon are scaffolded."), self.aligner)
-        align_form.addRow(self._info_label("Quantifier", "How aligned reads are summarised to gene counts. featureCounts is the implemented route."), self.quantifier)
+        align_form.addRow(self._info_label("Aligner", "Read aligner. STAR (default) suits most studies; HISAT2 uses far less memory and still makes BAMs; Salmon is alignment-free, lowest memory, best for very large genomes. All three give the same gene counts. If unsure, keep STAR."), self.aligner)
+        align_form.addRow(self._info_label("Quantifier", "How reads are summarised to gene counts. Set automatically from the aligner (featureCounts for STAR/HISAT2, tximport for Salmon), so it is read-only."), self.quantifier)
         align_form.addRow("fastp trimming", self.trim)
         align_form.addRow(self._info_label("fastp quality (-q)", "Minimum acceptable per-base Phred quality. Bases below this count as low quality. fastp default 15."), self.fastp_q)
         align_form.addRow(self._info_label("fastp min length (-l)", "Reads shorter than this (after trimming) are discarded. Protocol default 36."), self.fastp_len)
@@ -2469,7 +2477,11 @@ class MainWindow(QMainWindow):
             return
         wf = self.config.workflow
         self.aligner.setCurrentText(wf.aligner)
-        self.quantifier.setCurrentText(wf.quantifier)
+        # The quantifier is derived from the aligner (read-only), so set it from the aligner
+        # rather than the saved value. Force the sync directly: setCurrentText above emits no
+        # signal when the value is unchanged (e.g. loading a STAR project while STAR is current),
+        # which would otherwise leave a stale quantifier.
+        self._on_aligner_changed(self.aligner.currentText())
         self.trim.setChecked(wf.trimming)
         self.rrna.setChecked(wf.rrna_filtering)
         self.enrichment.setChecked(wf.enrichment)

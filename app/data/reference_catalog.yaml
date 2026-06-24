@@ -316,9 +316,10 @@ references:
       Bread wheat Chinese Spring, IWGSC CS RefSeq v2.1 (~14.5 Gb allohexaploid). gene_id =
       LOC<GeneID> (KEGG taes key after the LOC strip; g:Profiler taestivum; STRING 4565). No
       OrgDb, so GO comes from g:Profiler. WARNING: a full STAR index needs ~150 GB RAM and is
-      NOT feasible under the ~40 GB WSL2 cap or the 80 GB host -- use count_matrix mode, or
-      HISAT2/salmon on a >=128 GB node.
-    recommended_aligner_settings: NOT STAR at 40 GB; use count_matrix mode, or HISAT2/salmon on a high-memory node.
+      NOT feasible under the ~40 GB WSL2 cap or the 80 GB host. Use the Salmon aligner
+      (transcriptome quantification -- indexes the transcripts, not the 14.5 Gb genome, so it
+      runs in modest RAM) or count-matrix mode.
+    recommended_aligner_settings: NOT STAR at 40 GB; use the Salmon aligner (transcriptome-based) or count-matrix mode.
     genome_size_category: plant
   - organism_name: Glycine max
     scientific_name: Glycine max
@@ -370,9 +371,9 @@ references:
       Barley Morex, MorexV3 (~4.5 Gb, larger than human). gene_id = LOC<GeneID> (KEGG code hvg
       after the LOC strip -- NOT hvu, which is a bacterium; g:Profiler hvulgare; STRING/taxon
       112509, subsp. vulgare). No OrgDb, so GO comes from g:Profiler. WARNING: a STAR index is
-      ~44 GB at defaults, exceeding the ~40 GB WSL2 cap; feasible only with --genomeSAsparseD 2
-      (tight) or a raised cap, otherwise use count_matrix mode.
-    recommended_aligner_settings: STAR --genomeSAsparseD 2 (tight) or raise the WSL2 cap; else count_matrix mode.
+      ~44 GB at defaults, exceeding the ~40 GB WSL2 cap. Use the Salmon aligner (transcriptome
+      quantification, low RAM), or STAR with --genomeSAsparseD 2 (tight), or count-matrix mode.
+    recommended_aligner_settings: Salmon (transcriptome-based, low RAM); or STAR --genomeSAsparseD 2 (tight); or count-matrix mode.
     genome_size_category: plant
   - organism_name: Sorghum bicolor
     scientific_name: Sorghum bicolor

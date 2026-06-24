@@ -8,7 +8,8 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 
 ## Features
 
-- **End-to-end pipeline** — ENA/SRA FASTQ download → FastQC/MultiQC → fastp trimming → STAR alignment (genome-size-aware index) → featureCounts → DESeq2 → GO/KEGG enrichment → figures, orchestrated by Snakemake.
+- **End-to-end pipeline** — ENA/SRA FASTQ download → FastQC/MultiQC → fastp trimming → alignment (STAR, HISAT2, or Salmon) → featureCounts/tximport → DESeq2 → GO/KEGG enrichment → figures, orchestrated by Snakemake.
+- **Choice of aligner** — STAR (default, genome-size-aware index), HISAT2 (graph aligner, small index and low RAM — the route for large crop genomes like wheat or barley that overflow STAR), or Salmon (alignment-free transcriptome quantification, low memory). The three routes produce a common count matrix, so everything downstream of counting is unchanged.
 - **No command line needed** — a tabbed GUI walks you from project setup through metadata, reference selection, a sanity-check gate, and an interactive Outputs browser. The Run Monitor shows a plain-language current phase (Downloading, Aligning, DESeq2, …) above the raw log.
 - **Sizes itself to your machine** — resource recommendations are based on the WSL2 VM's real RAM/CPU caps (not the Windows host total), so memory-heavy steps like STAR don't over-subscribe and thrash. A runtime estimate is shown before you start.
 - **Fetch a study from its accession** — paste SRR/SRP/PRJ accessions and the ENA metadata fetch builds the sample sheet (layout, FASTQ URLs, read counts) for you.
@@ -26,23 +27,35 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 - **Reproducibility built in** — every run records a default-vs-used parameter diff, software versions, an environment lock hash, the reference accession/MD5, and R `sessionInfo`. The conda environment is pinned in `workflow/envs/bulkseq.lock.yaml`.
 - **A polished, accessible desktop UI** — light and dark themes (WCAG-AA contrast), grouped settings cards with a clear primary action per tab, plain-language controls, empty-state guidance, a resizable Outputs workspace that remembers its size, keyboard shortcuts (Ctrl+O open, F5 dry-run, F9 run), and a recent-projects list.
 
-The default **STAR → featureCounts → DESeq2 → enrichment → figures** route (and the count-matrix and **GEO microarray → limma** routes) are implemented and validated (see [Validation](#validation)). HISAT2, Salmon/tximport, SortMeRNA, htseq-count, and edgeR/limma-voom for RNA-seq are scaffolded but not yet implemented; the not-yet-available aligner and quantifier options appear disabled in the GUI so a run cannot start down an unfinished path.
+Three aligner routes are implemented and validated (see [Validation](#validation)): the default **STAR → featureCounts**, **HISAT2 → featureCounts** (a graph aligner with a much smaller index, viable for large crop genomes that exceed STAR's RAM), and **Salmon → tximport** (alignment-free transcriptome quantification, low memory). All three produce a gene-level count matrix in the same format and run the identical downstream (DESeq2, enrichment, PPI, figures); because the aligners assign reads by different algorithms, the results are highly concordant rather than bit-identical (e.g. on the rice benchmark Salmon called 12,609 DE genes vs STAR's 12,171). The count-matrix, **GEO microarray → limma**, and **DESeq2-results upload** input routes are also implemented and validated. SortMeRNA, htseq-count, and edgeR/limma-voom for RNA-seq remain scaffolded but not yet implemented; those not-yet-available options appear disabled in the GUI so a run cannot start down an unfinished path.
+
+## Choosing an aligner
+
+All three aligners feed a **gene-level count matrix in the same format**, so the whole downstream — differential expression, enrichment, the PPI network, every figure — runs identically whichever you pick. The aligners count reads by different methods, so the exact numbers differ slightly (highly concordant, not bit-identical — on the rice benchmark Salmon called 12,609 DE genes vs STAR's 12,171). The choice is mainly about speed, memory, and whether you want alignment files (BAMs). You do not set the counter separately — the app pairs it to the aligner for you (featureCounts for STAR and HISAT2, tximport for Salmon).
+
+| Aligner | Counter (automatic) | Memory | BAM files? | Choose it when |
+|---|---|---|---|---|
+| **STAR** *(default)* | featureCounts | High — the genome index grows with genome size (~30 GB RAM for a mammalian genome) | Yes | The standard choice for most studies. Use it whenever the genome index fits in your RAM, which covers everything except the largest plant genomes. STAR is the most widely used and most-cited RNA-seq aligner. |
+| **HISAT2** | featureCounts | Low — small graph index | Yes | The genome is too big for STAR, or your machine is short on RAM, but you still want BAM files (for a genome browser like IGV, or extra QC). |
+| **Salmon** | tximport | Lowest — indexes the transcripts, not the whole genome | No | You want the fastest, lightest run and don't need BAMs. Best for very large genomes (e.g. bread wheat, barley) and memory-limited machines; it quantifies reads directly against the transcriptome. |
+
+**Not sure? Leave it on STAR.** It is the safe default and the most common choice in the literature. Switch only if STAR will not fit in memory — the app estimates the index size and warns you before a run starts. When that happens, pick **HISAT2** if you want BAM files, or **Salmon** for the smallest memory footprint and the fastest run. The very large crop genomes (bread wheat ~14.5 Gb, barley ~4.5 Gb) cannot build a STAR index under the WSL2 memory limit, so their reference presets recommend Salmon. The aligner is selected on the **Workflow** tab; the matching counter is filled in automatically.
 
 ## Screenshots
 
-From data to results in one window — bring in a study, configure the analysis, run it while watching progress by phase, then browse tables and publication figures. The same workflow in dark mode:
+From data to results in one window — bring in a study on the Input tab, configure the aligner and DESeq2 design on the Workflow tab, browse publication figures in the Outputs tab, and explore the protein network on the PPI tab. The same four-tab workflow in dark mode:
 
-![BulkSeq Studio Outputs browser — KEGG pathway enrichment, dark theme](docs/screenshot-overview-dark.png)
+![BulkSeq Studio in dark mode — the Input, Workflow Settings, Outputs (volcano plot) and PPI Network tabs](docs/screenshot-overview-dark.png)
 
-The interactive PPI Network tab — hover a protein for its expression and fold-change, recolour and resize the nodes, filter by confidence, and export:
+The interactive PPI Network tab — hover a protein to read its fold-change, adjusted p-value, mean expression and degree; recolour and resize the nodes, filter by confidence, export PNG/SVG, or save the Cytoscape files:
 
-![Interactive PPI network — hub proteins sized by degree on a force-directed layout](docs/screenshot-ppi-interactive.png)
+![Interactive PPI network — hub proteins sized by degree on a force-directed layout, with a hover tooltip](docs/screenshot-ppi-interactive.png)
 
 ## Requirements
 
 - Windows 10/11 (x64).
 - [WSL2](https://learn.microsoft.com/windows/wsl/install) with a Linux distribution. The app can enable WSL2 and install the bioinformatics environment for you from its setup screen.
-- ~10 GB free disk for the toolchain and reference indices; 16 GB+ RAM recommended (STAR alignment is the memory-intensive step).
+- ~10 GB free disk for the toolchain and reference indices; 16 GB+ RAM recommended (STAR alignment is the memory-intensive step — for very large genomes use the HISAT2 or Salmon aligner, which need far less).
 
 The bioinformatics tools (Snakemake, STAR, featureCounts, samtools, fastp, FastQC, MultiQC, DESeq2, clusterProfiler, …) install into a pinned micromamba environment inside WSL2; the Windows side only runs the GUI.
 
@@ -55,7 +68,18 @@ Download the latest build from the [**Releases**](https://github.com/tunabirgun/
 
 (Or build them yourself with `scripts\build_release.ps1`.)
 
-On first launch the app runs a readiness check and can install the WSL2 environment for you. Only enabling WSL itself asks for elevation (Windows requires it); normal use does not run as administrator.
+### First launch: checking the environment
+
+The first time you start BulkSeq Studio — and any time later, from the **Check Environment** button on the Project tab — an **Environment setup** window runs a readiness check. It shows four cards, each with a status (*Ready* or *Action needed*) and, when something is missing, a button that installs it for you:
+
+1. **Python GUI / core packages** — the libraries the Windows GUI itself needs.
+2. **WSL2** — the Windows Subsystem for Linux the whole pipeline runs inside, plus the micromamba package manager. If WSL2 is not enabled, *Install / enable WSL* opens an Administrator PowerShell window; this is the only step that needs elevation (Windows requires it), and you may be asked to reboot.
+3. **Core bioinformatics environment (bulkseq)** — Snakemake, the three aligners (STAR, HISAT2, Salmon), featureCounts, samtools, fastp, FastQC and MultiQC. *Install / repair core environment* sets these up inside your WSL user account with no sudo password; the download takes several minutes.
+4. **R / DESeq2 stack** — R with DESeq2, the enrichment packages and the figure toolchain. This is the largest, slowest install.
+
+Work top to bottom: click each *Install…* button, press **Re-check** to refresh the statuses, and when the header reads **4 of 4 ready** click **Continue**. *Show details / log* expands the full setup log if a step needs attention. Normal use never runs as administrator. You can keep using the GUI to create projects, edit metadata and generate configs while the WSL tools install; only starting a pipeline run needs them.
+
+![BulkSeq Studio environment-check window — four readiness cards with install buttons](docs/screenshot-environment-check.png)
 
 ### Run from source (development)
 

@@ -36,12 +36,16 @@ else:
         "checks/00_project_setup.json",
         "checks/01_input_validation.json",
         "checks/05_reference_validation.json",
-        "checks/06_alignment_qc.json",
         "checks/07_quantification_qc.json",
         "checks/08_metadata_design_qc.json",
         "checks/09_deseq2_qc.json",
         "checks/13_equivalence_qc.json",
     ]
+    # 06 alignment QC parses STAR's Log.final.out; only STAR produces it. HISAT2 and
+    # Salmon report their own mapping rate in their logs (results/aligned/*_hisat2_summary.txt,
+    # results/salmon/<sample>/logs), so the formal 06 check is STAR-only.
+    if not (USE_HISAT2 or USE_SALMON):
+        ALL_CHECKS.insert(3, "checks/06_alignment_qc.json")
 if WF.get("enrichment", True):
     ALL_CHECKS.append("checks/10_enrichment_qc.json")
 # Wilcoxon sensitivity diagnostic reads the normalized matrix, which the

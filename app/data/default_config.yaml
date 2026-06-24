@@ -72,6 +72,9 @@ star:
 featurecounts:
   feature_type: exon
   attribute_type: gene_id
+  # strandedness is auto-detected per run (STAR from ReadsPerGene, HISAT2 from a
+  # featureCounts -s1/-s2 probe) and Salmon uses -l A, so this value is overwritten
+  # and kept only as a fallback default.
   strandedness: 0
   count_read_pairs: true
 deseq2:

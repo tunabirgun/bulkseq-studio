@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.11.0 — 2026-06-24
+
+### Added
+
+- **HISAT2 and Salmon aligners (two new routes), in addition to STAR.** The Workflow tab now
+  offers three aligners, all validated end to end through DESeq2, enrichment and the PPI network:
+  - **STAR → featureCounts** (default, unchanged).
+  - **HISAT2 → featureCounts** — a graph aligner with a much smaller index and far lower RAM than
+    STAR, so it is viable for large crop genomes that overflow STAR. Produces sorted BAMs like STAR.
+  - **Salmon → tximport** — alignment-free selective-alignment transcriptome quantification, the
+    lowest memory of the three; the transcriptome is built automatically from the reference
+    genome + GTF (gffread), and `tximport` (lengthScaledTPM) collapses transcript counts to the
+    gene level. No BAMs.
+
+  All three produce a gene-level count matrix in the same format and run the identical downstream
+  (DESeq2, enrichment, PPI, figures); because the aligners assign reads differently, results are
+  highly concordant rather than bit-identical (rice: Salmon 12,609 DEGs vs STAR 12,171). The
+  quantifier is chosen automatically from the aligner
+  (featureCounts for STAR/HISAT2, tximport for Salmon) and shown read-only, so the two cannot be
+  mis-paired. A new **"Choosing an aligner"** section in the README gives plain-language "use X
+  when Y" guidance.
+- **DESeq2-results upload, count-matrix, and GEO-microarray input routes** are documented in the
+  README alongside the three aligners (the routes themselves shipped earlier).
+
+### Fixed
+
+- **HISAT2 now auto-detects library strandedness, like STAR.** STAR derives strandedness from its
+  ReadsPerGene table and Salmon uses `salmon quant -l A`, but the HISAT2 route had used the static
+  `featurecounts.strandedness` config value (default 0 = unstranded). A stranded library aligned
+  with HISAT2 was therefore counted as unstranded, miscounting genes with antisense overlap (e.g.
+  the reverse-stranded *F. graminearum* set gave 6,298 DEGs at `-s 0` vs 5,836 at the correct
+  `-s 2`). HISAT2 now infers strandedness by counting the first sample with featureCounts in
+  forward (`-s 1`) and reverse (`-s 2`) modes (paired libraries counted with `-p`) and applying the
+  same ratio thresholds as the STAR path, so all three aligners auto-detect strandedness.
+- **Salmon pinned to the stable 1.10.3.** The environment had resolved to salmon 2.1.1 (the new
+  Rust/piscem rewrite), which crashed with an internal panic (`index out of bounds`) part-way
+  through quantifying some samples and had deprecated `--validateMappings`/`--gcBias`. Pinned to
+  the mature, widely-cited 1.10.3 C++ build, which is stable across the validation datasets.
+- **Robust transcriptome build for the Salmon route across diverse NCBI RefSeq GTFs.** Building
+  the transcriptome with gffread previously failed on several real annotations; all are now
+  handled: gene-feature lines (empty `transcript_id`) and unknown-strand `?` records
+  (trans-spliced organelle genes, e.g. chloroplast *rps12*) are dropped; semicolons embedded
+  inside quoted attribute values (gene symbols such as `"CYCB1;1"` in soybean/tomato/potato) are
+  neutralized so gffread does not mis-read them as the attribute separator; and duplicate
+  transcript names (gffread emits non-unique `unassigned_transcript_N` auto-names for unnamed
+  organellar/tRNA records, which the salmon indexer rejects) are de-duplicated, keeping the FASTA
+  and tx2gene table in sync. The gffread transcriptome parse was smoke-tested across all seven
+  bundled crop GTFs.
+
+### Validation
+
+- **HISAT2** verified end to end on the Drosophila pasilla benchmark (Ensembl; unstranded —
+  strandedness auto-detected as 0) and the reverse-stranded *F. graminearum* heat-shock dataset
+  (NCBI RefSeq; strandedness auto-detected as 2): fghs 5,812 DEGs (concordant with STAR's 5,836),
+  82-node PPI; pasilla 447 DEGs, 61-node PPI; both through KEGG/GO enrichment and figures.
+- **Salmon** (1.10.3) verified end to end on the pasilla benchmark (Ensembl) and the rice salt-
+  stress benchmark (NCBI RefSeq crop): pasilla 24,278 genes / 530 DEGs / 57-node PPI / 22 figures;
+  rice 33,844 genes / 12,609 DEGs (concordant with the STAR route's 12,171) / 22 KEGG-ORA +
+  31 KEGG-GSEA terms (osa) / 56-node STRING PPI / 22 figures.
+
 ## 0.10.1 — 2026-06-24
 
 ### Added
