@@ -22,6 +22,11 @@ sink(log_con, type = "message")
 obj <- readRDS(snakemake@input[["rds"]])
 dds <- obj$dds; res <- obj$res; resLFC <- obj$resLFC; vsd <- obj$vsd
 out <- snakemake@output
+# Bring-your-own DESeq2-results mode ships a synthetic RDS with no dds/vsd, so the
+# count/VST-dependent figures (PCA, sample-distance, top-DEG heatmap, model
+# diagnostics) degrade to labelled placeholders; MA, volcano and the p-value
+# histogram render from res/resLFC as usual.
+has_counts <- !is.null(vsd) && !is.null(dds)
 # Microarray (limma) backend: baseMean is average log2 intensity, not a count
 # mean, so count-scale transforms (log10 on baseMean) are skipped below.
 is_intensity <- identical(tryCatch(obj$assay_kind, error = function(e) NULL), "log2_intensity")
@@ -112,7 +117,7 @@ if (is.list(de_cfg)) {
     group_var <- as.character(cons[[1]][["factor"]])
   }
 }
-if (!(group_var %in% colnames(colData(dds)))) group_var <- colnames(colData(dds))[1]
+if (has_counts && !(group_var %in% colnames(colData(dds)))) group_var <- colnames(colData(dds))[1]
 
 # Significance thresholds from config (used by MA + volcano).
 num_cfg <- function(key, default) {
@@ -125,6 +130,7 @@ lfc_thr <- if (is.list(de_cfg)) num_cfg("lfc_threshold", 1) else 1
 # ---- PCA --------------------------------------------------------------------
 # plotPCA adds a generic "group" column for whatever intgroup is, so the plot
 # code stays independent of the factor's name.
+if (has_counts) {
 pca <- plotPCA(vsd, intgroup = group_var, ntop = pca_ntop, returnData = TRUE)
 pv <- round(100 * attr(pca, "percentVar"))
 p_pca <- ggplot(pca, aes(PC1, PC2, colour = group)) +
@@ -162,10 +168,15 @@ ph <- pheatmap(mat, clustering_distance_rows = sampleDists,
                fontsize = base_size, silent = TRUE)
 dist_dim <- fig_dim("sample_distance")
 save_grid(ph$gtable, out[["dist_png"]], out[["dist_svg"]], w = dist_dim[1], h = dist_dim[2])
+} else {
+  save_placeholder("PCA needs the counts / VST matrix (unavailable for a DESeq2-results upload).", out[["pca_png"]], out[["pca_svg"]])
+  save_placeholder("Sample-distance heatmap needs the counts / VST matrix (unavailable for a DESeq2-results upload).", out[["dist_png"]], out[["dist_svg"]])
+}
 
 # ---- MA plot ----------------------------------------------------------------
 # The MA plot is dense; scale the configured point size down so it stays legible.
 ma_point <- max(0.3, point_size * 0.4)
+if ("baseMean" %in% colnames(as.data.frame(resLFC)) && any(is.finite(as.data.frame(resLFC)$baseMean))) {
 ma <- as.data.frame(resLFC)
 ma <- ma[!is.na(ma$padj), ]
 ma$sig <- ma$padj < alpha_thr
@@ -193,6 +204,7 @@ p_ma <- ggplot(ma, aes(baseMean, log2FoldChange)) +
 if (!is_intensity) p_ma <- p_ma + scale_x_log10(labels = scales::label_log())
 ma_dim <- fig_dim("ma_plot")
 save_gg(p_ma, out[["ma_png"]], out[["ma_svg"]], w = ma_dim[1], h = ma_dim[2])
+} else save_placeholder("MA plot needs a baseMean column in the results table.", out[["ma_png"]], out[["ma_svg"]])
 
 # ---- Volcano ----------------------------------------------------------------
 vol <- as.data.frame(resLFC)
@@ -282,6 +294,7 @@ save_gg(p_vol, out[["volcano_png"]], out[["volcano_svg"]], w = vol_dim[1], h = v
 # Drop NA padj first (order() puts NA last, so a naive head() would pull in NA
 # rows), then index assay(vsd) BY NAME so the heatmap is robust to any row-order
 # difference between res and vsd.
+if (has_counts) {
 ok <- which(!is.na(res$padj))
 ord <- ok[order(res$padj[ok])]
 n_top <- min(heatmap_top, length(ord))
@@ -313,6 +326,7 @@ hm_dim <- if (!is.null(size_overrides[["top_deg_heatmap"]])) {
   fig_dim("top_deg_heatmap")
 } else c(fig_w, max(hm_h, fig_h))
 save_grid(ph2$gtable, out[["heatmap_png"]], out[["heatmap_svg"]], w = hm_dim[1], h = hm_dim[2])
+} else save_placeholder("Top-DEG heatmap needs the counts / VST matrix (unavailable for a DESeq2-results upload).", out[["heatmap_png"]], out[["heatmap_svg"]])
 
 # ---- Raw p-value histogram (DE calibration check) ---------------------------
 # A spike near 0 over a flat background indicates a well-calibrated test; a
@@ -336,7 +350,7 @@ if (length(pv) > 0) {
 # Dispersion fit, Cook's-distance outlier spread, and per-sample library size
 # all come from the DESeqDataSet. On the microarray (limma) backend dds is a
 # DESeqTransform, so these are emitted as labelled placeholders instead.
-if (!is_intensity) {
+if (!is_intensity && has_counts) {
   # Dispersion: faithful ggplot re-expression of plotDispEsts (gene-wise estimate,
   # fitted trend, final shrunken value, flagged outliers) so it inherits the
   # shared theme/palette/font instead of base graphics.
@@ -391,7 +405,7 @@ if (!is_intensity) {
   lib_dim <- fig_dim("library_size")
   save_gg(p_lib, out[["libsize_png"]], out[["libsize_svg"]], w = lib_dim[1], h = lib_dim[2])
 } else {
-  na_msg <- "Diagnostic not applicable (microarray)"
+  na_msg <- if (is_intensity) "Diagnostic not applicable (microarray)" else "Diagnostic needs the count model (unavailable for a DESeq2-results upload)"
   save_placeholder(na_msg, out[["disp_png"]], out[["disp_svg"]])
   save_placeholder(na_msg, out[["cooks_png"]], out[["cooks_svg"]])
   save_placeholder(na_msg, out[["libsize_png"]], out[["libsize_svg"]])

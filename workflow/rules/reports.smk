@@ -22,10 +22,10 @@ rule final_reports:
     input:
         sanity="checks/sanity_checks.txt",
         deseq2="results/deseq2/deseq2_results.csv",
-        # No counts.txt in microarray mode (intensities, not counts).
-        **({} if MICROARRAY_MODE else {"counts": "results/counts/counts.txt"}),
+        # No counts.txt in microarray mode (intensities) or deseq2-results mode (no counts).
+        **({} if (MICROARRAY_MODE or DE_RESULTS_MODE) else {"counts": "results/counts/counts.txt"}),
         # MultiQC only exists on the alignment route.
-        **({} if (COUNT_MATRIX_MODE or MICROARRAY_MODE) else {"multiqc": "results/qc/multiqc/multiqc_report.html"}),
+        **({} if (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE) else {"multiqc": "results/qc/multiqc/multiqc_report.html"}),
     output:
         run_txt="results/reports/run_summary.txt",
         run_json="results/reports/run_summary.json",

@@ -15,10 +15,17 @@ sink(log_con, type = "message")
 obj <- readRDS(snakemake@input[["rds"]])
 vsd <- obj$vsd
 
-# Normalized expression matrix -> CSV (gene_id + one column per sample).
-mat <- as.data.frame(assay(vsd))
-mat <- cbind(gene_id = rownames(mat), mat)
-write.csv(mat, snakemake@output[["vst"]], row.names = FALSE)
+# Normalized expression matrix -> CSV (gene_id + one column per sample). The
+# bring-your-own DESeq2-results mode has no per-sample matrix (vsd is NULL), so a
+# header-only stub keeps the declared output present; the matrix is gated out of
+# final_targets in that mode. The .rnk below still works (it reads the results CSV).
+if (is.null(vsd)) {
+  writeLines("gene_id", snakemake@output[["vst"]])
+} else {
+  mat <- as.data.frame(assay(vsd))
+  mat <- cbind(gene_id = rownames(mat), mat)
+  write.csv(mat, snakemake@output[["vst"]], row.names = FALSE)
+}
 
 # Preranked .rnk: gene_id <tab> stat, descending, NA dropped (no header per the
 # GSEA .rnk spec).

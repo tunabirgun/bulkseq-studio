@@ -373,6 +373,17 @@ class MainWindow(QMainWindow):
         cm_row.addWidget(cm_btn)
         cm_row.addStretch(1)
         layout.addLayout(cm_row)
+        dr_row = QHBoxLayout()
+        dr_btn = QPushButton("Upload DESeq2 Results (skip to enrichment/PPI)")
+        dr_btn.setToolTip("Start from a ready DESeq2 results table (CSV/TSV with at least gene_id, "
+                          "log2FoldChange and padj). The pipeline skips alignment/counts/DESeq2 and runs "
+                          "enrichment, the volcano/MA/p-value figures and the STRING PPI network. PCA, "
+                          "sample heatmaps, sample correlation and genes-of-interest need counts and are skipped.")
+        dr_btn.clicked.connect(self._import_deseq2_results)
+        dr_row.addWidget(QLabel("Already have DE results?"))
+        dr_row.addWidget(dr_btn)
+        dr_row.addStretch(1)
+        layout.addLayout(dr_row)
         geo_row = QHBoxLayout()
         self.gse_box = QLineEdit()
         self.gse_box.setPlaceholderText("GSE accession, e.g. GSE5583")
@@ -429,6 +440,8 @@ class MainWindow(QMainWindow):
         organism = str(info.get("organism", "")).strip()
         platform = str(info.get("platform", "")).strip()
         self.config.input.type = "microarray"
+        self.config.input.count_matrix = None
+        self.config.input.deseq2_results = None
         self.config.microarray.gse_accession = gse
         self.config.microarray.platform = platform or None
         self.config.microarray.source = "geo_series_matrix"
@@ -478,11 +491,91 @@ class MainWindow(QMainWindow):
                     "organism below — it enables GO/KEGG enrichment and the STRING PPI network. "
                     "Without a selection, enrichment and PPI are skipped.")
                 self.reference_mode_banner.setVisible(True)
+            elif mode == "deseq2_results":
+                self.reference_mode_banner.setText(
+                    "DESeq2-results mode: alignment and a genome reference are skipped. Select your "
+                    "organism below — it enables GO/KEGG enrichment and the STRING PPI network. PCA, "
+                    "sample heatmaps, sample correlation and genes-of-interest need per-sample counts "
+                    "and are not produced in this mode.")
+                self.reference_mode_banner.setVisible(True)
             else:
                 self.reference_mode_banner.setVisible(False)
         self._refresh_output_table_pick()
         self._update_enrichment_warning()
         self._update_organism_label()
+
+    def _import_deseq2_results(self) -> None:
+        if not self._require_project() or self.config is None:
+            return
+        assert self.project_root is not None
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select a DESeq2 results table", "", "DESeq2 results (*.csv *.tsv *.txt)")
+        if not path:
+            return
+        src = Path(path)
+        sep = "," if src.suffix.lower() == ".csv" else "\t"
+        self.statusBar().showMessage("Importing DESeq2 results table...")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            try:
+                df = pd.read_csv(src, sep=sep, comment="#", dtype=str, nrows=5)
+            except Exception as exc:
+                QMessageBox.warning(self, APP_NAME, f"Could not read the table: {exc}")
+                return
+            cols = {str(c).strip().lower() for c in df.columns}
+            def _has(*names: str) -> bool:
+                return any(n.lower() in cols for n in names)
+            missing = []
+            if not _has("gene_id", "gene", "geneid", "id"):
+                missing.append("gene_id")
+            if not _has("log2FoldChange", "log2fc", "logfc"):
+                missing.append("log2FoldChange")
+            if not _has("padj", "adj.P.Val", "FDR", "qvalue"):
+                missing.append("padj")
+            if missing:
+                QMessageBox.warning(
+                    self, APP_NAME,
+                    "The results table is missing required column(s): " + ", ".join(missing) +
+                    ".\n\nRequired: gene_id, log2FoldChange, padj (common synonyms accepted; see the README).")
+                return
+            # Copy verbatim; the ingest step detects CSV vs TSV and normalizes headers.
+            dest = self.project_root / "config" / "deseq2_results.csv"
+            shutil.copyfile(src, dest)
+            self.config.input.type = "deseq2_results"
+            self.config.input.deseq2_results = "config/deseq2_results.csv"
+            self.config.input.count_matrix = None
+            self.config.microarray.gse_accession = None
+            # A microarray-only SYMBOL keytype must not carry over; fall back to the
+            # organism mapping (or the LOC/ENSEMBL handling in the enrichment step).
+            if self.config.enrichment.keytype == "SYMBOL":
+                self.config.enrichment.keytype = None
+            samples = dataframe_from_rows([
+                {"sample_id": "uploaded", "condition": "unknown", "layout": "n/a", "fastq_1": ""}
+            ])
+            save_metadata(samples, self.project_root / "config" / "samples.tsv")
+            self.metadata_table.load_dataframe(samples)
+            self.manager.save_config(self.project_root, self.config)
+        finally:
+            QApplication.restoreOverrideCursor()
+        if hasattr(self, "gse_box"):
+            self.gse_box.clear()
+        self._apply_input_mode_ui()
+        organism = self.config.reference.organism_name
+        has_org = bool(self.config.enrichment.kegg_organism or self.config.enrichment.orgdb
+                       or self.config.enrichment.gprofiler_organism)
+        org_note = (
+            f"\n\nEnrichment/PPI organism: {organism}." if has_org else
+            "\n\nNo organism selected yet — pick your organism on the Reference Manager tab so GO/KEGG "
+            "enrichment and the STRING PPI network can run.")
+        self.input_preview.setPlainText(
+            f"DESeq2-results mode: imported {src.name}.\n\n"
+            "The pipeline skips alignment, counts and DESeq2, and runs enrichment (GO/KEGG/GSEA), the "
+            "volcano / MA / p-value figures, and the STRING PPI network directly from your table. PCA, "
+            "sample-distance and expression heatmaps, sample correlation, the Wilcoxon diagnostic and "
+            "genes-of-interest need per-sample counts and are skipped." + org_note +
+            "\n\nNext: select your organism (Reference Manager), optionally set the contrast factor/levels "
+            "on Workflow Settings to name the comparison, then Start Run.")
+        self.statusBar().showMessage(f"Imported DESeq2 results: {src.name}", 8000)
 
     def _import_count_matrix(self) -> None:
         if not self._require_project() or self.config is None:
@@ -528,9 +621,11 @@ class MainWindow(QMainWindow):
             self.metadata_table.load_dataframe(samples)
             self.config.input.type = "count_matrix"
             self.config.input.count_matrix = "config/counts_matrix.txt"
-            # Switching to count-matrix mode: drop any stale microarray accession so
-            # a later save doesn't write a GSE that no longer applies.
+            # Switching to count-matrix mode: drop any stale microarray accession or
+            # uploaded results table so a later save doesn't write inputs that no
+            # longer apply.
             self.config.microarray.gse_accession = None
+            self.config.input.deseq2_results = None
             # Clear a microarray-only SYMBOL keytype so it can't carry into a
             # count-matrix run (whose ids are usually ENSEMBL); fall back to the
             # organism mapping.
@@ -1168,6 +1263,7 @@ class MainWindow(QMainWindow):
         ("align", "Aligning reads to the genome"),
         ("salmon_quant", "Quantifying transcripts"),
         ("ingest_counts", "Reading the count matrix"),
+        ("ingest_deseq2_results", "Reading the DESeq2 results table"),
         ("featurecounts", "Counting reads per gene"),
         ("htseq", "Counting reads per gene"),
         ("genes_of_interest", "Genes-of-interest figures"),
@@ -1592,8 +1688,13 @@ class MainWindow(QMainWindow):
         export_svg.setEnabled(False)
         export_svg.setToolTip("Load a network first.")
         export_svg.clicked.connect(lambda: self._ppi_export("svg"))
+        save_cyto = QPushButton("Save Cytoscape files…")
+        save_cyto.setEnabled(False)
+        save_cyto.setToolTip("Load a network first.")
+        save_cyto.clicked.connect(self._save_ppi_cytoscape)
         self.ppi_export_png = export_png
         self.ppi_export_svg = export_svg
+        self.ppi_save_cyto = save_cyto
         row2.addWidget(self.ppi_conf)
         row2.addWidget(self.ppi_conf_lbl)
         row2.addStretch(1)
@@ -1602,6 +1703,7 @@ class MainWindow(QMainWindow):
         row2.addWidget(self.ppi_export_bg)
         row2.addWidget(export_png)
         row2.addWidget(export_svg)
+        row2.addWidget(save_cyto)
         layout.addLayout(row2)
 
         self.ppi_status = QLabel("No network loaded — click “Load / refresh network”.")
@@ -1663,6 +1765,9 @@ class MainWindow(QMainWindow):
             self.ppi_export_svg.setEnabled(has_network)
             self.ppi_export_png.setToolTip("" if has_network else "Load a network first.")
             self.ppi_export_svg.setToolTip("" if has_network else "Load a network first.")
+            if hasattr(self, "ppi_save_cyto"):
+                self.ppi_save_cyto.setEnabled(has_network)
+                self.ppi_save_cyto.setToolTip("" if has_network else "Load a network first.")
         if not has_network:
             self.ppi_status.setText(
                 "No PPI network for this run — STRING returned no interactions (the organism may "
@@ -1678,6 +1783,43 @@ class MainWindow(QMainWindow):
         self.ppi_conf_lbl.setText(f"{floor:.2f}")
         if hasattr(self, "ppi_viewer"):
             self.ppi_viewer.set_confidence(floor)
+
+    def _save_ppi_cytoscape(self) -> None:
+        # Copy the Cytoscape interchange files (GraphML / SIF / cytoscape.js JSON +
+        # node/edge/hub tables for the STRING PPI and the enrichment networks) to a
+        # folder the user picks. GraphML keeps node attributes on import.
+        if not self._require_project() or self.project_root is None:
+            return
+        net_dir = self.project_root / "results" / "networks"
+        if not (net_dir / "string_ppi.graphml").exists():
+            QMessageBox.information(
+                self, APP_NAME,
+                "No STRING PPI network files yet. Run the pipeline (or 'Rebuild from STRING…') first.")
+            return
+        dest = QFileDialog.getExistingDirectory(self, "Choose a folder for the Cytoscape network files")
+        if not dest:
+            return
+        names = [
+            "string_ppi.graphml", "string_ppi.sif", "string_ppi.cyjs",
+            "string_ppi_nodes.csv", "string_ppi_edges.csv", "ppi_hub_genes.csv",
+            "enrichment_emap.graphml", "enrichment_emap.sif", "enrichment_emap.cyjs",
+            "enrichment_genemap.graphml", "enrichment_genemap.sif", "enrichment_genemap.cyjs",
+        ]
+        copied = 0
+        for n in names:
+            src = net_dir / n
+            if src.exists():
+                try:
+                    shutil.copyfile(src, Path(dest) / n)
+                    copied += 1
+                except Exception:
+                    pass
+        QMessageBox.information(
+            self, APP_NAME,
+            f"Saved {copied} Cytoscape network file(s) to:\n{dest}\n\n"
+            "Open string_ppi.graphml in Cytoscape (File → Import → Network from File) to keep node "
+            "attributes (module, degree, betweenness, log2FC). .sif is bare topology; .cyjs is for "
+            "cytoscape.js / web.")
 
     def _ppi_export(self, fmt: str) -> None:
         if not hasattr(self, "ppi_viewer") or not self.ppi_viewer.available:
@@ -2303,6 +2445,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "ppi_export_png"):
             self.ppi_export_png.setEnabled(False)
             self.ppi_export_svg.setEnabled(False)
+            if hasattr(self, "ppi_save_cyto"):
+                self.ppi_save_cyto.setEnabled(False)
 
     def _remember_recent_project(self, root: Path) -> None:
         # Keep up to 8 most-recently-opened project paths in QSettings for the
@@ -2456,6 +2600,7 @@ class MainWindow(QMainWindow):
         # branch (the SRA/count-matrix/GEO handlers set their own type the same way).
         self.config.input.type = "fastq"
         self.config.input.count_matrix = None
+        self.config.input.deseq2_results = None
         self.config.microarray.gse_accession = None
         self.manager.save_config(self.project_root, self.config)
         self.metadata_table.load_dataframe(df)
@@ -2538,7 +2683,7 @@ class MainWindow(QMainWindow):
 
     def _validate_metadata(self) -> None:
         allow_pending_sra = self.config is not None and self.config.input.type in (
-            "sra", "count_matrix", "microarray")
+            "sra", "count_matrix", "microarray", "deseq2_results")
         messages = validate_metadata(
             self.metadata_table.to_dataframe(),
             allow_pending_sra=allow_pending_sra,
@@ -2742,7 +2887,7 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()
         try:
             allow_pending_sra = self.config is not None and self.config.input.type in (
-                "sra", "count_matrix", "microarray")
+                "sra", "count_matrix", "microarray", "deseq2_results")
             messages = validate_metadata(
                 self.metadata_table.to_dataframe(),
                 allow_pending_sra=allow_pending_sra,
@@ -2793,7 +2938,7 @@ class MainWindow(QMainWindow):
         # A reference must be resolvable, or the pipeline dies mid-run with a
         # cryptic "genome_fasta_url is not set". Block early with clear guidance.
         if self.config is not None:
-            no_reference_mode = self.config.input.type in ("count_matrix", "microarray")
+            no_reference_mode = self.config.input.type in ("count_matrix", "microarray", "deseq2_results")
             ref = self.config.reference
             has_url = bool(ref.genome_fasta_url and ref.annotation_gtf_url)
             has_local = bool(ref.genome_fasta and ref.annotation_file)
@@ -3012,16 +3157,27 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "output_table_pick"):
             return
         itype = self.config.input.type if self.config is not None else "sra"
-        items = ["results/deseq2/deseq2_results.csv",
-                 "results/deseq2/normalized_counts.csv",
-                 "results/deseq2/unchanged_genes.csv"]
-        if itype in ("sra", "fastq"):
-            items.insert(0, "results/counts/counts.txt")
-        items += ["results/enrichment/kegg_ora.csv", "results/enrichment/kegg_gsea.csv",
-                  "results/stats/wilcoxon_results.csv", "results/stats/set_overlap.csv",
-                  "results/networks/enrichment_emap_nodes.csv",
-                  "results/networks/enrichment_genemap_nodes.csv",
-                  "results/networks/string_ppi_nodes.csv", "results/networks/ppi_hub_genes.csv"]
+        if itype == "deseq2_results":
+            # No counts/normalized/unchanged/wilcoxon outputs in this mode.
+            items = ["results/deseq2/deseq2_results.csv",
+                     "results/deseq2/upregulated_genes.csv",
+                     "results/deseq2/downregulated_genes.csv",
+                     "results/enrichment/kegg_ora.csv", "results/enrichment/kegg_gsea.csv",
+                     "results/stats/set_overlap.csv",
+                     "results/networks/enrichment_emap_nodes.csv",
+                     "results/networks/enrichment_genemap_nodes.csv",
+                     "results/networks/string_ppi_nodes.csv", "results/networks/ppi_hub_genes.csv"]
+        else:
+            items = ["results/deseq2/deseq2_results.csv",
+                     "results/deseq2/normalized_counts.csv",
+                     "results/deseq2/unchanged_genes.csv"]
+            if itype in ("sra", "fastq"):
+                items.insert(0, "results/counts/counts.txt")
+            items += ["results/enrichment/kegg_ora.csv", "results/enrichment/kegg_gsea.csv",
+                      "results/stats/wilcoxon_results.csv", "results/stats/set_overlap.csv",
+                      "results/networks/enrichment_emap_nodes.csv",
+                      "results/networks/enrichment_genemap_nodes.csv",
+                      "results/networks/string_ppi_nodes.csv", "results/networks/ppi_hub_genes.csv"]
         current = self.output_table_pick.currentText()
         self.output_table_pick.blockSignals(True)
         self.output_table_pick.clear()

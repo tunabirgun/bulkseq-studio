@@ -18,7 +18,7 @@ class ProjectConfig(BaseModel):
 
 
 class InputConfig(BaseModel):
-    type: Literal["fastq", "sra", "mixed", "count_matrix", "microarray"] = "fastq"
+    type: Literal["fastq", "sra", "mixed", "count_matrix", "microarray", "deseq2_results"] = "fastq"
     layout: Literal["paired", "single", "mixed", "unknown"] = "unknown"
     samples: str = "config/samples.tsv"
     sra_accessions: str = "config/sra_accessions.txt"
@@ -26,6 +26,11 @@ class InputConfig(BaseModel):
     # pipeline ingests it (skipping download/QC/alignment/featureCounts) into the
     # canonical results/counts/counts.txt and runs DESeq2 -> figures -> enrichment.
     count_matrix: str | None = None
+    # When type == deseq2_results: a user-supplied DESeq2 results table; the pipeline
+    # ingests it (skipping download/QC/alignment/featureCounts/DESeq2) into the canonical
+    # results/deseq2/deseq2_results.csv and runs enrichment -> figures -> PPI. Outputs that
+    # require raw/normalized counts (PCA, sample correlation, count heatmaps, GOI) are skipped.
+    deseq2_results: str | None = None
 
 
 class MicroarrayConfig(BaseModel):

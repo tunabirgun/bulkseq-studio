@@ -38,6 +38,38 @@ if MICROARRAY_MODE:
         script:
             "../scripts/run_limma.R"
 
+elif DE_RESULTS_MODE:
+
+    # DESeq2-results upload: the user supplies a ready results table. Ingest it into
+    # the canonical deseq2 outputs (results + up/down + a synthetic objects RDS that
+    # carries no dds/vsd) so enrichment/figures/PPI run; alignment, counts and DESeq2
+    # are skipped. Count-only outputs (normalized, unchanged, equivalence) are not
+    # produced and are gated out of final_targets().
+    rule ingest_deseq2_results:
+        input:
+            table=DE_RESULTS_TABLE,
+            samples=config["input"]["samples"],
+        output:
+            results="results/deseq2/deseq2_results.csv",
+            up="results/deseq2/upregulated_genes.csv",
+            down="results/deseq2/downregulated_genes.csv",
+            rds="results/deseq2/deseq2_objects.rds",
+            session="results/reports/sessionInfo.txt",
+            design_check="checks/08_metadata_design_qc.json",
+            deseq_check="checks/09_deseq2_qc.json",
+        params:
+            alpha=_DE.get("alpha", 0.05),
+            lfc_threshold=_DE.get("lfc_threshold", 1.0),
+            contrast_factor=_CONTRAST.get("factor", "condition"),
+            numerator=_CONTRAST.get("numerator", ""),
+            denominator=_CONTRAST.get("denominator", ""),
+        benchmark:
+            "benchmarks/ingest_deseq2_results.tsv"
+        log:
+            "logs/ingest_deseq2_results.log",
+        script:
+            "../scripts/ingest_deseq2_results.R"
+
 else:
 
     rule deseq2:

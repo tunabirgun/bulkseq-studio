@@ -22,6 +22,15 @@ elif COUNT_MATRIX_MODE:
         "checks/09_deseq2_qc.json",
         "checks/13_equivalence_qc.json",
     ]
+elif DE_RESULTS_MODE:
+    # DESeq2-results upload: only the ingest checks exist (no alignment, counts,
+    # DESeq2 model or equivalence test).
+    ALL_CHECKS = [
+        "checks/00_project_setup.json",
+        "checks/01_input_validation.json",
+        "checks/08_metadata_design_qc.json",
+        "checks/09_deseq2_qc.json",
+    ]
 else:
     ALL_CHECKS = [
         "checks/00_project_setup.json",
@@ -35,8 +44,10 @@ else:
     ]
 if WF.get("enrichment", True):
     ALL_CHECKS.append("checks/10_enrichment_qc.json")
-# Wilcoxon sensitivity diagnostic runs on every mode (reads the normalized matrix).
-ALL_CHECKS.append("checks/14_wilcoxon_sensitivity.json")
+# Wilcoxon sensitivity diagnostic reads the normalized matrix, which the
+# DESeq2-results upload mode does not have; it runs on every other mode.
+if not DE_RESULTS_MODE:
+    ALL_CHECKS.append("checks/14_wilcoxon_sensitivity.json")
 # DE-vs-gene-set overlap (skips cleanly for organisms not covered by MSigDB).
 ALL_CHECKS.append("checks/15_set_overlap.json")
 # PPI network (STRING) when enabled; degrades to empty + PASS if unreachable.

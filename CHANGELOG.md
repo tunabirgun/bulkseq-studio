@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.10.0 — 2026-06-24
+
+### Added
+
+- **Upload your own DESeq2 results (new input mode).** An "Upload DESeq2 Results" button on the Input
+  tab takes a ready DESeq2 results table (CSV/TSV with at least `gene_id`, `log2FoldChange`, `padj`;
+  common synonyms accepted) and runs the downstream analysis directly — functional enrichment
+  (GO/KEGG/GSEA), the volcano / MA / p-value figures, and the STRING PPI network — skipping alignment,
+  counts and DESeq2. Select the organism on the Reference Manager tab to resolve the enrichment/PPI
+  identifiers. Outputs that need per-sample counts (PCA, sample-distance and expression heatmaps,
+  sample correlation, the Wilcoxon diagnostic, genes-of-interest) are skipped with labelled
+  placeholders. The accepted table format is documented in the README. Validated by reproducing the
+  rice salt-stress enrichment + PPI from its results table alone (identical GO/KEGG/PPI to the full run).
+- **Save Cytoscape files button on the PPI tab.** Exports the network interchange files (GraphML, SIF,
+  cytoscape.js JSON and the node/edge/hub tables, for both the STRING PPI and the enrichment networks)
+  to a folder you choose. GraphML imports into Cytoscape with all node attributes (module, degree,
+  betweenness, log2FC).
+
 ## 0.9.0 — 2026-06-24
 
 ### Added

@@ -78,10 +78,16 @@ COUNT_MATRIX = INPUT.get("count_matrix")
 # with limma; no alignment/reference/counts. limma emits the DESeq2-shaped
 # artifacts so figures/enrichment/GOI are shared.
 MICROARRAY_MODE = INPUT.get("type") == "microarray"
+# DESeq2-results mode: the user supplies a ready DESeq2 results table, so the pipeline
+# skips download/QC/alignment/featureCounts/DESeq2 and ingests it into the canonical
+# results/deseq2/deseq2_results.csv, then runs enrichment/figures/PPI. Outputs that need
+# raw/normalized counts (PCA, sample correlation, count heatmaps, GOI) are gated off.
+DE_RESULTS_MODE = INPUT.get("type") == "deseq2_results"
+DE_RESULTS_TABLE = INPUT.get("deseq2_results")
 # Single-end FASTQ is not yet supported on the alignment route (only fastp_pe
 # exists); reject it up front with a clear message instead of dead-ending at the
-# trim step. Count-matrix / microarray modes have no layout and are unaffected.
-if not (COUNT_MATRIX_MODE or MICROARRAY_MODE) and not ALL_PAIRED:
+# trim step. Count-matrix / microarray / deseq2-results modes have no layout.
+if not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE) and not ALL_PAIRED:
     _se_samples = [s for s in SAMPLES if not is_paired(s)]
     raise ValueError(
         "Single-end FASTQ input is not yet supported (paired-end only). "
@@ -127,17 +133,7 @@ include: "rules/ppi.smk"
 def final_targets():
     targets = [
         "results/deseq2/deseq2_results.csv",
-        "results/export/normalized_expression_matrix.csv",
         "results/export/ranked_genes.rnk",
-        "results/figures/sample_correlation_pearson.png",
-        "results/figures/sample_correlation_pearson.svg",
-        "results/figures/sample_correlation_spearman.png",
-        "results/figures/sample_correlation_spearman.svg",
-        "results/export/sample_correlation_pearson.csv",
-        "results/export/sample_correlation_spearman.csv",
-        "results/figures/wilcoxon_concordance.png",
-        "results/figures/wilcoxon_concordance.svg",
-        "results/stats/wilcoxon_results.csv",
         "results/figures/set_overlap_dotplot.png",
         "results/figures/set_overlap_dotplot.svg",
         "results/stats/set_overlap.csv",
@@ -146,15 +142,35 @@ def final_targets():
         "results/reports/software_versions.txt",
         "checks/sanity_checks.txt",
     ]
-    # Microarray has no counts.txt (intensities, not counts); every other mode does.
-    if not MICROARRAY_MODE:
+    # Per-sample / normalized-count outputs: every mode produces them EXCEPT
+    # deseq2-results (a results table carries no per-sample expression matrix).
+    if not DE_RESULTS_MODE:
+        targets += [
+            "results/export/normalized_expression_matrix.csv",
+            "results/figures/sample_correlation_pearson.png",
+            "results/figures/sample_correlation_pearson.svg",
+            "results/figures/sample_correlation_spearman.png",
+            "results/figures/sample_correlation_spearman.svg",
+            "results/export/sample_correlation_pearson.csv",
+            "results/export/sample_correlation_spearman.csv",
+            "results/figures/wilcoxon_concordance.png",
+            "results/figures/wilcoxon_concordance.svg",
+            "results/stats/wilcoxon_results.csv",
+        ]
+    # Microarray has no counts.txt (intensities, not counts); deseq2-results has no
+    # counts at all; every other mode does.
+    if not (MICROARRAY_MODE or DE_RESULTS_MODE):
         targets.insert(0, "results/counts/counts.txt")
         targets.append("results/deseq2/unchanged_genes.csv")
-    if not (COUNT_MATRIX_MODE or MICROARRAY_MODE):
+    if not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE):
         # MultiQC aggregates FastQC/fastp/STAR — irrelevant without alignment.
         targets.insert(0, "results/qc/multiqc/multiqc_report.html")
     if WF.get("figures", True):
-        for fig in ("pca", "sample_distance", "ma_plot", "volcano", "top_deg_heatmap"):
+        # deseq2-results mode can draw only the results-table figures; PCA / sample
+        # distance / top-DEG heatmap need the counts/vst and degrade to placeholders.
+        fig_list = ("ma_plot", "volcano", "pvalue_histogram") if DE_RESULTS_MODE else \
+                   ("pca", "sample_distance", "ma_plot", "volcano", "top_deg_heatmap")
+        for fig in fig_list:
             targets.append(f"results/figures/{fig}.png")
             targets.append(f"results/figures/{fig}.svg")
     if WF.get("enrichment", True):
@@ -171,7 +187,7 @@ def final_targets():
                 targets.append(f"results/networks/{net}.{ext}")
             targets.append(f"results/networks/{net}_nodes.csv")
             targets.append(f"results/networks/{net}_edges.csv")
-    if config.get("gene_sets", {}).get("custom_gene_list"):
+    if config.get("gene_sets", {}).get("custom_gene_list") and not DE_RESULTS_MODE:
         targets.append("results/figures/goi_heatmap.png")
         targets.append("results/figures/goi_expression.png")
         targets.append("results/genes_of_interest/goi_report.txt")

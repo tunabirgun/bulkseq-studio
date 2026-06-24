@@ -113,6 +113,43 @@ The pasilla and Fusarium runs reproduce byte-for-byte across pipeline revisions,
 
 **Bundled benchmark projects.** Three one-click datasets are available from *Create Benchmark Project* on the Project tab: the Drosophila pasilla subset above, a *Saccharomyces cerevisiae* wild-type vs *ume6Δ* subset (PRJNA630199 / SRP260000; R64-1-1, Ensembl) — a small, fast genome on a different organism that exercises the g:Profiler + KEGG enrichment route — and an *Oryza sativa* (rice) super-hybrid CY1000 control vs 5-day salt-stress subset (PRJDB38133; IRGSP-1.0 NCBI RefSeq) that exercises the crop route (KEGG `osa` via the NCBI-RefSeq `LOC<GeneID>` strip, g:Profiler `osativa`, STRING taxid 39947). Each scaffolds an SRA-mode project (samples, contrast, reference) that downloads its reads and runs the full pipeline; the yeast project's pipeline DAG is verified to resolve end-to-end (download → STAR → featureCounts → DESeq2 → enrichment → networks).
 
+## Bring your own DESeq2 results
+
+If you already have a differential-expression table, the **Upload DESeq2 Results** button on the
+Input tab runs enrichment, the volcano / MA / p-value figures and the STRING PPI network directly
+from it — no FASTQ, alignment, counts or DESeq2 step. Select your organism on the Reference Manager
+tab so the KEGG / g:Profiler / STRING identifiers resolve.
+
+![The Upload DESeq2 Results button on the Input tab](docs/screenshot-input-deseq2.png)
+
+The table is a CSV or TSV with a header row. Required and optional columns (common synonyms accepted):
+
+| Column | Synonyms | Required | Used for |
+| --- | --- | --- | --- |
+| `gene_id` | gene, geneid, id | yes | enrichment + PPI seed; must be unique and match the organism's namespace |
+| `log2FoldChange` | log2FC, logFC | yes | volcano / MA, GSEA ranking, up/down split |
+| `padj` | adj.P.Val, FDR, qvalue | yes | significance (up/down at padj < alpha) |
+| `baseMean` | AveExpr | no | MA-plot x-axis (placeholder if absent) |
+| `pvalue` | P.Value, pval | no | p-value histogram (placeholder if absent) |
+| `stat` | statistic, t | no | GSEA `.rnk` ranking (synthesized as signed −log10(padj) if absent) |
+| `symbol` | gene_name | no | figure / network labels (falls back to `gene_id`) |
+| `lfcSE`, `biotype` | — | no | carried through |
+
+Up- and down-regulated sets are derived from your `padj` and `|log2FoldChange|` against the
+thresholds on the Workflow Settings tab (defaults padj < 0.05, |log2FC| ≥ 1). The `gene_id`
+namespace must match the organism's enrichment resources — Ensembl gene IDs for human/mouse,
+FlyBase for Drosophila, and NCBI GeneIDs (bare or `LOC<GeneID>`) for NCBI-RefSeq crops such as rice.
+Minimal example:
+
+```csv
+gene_id,log2FoldChange,padj
+LOC4338641,8.78,2.0e-311
+LOC4327274,-7.12,4.3e-277
+```
+
+Outputs that need per-sample counts (PCA, sample-distance and expression heatmaps, sample
+correlation, the Wilcoxon diagnostic and genes-of-interest) are not produced in this mode.
+
 ## Project layout
 
 | Path | Contents |
