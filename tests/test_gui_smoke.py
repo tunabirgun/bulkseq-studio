@@ -72,10 +72,26 @@ def test_config_round_trip_through_widgets() -> None:
     # by widget defaults).
     window.design.setText("~ batch + condition")
     window.alpha.setValue(0.1)
+    window.organellar.setCurrentIndex(window.organellar.findData("separate"))
     window._save_workflow_settings()
     reloaded = window.manager.load_config(root)
     assert reloaded.deseq2.design_formula == "~ batch + condition"
     assert abs(reloaded.deseq2.alpha - 0.1) < 1e-9
+    assert reloaded.workflow.organellar_genes == "separate"
+    # Reload into the widgets: the organellar combo must reflect the saved value.
+    window._load_project(root)
+    assert window.organellar.currentData() == "separate"
+
+    # The Run-Monitor provenance exports stay disabled until a run writes the files.
+    assert not window.export_toolsref_button.isEnabled()
+    assert not window.export_design_button.isEnabled()
+    reports = root / "results" / "reports"
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / "tools_references.txt").write_text("x", encoding="utf-8")
+    (reports / "study_design.txt").write_text("x", encoding="utf-8")
+    window._refresh_export_buttons()
+    assert window.export_toolsref_button.isEnabled()
+    assert window.export_design_button.isEnabled()
     window.close()
 
 

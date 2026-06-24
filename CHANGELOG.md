@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.11.1 — 2026-06-24
+
+### Added
+
+- **Mitochondrial / chloroplast (organellar) gene handling.** A new Workflow-tab choice — **keep**
+  (default), **discard**, or **analyse separately** — controls organellar genes, which can dominate
+  library size and skew DESeq2 size-factor normalization. *Discard* removes them from the count
+  matrix before the differential test; *separate* runs the main DE on nuclear genes only and writes
+  `results/organellar/organellar_counts.txt` plus a per-sample organellar-fraction table
+  (`organellar_summary.tsv`, mitochondrial and plastid broken out). Organellar contigs are detected
+  automatically from the reference genome FASTA headers (mitochondrion / chloroplast / plastid, plus
+  short contig names like `MT` / `Pt`); genes are mapped to them via the featureCounts Chr column or
+  the GTF (Salmon), so it works for plants and animals with no curated gene list. Applies to the
+  STAR/HISAT2/Salmon alignment routes; `keep` leaves the counts flow unchanged. Validated on rice
+  (234 organellar genes, 80 mitochondrial and 154 chloroplast, correctly separated) and on the
+  Drosophila pasilla set through Snakemake (38 mitochondrial genes removed, 0.18–0.41% of reads per
+  sample), with the main DE run on the remaining nuclear genes.
+- **Export tools & references and study design from a run.** When a run finishes, the Run Monitor
+  enables two buttons. *Export Tools & References* saves a text file with the tool versions
+  (including HISAT2, Salmon, gffread) and R/Bioconductor package versions (DESeq2, clusterProfiler,
+  STRINGdb, msigdbr, and more), the reference genome and annotation (organism, source URLs, MD5),
+  and the enrichment database codes (KEGG, STRING, g:Profiler, OrgDb). *Export Study Design* saves
+  the samples, conditions, layout, DESeq2 design formula, and contrasts. Both files are written by
+  the pipeline into `results/reports/` (`tools_references.txt`, `study_design.txt`); the buttons
+  save a copy to a location you choose.
+
+### Documentation
+
+- README rewritten for the current tool (three aligners, organellar handling, the two exports, the
+  input modes) and all screenshots retaken, including a Run Monitor view of the export buttons.
+
 ## 0.11.0 — 2026-06-24
 
 ### Added

@@ -51,7 +51,7 @@ rule multiqc:
         expand("results/qc/fastqc_trim/{sample}", sample=SAMPLES),
         expand("results/qc/fastp/{sample}.json", sample=SAMPLES),
         _multiqc_align_inputs(),
-        "results/counts/counts.txt.summary",
+        COUNTS_SUMMARY,
     output:
         "results/qc/multiqc/multiqc_report.html",
     benchmark:

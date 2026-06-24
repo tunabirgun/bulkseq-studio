@@ -1011,6 +1011,17 @@ class MainWindow(QMainWindow):
         de_form.addRow(self._info_label("Alpha (padj/FDR)", "Significance threshold on the Benjamini-Hochberg adjusted p-value (false discovery rate). Default 0.05."), self.alpha)
         de_form.addRow(self._info_label("log2FC threshold", "Minimum absolute log2 fold change for a gene to count as up/down-regulated. |log2FC| >= this AND padj < alpha. Default 1.0 (a 2-fold change)."), self.lfc_threshold)
         de_form.addRow(QLabel("featureCounts strandedness is auto-inferred per protocol."))
+        self.organellar = QComboBox()
+        self.organellar.addItem("Keep (include in analysis)", "keep")
+        self.organellar.addItem("Discard before differential expression", "discard")
+        self.organellar.addItem("Analyse separately (nuclear DE + organellar subset)", "separate")
+        de_form.addRow(self._info_label(
+            "Mitochondrial / chloroplast genes",
+            "Organellar (mitochondrial + chloroplast) transcripts can dominate library size and "
+            "skew DESeq2 normalization. Keep them, discard them before the differential test, or "
+            "analyse them separately (the main DE runs on nuclear genes only; a separate organellar "
+            "count subset and a per-sample organellar-fraction table are written). Applies to "
+            "STAR/HISAT2/Salmon runs (needs a reference genome)."), self.organellar)
         layout.addWidget(de_group)
 
         out_group = QGroupBox("Outputs")
@@ -1193,7 +1204,17 @@ class MainWindow(QMainWindow):
         open_folder.clicked.connect(self._open_folder)
         open_report = QPushButton("Open MultiQC Report")
         open_report.clicked.connect(self._open_report)
-        for w in (stop, open_folder, open_report):
+        self.export_toolsref_button = QPushButton("Export Tools && References")
+        self.export_toolsref_button.setToolTip(
+            "Save a text file listing the tool versions, reference genome/annotation (accession, "
+            "source, MD5) and enrichment database sources used in this run. Available after the run completes.")
+        self.export_toolsref_button.clicked.connect(self._export_tools_references)
+        self.export_design_button = QPushButton("Export Study Design")
+        self.export_design_button.setToolTip(
+            "Save a text file describing the study design: samples, conditions, layout, the DESeq2 "
+            "design formula and contrasts. Available after the run completes.")
+        self.export_design_button.clicked.connect(self._export_study_design)
+        for w in (stop, open_folder, open_report, self.export_toolsref_button, self.export_design_button):
             actions.addWidget(w)
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -1227,6 +1248,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.log_text)
         self.run_monitor_page = page
         self.tabs.addTab(page, "Run Monitor")
+        self._refresh_export_buttons()
 
     def _set_run_status(self, text: str, color: str | None = None) -> None:
         self.status_label.setText(text)
@@ -1446,6 +1468,8 @@ class MainWindow(QMainWindow):
             # interactive viewer so it reflects the rebuild instead of the old graph.
             if was_mode == "ppi" and self.project_root is not None:
                 self._load_ppi_network()
+            # A completed run writes the provenance files; enable their export buttons.
+            self._refresh_export_buttons()
         else:
             # Non-zero: do not imply success. Red bar, red status, keep partial %.
             self.progress.setStyleSheet("QProgressBar::chunk { background-color: #C0392B; }")
@@ -1478,6 +1502,39 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(report)))
         else:
             self.log_text.append(f"MultiQC report not found yet: {report}")
+
+    def _refresh_export_buttons(self) -> None:
+        # Enable the Run-Monitor provenance exports once a run has produced the files.
+        root = getattr(self, "project_root", None)
+        reports = (root / "results" / "reports") if root else None
+        for attr, fname in (("export_toolsref_button", "tools_references.txt"),
+                            ("export_design_button", "study_design.txt")):
+            button = getattr(self, attr, None)
+            if button is not None:
+                button.setEnabled(bool(reports and (reports / fname).exists()))
+
+    def _export_report_file(self, name: str, label: str) -> None:
+        if self.project_root is None:
+            return
+        src = self.project_root / "results" / "reports" / name
+        if not src.exists():
+            QMessageBox.information(self, f"Export {label}",
+                f"The {label} file is written when a run completes. Run the pipeline first, then export.")
+            return
+        dest, _ = QFileDialog.getSaveFileName(self, f"Export {label}", name, "Text (*.txt)")
+        if not dest:
+            return
+        try:
+            shutil.copyfile(src, dest)
+            self.log_text.append(f"Exported {label} to {dest}")
+        except OSError as exc:
+            QMessageBox.warning(self, f"Export {label}", f"Could not write {dest}:\n{exc}")
+
+    def _export_tools_references(self) -> None:
+        self._export_report_file("tools_references.txt", "tools & references")
+
+    def _export_study_design(self) -> None:
+        self._export_report_file("study_design.txt", "study design")
 
     def _build_reports_tab(self) -> None:
         page = QWidget()
@@ -2427,6 +2484,7 @@ class MainWindow(QMainWindow):
         if samples.exists():
             self.metadata_table.load_tsv(samples)
         self._refresh_gallery()
+        self._refresh_export_buttons()
         self._remember_recent_project(root)
         self.project_status.setPlainText(f"Open project: {root}")
 
@@ -2486,6 +2544,8 @@ class MainWindow(QMainWindow):
         self.rrna.setChecked(wf.rrna_filtering)
         self.enrichment.setChecked(wf.enrichment)
         self.figures.setChecked(wf.figures)
+        _org_idx = self.organellar.findData(getattr(wf, "organellar_genes", "keep"))
+        self.organellar.setCurrentIndex(_org_idx if _org_idx >= 0 else 0)
         self.fastp_q.setValue(self.config.fastp.qualified_quality_phred)
         self.fastp_len.setValue(self.config.fastp.length_required)
         self.trim_poly_g.setChecked(self.config.fastp.trim_poly_g)
@@ -2792,6 +2852,7 @@ class MainWindow(QMainWindow):
         self.config.workflow.rrna_filtering = self.rrna.isChecked()
         self.config.workflow.enrichment = self.enrichment.isChecked()
         self.config.workflow.figures = self.figures.isChecked()
+        self.config.workflow.organellar_genes = self.organellar.currentData()  # type: ignore[assignment]
         self.config.fastp.qualified_quality_phred = self.fastp_q.value()
         self.config.fastp.length_required = self.fastp_len.value()
         self.config.fastp.trim_poly_g = self.trim_poly_g.isChecked()

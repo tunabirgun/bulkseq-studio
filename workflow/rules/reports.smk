@@ -32,6 +32,8 @@ rule final_reports:
         timing_txt="results/reports/timing_summary.txt",
         timing_json="results/reports/timing_summary.json",
         versions="results/reports/software_versions.txt",
+        tools_refs="results/reports/tools_references.txt",
+        study_design="results/reports/study_design.txt",
     benchmark:
         "benchmarks/final_reports.tsv"
     shell:

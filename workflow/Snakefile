@@ -100,6 +100,23 @@ if not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE) and not ALL_PAI
         f"Single-end sample(s): {', '.join(_se_samples)}. Provide paired-end "
         "reads, or use the count-matrix or GEO microarray input mode."
     )
+# Mitochondrial + chloroplast (organellar) gene handling: keep | discard | separate.
+# Only meaningful on the alignment routes (they have a genome + GTF to identify organellar
+# contigs). When not "keep", featureCounts/Salmon write counts.raw.txt and filter_organellar
+# produces the canonical counts.txt (nuclear-only; plus the organellar subset in "separate"
+# mode). "keep" leaves the counts flow exactly as before.
+ORGANELLAR_MODE = (WF.get("organellar_genes") or "keep").lower()
+ORGANELLAR_FILTER = (
+    ORGANELLAR_MODE in ("discard", "separate")
+    and not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)
+)
+COUNTS_FILE = "results/counts/counts.txt"
+COUNTS_RAW = "results/counts/counts.raw.txt" if ORGANELLAR_FILTER else COUNTS_FILE
+# featureCounts auto-names its summary <output>.summary, so the quantification summary
+# tracks the counts file name. It reflects read counting (pre-organellar-filter), which
+# is what the 07 check and MultiQC report.
+COUNTS_SUMMARY = COUNTS_RAW + ".summary"
+
 GENOME_FA = "references/genome.fa"
 ANNOTATION_GTF = "references/annotation.gtf"
 STAR_INDEX = "references/star_index"

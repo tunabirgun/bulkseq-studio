@@ -81,6 +81,9 @@ class WorkflowConfig(BaseModel):
     enrichment: bool = True
     figures: bool = True
     custom_gene_list_analysis: bool = True
+    # Mitochondrial + chloroplast/plastid genes: keep them, discard them before DE, or
+    # separate them into their own count subset (and run the main DE on nuclear genes only).
+    organellar_genes: Literal["keep", "discard", "separate"] = "keep"
 
 
 class FastpConfig(BaseModel):

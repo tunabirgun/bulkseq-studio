@@ -37,10 +37,37 @@ TOOLS = {
     "multiqc": ["multiqc", "--version"],
     "fastp": ["fastp", "--version"],
     "STAR": ["STAR", "--version"],
+    "HISAT2": ["hisat2", "--version"],
+    "salmon": ["salmon", "--version"],
+    "gffread": ["gffread", "--version"],
     "samtools": ["samtools", "--version"],
     "featureCounts": ["featureCounts", "-v"],
     "Rscript": ["Rscript", "--version"],
 }
+
+# Key R analysis packages (DE, enrichment, network, figures). Their versions are the
+# effective "database versions" for the annotation/enrichment back-ends (OrgDb, MSigDB).
+R_PACKAGES = [
+    "DESeq2", "limma", "apeglm", "tximport", "clusterProfiler", "enrichplot",
+    "gprofiler2", "STRINGdb", "msigdbr", "DOSE", "ggplot2",
+]
+
+
+def r_package_versions(extra=None):
+    pkgs = list(R_PACKAGES) + [p for p in (extra or []) if p]
+    code = ('for (p in commandArgs(TRUE)) cat(sprintf("%s\\t%s\\n", p, '
+            'tryCatch(as.character(packageVersion(p)), error = function(e) "not installed")))')
+    try:
+        result = subprocess.run(["Rscript", "-e", code, *pkgs],
+                                capture_output=True, text=True, timeout=60, check=False)
+        out = {}
+        for line in result.stdout.splitlines():
+            if "\t" in line:
+                name, ver = line.split("\t", 1)
+                out[name.strip()] = ver.strip()
+        return out
+    except Exception:
+        return {}
 
 
 def run_version(command: list[str]) -> str:
@@ -96,6 +123,7 @@ def main() -> int:
     customized = diff_configs(drop_project(defaults), drop_project(config))
 
     versions = {name: run_version(command) for name, command in TOOLS.items()}
+    r_pkgs = r_package_versions(extra=[config.get("enrichment", {}).get("orgdb")])
     sanity_path = root / "checks/sanity_checks.txt"
     sanity_text = sanity_path.read_text(encoding="utf-8") if sanity_path.exists() else ""
     project = config.get("project", {})
@@ -112,6 +140,7 @@ def main() -> int:
         "reference": config.get("reference", {}),
         "microarray": config.get("microarray", {}),
         "enrichment": config.get("enrichment", {}),
+        "ppi": config.get("ppi", {}),
         "workflow": config.get("workflow", {}),
         "deseq2": config.get("deseq2", {}),
         "fastp": config.get("fastp", {}),
@@ -121,6 +150,7 @@ def main() -> int:
         "resources": config.get("resources", {}),
         "rule_threads": config.get("rule_threads", {}),
         "software_versions": versions,
+        "r_packages": r_pkgs,
         "customized_parameters": customized,
         "warnings": collect_warnings(sanity_text),
         "output_paths": existing_outputs(root),
@@ -131,6 +161,10 @@ def main() -> int:
     (reports / "run_summary.json").write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
     (reports / "software_versions.txt").write_text("\n".join(f"{k}: {v}" for k, v in versions.items()) + "\n", encoding="utf-8")
     (reports / "run_summary.txt").write_text(render_text(payload), encoding="utf-8")
+    (reports / "tools_references.txt").write_text(render_tools_references(payload), encoding="utf-8")
+    samples_tsv = root / "config" / "samples.tsv"
+    samples_text = samples_tsv.read_text(encoding="utf-8") if samples_tsv.exists() else ""
+    (reports / "study_design.txt").write_text(render_study_design(payload, samples_text), encoding="utf-8")
     return 0
 
 
@@ -183,6 +217,78 @@ def render_text(p: dict) -> str:
     lines += p["output_paths"] or ["None yet."]
     lines += ["", "Software Versions", "-----------------"]
     lines += [f"{k}: {v}" for k, v in p["software_versions"].items()]
+    return "\n".join(lines) + "\n"
+
+
+def render_tools_references(p: dict) -> str:
+    ref = p.get("reference", {})
+    enr = p.get("enrichment", {})
+    ppi = p.get("ppi", {})
+    ma = p.get("microarray", {})
+    wf = p.get("workflow", {})
+    input_type = p.get("input", {}).get("type")
+    is_micro = input_type == "microarray"
+    lines = ["Tools, References and Databases", "===============================", "",
+             f"Project: {p['project'].get('name')}",
+             f"Run date: {p['run_date']}",
+             f"App version: {p['app_version']}    Workflow version: {p['workflow_version']}",
+             f"Workflow commit: {p.get('workflow_git_commit') or 'n/a (packaged build)'}",
+             f"Environment lock md5: {p.get('environment_lock_md5') or 'n/a'}",
+             f"Input type: {input_type}    Aligner: {wf.get('aligner')}    "
+             f"Quantifier: {wf.get('quantifier')}", ""]
+    if is_micro:
+        lines += ["Microarray source", "-----------------",
+                  f"Organism: {ref.get('organism_name')}",
+                  f"GEO series: {ma.get('gse_accession')}    Platform: {ma.get('platform')}",
+                  f"Source: {ma.get('source')}    Normalization: {ma.get('normalization')}", ""]
+    else:
+        lines += ["Reference genome and annotation", "-------------------------------",
+                  f"Organism: {ref.get('organism_name')}    Strain: {ref.get('strain')}",
+                  f"Assembly/package: {ref.get('package_id') or 'n/a'}    "
+                  f"Source/release: {ref.get('source')} {ref.get('release', '')}".rstrip(),
+                  f"Genome FASTA: {ref.get('genome_fasta_url') or ref.get('genome_fasta') or 'n/a'}",
+                  f"Annotation: {ref.get('annotation_gtf_url') or ref.get('annotation_file') or 'n/a'}",
+                  f"Genome MD5: {ref.get('genome_md5') or 'n/a'}    "
+                  f"Annotation MD5: {ref.get('annotation_md5') or 'n/a'}", ""]
+    lines += ["Enrichment databases and sources", "--------------------------------",
+              f"KEGG organism code: {enr.get('kegg_organism') or 'n/a'}",
+              f"STRING taxon: {ppi.get('taxon') or 'derived from organism'}",
+              f"Bioconductor OrgDb: {enr.get('orgdb') or 'none (g:Profiler used for GO)'}",
+              f"g:Profiler organism: {enr.get('gprofiler_organism') or 'n/a'}",
+              f"Enrichment keytype: {enr.get('keytype') or '(organism default)'}    "
+              f"Backend: {enr.get('backend') or 'clusterprofiler'}",
+              "Note: KEGG, STRING and g:Profiler are queried live; their content version is the "
+              "run date above. OrgDb / MSigDB versions are the R package versions listed below.", ""]
+    lines += ["Tool versions", "-------------"]
+    lines += [f"{k}: {v}" for k, v in p.get("software_versions", {}).items()]
+    rp = p.get("r_packages", {})
+    if rp:
+        lines += ["", "R / Bioconductor package versions", "---------------------------------"]
+        lines += [f"{k}: {v}" for k, v in rp.items()]
+    return "\n".join(lines) + "\n"
+
+
+def render_study_design(p: dict, samples_tsv: str) -> str:
+    de = p.get("deseq2", {})
+    wf = p.get("workflow", {})
+    input_type = p.get("input", {}).get("type")
+    is_micro = input_type == "microarray"
+    de_method = "limma (microarray)" if is_micro else "DESeq2"
+    lines = ["Study Design", "============", "",
+             f"Project: {p['project'].get('name')}",
+             f"Run date: {p['run_date']}",
+             f"Input type: {input_type}    Differential expression: {de_method}", "",
+             "Design", "------",
+             f"Design formula: {de.get('design_formula')}",
+             f"Reference level: {de.get('reference_level')}",
+             f"Contrasts: {json.dumps(de.get('contrasts', []))}",
+             f"Alpha (FDR): {de.get('alpha')}    |log2FC| threshold: {de.get('lfc_threshold')}",
+             f"Organellar genes: {wf.get('organellar_genes', 'keep')}", "",
+             "Samples (config/samples.tsv)", "----------------------------"]
+    if samples_tsv.strip():
+        lines += samples_tsv.rstrip("\n").splitlines()
+    else:
+        lines.append("samples.tsv not found.")
     return "\n".join(lines) + "\n"
 
 

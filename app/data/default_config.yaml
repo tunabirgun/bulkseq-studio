@@ -48,6 +48,8 @@ workflow:
   enrichment: true
   figures: true
   custom_gene_list_analysis: true
+  # Mitochondrial + chloroplast genes: keep | discard | separate (default keep).
+  organellar_genes: keep
 fastp:
   detect_adapter_for_pe: true
   qualified_quality_phred: 15

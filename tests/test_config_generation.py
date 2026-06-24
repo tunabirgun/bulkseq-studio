@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from app.core.config_models import default_config
+from app.core.config_models import WorkflowConfig, default_config
 from app.core.project import ProjectManager
 
 
@@ -24,3 +24,11 @@ def test_default_config_has_star_route():
     cfg = default_config("demo", BASE / "demo")
     assert cfg.workflow.aligner == "STAR"
     assert cfg.workflow.quantifier == "featureCounts"
+
+
+def test_organellar_genes_default_and_round_trip():
+    # Default keeps organellar genes; the choice survives a dump -> reload round-trip.
+    assert WorkflowConfig().organellar_genes == "keep"
+    for mode in ("keep", "discard", "separate"):
+        wf = WorkflowConfig(organellar_genes=mode)
+        assert WorkflowConfig(**wf.model_dump()).organellar_genes == mode

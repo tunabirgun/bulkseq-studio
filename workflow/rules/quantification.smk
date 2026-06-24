@@ -14,8 +14,8 @@ if COUNT_MATRIX_MODE:
             matrix=COUNT_MATRIX,
             samples=config["input"]["samples"],
         output:
-            counts="results/counts/counts.txt",
-            summary="results/counts/counts.txt.summary",
+            counts=COUNTS_RAW,
+            summary=COUNTS_SUMMARY,
         log:
             "logs/ingest_counts.log",
         shell:
@@ -52,8 +52,8 @@ elif USE_SALMON:
             quants=expand("results/salmon/{sample}/quant.sf", sample=SAMPLES),
             tx2gene="references/tx2gene.tsv",
         output:
-            counts="results/counts/counts.txt",
-            summary="results/counts/counts.txt.summary",
+            counts=COUNTS_RAW,
+            summary=COUNTS_SUMMARY,
         log:
             "logs/salmon_tximport.log",
         script:
@@ -68,8 +68,8 @@ else:
             gtf=ANNOTATION_GTF,
             strand="results/aligned/strandedness.txt",
         output:
-            counts="results/counts/counts.txt",
-            summary="results/counts/counts.txt.summary",
+            counts=COUNTS_RAW,
+            summary=COUNTS_SUMMARY,
         params:
             paired="-p --countReadPairs" if ALL_PAIRED else "",
             feature=_FC.get("feature_type", "exon"),
@@ -88,9 +88,47 @@ else:
             "{input.bams:q} > {log:q} 2>&1"
 
 
+# Organellar (mitochondrial + chloroplast) gene handling. Only wired when the user
+# chose discard/separate on an alignment route; otherwise the quant rules write
+# counts.txt directly (COUNTS_RAW == COUNTS_FILE) and these rules do not exist.
+if ORGANELLAR_FILTER and ORGANELLAR_MODE == "discard":
+
+    rule filter_organellar:
+        input:
+            counts=COUNTS_RAW,
+            genome=GENOME_FA,
+            gtf=ANNOTATION_GTF,
+        output:
+            counts=COUNTS_FILE,
+        log:
+            "logs/filter_organellar.log",
+        shell:
+            "python workflow/scripts/filter_organellar.py --counts {input.counts:q} "
+            "--genome {input.genome:q} --gtf {input.gtf:q} --mode discard "
+            "--out-counts {output.counts:q} --log {log:q}"
+
+elif ORGANELLAR_FILTER and ORGANELLAR_MODE == "separate":
+
+    rule filter_organellar:
+        input:
+            counts=COUNTS_RAW,
+            genome=GENOME_FA,
+            gtf=ANNOTATION_GTF,
+        output:
+            counts=COUNTS_FILE,
+            organellar="results/organellar/organellar_counts.txt",
+            summary="results/organellar/organellar_summary.tsv",
+        log:
+            "logs/filter_organellar.log",
+        shell:
+            "python workflow/scripts/filter_organellar.py --counts {input.counts:q} "
+            "--genome {input.genome:q} --gtf {input.gtf:q} --mode separate "
+            "--out-counts {output.counts:q} --organellar-dir results/organellar --log {log:q}"
+
+
 rule quantification_check:
     input:
-        summary="results/counts/counts.txt.summary",
+        summary=COUNTS_SUMMARY,
     output:
         "checks/07_quantification_qc.json",
     benchmark:
