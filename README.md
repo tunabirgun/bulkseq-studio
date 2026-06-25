@@ -1,8 +1,8 @@
 # BulkSeq Studio
 
-A Windows desktop application for reproducible, reference-based **bulk RNA-seq analysis**, from raw FASTQ/SRA reads to differential expression, functional enrichment, and publication figures, with no command line required.
+A **cross-platform** desktop application (Windows and Linux) for reproducible, reference-based **bulk RNA-seq analysis**, from raw FASTQ/SRA reads to differential expression, functional enrichment, and publication figures, with no command line required.
 
-BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://snakemake.github.io/) pipeline inside WSL2. You point it at your data and a reference; it produces a count matrix, DESeq2 results, GO/KEGG enrichment, and figures, and records the exact parameters, tool versions, and environment so a run can be reproduced later.
+BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://snakemake.github.io/) pipeline — inside WSL2 on Windows, or natively in a local environment on Linux. You point it at your data and a reference; it produces a count matrix, DESeq2 results, GO/KEGG enrichment, and figures, and records the exact parameters, tool versions, and environment so a run can be reproduced later. On Linux the same pipeline runs directly (no WSL); see [Running on Linux](#running-on-linux).
 
 ![BulkSeq Studio, from data to results](docs/screenshot-overview-light.png)
 
@@ -56,11 +56,20 @@ The interactive PPI Network tab. Hover a protein to read its fold-change, adjust
 
 ## Requirements
 
+**Windows**
+
 - Windows 10/11 (x64).
 - [WSL2](https://learn.microsoft.com/windows/wsl/install) with a Linux distribution. The app can enable WSL2 and install the bioinformatics environment for you from its setup screen.
+
+**Linux**
+
+- A 64-bit Linux distribution with Python 3.10+ and [micromamba](https://mamba.readthedocs.io/) (or conda/mamba). The GUI and the pipeline run natively in your local environment; no WSL is involved.
+
+**Both**
+
 - About 10 GB free disk for the toolchain and reference indices; 16 GB+ RAM recommended (STAR alignment is the memory-intensive step; for very large genomes use the HISAT2 or Salmon aligner, which need far less).
 
-The bioinformatics tools (Snakemake, STAR, HISAT2, Salmon, featureCounts, samtools, fastp, FastQC, MultiQC, DESeq2, clusterProfiler, and more) install into a pinned micromamba environment inside WSL2; the Windows side only runs the GUI.
+The bioinformatics tools (Snakemake, STAR, HISAT2, Salmon, featureCounts, samtools, fastp, FastQC, MultiQC, DESeq2, clusterProfiler, and more) install into a pinned micromamba environment — inside WSL2 on Windows, or locally on Linux. The GUI itself is PySide6/Qt and runs on both.
 
 ## Install
 
@@ -92,6 +101,32 @@ python -m venv .venv
 pip install -r requirements.txt
 python -m app.main
 ```
+
+## Running on Linux
+
+On Linux, BulkSeq Studio runs **natively** — there is no WSL. The same PySide6 GUI drives the same Snakemake pipeline directly in a local [micromamba](https://mamba.readthedocs.io/) environment, and the results are identical to a Windows/WSL2 run (a native Linux run of the pasilla count matrix reproduces the same 473 differentially expressed genes as the Windows benchmark).
+
+1. Create the pipeline environment once:
+
+   ```bash
+   micromamba create -n bulkseq -f workflow/envs/bulkseq.lock.yaml
+   ```
+
+2. Install the GUI dependencies and launch the full application:
+
+   ```bash
+   micromamba activate bulkseq        # any environment with snakemake on PATH
+   pip install PySide6 pandas pydantic pyyaml psutil openpyxl pillow
+   python -m app.main
+   ```
+
+The full GUI — every tab, the Figure Style editor, and the interactive cytoscape.js PPI viewer (QtWebEngine) — runs the same on Linux as on Windows; the WSL2 controls are hidden, since the pipeline runs locally.
+
+![BulkSeq Studio running natively on Linux](docs/screenshot-linux.png)
+
+A minimal launcher (`python -m app.simple_gui`) is also available for opening an existing project and running, dry-running, or unlocking the pipeline with a live log:
+
+![The simple native GUI on Linux](docs/screenshot-linux-simple.png)
 
 ## Quick start
 
@@ -195,3 +230,9 @@ correlation, the Wilcoxon diagnostic, and genes-of-interest) are not produced in
 ## License
 
 See [`LICENSE`](LICENSE).
+
+## WSL2 on Windows versus native Linux
+
+Both routes run the identical Snakemake pipeline and produce identical results, so the choice is about your environment rather than the science. On Windows the pipeline runs inside WSL2, a lightweight Linux virtual machine. This keeps the desktop experience on Windows, where many wet-lab biologists work, while giving the bioinformatics tools a genuine Linux toolchain. The trade-offs are a one-time WSL2 setup that needs a single administrator step to enable the Windows feature; a memory cap on the WSL2 virtual machine that sits below the host's total RAM, so the very largest genome indices can exceed a limit the host could otherwise satisfy (bread wheat's STAR index needs about 95 GiB, which overflows a typical WSL2 cap, and the HISAT2 or Salmon route is then the fallback); and slower file access when a project lives on a Windows drive (`C:\...`) rather than the WSL filesystem, because every read crosses the Windows–Linux 9P boundary.
+
+Native Linux avoids all of this. There is no virtual machine, so no memory cap below the host's RAM and no 9P file-access penalty; there is no WSL setup step; and large-genome indexing and the many-small-file steps (alignment, package installation) are correspondingly faster and simpler. The practical guidance follows from that: on Windows, keep projects on the WSL filesystem and switch to HISAT2 or Salmon for crop genomes that exceed the WSL2 memory cap; on Linux, run natively and use the full host RAM. The graphical interface and every output file are the same on both.

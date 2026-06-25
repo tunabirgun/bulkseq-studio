@@ -170,7 +170,12 @@ class MainWindow(QMainWindow):
         # detection), so blocking actions show progress instead of looking frozen.
         # The environment check is on-demand (the 'Check Environment' button) so the
         # window opens instantly instead of blocking on WSL/conda probes at startup.
-        if shutil.which("wsl") is None:
+        if not sys.platform.startswith("win"):
+            self.statusBar().showMessage(
+                "Ready — the pipeline runs natively in the local environment. Click 'Check "
+                "Environment' on the Project tab to verify the bioinformatics tools are installed."
+            )
+        elif shutil.which("wsl") is None:
             self.statusBar().showMessage(
                 "WSL2 was not detected. Click 'Check Environment' on the Project tab to "
                 "enable WSL2 and install the bioinformatics environment before running."
@@ -284,15 +289,21 @@ class MainWindow(QMainWindow):
                           "genomics I/O. A Windows-drive folder works too but is slower over the "
                           "/mnt 9P boundary.")
         wsl_fs.clicked.connect(self._use_wsl_workdir)
+        wsl_fs.setVisible(sys.platform.startswith("win"))  # WSL filesystem is a Windows-only concept
         workdir_row = QHBoxLayout()
         workdir_row.addWidget(self.workdir)
         workdir_row.addWidget(browse)
         workdir_row.addWidget(wsl_fs)
-        workdir_hint = QLabel(
-            "Recommended for WSL2: keep the project on the Linux filesystem "
-            "(\\\\wsl.localhost\\...). A Windows folder (C:\\...) also works but is slower for "
-            "large genomics files."
-        )
+        if sys.platform.startswith("win"):
+            workdir_hint = QLabel(
+                "Recommended for WSL2: keep the project on the Linux filesystem "
+                "(\\\\wsl.localhost\\...). A Windows folder (C:\\...) also works but is slower for "
+                "large genomics files."
+            )
+        else:
+            workdir_hint = QLabel(
+                "The project folder and the pipeline run in the local filesystem and environment."
+            )
         workdir_hint.setWordWrap(True)
         create = QPushButton("New Project")
         create.setProperty("primary", True)
