@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.2 — 2026-06-25
+
+### Fixed
+
+- **Config template hardening.** The `created_at` field in the bundled `default_config.yaml` template
+  was an unquoted date, which a raw `yaml.safe_load` parses as a `datetime.date`. Snakemake's
+  configuration JSON header (`json.dumps(config)`) cannot serialise a date, so feeding the raw
+  template to the workflow aborted the run before any rule. The value is now quoted
+  (`created_at: "2026-06-19"`) so it loads as a string. The GUI was unaffected (it already writes
+  `created_at` as an ISO string); this only hardens the template against direct, non-GUI use.
+
 ## 0.11.1 — 2026-06-24
 
 ### Added
