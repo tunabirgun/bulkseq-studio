@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.12.1 — 2026-06-25
+
+### Added
+
+- **Linux AppImage.** A self-contained `BulkSeqStudio-x86_64.AppImage` (PySide6 and QtWebEngine
+  bundled) is now a release asset, so Linux users can download one file, mark it executable, and run
+  the full GUI without installing Python or pip. The portable tar.gz and the from-source path remain
+  available. Built on Ubuntu 24.04 (glibc 2.39), so it needs glibc 2.39 or newer.
+
+### Fixed
+
+- **Check Environment on Linux.** The readiness check and its dialog were WSL-only: on a native Linux
+  machine with the pipeline tools installed they still reported "WSL2 is not available" and "1 of 4
+  ready". The check now has a native branch — it reads the local PATH for snakemake, STAR,
+  featureCounts, samtools, fastp, FastQC, MultiQC and Rscript, hides the WSL2 card, and reports
+  readiness against the applicable cards (a provisioned machine reads "3 of 3 ready"). The Windows/WSL
+  path is unchanged.
+- **Save Workflow Settings skipped its own validation.** The button's `clicked` signal passed a
+  boolean that was bound to the slot's `validate` parameter, so saving always ran with validation off
+  and an invalid contrast (numerator equal to denominator, or a contrast factor that is not a metadata
+  column) was written without warning. The button path now validates as intended.
+- **Stale contrast dropdown lists on project load.** The numerator / denominator / reference-level
+  dropdown option lists were seeded from the previously open project's conditions until the user
+  clicked "Refresh conditions from metadata"; they are now re-seeded after the new project's samples
+  load. Selected values were already restored correctly.
+- **Simple GUI run-state and launch handling.** Loading or browsing to another project during an
+  active run is now blocked (it could start a second concurrent run and orphan the first), and a
+  failure to launch Snakemake (PATH or permissions) now reports the error and resets the buttons
+  instead of leaving the interface stuck.
+
 ## 0.12.0 — 2026-06-25
 
 ### Added

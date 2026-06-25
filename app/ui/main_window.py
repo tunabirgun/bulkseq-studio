@@ -2499,6 +2499,10 @@ class MainWindow(QMainWindow):
         samples = root / "config" / "samples.tsv"
         if samples.exists():
             self.metadata_table.load_tsv(samples)
+            # _populate_widgets_from_config seeded the contrast dropdowns from the PREVIOUS
+            # table; re-seed now that the new project's samples are loaded (valid selected
+            # values are preserved by _refresh_conditions).
+            self._refresh_conditions()
         self._refresh_gallery()
         self._refresh_export_buttons()
         self._remember_recent_project(root)
@@ -2852,7 +2856,9 @@ class MainWindow(QMainWindow):
                     f"Available columns: {', '.join(cols)}.")
         return None
 
-    def _save_workflow_settings(self, validate: bool = True) -> bool:
+    def _save_workflow_settings(self, _checked: bool = False, validate: bool = True) -> bool:
+        # _checked absorbs QPushButton.clicked's bool, which would otherwise bind to
+        # `validate` and silently disable the contrast guard on the Save button path.
         if self.config is None or self.project_root is None:
             return False
         # Only the differential-expression modes use the contrast, so don't let a

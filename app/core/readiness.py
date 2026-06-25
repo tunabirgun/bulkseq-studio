@@ -58,6 +58,7 @@ class ReadinessItem:
 
 
 def check_readiness() -> list[ReadinessItem]:
+    is_windows = sys.platform.startswith("win")
     items: list[ReadinessItem] = []
     items.append(ReadinessItem("Python", "PASS", sys.executable, "GUI"))
     for import_name, package_name in PYTHON_PACKAGES.items():
@@ -65,14 +66,22 @@ def check_readiness() -> list[ReadinessItem]:
         detail = "installed" if status == "PASS" else f"missing; install package {package_name}"
         items.append(ReadinessItem(package_name, status, detail, "GUI/core features"))
     for command, purpose in EXTERNAL_TOOLS.items():
+        # WSL is a Windows-only execution path; on Linux the pipeline runs natively.
+        if command == "wsl" and not is_windows:
+            items.append(ReadinessItem("wsl", "PASS", "not applicable (native execution)", purpose))
+            continue
         status = "PASS" if shutil.which(command) else ("WARNING" if command == "mamba" else "REVIEW_REQUIRED")
         detail = shutil.which(command) or "not found on PATH"
         items.append(ReadinessItem(command, status, detail, purpose))
     for command, purpose in BIOINFORMATICS_TOOLS.items():
         status = "PASS" if shutil.which(command) else "REVIEW_REQUIRED"
-        detail = shutil.which(command) or "not found on PATH or inside this Windows session"
+        not_found = "not found on PATH or inside this Windows session" if is_windows else "not found on PATH"
+        detail = shutil.which(command) or not_found
         items.append(ReadinessItem(command, status, detail, purpose))
-    items.extend(check_wsl_bulkseq_environment())
+    # On Windows the bioinformatics tools live inside WSL; probe it. On Linux the native
+    # PATH probes above ARE the environment check, so the WSL probe is skipped.
+    if is_windows:
+        items.extend(check_wsl_bulkseq_environment())
     return items
 
 
@@ -223,8 +232,26 @@ def readiness_summary(items: list[ReadinessItem]) -> str:
     return "\n".join(lines)
 
 
+def _native_readiness_actions(by_name: dict[str, ReadinessItem]) -> list[str]:
+    actions: list[str] = []
+    missing = [name for name in ("snakemake", "STAR", "featureCounts", "samtools", "fastp", "fastqc", "multiqc")
+               if by_name.get(name, ReadinessItem(name, "REVIEW_REQUIRED", "", "")).status != "PASS"]
+    if missing:
+        actions.append(
+            "Activate the bulkseq environment (e.g. micromamba activate bulkseq), or create it from "
+            "workflow/envs/bulkseq.lock.yaml, so these tools are on PATH: " + ", ".join(missing) + ".")
+    if by_name.get("Rscript", ReadinessItem("Rscript", "REVIEW_REQUIRED", "", "")).status != "PASS":
+        actions.append("Install the R/DESeq2 stack in the environment so Rscript is available for "
+                       "DESeq2, enrichment, and figures.")
+    if not actions:
+        actions.append("Setup is ready for native Snakemake runs.")
+    return actions
+
+
 def next_readiness_actions(items: list[ReadinessItem]) -> list[str]:
     by_name = {item.name: item for item in items}
+    if not sys.platform.startswith("win"):
+        return _native_readiness_actions(by_name)
     actions: list[str] = []
     if by_name.get("wsl", ReadinessItem("wsl", "REVIEW_REQUIRED", "", "")).status != "PASS":
         actions.append("Click Install/Enable WSL, then reboot Windows if prompted.")
@@ -248,4 +275,11 @@ def next_readiness_actions(items: list[ReadinessItem]) -> list[str]:
 def has_wsl_core_environment(items: list[ReadinessItem]) -> bool:
     by_name = {item.name: item for item in items}
     required = ("WSL env:bulkseq", "WSL snakemake", "WSL fastqc", "WSL multiqc", "WSL fastp", "WSL STAR", "WSL featureCounts", "WSL samtools")
+    return all(by_name.get(name, ReadinessItem(name, "REVIEW_REQUIRED", "", "")).status == "PASS" for name in required)
+
+
+def has_native_core_environment(items: list[ReadinessItem]) -> bool:
+    # Native (Linux/macOS) counterpart of has_wsl_core_environment: the core tools are on PATH.
+    by_name = {item.name: item for item in items}
+    required = ("snakemake", "STAR", "featureCounts", "samtools", "fastp", "fastqc", "multiqc")
     return all(by_name.get(name, ReadinessItem(name, "REVIEW_REQUIRED", "", "")).status == "PASS" for name in required)

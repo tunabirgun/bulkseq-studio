@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal
@@ -22,6 +23,7 @@ from app.core.paths import app_root
 from app.core.readiness import (
     ReadinessItem,
     check_readiness,
+    has_native_core_environment,
     has_wsl_core_environment,
     install_python_packages,
     missing_python_packages,
@@ -358,6 +360,16 @@ class ReadinessDialog(QDialog):
         for card in (self.card_python, self.card_wsl, self.card_core, self.card_r):
             cards_layout.addWidget(card)
         cards_layout.addStretch(1)
+        # WSL is a Windows-only execution path. On Linux the pipeline runs natively, so
+        # hide the WSL2 card and count readiness against the remaining cards.
+        self._is_windows = sys.platform.startswith("win")
+        if not self._is_windows:
+            self.card_wsl.setVisible(False)
+        self._active_cards = (
+            (self.card_python, self.card_wsl, self.card_core, self.card_r)
+            if self._is_windows
+            else (self.card_python, self.card_core, self.card_r)
+        )
         scroll.setWidget(card_host)
         root.addWidget(scroll, stretch=1)
 
@@ -479,7 +491,8 @@ class ReadinessDialog(QDialog):
         self.check_progress.setVisible(False)
         self.refresh_button.setEnabled(True)
         self._update_python_card()
-        self._update_wsl_card(items)
+        if self._is_windows:
+            self._update_wsl_card(items)
         self._update_core_card(items)
         self._update_r_card(items)
         self._update_summary()
@@ -489,20 +502,21 @@ class ReadinessDialog(QDialog):
 
     def _ready_count(self) -> int:
         ready = 0
-        for card in (self.card_python, self.card_wsl, self.card_core, self.card_r):
+        for card in self._active_cards:
             if isinstance(card.pill, _StatusPill) and card.pill.text() == _PILL_TEXT[STATE_READY]:
                 ready += 1
         return ready
 
     def _update_summary(self) -> None:
         ready = self._ready_count()
-        if ready == 4:
-            self.summary_label.setText("4 of 4 ready — setup complete")
+        total = len(self._active_cards)
+        if ready == total:
+            self.summary_label.setText(f"{ready} of {total} ready — setup complete")
             self.summary_label.setStyleSheet(
                 f"color: {SUCCESS}; font-size: 10pt; font-weight: 600; background: transparent;"
             )
         else:
-            self.summary_label.setText(f"{ready} of 4 ready")
+            self.summary_label.setText(f"{ready} of {total} ready")
             self.summary_label.setStyleSheet(
                 f"color: {MUTED}; font-size: 10pt; background: transparent;"
             )
@@ -550,6 +564,23 @@ class ReadinessDialog(QDialog):
             )
 
     def _update_core_card(self, items: list[ReadinessItem]) -> None:
+        if not self._is_windows:
+            if has_native_core_environment(items):
+                self.card_core.update_state(
+                    STATE_READY,
+                    "Snakemake, STAR, featureCounts, samtools, fastp, FastQC and MultiQC are on "
+                    "PATH in the local environment.",
+                )
+            else:
+                missing = [n for n in ("snakemake", "STAR", "featureCounts", "samtools", "fastp",
+                                       "fastqc", "multiqc") if self._status_of(items, n) != "PASS"]
+                self.card_core.update_state(
+                    STATE_ACTION,
+                    "Not on PATH: " + ", ".join(missing) + ". Activate the bulkseq environment "
+                    "(e.g. micromamba activate bulkseq) or create it from "
+                    "workflow/envs/bulkseq.lock.yaml, then re-check.",
+                )
+            return
         wsl_ok = self._status_of(items, "wsl") == "PASS"
         micromamba_ok = self._status_of(items, "WSL micromamba") == "PASS"
         if not (wsl_ok and micromamba_ok):
@@ -577,6 +608,19 @@ class ReadinessDialog(QDialog):
             )
 
     def _update_r_card(self, items: list[ReadinessItem]) -> None:
+        if not self._is_windows:
+            if self._status_of(items, "Rscript") == "PASS":
+                self.card_r.update_state(
+                    STATE_READY,
+                    "Rscript is on PATH; DESeq2, enrichment and figures can run.",
+                )
+            else:
+                self.card_r.update_state(
+                    STATE_ACTION,
+                    "Rscript is not on PATH. Install the R/DESeq2 stack into the environment so "
+                    "DESeq2, enrichment and figures can run.",
+                )
+            return
         core_ready = has_wsl_core_environment(items)
         rscript_ok = self._status_of(items, "WSL Rscript") == "PASS"
         if rscript_ok:

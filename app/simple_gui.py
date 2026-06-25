@@ -57,7 +57,12 @@ class _RunThread(QThread):
         self.runner = runner
 
     def run(self) -> None:  # noqa: D401 - QThread entry point
-        proc = self.runner.start()
+        try:
+            proc = self.runner.start()
+        except OSError as exc:  # launch failure (PATH/permissions): report, don't wedge the UI
+            self.line.emit(f"Failed to launch run: {exc}")
+            self.done.emit(1)
+            return
         if proc.stdout is not None:
             for raw in proc.stdout:
                 self.line.emit(raw.rstrip("\n"))
@@ -124,6 +129,15 @@ class SimpleWindow(QWidget):
             self._load(Path(chosen))
 
     def _load(self, root: Path) -> None:
+        # Don't switch projects mid-run: it would orphan the running process and let a
+        # second concurrent run start. _browse() routes here, so guarding _load covers both.
+        if (self.thread is not None and self.thread.isRunning()) or (
+            self.runner is not None and self.runner.is_running()
+        ):
+            QMessageBox.warning(
+                self, APP_TITLE,
+                "A run is active. Click Stop and wait for it to finish before loading another project.")
+            return
         cfg_path = root / "config" / "config.yaml"
         if not cfg_path.is_file():
             QMessageBox.warning(self, APP_TITLE, f"No config/config.yaml found in:\n{root}")
