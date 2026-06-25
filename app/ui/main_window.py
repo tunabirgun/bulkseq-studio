@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import os
 import re
+import sys
 from datetime import date, datetime
 from pathlib import Path
 
@@ -1193,7 +1194,11 @@ class MainWindow(QMainWindow):
             self.run_action_buttons[mode] = button
             buttons.addWidget(button)
         self.use_wsl = QCheckBox("Use WSL2")
-        self.use_wsl.setChecked(True)
+        # WSL2 exists only on Windows; on Linux/macOS the pipeline runs natively in the local
+        # micromamba environment, so default the toggle off and hide it there.
+        _is_windows = sys.platform.startswith("win")
+        self.use_wsl.setChecked(_is_windows)
+        self.use_wsl.setVisible(_is_windows)
         buttons.addWidget(self.use_wsl)
         actions = QHBoxLayout()
         stop = QPushButton("Stop")

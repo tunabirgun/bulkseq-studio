@@ -1,6 +1,18 @@
 # Changelog
 
-## 0.11.2 — 2026-06-25
+## 0.12.0 — 2026-06-25
+
+### Added
+
+- **Simple cross-platform GUI (Linux/macOS).** A new lightweight interface (`app/simple_gui.py`,
+  launched with `python -m app.simple_gui`) runs the Snakemake pipeline directly in the local
+  environment without WSL2, the natural mode on Linux and macOS. It loads an existing project, shows a
+  summary, and runs / dry-runs / unlocks the pipeline while streaming the log, reusing the same
+  configuration model and Snakemake runner as the full app. Validated on Linux (PySide6 6.11.1) and
+  Windows: it constructs, loads a real config, and builds a native `snakemake` command (no WSL wrapper).
+- **Cross-platform full GUI.** The full GUI now defaults to native (non-WSL) execution and hides the
+  "Use WSL2" toggle on Linux and macOS. Functionality and UI changes target both Linux and Windows
+  from this release onward.
 
 ### Fixed
 
