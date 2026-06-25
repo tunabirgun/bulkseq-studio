@@ -112,10 +112,23 @@ On Linux, BulkSeq Studio runs **natively** — there is no WSL. The same PySide6
    micromamba create -n bulkseq -f workflow/envs/bulkseq.lock.yaml
    ```
 
-2. Install the GUI dependencies and launch the full application:
+2. Get the GUI, either prebuilt or from source:
+
+   **Prebuilt (easiest):** download `BulkSeqStudio-linux-0.12.0.tar.gz` from the
+   [Releases page](https://github.com/tunabirgun/bulkseq-studio/releases), extract it, and run
+   the bundled launcher — it is self-contained (PySide6 and QtWebEngine included, no system
+   Python or pip needed for the interface):
 
    ```bash
-   micromamba activate bulkseq        # any environment with snakemake on PATH
+   tar xzf BulkSeqStudio-linux-0.12.0.tar.gz
+   "BulkSeq Studio/BulkSeqStudio"
+   ```
+
+   **From source:** install the GUI dependencies into any environment with `snakemake` on the
+   PATH and launch the full application:
+
+   ```bash
+   micromamba activate bulkseq
    pip install PySide6 pandas pydantic pyyaml psutil openpyxl pillow
    python -m app.main
    ```
