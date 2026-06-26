@@ -1,6 +1,12 @@
-# Core environment: the wired STAR -> featureCounts -> DESeq2 route command-line
-# tools. conda-forge has priority over bioconda (channel added last wins); use
-# with channel_priority strict. CLI tools pinned to the protocol versions.
+# Core environment: the alignment/quantification command-line tools for all three
+# aligner routes (STAR, HISAT2, Salmon) -> featureCounts/tximport -> DESeq2. The R /
+# Bioconductor stack lives in bulkseq_full.yaml. conda-forge has priority over bioconda
+# (channel added last wins); use with channel_priority strict. CLI tools pinned to the
+# protocol versions.
+# NOTE: keep the aligner tool set in sync with bulkseq_full.yaml, the pinned
+# bulkseq.lock.yaml, the setup verification loop in scripts/setup_wsl_bioenv.sh, and the
+# probe lists in app/core/readiness.py. List drift here is what broke the Salmon/HISAT2
+# routes on core-only envs (gffread/salmon/hisat2 were added to full but not core).
 name: bulkseq
 channels:
   - conda-forge
@@ -12,6 +18,9 @@ dependencies:
   - multiqc=1.30
   - fastp=1.0.1
   - star=2.7.11b
+  - hisat2=2.2.2
+  - salmon=1.10.3
+  - gffread=0.12.9
   - samtools=1.22.1
   - subread=2.1.1
   - pandas

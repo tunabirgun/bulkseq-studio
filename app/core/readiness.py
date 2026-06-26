@@ -26,11 +26,19 @@ EXTERNAL_TOOLS = {
     "snakemake": "Snakemake workflow engine",
 }
 
+# Tool probe lists. hisat2/salmon/gffread are the alternative-aligner-route tools; they
+# are PROBED and DISPLAYED here but deliberately NOT part of the has_*_core_environment
+# "default-route ready" gate below, so an existing STAR-route user is never forced to
+# repair a working env. Keep this set in sync with workflow/envs/bulkseq_core.yaml,
+# bulkseq_full.yaml, and the setup_wsl_bioenv.sh verification loop.
 BIOINFORMATICS_TOOLS = {
     "fastqc": "Raw/post-trim read QC",
     "multiqc": "QC report aggregation",
     "fastp": "Read trimming",
-    "STAR": "Reference alignment",
+    "STAR": "Reference alignment (STAR route)",
+    "hisat2": "Reference alignment (HISAT2 route)",
+    "salmon": "Pseudo-alignment quantification (Salmon route)",
+    "gffread": "Transcriptome FASTA for the Salmon route",
     "featureCounts": "Gene-level counting",
     "samtools": "BAM indexing and summaries",
     "Rscript": "DESeq2/enrichment/figures",
@@ -42,7 +50,10 @@ WSL_TOOLS = {
     "fastqc": "Raw/post-trim read QC",
     "multiqc": "QC report aggregation",
     "fastp": "Read trimming",
-    "STAR": "Reference alignment",
+    "STAR": "Reference alignment (STAR route)",
+    "hisat2": "Reference alignment (HISAT2 route)",
+    "salmon": "Pseudo-alignment quantification (Salmon route)",
+    "gffread": "Transcriptome FASTA for the Salmon route",
     "featureCounts": "Gene-level counting",
     "samtools": "BAM indexing and summaries",
     "Rscript": "DESeq2/enrichment/figures",
@@ -273,6 +284,9 @@ def next_readiness_actions(items: list[ReadinessItem]) -> list[str]:
 
 
 def has_wsl_core_environment(items: list[ReadinessItem]) -> bool:
+    # Gate = the default STAR -> featureCounts -> DESeq2 route. hisat2/salmon/gffread are
+    # intentionally excluded so a working STAR-route env is never flagged "incomplete";
+    # the Salmon/HISAT2 routes are guarded at run time inside their Snakemake rules.
     by_name = {item.name: item for item in items}
     required = ("WSL env:bulkseq", "WSL snakemake", "WSL fastqc", "WSL multiqc", "WSL fastp", "WSL STAR", "WSL featureCounts", "WSL samtools")
     return all(by_name.get(name, ReadinessItem(name, "REVIEW_REQUIRED", "", "")).status == "PASS" for name in required)
