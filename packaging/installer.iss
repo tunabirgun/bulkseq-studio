@@ -1,4 +1,4 @@
-; Inno Setup script for BulkSeq Studio.
+﻿; Inno Setup script for BulkSeq Studio.
 ; Build the exe first (pyinstaller packaging/BulkSeqStudio.spec), then compile:
 ;   iscc packaging\installer.iss
 ; Per-user install (no admin): installs to %LOCALAPPDATA%\Programs\BulkSeq Studio,
@@ -12,7 +12,7 @@
 #ifndef MyAppVersion
   #define MyAppVersion "0.12.1"
 #endif
-#define MyAppPublisher "Tuna Birgun"
+#define MyAppPublisher "Tuna Birgün"
 #define MyAppExeName "BulkSeqStudio.exe"
 
 [Setup]
