@@ -1949,7 +1949,7 @@ class MainWindow(QMainWindow):
         # No group title — the enclosing "Genes of Interest" tab already names it.
         group = QWidget()
         v = QVBoxLayout(group)
-        help_label = QLabel("Paste gene IDs (one per line) matching the count matrix (e.g. FBgn..., RefSeq locus tags, or symbols present in the GTF). On the next run, a focused z-scored heatmap and per-condition expression plots are produced.")
+        help_label = QLabel("Paste gene IDs (one per line) in the same identifier format as your reference — locus tags (e.g. FBgn..., FGSG_...), Ensembl/RefSeq IDs, or gene symbols present in the GTF. They are matched to this run's genes; any that do not match are flagged in the genes-of-interest report (with examples of the run's ID format). On the next run you get a focused z-scored heatmap, per-condition expression plots, a counts table, and — when PPI seeding is set to the gene list — a STRING network for these genes.")
         help_label.setWordWrap(True)  # without this the long label forces a huge min width
         v.addWidget(help_label)
         self.goi_box = QTextEdit()

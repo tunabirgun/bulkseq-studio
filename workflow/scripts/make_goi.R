@@ -71,7 +71,24 @@ if (!is.null(symbol_map)) {
 present <- idx[!is.na(idx)]
 missing <- goi[is.na(idx)]
 
+# Flag a likely identifier-format mismatch (e.g. symbols pasted into a run keyed on
+# locus tags) and show what this run's IDs actually look like so the list can be fixed.
+match_rate <- if (length(goi)) length(present) / length(goi) else 0
+example_ids <- head(rn[nzchar(rn)], 3)
+sv <- if (!is.null(symbol_map)) unname(symbol_map) else character(0)
+example_syms <- head(unique(sv[!is.na(sv) & nzchar(sv)]), 3)
+id_hint <- sprintf("This run's gene IDs look like: %s%s",
+                   paste(example_ids, collapse = ", "),
+                   if (length(example_syms)) sprintf("  (symbols: %s)", paste(example_syms, collapse = ", ")) else "")
+flag <- character(0)
+if (length(goi) && length(present) == 0) {
+  flag <- c("WARNING: none of the supplied genes matched this run -- the identifiers are probably in a different format than the run uses.", id_hint)
+} else if (match_rate < 0.5) {
+  flag <- c(sprintf("WARNING: only %d of %d genes matched (%.0f%%); check that the unmatched IDs use this run's identifier format.",
+                    length(present), length(goi), 100 * match_rate), id_hint)
+}
 writeLines(c(
+  flag,
   sprintf("Genes of interest: %d requested, %d found, %d not matched.", length(goi), length(present), length(missing)),
   if (length(missing)) paste("Not matched:", paste(head(missing, 100), collapse = ", ")) else "All matched."),
   out[["report"]])

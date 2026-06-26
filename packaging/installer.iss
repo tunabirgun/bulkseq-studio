@@ -10,7 +10,7 @@
 ; app/constants.py so the installer name never drifts from APP_VERSION; the
 ; fallback below is only used when compiling installer.iss by hand.
 #ifndef MyAppVersion
-  #define MyAppVersion "0.14.1"
+  #define MyAppVersion "0.14.2"
 #endif
 #define MyAppPublisher "Tuna Birgün"
 #define MyAppExeName "BulkSeqStudio.exe"

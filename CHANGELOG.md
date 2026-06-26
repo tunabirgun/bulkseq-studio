@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.2 — 2026-06-26
+
+### Changed
+
+- **Genes of interest: clearer identifier guidance and a mismatch flag.** The focused-gene analysis (a z-scored heatmap, per-condition expression plots, a counts table, and — when PPI seeding is set to the gene list — a STRING network) matches the gene IDs you paste against the run's genes by locus tag, Ensembl/RefSeq ID, or symbol. When few or none match — usually because the IDs are in a different format than the run uses (for example gene symbols pasted into a locus-tag run) — the genes-of-interest report now leads with a clear warning and shows examples of the run's actual ID format so the list can be corrected. The Genes of Interest tab spells out the format requirement.
+
 ## 0.14.1 — 2026-06-26
 
 ### Changed
