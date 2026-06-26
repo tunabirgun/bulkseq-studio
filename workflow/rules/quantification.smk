@@ -59,6 +59,29 @@ elif USE_SALMON:
         script:
             "../scripts/salmon_tximport.R"
 
+elif USE_STAR_GENECOUNTS:
+
+    # Build the canonical counts.txt from STAR's --quantMode GeneCounts per-sample
+    # ReadsPerGene.out.tab, picking the strand-matched column (0=unstranded, 1=forward,
+    # 2=reverse) from results/aligned/strandedness.txt. No second pass -- STAR already
+    # counted during alignment. featureCounts layout so DESeq2 and downstream are unchanged.
+    # bais are an input only to keep samtools_index/flagstat in the DAG (MultiQC parity).
+    rule star_genecounts:
+        input:
+            tabs=expand("results/aligned/{sample}_ReadsPerGene.out.tab", sample=SAMPLES),
+            bais=expand("results/aligned/{sample}_Aligned.sortedByCoord.out.bam.bai", sample=SAMPLES),
+            strand="results/aligned/strandedness.txt",
+        output:
+            counts=COUNTS_RAW,
+            summary=COUNTS_SUMMARY,
+        log:
+            "logs/star_genecounts.log",
+        shell:
+            "S=$(cat {input.strand:q}); "
+            "python workflow/scripts/build_star_genecounts.py --strand $S "
+            "--out {output.counts:q} --summary {output.summary:q} {input.tabs:q} > {log:q} 2>&1"
+
+
 else:
 
     rule featurecounts:

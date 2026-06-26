@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.15.0 — 2026-06-26
+
+### Added
+
+- **STAR gene-counts quantifier.** With the STAR aligner the Quantifier control is now a real choice: `STAR_GeneCounts` takes gene counts from STAR's own `--quantMode GeneCounts` output (no extra counting pass), strand-matched to the run's inferred strandedness, instead of running featureCounts. The counts converge on the same matrix the rest of the pipeline expects — validated at Pearson r ≈ 0.998 (unstranded) to 1.000 (stranded) against featureCounts on the same BAMs. featureCounts remains the default; HISAT2 uses featureCounts and Salmon uses tximport.
+- **Custom gene-set enrichment.** Supply your own gene sets — a GMT and/or an id→term annotation table, with an optional background list for the over-representation universe — to run a clusterProfiler ORA + GSEA alongside the built-in GO/KEGG, producing custom ORA/GSEA tables and a dotplot. It is organism-agnostic (no Bioconductor OrgDb needed), so it works where the built-in GO route is skipped (e.g. most fungi). The gene IDs must use the run's identifier format; a namespace mismatch is flagged (`REVIEW_REQUIRED`) rather than returned as a silent empty result. The built-in GO/KEGG enrichment is unchanged.
+
 ## 0.14.2 — 2026-06-26
 
 ### Changed

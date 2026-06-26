@@ -114,3 +114,58 @@ rule network_enrichment:
         "logs/network_enrichment.log",
     script:
         "../scripts/export_network.R"
+
+
+# Custom gene-set enrichment (optional): clusterProfiler ORA + GSEA against a user-supplied
+# GMT and/or id->term annotation table, via TERM2GENE. Gated on the gene_sets config, so when
+# neither is set these rules are not defined and run_enrichment.R's outputs are untouched.
+# Organism-agnostic (no OrgDb/KEGG needed), so it works for organisms run_enrichment.R skips.
+# Separate dotplot rule so it can be restyled without re-running enrichment.
+_CUSTOM_GMT = config.get("gene_sets", {}).get("custom_gene_sets")
+_CUSTOM_ANNOT = config.get("gene_sets", {}).get("functional_annotation_table")
+_CUSTOM_BG = config.get("gene_sets", {}).get("background_gene_list")
+
+if _CUSTOM_GMT or _CUSTOM_ANNOT:
+
+    rule custom_enrichment:
+        input:
+            results="results/deseq2/deseq2_results.csv",
+            up="results/deseq2/upregulated_genes.csv",
+            down="results/deseq2/downregulated_genes.csv",
+            # File inputs only when set, so editing them is a rerun trigger and a missing
+            # path fails at DAG build rather than mid-script.
+            **({"gmt": _CUSTOM_GMT} if _CUSTOM_GMT else {}),
+            **({"annot": _CUSTOM_ANNOT} if _CUSTOM_ANNOT else {}),
+            **({"background": _CUSTOM_BG} if _CUSTOM_BG else {}),
+        output:
+            ora="results/enrichment/custom_ora.csv",
+            gsea="results/enrichment/custom_gsea.csv",
+            summary="results/enrichment/custom_enrichment_summary.txt",
+            objects="results/enrichment/custom_enrichment_objects.rds",
+            check="checks/11_custom_enrichment_qc.json",
+        params:
+            gmt=_CUSTOM_GMT or "",
+            annot=_CUSTOM_ANNOT or "",
+            background=_CUSTOM_BG or "",
+            alpha=config.get("deseq2", {}).get("alpha", 0.05),
+        benchmark:
+            "benchmarks/custom_enrichment.tsv"
+        log:
+            "logs/custom_enrichment.log",
+        script:
+            "../scripts/run_custom_enrichment.R"
+
+    rule custom_enrichment_figure:
+        input:
+            objects="results/enrichment/custom_enrichment_objects.rds",
+        output:
+            dotplot_png="results/figures/custom_enrichment_dotplot.png",
+            dotplot_svg="results/figures/custom_enrichment_dotplot.svg",
+        params:
+            style=config.get("figures_style", {}),
+        benchmark:
+            "benchmarks/custom_enrichment_figure.tsv"
+        log:
+            "logs/custom_enrichment_figure.log",
+        script:
+            "../scripts/make_custom_enrichment_figure.R"

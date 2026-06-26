@@ -134,6 +134,30 @@ FASTQC_PRE = (
     and not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)
 )
 FASTQC_POST = bool(WF.get("fastqc_post_trim", True)) and TRIMMING
+# Quantifier: how reads are summarised to gene counts on the STAR/HISAT2 (BAM) routes.
+# Salmon's route is fixed (tximport); featureCounts is the default; STAR can also reuse its
+# own --quantMode GeneCounts table (STAR_GeneCounts). All routes converge on the canonical
+# results/counts/counts.txt, so DESeq2 and the whole downstream are unchanged.
+_VALID_QUANTIFIERS = {
+    "STAR": ("featureCounts", "STAR_GeneCounts"),
+    "HISAT2": ("featureCounts",),
+    "SALMON": ("Salmon_tximport",),
+}
+if USE_SALMON:
+    QUANTIFIER = "Salmon_tximport"
+else:
+    QUANTIFIER = WF.get("quantifier") or "featureCounts"
+if not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE):
+    _allowed_q = _VALID_QUANTIFIERS.get(ALIGNER, ("featureCounts",))
+    if QUANTIFIER not in _allowed_q:
+        raise ValueError(
+            f"quantifier '{QUANTIFIER}' is not valid with aligner '{ALIGNER}'. "
+            f"Allowed for {ALIGNER}: {', '.join(_allowed_q)}."
+        )
+USE_STAR_GENECOUNTS = (
+    QUANTIFIER == "STAR_GeneCounts" and ALIGNER == "STAR"
+    and not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)
+)
 # Single-end FASTQ is not yet supported on the alignment route (only fastp_pe
 # exists); reject it up front with a clear message instead of dead-ending at the
 # trim step. Count-matrix / microarray / deseq2-results modes have no layout.
@@ -259,6 +283,14 @@ def final_targets():
                 targets.append(f"results/networks/{net}.{ext}")
             targets.append(f"results/networks/{net}_nodes.csv")
             targets.append(f"results/networks/{net}_edges.csv")
+        # Custom gene-set enrichment (optional): only when a GMT or annotation table is set.
+        _cs = config.get("gene_sets", {})
+        if _cs.get("custom_gene_sets") or _cs.get("functional_annotation_table"):
+            targets.append("results/enrichment/custom_ora.csv")
+            targets.append("results/enrichment/custom_gsea.csv")
+            targets.append("results/enrichment/custom_enrichment_summary.txt")
+            targets.append("results/figures/custom_enrichment_dotplot.png")
+            targets.append("results/figures/custom_enrichment_dotplot.svg")
     if config.get("gene_sets", {}).get("custom_gene_list") and not DE_RESULTS_MODE:
         targets.append("results/figures/goi_heatmap.png")
         targets.append("results/figures/goi_expression.png")

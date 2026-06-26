@@ -93,6 +93,10 @@ def build_snakemake_args(
             project_root, "results/deseq2/deseq2_objects.rds"
         ):
             targets.append("genes_of_interest")
+        if (config.gene_sets.custom_gene_sets or config.gene_sets.functional_annotation_table) and _target_input_exists(
+            project_root, "results/enrichment/custom_enrichment_objects.rds"
+        ):
+            targets.append("custom_enrichment_figure")
         args += ["--forcerun", *targets, "--allowed-rules", *targets]
     elif mode == "goi":
         # Produce only the genes-of-interest outputs from the existing DESeq2 object
