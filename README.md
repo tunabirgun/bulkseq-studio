@@ -204,6 +204,8 @@ The two alternative aligners are validated against STAR on these datasets. HISAT
 
 **Bundled benchmark projects.** Three one-click datasets are available from *Create Benchmark Project* on the Project tab: the Drosophila pasilla subset above, a *Saccharomyces cerevisiae* wild-type vs *ume6Δ* subset (PRJNA630199 / SRP260000; R64-1-1, Ensembl), a small, fast genome on a different organism that exercises the g:Profiler and KEGG enrichment route, and an *Oryza sativa* (rice) super-hybrid CY1000 control vs 5-day salt-stress subset (PRJDB38133; IRGSP-1.0 NCBI RefSeq) that exercises the crop route (KEGG `osa` via the NCBI-RefSeq `LOC<GeneID>` strip, g:Profiler `osativa`, STRING taxid 39947). Each scaffolds an SRA-mode project (samples, contrast, reference) that downloads its reads and runs the full pipeline.
 
+**Benchmark archive (Zenodo).** The full quantitative validation suite behind the BulkSeq Studio paper (correctness against simulated ground truth, false-discovery and null calibration, accuracy curves, concordance with [nf-core/rnaseq](https://nf-co.re/rnaseq), cross-aligner agreement, input-mode and microarray-route equivalence, multi-organism breadth, runtime/memory scaling, and determinism — families B1–B10) is archived on Zenodo, together with the simulation and scoring code, the pinned scoring environment, the per-benchmark result tables and figures, and a step-by-step reproduction guide: **DOI [10.5281/zenodo.20902966](https://doi.org/10.5281/zenodo.20902966)**.
+
 ## Bring your own DESeq2 results
 
 If you already have a differential-expression table, the **Upload DESeq2 Results** button on the
