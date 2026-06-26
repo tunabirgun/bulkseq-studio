@@ -951,9 +951,9 @@ class MainWindow(QMainWindow):
         self.rrna = QCheckBox()
         self.rrna.setToolTip(
             "Remove ribosomal RNA reads with SortMeRNA after trimming, before alignment.\n"
-            "On first use the default rRNA reference (~150 MB) is downloaded and indexed once. "
-            "Useful for total-RNA / ribo-depleted libraries; poly-A selected libraries usually "
-            "have little rRNA and may not need it."
+            "The default rRNA reference (~150 MB) is downloaded and indexed once per project "
+            "(the index is a few GB on disk). Useful for total-RNA / ribo-depleted libraries; "
+            "poly-A selected libraries usually have little rRNA and may not need it."
         )
         self.enrichment = QCheckBox()
         self.enrichment.setChecked(True)
