@@ -24,6 +24,9 @@ dependencies:
   - r-base>=4.3
   - bioconductor-deseq2
   - bioconductor-apeglm
+  # ashr: the lfcShrink type used as the contrast fallback in run_deseq2.R (apeglm
+  # shrinks coefficients only; ashr also shrinks arbitrary contrasts).
+  - r-ashr
   - bioconductor-tximport
   - bioconductor-clusterprofiler
   - bioconductor-enrichplot
@@ -40,6 +43,14 @@ dependencies:
   - bioconductor-biobase
   - bioconductor-org.hs.eg.db
   - bioconductor-org.mm.eg.db
+  # OrgDbs for the other organism presets that enrichment.smk _ENRICH_MAP maps to a
+  # native clusterProfiler GO route (enrichGO + gseGO + DOSE). Without these the run
+  # silently falls back to g:Profiler (ORA only, no GO GSEA) for yeast/Arabidopsis/
+  # worm/zebrafish.
+  - bioconductor-org.sc.sgd.db
+  - bioconductor-org.at.tair.db
+  - bioconductor-org.ce.eg.db
+  - bioconductor-org.dr.eg.db
   - r-ggplot2
   - r-ggrepel
   - r-ggridges

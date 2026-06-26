@@ -49,3 +49,28 @@ def test_readiness_probes_aligner_route_tools() -> None:
     for tool in ALIGNER_TOOLS:
         assert tool in WSL_TOOLS, f"readiness WSL_TOOLS does not probe {tool}"
         assert tool in BIOINFORMATICS_TOOLS, f"readiness BIOINFORMATICS_TOOLS does not probe {tool}"
+
+
+# Full-env (R/Bioconductor) packages that the DESeq2 and enrichment routes need but that
+# were missing from the env: r-ashr (lfcShrink ashr fallback in run_deseq2.R) and the four
+# OrgDbs that enrichment.smk maps yeast/Arabidopsis/worm/zebrafish to. Keep in sync with
+# bulkseq_full.yaml + bulkseq.lock.yaml.
+FULL_ROUTE_PACKAGES = (
+    "r-ashr",
+    "bioconductor-org.sc.sgd.db",
+    "bioconductor-org.at.tair.db",
+    "bioconductor-org.ce.eg.db",
+    "bioconductor-org.dr.eg.db",
+)
+
+
+def test_full_env_has_deseq2_and_enrichment_packages() -> None:
+    deps = _conda_deps(ENVS / "bulkseq_full.yaml")
+    for pkg in FULL_ROUTE_PACKAGES:
+        assert _has_tool(deps, pkg), f"bulkseq_full.yaml is missing {pkg}"
+
+
+def test_lock_has_deseq2_and_enrichment_packages() -> None:
+    deps = _conda_deps(ENVS / "bulkseq.lock.yaml")
+    for pkg in FULL_ROUTE_PACKAGES:
+        assert _has_tool(deps, pkg), f"bulkseq.lock.yaml is missing {pkg}"

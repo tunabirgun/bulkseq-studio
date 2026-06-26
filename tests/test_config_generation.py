@@ -26,6 +26,18 @@ def test_default_config_has_star_route():
     assert cfg.workflow.quantifier == "featureCounts"
 
 
+def test_deseq2_shrinkage_method_validation():
+    import pytest
+    from pydantic import ValidationError
+
+    from app.core.config_models import Deseq2Config
+
+    for ok in ("apeglm", "ashr", "normal"):
+        assert Deseq2Config(shrinkage_method=ok).shrinkage_method == ok
+    with pytest.raises(ValidationError):
+        Deseq2Config(shrinkage_method="bogus")
+
+
 def test_organellar_genes_default_and_round_trip():
     # Default keeps organellar genes; the choice survives a dump -> reload round-trip.
     assert WorkflowConfig().organellar_genes == "keep"

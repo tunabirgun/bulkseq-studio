@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.12.3 — 2026-06-26
+
+### Fixed
+
+- **DESeq2 log-fold-change shrinkage could fail with a missing-package error.** `run_deseq2.R` falls
+  back to `lfcShrink(type="ashr")` for contrasts apeglm cannot shrink, and `ashr` is also selectable
+  via `deseq2.shrinkage_method`, but the `ashr` R package was in no environment profile. A config that
+  requested ashr (or a default apeglm run that hit the contrast fallback) aborted after the model fit
+  with a missing-package error. `r-ashr` is now in the full environment and the pinned lock, and
+  `deseq2.shrinkage_method` is restricted to `apeglm`, `ashr`, or `normal` so an unsupported value is
+  rejected when the config loads rather than mid-run. Default (apeglm) runs are unchanged.
+- **GO enrichment for yeast, Arabidopsis, C. elegans, and zebrafish fell back to g:Profiler.** The
+  enrichment step maps these organisms to the Bioconductor OrgDbs `org.Sc.sgd.db`, `org.At.tair.db`,
+  `org.Ce.eg.db`, and `org.Dr.eg.db`, but those packages were not installed, so the native
+  clusterProfiler GO route (GO over-representation, GO GSEA, and disease ontology) was skipped and the
+  run quietly used the g:Profiler over-representation fallback instead. The four OrgDbs are now in the
+  full environment and the lock, restoring the full GO route for these organisms.
+
 ## 0.12.2 — 2026-06-26
 
 ### Fixed

@@ -158,6 +158,17 @@ class Deseq2Config(BaseModel):
             raise ValueError("deseq2.alpha must be between 0 and 1.")
         return value
 
+    @field_validator("shrinkage_method")
+    @classmethod
+    def valid_shrinkage(cls, value: str) -> str:
+        # The three lfcShrink() estimators. apeglm + ashr are conda packages in the
+        # full env; restricting the value stops a typo or unsupported method from
+        # reaching run_deseq2.R and erroring mid-run.
+        allowed = {"apeglm", "ashr", "normal"}
+        if value not in allowed:
+            raise ValueError(f"deseq2.shrinkage_method must be one of {sorted(allowed)}.")
+        return value
+
 
 class GeneSetsConfig(BaseModel):
     custom_gene_list: str | None = None
