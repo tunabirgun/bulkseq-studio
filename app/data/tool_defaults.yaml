@@ -4,9 +4,6 @@ fastp:
   unqualified_percent_limit: 40
   length_required: 36
   trim_poly_g: false
-STAR:
-  outSAMtype: BAM SortedByCoordinate
-  quantMode: GeneCounts
 featureCounts:
   feature_type: exon
   attribute_type: gene_id

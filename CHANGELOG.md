@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.1 — 2026-06-26
+
+### Changed
+
+- **Removed dead configuration scaffolding.** Config fields that no rule or app code read have been removed, so the configuration no longer advertises behavior the pipeline does not perform: `workflow.repair_pairs` (BBMap repair, never implemented), `workflow.differential_expression` (the edgeR / limma-voom values were never wired — DESeq2 is selected by input mode), `sortmerna.enabled` (rRNA filtering is gated on `workflow.rrna_filtering`), and the STAR overrides `outSAMtype` / `quantMode` / `sjdb_overhang` / `genomeSAindexNbases` (the indexing rule computes these itself). Existing project configs that still carry these keys load unchanged — the stale keys are ignored.
+- Removed the orphaned `STAR` block in `tool_defaults.yaml` and a progress-label entry for a "repair" rule that does not exist, and updated the README feature list to state that SortMeRNA rRNA filtering is implemented (it was previously listed as scaffolded).
+
 ## 0.14.0 — 2026-06-26
 
 A full audit of the GUI controls and analysis scripts found no scientific-validity issues (the DESeq2 baseline reproduces exactly), and turned up two GUI controls that looked active but did nothing. Both now work.

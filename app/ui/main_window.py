@@ -1313,7 +1313,6 @@ class MainWindow(QMainWindow):
         ("fastp", "Trimming reads"),
         ("sortmerna", "Filtering rRNA"),
         ("rrna", "Filtering rRNA"),
-        ("repair", "Repairing read pairs"),
         ("star_index", "Building genome index"),
         ("hisat2_index", "Building genome index"),
         ("salmon_index", "Building transcriptome index"),

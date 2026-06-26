@@ -30,7 +30,7 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 - **Reproducibility built in.** Every run records a default-vs-used parameter diff, software versions, an environment lock hash, the reference accession/MD5, and R `sessionInfo`. The conda environment is pinned in `workflow/envs/bulkseq.lock.yaml`.
 - **An accessible desktop UI.** Light and dark themes (WCAG-AA contrast), grouped settings cards with a clear primary action per tab, plain-language controls, empty-state guidance, a resizable Outputs workspace that remembers its size, keyboard shortcuts (Ctrl+O open, F5 dry-run, F9 run), and a recent-projects list.
 
-The three aligner routes (STAR, HISAT2, Salmon) and the count-matrix, GEO microarray (limma), and DESeq2-results input routes are implemented and validated (see [Validation](#validation)). SortMeRNA, htseq-count, and edgeR/limma-voom for RNA-seq are scaffolded but not yet implemented; those options are disabled in the GUI so a run cannot start down an unfinished path.
+The three aligner routes (STAR, HISAT2, Salmon), optional SortMeRNA rRNA filtering, and the count-matrix, GEO microarray (limma), and DESeq2-results input routes are implemented and validated (see [Validation](#validation)). The alternative gene-quantifiers (STAR gene counts, htseq-count) are scaffolded but not yet implemented and are disabled in the GUI so a run cannot start down an unfinished path.
 
 ## Choosing an aligner
 

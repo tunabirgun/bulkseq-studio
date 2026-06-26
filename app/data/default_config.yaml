@@ -41,10 +41,8 @@ workflow:
   trimming: true
   fastqc_post_trim: true
   rrna_filtering: false
-  repair_pairs: false
   aligner: STAR
   quantifier: featureCounts
-  differential_expression: DESeq2
   enrichment: true
   figures: true
   custom_gene_list_analysis: true
@@ -57,20 +55,15 @@ fastp:
   length_required: 36
   trim_poly_g: false
 sortmerna:
-  enabled: false
   paired_mode: paired_in
   database: null
 star:
-  sjdb_overhang: auto
-  genomeSAindexNbases: auto
   twopass_mode: false
   # Read filters default to STAR's own defaults; raise for ENCODE long-RNA
   # (multimap_nmax: 20, mismatch_nover_read_lmax: 0.04).
   multimap_nmax: 10
   mismatch_nover_read_lmax: 1.0
   extra: ""
-  outSAMtype: BAM SortedByCoordinate
-  quantMode: GeneCounts
 featurecounts:
   feature_type: exon
   attribute_type: gene_id

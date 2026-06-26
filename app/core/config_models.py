@@ -74,10 +74,8 @@ class WorkflowConfig(BaseModel):
     trimming: bool = True
     fastqc_post_trim: bool = True
     rrna_filtering: bool = False
-    repair_pairs: bool = False
     aligner: Literal["STAR", "HISAT2", "Salmon"] = "STAR"
     quantifier: Literal["featureCounts", "STAR_GeneCounts", "Salmon_tximport", "htseq-count"] = "featureCounts"
-    differential_expression: Literal["DESeq2", "edgeR", "limma-voom"] = "DESeq2"
     enrichment: bool = True
     figures: bool = True
     custom_gene_list_analysis: bool = True
@@ -95,22 +93,17 @@ class FastpConfig(BaseModel):
 
 
 class SortmernaConfig(BaseModel):
-    enabled: bool = False
     paired_mode: str = "paired_in"
     database: str | None = None
 
 
 class StarConfig(BaseModel):
-    sjdb_overhang: str | int = "auto"
-    genomeSAindexNbases: str | int = "auto"
     twopass_mode: bool = False
     # Read filters. Defaults equal STAR's own defaults (stock behaviour); tighten
     # for ENCODE long-RNA with multimap_nmax=20 and mismatch_nover_read_lmax=0.04.
     multimap_nmax: int = 10
     mismatch_nover_read_lmax: float = 1.0
     extra: str = ""
-    outSAMtype: str = "BAM SortedByCoordinate"
-    quantMode: str = "GeneCounts"
 
 
 class FeatureCountsConfig(BaseModel):
