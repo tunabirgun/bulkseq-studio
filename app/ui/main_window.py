@@ -841,6 +841,10 @@ class MainWindow(QMainWindow):
         ann_row.addWidget(ann_browse)
         self.ref_format = QComboBox()
         self.ref_format.addItems(["gtf", "gff3"])
+        self.ref_format.setToolTip(
+            "Annotation format of the file above. Choose gff3 for a GFF3 annotation; it is "
+            "converted to GTF automatically before indexing and counting."
+        )
         validate = QPushButton("Validate Reference")
         validate.clicked.connect(self._validate_reference_ui)
         use_custom = QPushButton("Use Custom Reference (writes lock)")
@@ -948,6 +952,10 @@ class MainWindow(QMainWindow):
         self.quantifier.setEnabled(False)
         self.trim = QCheckBox()
         self.trim.setChecked(True)
+        self.trim.setToolTip(
+            "Adapter and quality trimming with fastp (recommended). Uncheck to skip trimming and "
+            "send the raw reads straight to the aligner — use only if your reads are already trimmed."
+        )
         self.rrna = QCheckBox()
         self.rrna.setToolTip(
             "Remove ribosomal RNA reads with SortMeRNA after trimming, before alignment.\n"

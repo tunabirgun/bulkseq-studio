@@ -47,14 +47,26 @@ def _multiqc_rrna_inputs():
     return expand("results/qc/sortmerna/{sample}.log", sample=SAMPLES) if RRNA_FILTER else []
 
 
+# QC inputs depend on which steps run: FastQC-pre (raw reads), FastQC-post (trimmed reads),
+# and fastp's JSON only exist when those steps are enabled. Without this gate, MultiQC would
+# require outputs that are never produced when trimming / FastQC is turned off.
+def _multiqc_qc_inputs():
+    items = []
+    if FASTQC_PRE:
+        items += expand("results/qc/fastqc_raw/{sample}", sample=SAMPLES)
+    if FASTQC_POST:
+        items += expand("results/qc/fastqc_trim/{sample}", sample=SAMPLES)
+    if TRIMMING:
+        items += expand("results/qc/fastp/{sample}.json", sample=SAMPLES)
+    return items
+
+
 _MQC_SCAN = "results/qc results/salmon results/counts" if USE_SALMON else "results/qc results/aligned results/counts"
 
 
 rule multiqc:
     input:
-        expand("results/qc/fastqc_raw/{sample}", sample=SAMPLES),
-        expand("results/qc/fastqc_trim/{sample}", sample=SAMPLES),
-        expand("results/qc/fastp/{sample}.json", sample=SAMPLES),
+        _multiqc_qc_inputs(),
         _multiqc_align_inputs(),
         _multiqc_rrna_inputs(),
         COUNTS_SUMMARY,

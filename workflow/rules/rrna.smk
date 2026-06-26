@@ -53,8 +53,8 @@ if RRNA_FILTER:
 
     rule sortmerna_pe:
         input:
-            r1="results/trimmed/{sample}_1.trim.fastq.gz",
-            r2="results/trimmed/{sample}_2.trim.fastq.gz",
+            r1=lambda wc: _reads_pre_rrna(wc.sample, 1),
+            r2=lambda wc: _reads_pre_rrna(wc.sample, 2),
             db=RRNA_DB,
             idx=RRNA_IDX,
         output:

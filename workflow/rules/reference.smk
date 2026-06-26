@@ -49,10 +49,24 @@ rule download_gtf:
     params:
         url=REF.get("annotation_gtf_url", ""),
         src=REF.get("annotation_file", ""),
+        fmt=str(REF.get("annotation_format", "gtf")).lower(),
     log:
         "logs/download_gtf.log",
     run:
-        _stage_reference(params.src, params.url, output[0])
+        # GFF3 input is converted to GTF (gffread -T) so every downstream consumer
+        # (STAR --sjdbGTFfile, featureCounts -g gene_id, make_transcriptome) gets the GTF
+        # it expects. Only the gff3 path runs gffread; gtf / unset stage unchanged, so the
+        # GTF path is byte-identical to before.
+        if params.fmt == "gff3":
+            import subprocess
+            tmp = output[0] + ".gff3"
+            _stage_reference(params.src, params.url, tmp)
+            with open(log[0], "w", encoding="utf-8") as lf:
+                subprocess.run(["gffread", tmp, "-T", "-o", output[0]], check=True,
+                               stdout=lf, stderr=subprocess.STDOUT)
+            os.remove(tmp)
+        else:
+            _stage_reference(params.src, params.url, output[0])
 
 
 rule reference_check:

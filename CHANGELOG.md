@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.14.0 — 2026-06-26
+
+A full audit of the GUI controls and analysis scripts found no scientific-validity issues (the DESeq2 baseline reproduces exactly), and turned up two GUI controls that looked active but did nothing. Both now work.
+
+### Added
+
+- **Skip-trimming toggle.** The "fastp trimming" checkbox is now honored: unchecking it skips fastp entirely and sends the raw reads straight to the aligner (and to rRNA filtering, if that is on). Previously the box only changed the runtime estimate while fastp always ran. FastQC-before/after and the MultiQC inputs follow the same gating. Leave it on unless your reads are already trimmed.
+- **GFF3 annotation support.** The annotation Format selector (gtf / gff3) is now honored: a GFF3 annotation is converted to GTF with gffread before indexing and counting, so STAR/HISAT2/Salmon and featureCounts get the GTF they expect. Previously selecting gff3 did nothing and a real GFF3 file was silently parsed as GTF, which produces wrong or empty counts. The GTF path is unchanged.
+
 ## 0.13.0 — 2026-06-26
 
 ### Added

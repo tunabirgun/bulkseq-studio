@@ -64,19 +64,25 @@ def trimmed_fastqs(sample):
     return [f"results/trimmed/{sample}.trim.fastq.gz"]
 
 
-# Reads handed to the aligner/quantifier: the rRNA-depleted FASTQ when rRNA filtering
-# is on (RRNA_FILTER, defined below), otherwise the trimmed FASTQ unchanged. Paired-end
-# only (single-end is rejected up front). RRNA_FILTER is read at rule-eval time.
-def aligner_fastqs(sample):
-    if RRNA_FILTER:
-        return [f"results/rrna_filtered/{sample}_1.fastq.gz", f"results/rrna_filtered/{sample}_2.fastq.gz"]
-    return trimmed_fastqs(sample)
+# Reads handed to the aligner/quantifier, as a source chain:
+#   raw -> (fastp trimming?) -> (rRNA filtering?) -> aligner.
+# TRIMMING and RRNA_FILTER (defined below) are read at rule-eval time. Paired-end only
+# (single-end is rejected up front). _reads_pre_rrna is also the input to sortmerna.
+def _reads_pre_rrna(sample, read):
+    # After optional fastp trimming, before optional rRNA filtering.
+    if TRIMMING:
+        return f"results/trimmed/{sample}_{read}.trim.fastq.gz"
+    return raw_fastq(sample, read)
 
 
 def aligner_read(sample, read):
     if RRNA_FILTER:
         return f"results/rrna_filtered/{sample}_{read}.fastq.gz"
-    return f"results/trimmed/{sample}_{read}.trim.fastq.gz"
+    return _reads_pre_rrna(sample, read)
+
+
+def aligner_fastqs(sample):
+    return [aligner_read(sample, 1), aligner_read(sample, 2)]
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +122,18 @@ RRNA_FILTER = (
 )
 RRNA_DB = "references/rrna_db.fasta"
 RRNA_IDX = "references/rrna_idx"
+# fastp trimming toggle. When off, raw reads go straight to the rRNA filter / aligner
+# (fastp is skipped entirely). FastQC-pre / FastQC-post gate their own QC steps; post-trim
+# FastQC only makes sense when trimming actually runs. All only on the fastq/sra route.
+TRIMMING = (
+    bool(WF.get("trimming", True))
+    and not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)
+)
+FASTQC_PRE = (
+    bool(WF.get("fastqc_pre_trim", True))
+    and not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)
+)
+FASTQC_POST = bool(WF.get("fastqc_post_trim", True)) and TRIMMING
 # Single-end FASTQ is not yet supported on the alignment route (only fastp_pe
 # exists); reject it up front with a clear message instead of dead-ending at the
 # trim step. Count-matrix / microarray / deseq2-results modes have no layout.
