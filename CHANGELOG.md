@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.0 — 2026-06-26
+
+### Added
+
+- **rRNA filtering with SortMeRNA.** The "rRNA filtering" workflow option is now implemented (previously a no-op checkbox). When enabled, trimmed reads are filtered against the SortMeRNA rRNA database before alignment, on all three aligner routes (STAR, HISAT2, Salmon): the reference is downloaded and indexed once, each sample is then filtered in its own working directory, and the non-rRNA reads feed the aligner. The per-sample SortMeRNA log (rRNA %) is added to the MultiQC report, and `sortmerna` is now part of the core environment. A custom reference can be set via `sortmerna.database` (a local FASTA, a FASTA URL, or a database tarball URL); the default is `smr_v4.3_default_db`.
+
+### Fixed
+
+- **Rule guards added in 0.12.2 could abort their own rules.** The `command -v … || { … }` guards in `make_transcriptome`, `salmon_index`, and `hisat2_index` used unescaped braces, which Snakemake parses as format fields, raising a `NameError` and stopping the Salmon/HISAT2 routes even when the tool was present. The braces are now escaped. This slipped through in 0.12.2 because the guards were checked with `bash -n` after variable substitution rather than through Snakemake's own formatting.
+
 ## 0.12.3 — 2026-06-26
 
 ### Fixed

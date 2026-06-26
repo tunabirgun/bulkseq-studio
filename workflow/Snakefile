@@ -64,6 +64,21 @@ def trimmed_fastqs(sample):
     return [f"results/trimmed/{sample}.trim.fastq.gz"]
 
 
+# Reads handed to the aligner/quantifier: the rRNA-depleted FASTQ when rRNA filtering
+# is on (RRNA_FILTER, defined below), otherwise the trimmed FASTQ unchanged. Paired-end
+# only (single-end is rejected up front). RRNA_FILTER is read at rule-eval time.
+def aligner_fastqs(sample):
+    if RRNA_FILTER:
+        return [f"results/rrna_filtered/{sample}_1.fastq.gz", f"results/rrna_filtered/{sample}_2.fastq.gz"]
+    return trimmed_fastqs(sample)
+
+
+def aligner_read(sample, read):
+    if RRNA_FILTER:
+        return f"results/rrna_filtered/{sample}_{read}.fastq.gz"
+    return f"results/trimmed/{sample}_{read}.trim.fastq.gz"
+
+
 # ---------------------------------------------------------------------------
 # Reference / resources
 # ---------------------------------------------------------------------------
@@ -90,6 +105,17 @@ DE_RESULTS_TABLE = INPUT.get("deseq2_results")
 ALIGNER = (WF.get("aligner") or "STAR").upper()
 USE_HISAT2 = ALIGNER == "HISAT2"
 USE_SALMON = ALIGNER == "SALMON"
+# rRNA filtering (SortMeRNA): drop ribosomal RNA reads after trimming, before alignment.
+# Only meaningful on the fastq/sra alignment routes (count-matrix / microarray /
+# deseq2-results carry no reads). The default rRNA reference is downloaded to RRNA_DB and
+# indexed once into RRNA_IDX, which every per-sample sortmerna job then shares read-only.
+SORTMERNA = config.get("sortmerna", {})
+RRNA_FILTER = (
+    bool(WF.get("rrna_filtering", False))
+    and not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)
+)
+RRNA_DB = "references/rrna_db.fasta"
+RRNA_IDX = "references/rrna_idx"
 # Single-end FASTQ is not yet supported on the alignment route (only fastp_pe
 # exists); reject it up front with a clear message instead of dead-ending at the
 # trim step. Count-matrix / microarray / deseq2-results modes have no layout.
@@ -141,6 +167,7 @@ include: "rules/sra.smk"
 include: "rules/reference.smk"
 include: "rules/qc.smk"
 include: "rules/trimming.smk"
+include: "rules/rrna.smk"
 include: "rules/alignment.smk"
 include: "rules/quantification.smk"
 include: "rules/microarray.smk"

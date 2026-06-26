@@ -28,8 +28,8 @@ elif USE_SALMON:
     rule salmon_quant:
         input:
             index=SALMON_INDEX,
-            r1="results/trimmed/{sample}_1.trim.fastq.gz",
-            r2="results/trimmed/{sample}_2.trim.fastq.gz",
+            r1=lambda wc: aligner_read(wc.sample, 1),
+            r2=lambda wc: aligner_read(wc.sample, 2),
         output:
             quant="results/salmon/{sample}/quant.sf",
         threads:

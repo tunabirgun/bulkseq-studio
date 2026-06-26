@@ -12,6 +12,7 @@ dependencies:
   - fastqc=0.12.1
   - multiqc=1.30
   - fastp=1.0.1
+  - sortmerna=4.3.7
   - star=2.7.11b
   - hisat2=2.2.2
   - salmon=1.10.3

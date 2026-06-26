@@ -17,8 +17,8 @@ if not USE_SALMON:
         rule hisat2_align:
             input:
                 idx=HISAT2_INDEX_DIR,
-                r1="results/trimmed/{sample}_1.trim.fastq.gz",
-                r2="results/trimmed/{sample}_2.trim.fastq.gz",
+                r1=lambda wc: aligner_read(wc.sample, 1),
+                r2=lambda wc: aligner_read(wc.sample, 2),
             output:
                 bam="results/aligned/{sample}_Aligned.sortedByCoord.out.bam",
             threads:
@@ -43,7 +43,7 @@ if not USE_SALMON:
         rule star_align:
             input:
                 index=STAR_INDEX,
-                fastqs=lambda wc: trimmed_fastqs(wc.sample),
+                fastqs=lambda wc: aligner_fastqs(wc.sample),
             output:
                 bam="results/aligned/{sample}_Aligned.sortedByCoord.out.bam",
                 reads_per_gene="results/aligned/{sample}_ReadsPerGene.out.tab",

@@ -74,3 +74,10 @@ def test_lock_has_deseq2_and_enrichment_packages() -> None:
     deps = _conda_deps(ENVS / "bulkseq.lock.yaml")
     for pkg in FULL_ROUTE_PACKAGES:
         assert _has_tool(deps, pkg), f"bulkseq.lock.yaml is missing {pkg}"
+
+
+def test_sortmerna_in_core_full_and_lock() -> None:
+    # rRNA filtering (workflow.rrna_filtering) needs sortmerna in the env it runs under;
+    # it is a read-processing CLI tool so it belongs in the core profile, not full only.
+    for env in ("bulkseq_core.yaml", "bulkseq_full.yaml", "bulkseq.lock.yaml"):
+        assert _has_tool(_conda_deps(ENVS / env), "sortmerna"), f"{env} is missing sortmerna"

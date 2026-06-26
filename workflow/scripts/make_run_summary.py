@@ -36,6 +36,7 @@ TOOLS = {
     "fastqc": ["fastqc", "--version"],
     "multiqc": ["multiqc", "--version"],
     "fastp": ["fastp", "--version"],
+    "sortmerna": ["sortmerna", "--version"],
     "STAR": ["STAR", "--version"],
     "HISAT2": ["hisat2", "--version"],
     "salmon": ["salmon", "--version"],
@@ -144,6 +145,7 @@ def main() -> int:
         "workflow": config.get("workflow", {}),
         "deseq2": config.get("deseq2", {}),
         "fastp": config.get("fastp", {}),
+        "sortmerna": config.get("sortmerna", {}),
         "star": config.get("star", {}),
         "featurecounts": config.get("featurecounts", {}),
         "gene_sets": config.get("gene_sets", {}),
@@ -236,6 +238,11 @@ def render_tools_references(p: dict) -> str:
              f"Environment lock md5: {p.get('environment_lock_md5') or 'n/a'}",
              f"Input type: {input_type}    Aligner: {wf.get('aligner')}    "
              f"Quantifier: {wf.get('quantifier')}", ""]
+    if not is_micro and wf.get("rrna_filtering"):
+        smr = p.get("sortmerna", {})
+        lines += ["rRNA filtering: SortMeRNA (post-trim, pre-alignment)",
+                  f"  paired mode: {smr.get('paired_mode') or 'paired_in'}    "
+                  f"database: {smr.get('database') or 'SortMeRNA default rRNA db (smr_v4.3_default_db)'}", ""]
     if is_micro:
         lines += ["Microarray source", "-----------------",
                   f"Organism: {ref.get('organism_name')}",

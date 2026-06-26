@@ -42,6 +42,11 @@ def _multiqc_align_inputs():
     return expand("results/aligned/{sample}_Log.final.out", sample=SAMPLES)
 
 
+# SortMeRNA per-sample logs (rRNA %) feed the MultiQC sortmerna module when filtering is on.
+def _multiqc_rrna_inputs():
+    return expand("results/qc/sortmerna/{sample}.log", sample=SAMPLES) if RRNA_FILTER else []
+
+
 _MQC_SCAN = "results/qc results/salmon results/counts" if USE_SALMON else "results/qc results/aligned results/counts"
 
 
@@ -51,6 +56,7 @@ rule multiqc:
         expand("results/qc/fastqc_trim/{sample}", sample=SAMPLES),
         expand("results/qc/fastp/{sample}.json", sample=SAMPLES),
         _multiqc_align_inputs(),
+        _multiqc_rrna_inputs(),
         COUNTS_SUMMARY,
     output:
         "results/qc/multiqc/multiqc_report.html",
