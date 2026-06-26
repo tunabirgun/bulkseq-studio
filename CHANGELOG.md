@@ -4,39 +4,16 @@
 
 ### Fixed
 
-- **DESeq2 log-fold-change shrinkage could fail with a missing-package error.** `run_deseq2.R` falls
-  back to `lfcShrink(type="ashr")` for contrasts apeglm cannot shrink, and `ashr` is also selectable
-  via `deseq2.shrinkage_method`, but the `ashr` R package was in no environment profile. A config that
-  requested ashr (or a default apeglm run that hit the contrast fallback) aborted after the model fit
-  with a missing-package error. `r-ashr` is now in the full environment and the pinned lock, and
-  `deseq2.shrinkage_method` is restricted to `apeglm`, `ashr`, or `normal` so an unsupported value is
-  rejected when the config loads rather than mid-run. Default (apeglm) runs are unchanged.
-- **GO enrichment for yeast, Arabidopsis, C. elegans, and zebrafish fell back to g:Profiler.** The
-  enrichment step maps these organisms to the Bioconductor OrgDbs `org.Sc.sgd.db`, `org.At.tair.db`,
-  `org.Ce.eg.db`, and `org.Dr.eg.db`, but those packages were not installed, so the native
-  clusterProfiler GO route (GO over-representation, GO GSEA, and disease ontology) was skipped and the
-  run quietly used the g:Profiler over-representation fallback instead. The four OrgDbs are now in the
-  full environment and the lock, restoring the full GO route for these organisms.
+- **DESeq2 log-fold-change shrinkage could fail with a missing-package error.** `run_deseq2.R` falls back to `lfcShrink(type="ashr")` for contrasts apeglm cannot shrink, and `ashr` is also selectable via `deseq2.shrinkage_method`, but the `ashr` R package was in no environment profile. A config that requested ashr (or a default apeglm run that hit the contrast fallback) aborted after the model fit with a missing-package error. `r-ashr` is now in the full environment and the pinned lock, and `deseq2.shrinkage_method` is restricted to `apeglm`, `ashr`, or `normal` so an unsupported value is rejected when the config loads rather than mid-run. Default (apeglm) runs are unchanged.
+- **GO enrichment for yeast, Arabidopsis, C. elegans, and zebrafish fell back to g:Profiler.** The enrichment step maps these organisms to the Bioconductor OrgDbs `org.Sc.sgd.db`, `org.At.tair.db`, `org.Ce.eg.db`, and `org.Dr.eg.db`, but those packages were not installed, so the native clusterProfiler GO route (GO over-representation, GO GSEA, and disease ontology) was skipped and the run quietly used the g:Profiler over-representation fallback instead. The four OrgDbs are now in the full environment and the lock, restoring the full GO route for these organisms.
 
 ## 0.12.2 — 2026-06-26
 
 ### Fixed
 
-- **Salmon and HISAT2 aligner routes failed on a core-only environment.** The `bulkseq_core.yaml`
-  profile installed by "Install / repair core environment" did not include `gffread`, `salmon`, or
-  `hisat2`; those tools were only in the full R/DESeq2 profile. Selecting the Salmon or HISAT2 aligner
-  with a core (or pre-0.11.0) environment ran through trimming and QC, then died mid-run with
-  `exit status 127` (command not found) at `make_transcriptome`, `salmon_index`, or `hisat2_index`.
-  The three tools are now part of the core profile, so every aligner route works with the core
-  environment. Existing environments pick them up by clicking "Install / repair core environment"
-  again (an additive `micromamba env update`).
-- **Check Environment did not probe the alternative-aligner tools.** `gffread`, `salmon`, and `hisat2`
-  were in none of the readiness probe lists, so a stale environment reported as ready and the problem
-  only surfaced at run time. They are now probed and shown. The "core ready" gate still tracks the
-  default STAR route, so a working STAR setup is not reported as incomplete.
-- **Clearer failure when an aligner tool is missing.** `make_transcriptome`, `salmon_index`, and
-  `hisat2_index` now check for their tool first and exit with a message pointing to Setup, instead of
-  a raw `exit status 127` partway through the run.
+- **Salmon and HISAT2 aligner routes failed on a core-only environment.** The `bulkseq_core.yaml` profile installed by "Install / repair core environment" did not include `gffread`, `salmon`, or `hisat2`; those tools were only in the full R/DESeq2 profile. Selecting the Salmon or HISAT2 aligner with a core (or pre-0.11.0) environment ran through trimming and QC, then died mid-run with `exit status 127` (command not found) at `make_transcriptome`, `salmon_index`, or `hisat2_index`. The three tools are now part of the core profile, so every aligner route works with the core environment. Existing environments pick them up by clicking "Install / repair core environment" again (an additive `micromamba env update`).
+- **Check Environment did not probe the alternative-aligner tools.** `gffread`, `salmon`, and `hisat2` were in none of the readiness probe lists, so a stale environment reported as ready and the problem only surfaced at run time. They are now probed and shown. The "core ready" gate still tracks the default STAR route, so a working STAR setup is not reported as incomplete.
+- **Clearer failure when an aligner tool is missing.** `make_transcriptome`, `salmon_index`, and `hisat2_index` now check for their tool first and exit with a message pointing to Setup, instead of a raw `exit status 127` partway through the run.
 
 ## 0.12.1 — 2026-06-25
 
