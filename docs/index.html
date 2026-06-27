@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BulkSeq Studio — no-code bulk RNA-seq & microarray analysis</title>
+<meta name="description" content="BulkSeq Studio is a free, open-source desktop app that runs a complete bulk RNA-seq or microarray differential-expression analysis on your own computer, no coding required.">
+<link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="#overview">
+      <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
+      <span><b>BulkSeq Studio</b><span class="ver">v0.15.0</span></span>
+    </a>
+    <p class="tagline">Bulk RNA-seq &amp; microarray analysis, no code.</p>
+    <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
+    <nav>
+      <ul class="nav">
+        <li><a href="#overview">Overview</a></li>
+        <li><a href="#install">Install &amp; setup</a></li>
+        <li><a href="#quickstart">Quick start</a></li>
+        <li><a href="#input">Input modes</a></li>
+        <li><a href="#analysis">Analysis options</a></li>
+        <li><a href="#outputs">Outputs</a></li>
+        <li><a href="#benchmarks">Benchmarks</a></li>
+        <li><a href="#faq">FAQ &amp; troubleshooting</a></li>
+        <li><a href="#cite">Cite &amp; license</a></li>
+      </ul>
+      <div class="ext">
+        <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
+        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download latest release ↗</a>
+        <a href="https://doi.org/10.5281/zenodo.20902966" target="_blank" rel="noopener">Benchmark archive (Zenodo) ↗</a>
+      </div>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <section id="overview"><p class="kicker">Bulk RNA-seq & microarray, no code</p>
+
+<div class="hero">
+  <h1>BulkSeq Studio</h1>
+  <p>A free desktop app that takes you from raw reads or a count table to differential expression, functional enrichment, protein-interaction networks, and publication figures, without writing a single line of code.</p>
+  <div class="badges">
+    <span class="badge">Windows + Linux</span>
+    <span class="badge">No coding required</span>
+    <span class="badge">DESeq2 / limma</span>
+    <span class="badge">STAR · HISAT2 · Salmon</span>
+    <span class="badge">Open source</span>
+  </div>
+  <div class="btn-row">
+    <a class="btn btn-primary" href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">Download</a>
+    <a class="btn btn-ghost" href="https://github.com/tunabirgun/bulkseq-studio">View on GitHub</a>
+  </div>
+</div>
+
+<p class="lead">BulkSeq Studio is for biologists who want to analyse their own bulk RNA-seq or microarray data without learning the command line. You point a tabbed graphical interface at your data and a reference genome; it runs a transparent <a href="https://snakemake.github.io/">Snakemake</a> pipeline and produces a count matrix, a DESeq2 (or limma) results table, GO/KEGG enrichment, a STRING interaction network, and figures. Everything runs locally on your own machine, on Windows the pipeline runs inside WSL2, and on Linux it runs natively; either way the results are identical and every parameter, tool version, and reference is recorded so a run can be reproduced later.</p>
+
+<figure>
+  <img src="assets/screenshot-overview-light.png" alt="BulkSeq Studio main window: Workflow Settings populated with an aligner, quantifier, QC and trimming options, a DESeq2 design and enrichment toggles, shown beside a volcano plot and a STRING PPI network">
+  <figcaption>From data to results in one window: configure the run on the left, browse a volcano plot and the interactive protein network on the right.</figcaption>
+</figure>
+
+<h3>What you get</h3>
+
+<div class="grid">
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>Start from anything</h4>
+    <p>Paste SRR/SRP/PRJ accessions and the app fetches the FASTQ files and builds the sample sheet, or point it at local FASTQ files. Already have counts? Upload a gene-by-sample table to skip alignment. Already have a results table or a GEO microarray series (GSE)? Those go straight to figures and enrichment too.</p>
+  </div>
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg>QC, trimming & alignment</h4>
+    <p>FastQC and MultiQC report quality, fastp trims, and you choose the aligner: STAR (the default, used in most studies), HISAT2 (low memory, for large crop genomes), or Salmon (alignment-free, lightest of all). Optional SortMeRNA rRNA filtering is built in. All three routes feed the same count matrix.</p>
+  </div>
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="6" rx="1"/><rect x="12" y="7" width="3" height="10" rx="1"/><rect x="17" y="13" width="3" height="4" rx="1"/></svg>Differential expression</h4>
+    <p>RNA-seq runs through DESeq2 with apeglm shrinkage, VST normalization, and configurable significance thresholds; microarray series run through limma. You set the design formula and contrast in plain dropdowns and get separate up- and down-regulated gene lists.</p>
+  </div>
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2v6a2 2 0 0 0 .245.96l5.51 10.08A2 2 0 0 1 18 22H6a2 2 0 0 1-1.755-2.96l5.51-10.08A2 2 0 0 0 10 8V2"/><path d="M6.5 15h11"/><path d="M9 2h6"/></svg>Functional enrichment</h4>
+    <p>GO over-representation and GSEA run separately on the up- and down-regulated sets, with KEGG pathway analysis for any organism that has a KEGG code, GO through g:Profiler, and disease-ontology terms for human and mouse. You can also supply your own gene sets for a custom ORA and GSEA run.</p>
+  </div>
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" x2="15.4" y1="13.5" y2="17.5"/><line x1="15.4" x2="8.6" y1="6.5" y2="10.5"/></svg>Protein networks</h4>
+    <p>A dedicated tab embeds the STRING protein-interaction network in an interactive <a href="https://js.cytoscape.org/">cytoscape.js</a> view: hover a protein for its fold-change and degree, re-layout, recolour by fold-change, resize by degree, filter by confidence, and export PNG, SVG, or Cytoscape files.</p>
+  </div>
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 20h10"/><path d="M10 20c5.5-2.5.8-6.4 3-10"/><path d="M9.5 9.4c1.1.8 1.8 2.2 2.3 3.7-2 .4-3.5.4-4.8-.3-1.2-.6-2.3-1.9-3-4.2 2.8-.5 4.4 0 5.5.8z"/><path d="M14.1 6a7 7 0 0 0-1.1 4c1.9-.1 3.3-.6 4.3-1.4 1-1 1.6-2.3 1.7-4.6-2.7.1-4 1-4.9 2z"/></svg>Built for non-model organisms</h4>
+    <p>Crops and fungi are first-class. KEGG enrichment runs for any organism with a KEGG code, and GO terms come through g:Profiler without needing a Bioconductor OrgDb, so an organism is never skipped just for lacking one. Validated on rice, <em>Fusarium graminearum</em>, and Drosophila.</p>
+  </div>
+</div></section>
+    <section id="install"><p class="kicker">Get started</p>
+<h2>Install & setup</h2>
+<p class="lead">BulkSeq Studio is free and runs on Windows and Linux. You download one file, launch it, and let the app set up the bioinformatics tools for you the first time. No coding, and on Windows no administrator account for the install itself.</p>
+
+<div class="grid cols-2">
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>Windows</h4>
+    <p>Two downloads on the <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">Releases</a> page, pick either:</p>
+    <ul>
+      <li><strong>Installer</strong> — <code>BulkSeqStudio-Setup-0.15.0.exe</code>. A per-user install that needs no administrator rights; afterwards you launch it from the Start Menu.</li>
+      <li><strong>Portable</strong> — <code>BulkSeqStudio-Portable-0.15.0.zip</code>. Unzip it anywhere and double-click <code>BulkSeqStudio.exe</code>. Nothing is installed.</li>
+    </ul>
+  </div>
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>Linux</h4>
+    <p>Download from the same Releases page and pick either:</p>
+    <ul>
+      <li><strong>AppImage</strong> — a single self-contained file. Make it executable, then run it; nothing to extract or install.</li>
+      <li><strong>Tarball</strong> — extract it and run the bundled launcher <code>BulkSeqStudio</code>.</li>
+    </ul>
+    <p class="muted">Both bundle the interface, so you do not need system Python. They are built on Ubuntu 24.04 and need glibc 2.39 or newer.</p>
+  </div>
+</div>
+
+<h3>What is WSL2, and why does Windows need it?</h3>
+<p>The bioinformatics tools that do the analysis (alignment, counting, DESeq2, enrichment) are Linux programs. On Windows, BulkSeq Studio runs them inside <strong>WSL2</strong> — the Windows Subsystem for Linux, a lightweight Linux that Windows runs quietly in the background. You never open a Linux terminal yourself. The window you see is only the graphical interface; the actual computation happens in a managed <em>micromamba</em> environment inside WSL2. The app can enable WSL2 and install that environment for you from its setup screen, so you do not configure anything by hand.</p>
+<p class="muted">On Linux there is no WSL: the same interface runs the same pipeline directly in a local environment, and the results are identical.</p>
+
+<h3>Install and first run, step by step</h3>
+<ol class="steps">
+  <li>
+    <h4>Download and open the app</h4>
+    <p>Grab the Windows installer or portable ZIP (or, on Linux, the AppImage or tarball) from the Releases page, then launch BulkSeq Studio. The per-user Windows install does not ask for an administrator password.</p>
+  </li>
+  <li>
+    <h4>Let the Environment setup screen check your machine</h4>
+    <p>On first launch (and any time later from <strong>Check Environment</strong> on the Project tab), a readiness screen checks the pieces it needs and shows each one as <em>Ready</em> or <em>Action needed</em>, with an install button when something is missing.</p>
+  </li>
+  <li>
+    <h4>Install anything marked "Action needed"</h4>
+    <p>Work top to bottom: click each <em>Install…</em> button, then press <strong>Re-check</strong> to refresh the statuses. The downloads run inside your own WSL user account with no sudo password. <em>Show details / log</em> expands the full setup log if a step needs attention.</p>
+  </li>
+  <li>
+    <h4>Click Continue when the header reads "4 of 4 ready"</h4>
+    <p>Once every row is <em>Ready</em>, the screen is done. You can already create projects, edit metadata, and build configs while the tools finish installing; only starting a pipeline run needs them.</p>
+  </li>
+</ol>
+
+<figure>
+  <img src="assets/screenshot-environment-check.png" alt="The Environment setup window: four readiness rows, each Ready or Action needed, with install buttons and a Continue button.">
+  <figcaption>The first-run Environment setup screen on Windows. Each row has a status and, when needed, a one-click install.</figcaption>
+</figure>
+
+<h4>The four readiness rows (Windows first run)</h4>
+<ul>
+  <li><strong>Python GUI / core packages</strong> — the libraries the interface itself needs.</li>
+  <li><strong>WSL2</strong> — the lightweight Linux the pipeline runs inside, plus the micromamba package manager. If WSL2 is not yet enabled, this single step opens an Administrator PowerShell window once (Windows requires elevation only to turn the feature on), and you may be asked to reboot.</li>
+  <li><strong>Core bioinformatics environment ("bulkseq")</strong> — Snakemake, the three aligners (STAR, HISAT2, Salmon), featureCounts, samtools, fastp, FastQC, and MultiQC. The download takes a few minutes.</li>
+  <li><strong>R / DESeq2 stack</strong> — R with DESeq2, the enrichment packages, and the figure toolchain. This is the largest, slowest install and can take a while; you only do it once.</li>
+</ul>
+<p class="muted">On Linux the WSL2 row does not apply — the pipeline runs locally and those controls are hidden.</p>
+
+<div class="note"><span class="t">Disk space</span> Set aside about 10 GB of free disk for the toolchain and reference indices, and 16 GB or more of RAM is recommended (STAR alignment is the memory-heavy step; for very large genomes the HISAT2 or Salmon aligner needs far less). The one-time environment setup downloads several packages, so the first run is slower than later ones — give it time and a stable internet connection.</div>
+
+<figure>
+  <img src="assets/screenshot-linux.png" alt="BulkSeq Studio running natively on a Linux desktop.">
+  <figcaption>The same application running natively on Linux. Every tab, the Figure Style editor, and the interactive PPI viewer work the same as on Windows.</figcaption>
+</figure></section>
+    <section id="quickstart"><p class="kicker">Your first analysis</p>
+<h2>Quick start</h2>
+<p class="lead">From a public study to differential expression, enrichment, and an interactive protein network, without writing any code. The example below follows the most common path: paste study accessions, let the app fetch the data, and run.</p>
+
+<div class="note"><span class="t">Before you start</span> On the Project tab, click <strong>Check Environment</strong> first. The setup window checks four things (Python GUI, WSL2, the core bioinformatics environment, and the R/DESeq2 stack) and installs anything that is missing. When the header reads <strong>4 of 4 ready</strong>, you are clear to run. You can keep building the project while the tools install; only starting a run needs them.</div>
+
+<ol class="steps">
+  <li>
+    <h4>Create or open a project</h4>
+    <p>On the <strong>Project</strong> tab, make a new project folder. The app scaffolds the <code>config/</code> folder, a copy of the Snakemake <code>workflow/</code>, and a provenance manifest. On Windows, click <em>Use WSL filesystem</em> when prompted so the project lives on the fast Linux disk rather than a <code>C:\</code> drive.</p>
+  </li>
+  <li>
+    <h4>Choose an input</h4>
+    <p>On the <strong>Input Data</strong> tab, pick how your data comes in. The simplest is to paste SRR / SRP / PRJ accessions and click <em>Fetch metadata & build samples</em>; the ENA fetch reads the layout, FASTQ URLs, and read counts and builds the sample sheet for you. You can also select local FASTQ files, or skip alignment entirely with <em>Use a Count Matrix</em>, <em>Upload DESeq2 Results</em>, or a GEO microarray series (GSE).</p>
+  </li>
+  <li>
+    <h4>Confirm the metadata and contrast</h4>
+    <p>On the <strong>Metadata</strong> tab, the samples appear in an editable table. Assign each one a <code>condition</code> (for example <em>treated</em> vs <em>control</em>) and check that the layout (paired or single-end) is correct. These groups define the comparison DESeq2 will run.</p>
+  </li>
+  <li>
+    <h4>Pick a reference and analysis options</h4>
+    <p>On the <strong>Reference Manager</strong> tab, choose your organism from the Ensembl / NCBI RefSeq catalog (or import a custom genome and annotation), then click <em>Use Selected Preset</em>. A reference is required before a run will start. On the <strong>Workflow Settings</strong> tab, set the aligner (leave it on <strong>STAR</strong> if unsure), the DESeq2 design and contrast, the <code>alpha</code> and <code>|log2FC|</code> thresholds, and how to handle organellar genes. The defaults are sane, so most first runs only need the contrast confirmed.</p>
+  </li>
+  <li>
+    <h4>Start the run and watch the Run Monitor</h4>
+    <p>Clear any flagged items on the <strong>Sanity Checks</strong> tab, then go to <strong>Run Monitor</strong> and click <strong>Start Run</strong>. The progress bar and a plain-language current phase (Downloading, Aligning, DESeq2, and so on) track the pipeline above the raw log. Use <strong>Stop</strong> to cancel, <strong>Resume</strong> to continue an interrupted run, and <strong>Unlock</strong> if a run was interrupted hard.</p>
+    <figure>
+      <img src="assets/screenshot-run-monitor.png" alt="The Run Monitor tab showing a completed run at 100%, with Start Run, Resume, Unlock, Stop, and the Export Tools & References and Export Study Design buttons">
+      <figcaption>The Run Monitor after a finished run. The Export Tools & References and Export Study Design buttons save the exact tool versions, reference, and study design for that run.</figcaption>
+    </figure>
+  </li>
+  <li>
+    <h4>Read the results</h4>
+    <p>When the run finishes, the <strong>Outputs</strong> tab lets you browse the count matrix and DESeq2 table and view the figures (PCA, volcano, MA, heatmaps); toggle <em>Vector (SVG)</em> for a crisp preview at any zoom. Open the <strong>PPI Network</strong> tab to explore the STRING protein network interactively, and click <strong>Open MultiQC Report</strong> on the Run Monitor for the read-quality summary. Export the tools & references and study design files to capture the run's provenance.</p>
+  </li>
+</ol>
+
+<div class="note"><span class="t">Tip</span> Not sure the configuration is right? Use <strong>Dry Run</strong> before <strong>Start Run</strong>. A dry run validates the configuration and reports exactly which steps would execute, without downloading or computing anything.</div></section>
+    <section id="input"><p class="kicker">Five ways in</p>
+<h2>Input modes</h2>
+<p class="lead">BulkSeq Studio meets your data wherever it already is. You can start from raw reads, from public accessions, from a count table, from a finished differential-expression table, or from a GEO microarray series. The mode you choose decides which steps run and which outputs you get; everything downstream of the entry point is shared, so the figures and enrichment look the same no matter how you got there.</p>
+
+<div class="grid cols-2">
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 13v8"/><path d="m8 17 4 4 4-4"/><path d="M20 16.5A4.5 4.5 0 0 0 17.5 8h-1.8A7 7 0 1 0 4 14.9"/></svg>1. SRA / ENA accessions</h4>
+    <p>Paste SRR / SRP / PRJ accessions and the app fetches the ENA metadata, builds the sample sheet (layout, FASTQ URLs, read counts), and downloads the reads for you.</p>
+    <p class="muted">Unlocks the full pipeline: FastQC / MultiQC, fastp trimming, alignment, gene counting, DESeq2, enrichment, figures, and the PPI network.</p>
+  </div>
+
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>2. Local FASTQ files</h4>
+    <p>Already downloaded your reads? Point the app at FASTQ files on disk. Single-end or paired-end, detected automatically.</p>
+    <p class="muted">Same full pipeline as the accession route, minus the download step: QC, trimming, alignment, counting, DESeq2, enrichment, figures, PPI.</p>
+  </div>
+
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M12 3v18"/></svg>3. Count matrix (skip alignment)</h4>
+    <p>Upload a gene-by-sample counts table (featureCounts output or any TSV/CSV) to skip download, QC, and alignment.</p>
+    <p class="muted">Goes straight to DESeq2, then figures, enrichment, statistics, and the PPI network. Use this when alignment is already done elsewhere.</p>
+  </div>
+
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M12 18v-6"/><path d="m9 15 3-3 3 3"/></svg>4. DESeq2 results table (bring your own)</h4>
+    <p>Upload a finished differential-expression table (the format <code>DESeq2::results()</code> writes). Required columns are <code>gene_id</code>, <code>log2FoldChange</code>, and <code>padj</code>; the up- and down-regulated lists are derived from your significance thresholds.</p>
+    <p class="muted">No FASTQ, alignment, counts, or DESeq2 step. Produces functional enrichment, the volcano / MA / p-value figures, the STRING PPI network, the MSigDB set-overlap test, and a preranked <code>.rnk</code>. Outputs that need per-sample counts (PCA, sample-correlation, count heatmaps, the Wilcoxon test, the normalized-expression export) are skipped.</p>
+  </div>
+
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>5. GEO microarray series (GSE)</h4>
+    <p>Enter a GEO series accession. The app ingests the normalized intensities (GEOquery series matrix, or RMA from raw Affymetrix CEL), maps probes to gene symbols, and runs <strong>limma</strong> differential expression into a DESeq2-shaped results table.</p>
+    <p class="muted">From there it runs the same figures, enrichment, genes-of-interest, and networks as the RNA-seq routes. RNA-seq series pasted here are redirected to the SRA box.</p>
+  </div>
+</div>
+
+<figure>
+  <img src="assets/screenshot-input-deseq2.png" alt="The Input Data tab configured for the bring-your-own DESeq2-results input mode, with the results-table upload control selected.">
+  <figcaption>The Input Data tab in DESeq2-results mode: upload a finished table and go straight to enrichment, figures, and the STRING network, with no reads or alignment.</figcaption>
+</figure>
+
+<div class="note"><span class="t">Tip</span> The three aligner routes (STAR, HISAT2, Salmon) converge on a common count matrix, so once a run reaches the counting step, everything afterward is identical regardless of how the reads were aligned, or which input mode you started from.</div>
+
+<div class="note warn"><span class="t">Match your gene IDs</span> For modes that skip alignment (count matrix, DESeq2 results), the IDs in your table must match the keytype of the organism you select on the Reference tab, or enrichment, KEGG, and STRING will not map. Pick the preset for your organism so the gene-ID namespace lines up.</div></section>
+    <section id="analysis"><p class="kicker">What the pipeline does</p>
+<h2>Analysis options</h2>
+<p class="lead">BulkSeq Studio runs a fixed, transparent sequence of steps from reads to results. Each stage exposes a small set of choices on the Workflow Settings tab. The defaults are set for a standard study, so a typical run only needs an organism, a contrast, and the data.</p>
+
+<figure>
+  <img src="assets/screenshot-overview-light.png" alt="The main window with Workflow Settings populated (aligner, quantifier, QC and trimming, DESeq2 design, enrichment toggles) beside a volcano plot and a STRING PPI network">
+  <figcaption>Workflow Settings drives the whole pipeline: aligner, quantifier, QC and trimming, the DESeq2 design and contrast, and the enrichment toggles, shown next to a volcano plot and a STRING network.</figcaption>
+</figure>
+
+<h3>Quality control and trimming</h3>
+<p>Every FASTQ or SRA run starts with FastQC on the raw reads, then adapter and quality trimming with fastp, then FastQC again on the trimmed reads. The per-sample reports are collected into a single MultiQC summary you can open from the Run Monitor.</p>
+<p>Trimming is on by default. If your reads are already trimmed, uncheck the fastp trimming option and the raw reads go straight to the aligner. The before/after FastQC steps and the MultiQC inputs follow the same setting.</p>
+
+<h3>Optional ribosomal RNA removal</h3>
+<p>You can filter ribosomal RNA out of the reads with SortMeRNA before alignment. When the rRNA filtering option is on, trimmed reads are matched against the SortMeRNA rRNA database and only the non-rRNA reads continue to the aligner. This runs on all three aligner routes. The rRNA database is downloaded and indexed once, each sample is filtered in its own working directory, and the per-sample rRNA percentage is added to the MultiQC report. The default reference is <code>smr_v4.3_default_db</code>; you can point <code>sortmerna.database</code> at a local FASTA, a FASTA URL, or a database tarball instead.</p>
+
+<h3>Alignment and quantification</h3>
+<p>Three aligners are available, all validated end to end. They feed a gene-level count matrix in the same format, so everything after counting (differential expression, enrichment, the network, every figure) runs identically whichever you pick.</p>
+<ul>
+  <li><strong>STAR</strong> (default): the standard splice-aware aligner; the genome index grows with genome size and needs the most RAM. Writes sorted BAM files.</li>
+  <li><strong>HISAT2</strong>: a graph aligner with a small index and low memory, for large crop genomes that overflow STAR while you still want BAM files.</li>
+  <li><strong>Salmon</strong>: alignment-free transcriptome quantification, the lowest memory of the three and the fastest. No BAM files; the transcriptome is built automatically from the genome and annotation.</li>
+</ul>
+<p>Library strandedness is detected automatically on all three routes, so a stranded library is counted correctly without you setting it by hand.</p>
+<p>The quantifier is matched to the aligner. featureCounts is the default counter. With the STAR aligner the Quantifier control becomes a real choice: alongside featureCounts you can pick <strong>STAR gene-counts</strong>, which reads gene counts straight from STAR's own <code>--quantMode GeneCounts</code> output with no extra counting pass. STAR gene-counts is a 0.15.0 option, validated against featureCounts on the same BAMs at Pearson r of about 0.998 (unstranded) to 1.000 (stranded). HISAT2 always pairs with featureCounts and Salmon with tximport, so they cannot be mis-set.</p>
+<div class="note"><span class="t">Sane defaults</span> Leave the aligner on STAR and the quantifier on featureCounts unless STAR will not fit in memory; the app estimates the index size and warns before a run. Strandedness is auto-detected, fastp trimming is on, and the quantifier is paired to the aligner. The one quantifier you actively choose is STAR gene-counts versus featureCounts on the STAR route.</div>
+
+<h3>Differential expression</h3>
+<p>The differential-expression engine follows the input mode. RNA-seq and count-matrix runs use <strong>DESeq2</strong> (with apeglm shrinkage and VST); GEO microarray runs use <strong>limma</strong> and produce a DESeq2-shaped results table, so the figures and downstream steps are the same. You configure the design formula and the contrast (numerator, denominator, reference level), the significance threshold <code>alpha</code>, and the absolute log2 fold-change cutoff, which together split the genes into up- and down-regulated lists. A TOST equivalence test is also run to flag genes that are statistically unchanged, the complement of the significance call.</p>
+
+<h3>Functional enrichment</h3>
+<p>Enrichment runs separately on the up- and down-regulated sets. GO over-representation and GSEA come from clusterProfiler when a Bioconductor OrgDb is installed for the organism (human, mouse, fly, and others); for human and mouse it also adds disease-ontology terms. Organisms without an OrgDb fall back to g:Profiler for GO. <strong>KEGG pathway ORA and GSEA run for any organism that has a KEGG code, even without an OrgDb</strong>, so fungi, bacteria, and other non-model organisms are not skipped. Selecting an organism preset auto-configures its enrichment databases and STRING taxon.</p>
+<p>You can also supply your own gene sets: a GMT file and/or an id-to-term annotation table, with an optional background list for the over-representation universe. This runs a clusterProfiler ORA and GSEA alongside the built-in GO and KEGG and is organism-agnostic, so it works where the built-in GO route is skipped. Custom gene-set enrichment is a 0.15.0 option. The gene IDs must use the run's identifier format; a namespace mismatch is flagged as <code>REVIEW_REQUIRED</code> rather than returned as a silent empty result.</p>
+<p>For a focused look, a genes-of-interest list produces its own z-scored heatmap, per-condition expression panel, and counts table from an existing run without re-analysis. The IDs you paste are matched to the run's genes by locus tag, Ensembl/RefSeq ID, or symbol; when few or none match, the report leads with a warning and shows examples of the run's actual ID format so you can correct the list.</p>
+
+<h3>Protein-interaction networks</h3>
+<p>BulkSeq Studio builds a STRING protein-protein interaction network for the significant genes and seeds it by symbol or, for symbol-less annotations like the <code>FGSG_</code> locus tags of <em>Fusarium graminearum</em>, by gene ID. The network exports to Cytoscape as GraphML, SIF, and cytoscape.js JSON for external editing. A dedicated PPI Network tab embeds the same network in an interactive view.</p>
+
+<figure>
+  <img src="assets/screenshot-ppi-interactive.png" alt="The PPI Network tab: an interactive STRING network of 82 proteins and 158 interactions with Fusarium FGSG_ ids, layout/colour/size/confidence controls, export buttons, and a node hover tooltip">
+  <figcaption>The interactive PPI tab. Hover a protein for its fold-change, adjusted p-value, mean expression, and degree; recolour by log2 fold change, resize by node degree, filter by confidence, re-layout, and export PNG/SVG or the Cytoscape files.</figcaption>
+</figure>
+
+<h3>Extra statistics</h3>
+<p>Beyond the differential test, the pipeline writes a set of diagnostics: sample-to-sample correlation heatmaps (Pearson and Spearman), a Wilcoxon rank-sum concordance check, the TOST equivalence call described above, and an MSigDB Hallmark set-overlap.</p>
+
+<h3>Non-model organisms</h3>
+<p>Crops and fungi that have no Bioconductor OrgDb are not left without downstream analysis. As long as the organism has a KEGG code and a STRING taxon, KEGG enrichment and the STRING network still run, and g:Profiler supplies GO where it is available. This is how rice, the other crop presets, and <em>Fusarium graminearum</em> reach full enrichment and network outputs.</p></section>
+    <section id="outputs"><p class="kicker">What you get</p>
+<h2>Outputs</h2>
+<p class="lead">A finished run leaves a project folder of result tables, publication figures, a quality report, enrichment and network files, and a record of exactly how it was produced. You browse all of it inside the Outputs tab; every file is a plain CSV, PNG, SVG, or standard network format you can open or share.</p>
+
+<h3>Result tables</h3>
+<p>The differential-expression results come out as tab-friendly text files you can open in Excel or R:</p>
+<ul>
+  <li><strong>DESeq2 / limma results table</strong> — every gene with its log2 fold-change, p-value, adjusted p-value, gene symbol, and biotype.</li>
+  <li><strong>Up- and down-regulated gene lists</strong> — the significant genes split by direction, using your <code>alpha</code> and <code>|log2FC|</code> thresholds.</li>
+  <li><strong>Normalized expression matrix</strong> — DESeq2 normalized counts (or log2 intensities for microarray) as a gene-by-sample CSV.</li>
+  <li><strong>Unchanged / equivalence list</strong> — genes flagged as genuinely unchanged by the TOST equivalence test, separate from "not significant".</li>
+  <li><strong>Preranked <code>.rnk</code></strong> — a stat-ranked gene list for running GSEA elsewhere.</li>
+</ul>
+
+<h3>Figures</h3>
+<p>Each figure is written in two forms: a raster <span class="pill">PNG</span> for documents and slides, and a vector <span class="pill">SVG</span> that stays crisp at any zoom (toggle <em>Vector (SVG)</em> in the viewer to preview it). The Figure Style editor restyles and regenerates them without re-running alignment or DESeq2.</p>
+<ul>
+  <li>Volcano and MA plots.</li>
+  <li>PCA and sample-distance plots.</li>
+  <li>Top-DEG and genes-of-interest heatmaps.</li>
+  <li>Enrichment dotplots (GO and KEGG), GSEA running-score and ridgeplots, gene-concept and term-similarity networks.</li>
+  <li>A raw p-value histogram and, for RNA-seq, dispersion / Cook's-distance / library-size diagnostics.</li>
+</ul>
+
+<h3>Quality report</h3>
+<p>The <strong>MultiQC report</strong> gathers FastQC, fastp trimming, and alignment statistics for every sample into one HTML page. Open it from the <em>Open MultiQC Report</em> button on the Run Monitor.</p>
+
+<h3>Enrichment tables and networks</h3>
+<ul>
+  <li><strong>Enrichment tables</strong> — the GO, KEGG, and custom gene-set over-representation and GSEA results as CSV, run separately on the up- and down-regulated sets.</li>
+  <li><strong>STRING network files</strong> — the protein-interaction network exported as GraphML, SIF, and cytoscape.js JSON (cyjs) for editing in Cytoscape.</li>
+  <li><strong>Interactive PPI Network tab</strong> — the same network rendered live in the app (see below).</li>
+</ul>
+
+<h3>Genes of interest</h3>
+<p>Supply a gene list and the app generates a focused z-scored heatmap, a per-condition expression panel, and a counts table from the existing run, plus a STRING network for those genes when PPI seeding is set to the list. No re-analysis is needed.</p>
+
+<h3>Run provenance</h3>
+<p>When a run finishes, the Run Monitor lets you save two records of how it was produced:</p>
+<ul>
+  <li><strong>Tools & references</strong> — the tool and R/Bioconductor package versions, the reference genome and annotation with source URLs and MD5, and the enrichment database codes.</li>
+  <li><strong>Study design</strong> — the samples, conditions, layout, design formula, and contrasts.</li>
+</ul>
+<div class="note"><span class="t">Reproducible</span> Each run also records a default-vs-used parameter diff, an environment lock hash, the reference accession/MD5, and R <code>sessionInfo</code>, so a run can be reproduced later.</div>
+
+<figure>
+  <img src="assets/screenshot-ppi-interactive.png" alt="The interactive PPI Network tab showing an 82-protein, 158-interaction STRING network with a node hover tooltip and layout, colour, size, confidence, and export controls">
+  <figcaption>The interactive PPI Network tab. Hover any protein for its symbol, mean expression, log2 fold-change, adjusted p-value, and degree; recolour by fold-change or module, resize by topology, filter by confidence, and export the view as PNG, SVG, or Cytoscape files (GraphML / SIF / cyjs).</figcaption>
+</figure></section>
+    <section id="benchmarks" class="wide"><p class="kicker">Validation</p>
+<h2>Benchmarks</h2>
+<p class="lead">BulkSeq Studio is validated by a benchmark suite (B1-B13) that tests the pipeline against simulated ground truth, established tools, and itself across input modes and organisms. The full benchmark snapshot — tables, figures, and pinned environments — is deposited on Zenodo, and the accompanying manuscript is under peer review.</p>
+<p>Every number below traces to a checksummed result table in the deposited archive. Cite the snapshot as <a href="https://doi.org/10.5281/zenodo.20902966">10.5281/zenodo.20902966</a>.</p>
+
+<h3>B1-B10: the core validation</h3>
+<p>Ten benchmark families, each probing one part of the default analysis (STAR to featureCounts to DESeq2 to clusterProfiler enrichment). Headline results:</p>
+<div class="tablewrap">
+<table>
+<thead>
+<tr><th>Benchmark</th><th>What it tests</th><th>Headline result</th></tr>
+</thead>
+<tbody>
+<tr><td>B1</td><td>Correctness vs simulated ground truth (count- and read-level)</td><td>Power, precision, and fold-change recovery rise with replication; read-level FDR controlled (0.048 +/- 0.006 over 6 seeds), LFC Pearson 0.976</td></tr>
+<tr><td>B2</td><td>FDR / null calibration under a true null</td><td>Raw p-values near nominal 0.05; BH false positives essentially absent at n=10 (mean 0.8 / 12000 genes); inherits DESeq2 small-sample behaviour, motivating the 4-6 replicate guidance</td></tr>
+<tr><td>B3</td><td>Accuracy curves (iCOBRA TPR vs observed FDR)</td><td>Power ordered n10 > n5 > n3 at every FDR; observed FDR tightens toward nominal as replication grows</td></tr>
+<tr><td>B4</td><td>Concordance vs nf-core/rnaseq 3.14.0</td><td>LFC Spearman 0.97-0.99, DEG Jaccard 0.81-0.91, CAT top-100 0.85-0.93 across a fly and a fungus; all acceptance criteria met</td></tr>
+<tr><td>B5</td><td>Internal aligner concordance (STAR / HISAT2 / Salmon)</td><td>STAR and HISAT2 near-identical (LFC r 0.985-0.9997); Salmon agrees on fold change (r 0.94-0.996) with expected boundary-DEG differences</td></tr>
+<tr><td>B6</td><td>Input-mode equivalence (count-matrix, bring-your-own DESeq2)</td><td>Both entry points reproduce the FASTQ-path DESeq2 <em>exactly</em> (max abs diff = 0 on all result columns; up/down Jaccard 1.0) across three anchors</td></tr>
+<tr><td>B7</td><td>Microarray (limma) route validation</td><td>vs canonical limma-trend-robust: logFC Pearson 1.0, max abs diff 0, identical DEG sets (440 vs 440), positive control reproduced exactly</td></tr>
+<tr><td>B8</td><td>Multi-organism breadth + non-model enrichment</td><td>Real KEGG ORA and STRING networks for a fungus (FGSG_ locus tags) and a crop (RefSeq LOC route) <em>without</em> a Bioconductor OrgDb</td></tr>
+<tr><td>B9</td><td>Runtime / memory scaling + large-genome rescue</td><td>STAR index RAM scales with genome length (1 to 57.9 GiB) and overflows on wheat; Salmon indexes the same genomes at ~1 GiB, restoring quantification</td></tr>
+<tr><td>B10</td><td>Reproducibility and determinism</td><td>Identical sha256 across reruns and thread counts (4 vs 16 cores), max abs LFC diff 0; databases pinned (Ensembl 111, STRING v12.0)</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>New in 0.15.0 (B11-B13)</h3>
+<p>The 0.15.0 snapshot adds three benchmarks covering the analytical surfaces introduced since 0.12.1: the STAR gene-counts quantifier, custom gene-set enrichment, and the rRNA-filtering path. Each was adversarially reviewed before deposit.</p>
+
+<h4>B11 — STAR gene-counts vs featureCounts</h4>
+<p>Does the new STAR gene-counts quantifier (counts from STAR's <code>--quantMode GeneCounts</code>) agree with the default featureCounts? Both arms ran on the <em>same</em> BAM and through the identical DESeq2 path, so only the counting algorithm differs.</p>
+<div class="tablewrap">
+<table>
+<thead>
+<tr><th>Dataset</th><th>Strand</th><th>Count r (log2)</th><th>LFC Pearson</th><th>DEG Jaccard (padj<0.05)</th><th>DEG Jaccard (+|LFC|≥1)</th></tr>
+</thead>
+<tbody>
+<tr><td>fgval (F. graminearum)</td><td>unstranded</td><td class="num">0.9997</td><td class="num">0.9999</td><td class="num">0.9950</td><td class="num">0.9956</td></tr>
+<tr><td>fghs (F. graminearum)</td><td>reverse</td><td class="num">1.0000</td><td class="num">1.0000</td><td class="num">0.9993</td><td class="num">0.9991</td></tr>
+<tr><td>pasilla (D. melanogaster)</td><td>unstranded</td><td class="num">0.9981</td><td class="num">0.9969</td><td class="num">0.9619</td><td class="num">0.9463</td></tr>
+</tbody>
+</table>
+</div>
+<p>The two quantifiers are effectively interchangeable on these data: per-gene counts correlate at r ≥ 0.998, fold changes at Pearson ≥ 0.997, and DEG sets overlap at Jaccard 0.95-1.0. The reverse-stranded case is exact (1.0000). pasilla is the most divergent arm, reflecting its small DEG set, and is reported as-is. The claim is equivalence on these three datasets (two organisms, strand 0 and 2, paired-end), not a universal guarantee.</p>
+<figure class="bench"><img src="assets/b11_lfc_scatter.png" alt="Log2 fold-change scatter comparing STAR gene-counts against featureCounts for three datasets; points hug the identity line"><figcaption>B11: log2 fold-change agreement between STAR gene-counts and featureCounts across the three datasets.</figcaption></figure>
+
+<h4>B12 — custom gene-set enrichment (equivalence check)</h4>
+<p>This benchmark is an implementation-equivalence / regression check, not an independent validation of the enrichment statistics. A gene set built from the same KEGG sets the built-in route uses is fed back through the custom enrichment engine, and the output is compared to the built-in KEGG result.</p>
+<ul>
+<li>GSEA reproduces the built-in KEGG GSEA <em>exactly</em> (12 of 12 terms, Jaccard 1.0).</li>
+<li>ORA reproduces the built-in 4 terms exactly when the universe is matched to the KEGG-annotated background (2619 genes).</li>
+<li>With its own default universe (all 8280 tested genes) the custom ORA returns 0 terms — the more conservative, defensible background. This is the genuinely informative result, not a discrepancy.</li>
+<li>A wrong-namespace input (human symbols against FGSG_ ids, 0 overlap) returns REVIEW_REQUIRED rather than a silent empty result — the namespace-mismatch guard fires.</li>
+</ul>
+
+<h4>B13 — rRNA filtering (SortMeRNA)</h4>
+<p>The shipped SortMeRNA command filtered rRNA from six fungal total-RNA samples, then STAR, featureCounts, and DESeq2 ran on the filtered reads. The unfiltered arm is the B11 fghs result, so the two arms differ only in rRNA filtering.</p>
+<div class="tablewrap">
+<table>
+<thead>
+<tr><th>Metric</th><th>Value</th></tr>
+</thead>
+<tbody>
+<tr><td>Mean rRNA removed</td><td class="num">13.1% (11.65-16.09%)</td></tr>
+<tr><td>LFC Pearson / Spearman (filtered vs unfiltered)</td><td class="num">1.000 / 1.000</td></tr>
+<tr><td>DEG count padj<0.05 (unfiltered → filtered)</td><td class="num">5836 → 5827</td></tr>
+<tr><td>DEG Jaccard padj<0.05</td><td class="num">0.9978</td></tr>
+<tr><td>DEG Jaccard +|LFC|≥1</td><td class="num">0.9963</td></tr>
+</tbody>
+</table>
+</div>
+<p>Removing ~13% of reads as rRNA leaves the differential-expression result essentially unchanged (DEG Jaccard 0.998, fold-change correlation 1.0). The mechanism is direct: although SortMeRNA flagged 12-16% of reads as rRNA, the featureCounts-assigned read pairs fell by only 0.27-0.49% per sample. The rRNA reads were landing on rRNA loci or NoFeatures, not in the protein-coding gene counts that feed DESeq2, so the count matrix is barely perturbed.</p>
+<figure class="bench"><img src="assets/b13_lfc_scatter.png" alt="Log2 fold-change scatter comparing rRNA-filtered against unfiltered analysis; points fall on the identity line"><figcaption>B13: fold changes are unchanged after rRNA filtering on this library.</figcaption></figure>
+<div class="note warn"><span class="t">Scope</span> This is one fungal total-RNA library with a modest (~13%) rRNA fraction. The supported claim is "filtering had no effect here", not "filtering is unnecessary". Filtering would matter for heavily rRNA-contaminated libraries (degraded, FFPE, or meta-transcriptomic, 50-80% rRNA) and is near-moot for poly-A-selected libraries.</div>
+
+<div class="note"><span class="t">Default pipeline unchanged</span> The 0.13-0.15 features are additive, so B1-B10 carry over without re-running. Six core scripts (DESeq2, enrichment, limma, salmon/tximport, count ingest, strandedness inference) are byte-identical from 0.12.1 to 0.15.0; the environment lock changed by addition only (twelve packages added, none removed or downgraded); and the F. graminearum baseline of 2723 up / 2478 down reproduces exactly.</div></section>
+    <section id="faq"><p class="kicker">Help</p>
+<h2>FAQ & troubleshooting</h2>
+<p class="lead">Short answers to the questions that come up most often. Each one points to a tab or button in the app.</p>
+
+<h4>Do I need to know how to code?</h4>
+<p>No. The whole pipeline runs from a tabbed graphical interface, from project setup through metadata, reference selection, and the Outputs browser. No command line is required.</p>
+
+<h4>What do I need on Windows?</h4>
+<p>Windows 10 or 11 (x64) and WSL2, the Linux subsystem the pipeline runs inside. The app can enable WSL2 and install the bioinformatics environment for you from its Environment setup screen. Enabling the WSL feature is the one step that needs administrator rights (Windows requires it) and may ask for a reboot; everything after that runs without elevation.</p>
+
+<h4>The first-run environment setup is slow. Is that normal?</h4>
+<p>Yes, and it is one-time. The core bioinformatics environment downloads over several minutes, and the R / DESeq2 stack is the largest, slowest install. You can keep creating projects, editing metadata, and generating configs while it installs; only starting a pipeline run needs the tools in place.</p>
+
+<h4>Does it work on Linux without WSL?</h4>
+<p>Yes. On Linux the same GUI drives the same Snakemake pipeline natively in a local micromamba environment, with no WSL involved, and produces identical results. There is no WSL setup step and no memory cap below the host's RAM.</p>
+
+<h4>My organism has no Bioconductor annotation package (a crop or fungus). Can I still get enrichment and networks?</h4>
+<p>Yes. Without an OrgDb you still get KEGG pathway ORA and GSEA for any organism with a KEGG code, plus GO through g:Profiler (<code>gprofiler2</code>), and the STRING protein-interaction network is unaffected. An organism is not skipped for lacking an OrgDb.</p>
+
+<h4>How much disk space and memory do I need?</h4>
+<p>About 10 GB of free disk for the toolchain and reference indices, and 16 GB or more of RAM is recommended. STAR alignment is the memory-intensive step; for very large genomes use the HISAT2 or Salmon aligner, which need far less.</p>
+
+<h4>My custom gene sets returned nothing. Why?</h4>
+<p>Almost always an identifier-namespace mismatch: the gene IDs in your GMT or annotation table must match the run's ID format. A mismatch is flagged, with examples of the run's IDs. Use Ensembl gene IDs for human and mouse, FlyBase for Drosophila, and NCBI GeneIDs (bare or <code>LOC<GeneID></code>) for NCBI-RefSeq crops such as rice.</p>
+
+<h4>Where do my results go, and how do I re-make just the figures?</h4>
+<p>Everything lands in the project folder; open it from <strong>Open Project Folder</strong> on the Run Monitor tab. To restyle figures, use the built-in <strong>Figure Style</strong> editor (palette, fonts, sizes, dimensions, DPI) and click <strong>Regenerate figures</strong> — this re-renders them without re-running alignment or DESeq2.</p>
+
+<h4>A console window flashed on screen during a run. Should I close it?</h4>
+<p>No. On Windows a WSL/terminal window may briefly appear because the app launches Snakemake inside WSL2. Closing it kills the running pipeline. Use the <strong>Stop</strong> button in the app to cancel a run instead.</p>
+
+<div class="note warn"><span class="t">If a run pauses and asks to stop or continue</span> That is the low-mapping safeguard: a sample aligned poorly (uniquely-mapped rate below the threshold), usually a wrong reference or contamination. Check your reference and sample sheet before choosing to continue.</div></section>
+    <section id="cite"><p class="kicker">Cite & reuse</p>
+<h2>Cite & license</h2>
+<p class="lead">BulkSeq Studio is free and open-source software released under the MIT License. You can install it, use it, study the code, and share it at no cost. The accompanying manuscript is currently under peer review.</p>
+
+<h3>How to cite</h3>
+<p>If you use BulkSeq Studio or its benchmark archive in your work, please cite the software and the reproduction archive deposited on Zenodo. The archive (DOI <a href="https://doi.org/10.5281/zenodo.20902966">10.5281/zenodo.20902966</a>) holds the benchmark scripts, the pinned scoring environment, the per-benchmark result tables and figures, and a step-by-step reproduction guide for the validation suite.</p>
+
+<pre><code>Birgün, Tuna (2026). BulkSeq Studio: benchmark apparatus and
+  reproduction archive. Version 0.15.0. Zenodo.
+  https://doi.org/10.5281/zenodo.20902966
+
+Author affiliation:
+  Department of Molecular Biology and Genetics,
+  Faculty of Sciences and Literature,
+  Istanbul Yeni Yüzyıl University, Istanbul, Turkey</code></pre>
+
+<div class="note"><span class="t">BibTeX</span> The repository ships a <code>CITATION.cff</code> file. GitHub renders a ready-to-copy citation from it, and most reference managers can import the same file directly.</div>
+
+<pre><code>@software{birgun_bulkseq_studio_2026,
+  author  = {Birg{\"u}n, Tuna},
+  title   = {BulkSeq Studio: benchmark apparatus and
+             reproduction archive},
+  version = {0.15.0},
+  year    = {2026},
+  doi     = {10.5281/zenodo.20902966},
+  url     = {https://doi.org/10.5281/zenodo.20902966},
+  license = {MIT}
+}</code></pre>
+
+<h3>Links</h3>
+<p>
+  <a class="btn btn-solid" href="https://github.com/tunabirgun/bulkseq-studio">GitHub repository</a>
+  <a class="btn btn-solid" href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">Latest release</a>
+  <a class="btn btn-solid" href="https://doi.org/10.5281/zenodo.20902966">Zenodo archive</a>
+</p>
+<ul>
+  <li><strong>Source code:</strong> <a href="https://github.com/tunabirgun/bulkseq-studio">github.com/tunabirgun/bulkseq-studio</a></li>
+  <li><strong>Downloads:</strong> <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">github.com/tunabirgun/bulkseq-studio/releases/latest</a> (Windows installer, portable ZIP, Linux build)</li>
+  <li><strong>Benchmark archive:</strong> <a href="https://doi.org/10.5281/zenodo.20902966">doi.org/10.5281/zenodo.20902966</a></li>
+</ul>
+
+<div class="note"><span class="t">Questions & bugs</span> Report issues, ask questions, or request features on the <a href="https://github.com/tunabirgun/bulkseq-studio/issues">GitHub issue tracker</a>.</div></section>
+    <div class="footer" style="max-width:72ch;margin:0 auto;">
+      <p>BulkSeq Studio is free and open-source under the MIT License.
+      Author: Tuna Birgün, Department of Molecular Biology and Genetics, Istanbul Yeni Yüzyıl University.
+      This documentation describes v0.15.0.</p>
+    </div>
+  </main>
+</div>
+
+<script>
+// Active section highlighting in the sidebar.
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll('.nav a[href^="#"]'));
+  var map = {};
+  links.forEach(function (a) { var id = a.getAttribute('href').slice(1); var s = document.getElementById(id); if (s) map[id] = a; });
+  var obs = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) {
+        links.forEach(function (l) { l.classList.remove('active'); });
+        if (map[e.target.id]) map[e.target.id].classList.add('active');
+      }
+    });
+  }, { rootMargin: "-15% 0px -75% 0px" });
+  Object.keys(map).forEach(function (id) { obs.observe(document.getElementById(id)); });
+
+  // Mobile menu toggle.
+  var btn = document.querySelector('.menu-toggle');
+  var nav = document.querySelector('.nav');
+  if (btn && nav) {
+    btn.addEventListener('click', function () {
+      var open = nav.classList.toggle('open');
+      btn.setAttribute('aria-expanded', String(open));
+    });
+    nav.addEventListener('click', function (e) { if (e.target.tagName === 'A') nav.classList.remove('open'); });
+  }
+})();
+</script>
+</body>
+</html>
