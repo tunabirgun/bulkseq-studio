@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.2 — 2026-06-29
+
+### Fixed
+
+- **gffread / salmon / hisat2 not found in Snakemake shell rules.** The `make_transcriptome`, `salmon_index`, and `hisat2_index` rules now explicitly prepend `${MAMBA_ROOT_PREFIX}/envs/bulkseq/bin` to PATH at the start of their shell commands. Snakemake's subprocess environment does not reliably inherit the micromamba-activated PATH in all configurations; this makes the tool lookup independent of that inheritance, fixing the "gffread is not installed" error even when the binary is present in the env.
+
 ## 0.15.1 — 2026-06-29
 
 ### Fixed

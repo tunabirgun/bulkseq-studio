@@ -139,6 +139,7 @@ rule hisat2_index:
     log:
         "logs/hisat2_index.log",
     shell:
+        "export PATH=\"${{MAMBA_ROOT_PREFIX:-$HOME/micromamba}}/envs/bulkseq/bin:${{PATH}}\" && "
         "command -v hisat2-build >/dev/null 2>&1 || {{ echo 'hisat2 is not installed in the bulkseq environment; the HISAT2 aligner route needs it. In the app open Setup and click Install / repair core environment (or update the env from workflow/envs/bulkseq_core.yaml), then re-run.' >&2; exit 1; }}; "
         "mkdir -p {output} && hisat2-build -p {threads} {input.fa:q} {output}/genome > {log} 2>&1"
 
@@ -170,6 +171,7 @@ rule make_transcriptome:
         # organellar/tRNA records, which salmon's indexer rejects. Build to .raw, then
         # dedup_transcriptome.sh drops duplicate-named records (keeping FASTA + tx2gene
         # in sync); no-op for already-unique transcriptomes (Ensembl, most assemblies).
+        "export PATH=\"${{MAMBA_ROOT_PREFIX:-$HOME/micromamba}}/envs/bulkseq/bin:${{PATH}}\" && "
         "command -v gffread >/dev/null 2>&1 || {{ echo 'gffread is not installed in the bulkseq environment; the Salmon aligner route needs it. In the app open Setup and click Install / repair core environment (or update the env from workflow/envs/bulkseq_core.yaml), then re-run.' >&2; exit 1; }}; "
         "awk -F'\\t' '$3 != \"gene\" && $7 != \"?\"' {input.gtf:q} | "
         "perl workflow/scripts/gtf_clean.pl > {output.fa:q}.nogene.gtf && "
@@ -197,5 +199,6 @@ rule salmon_index:
         # (RefSeq XM_ + the original WGS model). Without this, salmon collapses the pair and
         # may keep the copy whose name is absent from tx2gene, zeroing those genes; keeping
         # both lets the tx2gene-named copy carry the counts. No-op for clean assemblies.
+        "export PATH=\"${{MAMBA_ROOT_PREFIX:-$HOME/micromamba}}/envs/bulkseq/bin:${{PATH}}\" && "
         "command -v salmon >/dev/null 2>&1 || {{ echo 'salmon is not installed in the bulkseq environment; the Salmon aligner route needs it. In the app open Setup and click Install / repair core environment (or update the env from workflow/envs/bulkseq_core.yaml), then re-run.' >&2; exit 1; }}; "
         "salmon index -t {input.txome:q} -i {output:q} -k 31 -p {threads} --keepDuplicates > {log} 2>&1"
