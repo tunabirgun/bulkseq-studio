@@ -276,6 +276,9 @@ def next_readiness_actions(items: list[ReadinessItem]) -> list[str]:
     missing_core = [name for name in ("WSL snakemake", "WSL fastqc", "WSL multiqc", "WSL fastp", "WSL STAR", "WSL featureCounts", "WSL samtools") if by_name.get(name, ReadinessItem(name, "REVIEW_REQUIRED", "", "")).status != "PASS"]
     if missing_core:
         actions.append("Click Install/Repair Core WSL Env to repair missing core tools: " + ", ".join(missing_core) + ".")
+    missing_alt = [t.replace("WSL ", "") for t in ("WSL salmon", "WSL gffread", "WSL hisat2") if by_name.get(t, ReadinessItem(t, "REVIEW_REQUIRED", "", "")).status != "PASS"]
+    if missing_alt:
+        actions.append("Salmon and HISAT2 aligner routes need additional tools not found in the env. Click Install/Repair Core WSL Env to install: " + ", ".join(missing_alt) + ".")
     if by_name.get("WSL Rscript", ReadinessItem("WSL Rscript", "REVIEW_REQUIRED", "", "")).status != "PASS":
         actions.append("After core tools pass, click Install Full R/DESeq2 Stack to enable DESeq2/enrichment/figure execution.")
     if not actions:

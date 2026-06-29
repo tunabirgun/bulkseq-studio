@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.15.1 — 2026-06-29
+
+### Fixed
+
+- **Workflow Settings tab scaling.** Form fields (dropdowns, spinboxes, line edits) now expand to fill the full available width at any window or monitor size. Previously the Qt default field-growth policy (`ExpandingFieldsGrow`) left Preferred-policy widgets like QComboBox at their minimum hint, with empty space to the right on wide windows.
+- **Setup readiness: Salmon/HISAT2 route tools warning.** When `salmon`, `gffread`, or `hisat2` are absent from the WSL bulkseq env, the Setup tab's recommended actions now explicitly call this out and direct the user to Install/Repair Core WSL Env. Previously only the STAR-route core tools triggered a repair prompt, so a machine missing gffread (needed by the Salmon route's transcriptome step) would show "Setup is ready" while Salmon runs would fail.
+
 ## 0.15.0 — 2026-06-26
 
 ### Added

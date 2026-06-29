@@ -1038,6 +1038,7 @@ class MainWindow(QMainWindow):
         # sections rather than one flat field list.
         align_group = QGroupBox("Alignment and read processing")
         align_form = QFormLayout(align_group)
+        align_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         align_form.addRow(self._info_label("Aligner", "Read aligner. STAR (default) suits most studies; HISAT2 uses far less memory and still makes BAMs; Salmon is alignment-free, lowest memory, best for very large genomes. All three give the same gene counts. If unsure, keep STAR."), self.aligner)
         align_form.addRow(self._info_label("Quantifier", "How reads are summarised to gene counts. STAR can use featureCounts (default) or STAR_GeneCounts (STAR's own per-gene counts, no extra pass); HISAT2 uses featureCounts and Salmon uses tximport (those are fixed)."), self.quantifier)
         align_form.addRow("fastp trimming", self.trim)
@@ -1049,6 +1050,7 @@ class MainWindow(QMainWindow):
 
         de_group = QGroupBox("Differential expression")
         de_form = QFormLayout(de_group)
+        de_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         de_form.addRow(self._info_label("DESeq2 design", "R model formula. The last term is the effect of interest; put known batch effects before it, e.g. '~ batch + condition'."), self.design)
         de_form.addRow(refresh)
         de_form.addRow(self._info_label("Contrast factor", "The metadata column compared in the differential test (usually 'condition')."), self.contrast_factor)
@@ -1081,6 +1083,7 @@ class MainWindow(QMainWindow):
 
         cs_group = QGroupBox("Custom gene sets (enrichment, optional)")
         cs_form = QFormLayout(cs_group)
+        cs_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         cs_form.addRow(QLabel(
             "Run enrichment against your own gene sets, alongside the built-in GO/KEGG. The gene "
             "IDs in these files must use the same identifier format as your reference (locus tags, "
