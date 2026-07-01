@@ -31,6 +31,20 @@ EXTERNAL_TOOLS = {
 # "default-route ready" gate below, so an existing STAR-route user is never forced to
 # repair a working env. Keep this set in sync with workflow/envs/bulkseq_core.yaml,
 # bulkseq_full.yaml, and the setup_wsl_bioenv.sh verification loop.
+# Optional-route CLI tools added in 0.16.0 (trimmers, rRNA tools, contamination screen, RSeQC).
+# Like hisat2/salmon/gffread these are PROBED and DISPLAYED so the user sees whether every route is
+# installed, but they are intentionally NOT part of the default-route gate (has_*_core_environment),
+# so a working STAR-route env is never flagged incomplete; each route is guarded at run time too.
+OPTIONAL_ROUTE_TOOLS = {
+    "trim_galore": "Read trimming (Trim Galore route)",
+    "trimmomatic": "Read trimming (Trimmomatic route)",
+    "sortmerna": "rRNA filtering (SortMeRNA)",
+    "ribodetector_cpu": "rRNA filtering (RiboDetector)",
+    "fastq_screen": "Contamination screen (FastQ Screen)",
+    "read_distribution.py": "Extended alignment QC (RSeQC)",
+    "genePredToBed": "RSeQC BED12 from the annotation (UCSC)",
+}
+
 BIOINFORMATICS_TOOLS = {
     "fastqc": "Raw/post-trim read QC",
     "multiqc": "QC report aggregation",
@@ -42,6 +56,7 @@ BIOINFORMATICS_TOOLS = {
     "featureCounts": "Gene-level counting",
     "samtools": "BAM indexing and summaries",
     "Rscript": "DESeq2/enrichment/figures",
+    **OPTIONAL_ROUTE_TOOLS,
 }
 
 WSL_ENV_NAME = "bulkseq"
@@ -57,7 +72,13 @@ WSL_TOOLS = {
     "featureCounts": "Gene-level counting",
     "samtools": "BAM indexing and summaries",
     "Rscript": "DESeq2/enrichment/figures",
+    **OPTIONAL_ROUTE_TOOLS,
 }
+
+# R analysis packages that must be present for the differential-expression, enrichment, and
+# optional-engine routes. Probed as one item so the R stack's completeness (not just "Rscript
+# exists") is verified — including the 0.16.0 additions edgeR, limma-voom (limma) and GSVA.
+R_ANALYSIS_PACKAGES = ("DESeq2", "edgeR", "limma", "GSVA", "clusterProfiler", "apeglm", "ashr")
 
 
 @dataclass(frozen=True)
@@ -93,6 +114,8 @@ def check_readiness() -> list[ReadinessItem]:
     # PATH probes above ARE the environment check, so the WSL probe is skipped.
     if is_windows:
         items.extend(check_wsl_bulkseq_environment())
+    else:
+        items.append(_native_r_packages_item())
     return items
 
 
@@ -133,6 +156,8 @@ def check_wsl_bulkseq_environment(distro: str | None = None, env_name: str = WSL
             items.append(ReadinessItem(f"WSL {command}", "PASS", f"{log_paths[command]} (from setup log)", purpose))
         else:
             items.append(ReadinessItem(f"WSL {command}", "REVIEW_REQUIRED", _short_output(result) or "not found in WSL bulkseq environment", purpose))
+    rp = _run_wsl(distro, _wsl_r_packages_probe_command(env_name, R_ANALYSIS_PACKAGES))
+    items.append(_r_packages_item("WSL R packages", _short_output(rp), rp.returncode == 0))
     return items
 
 
@@ -191,6 +216,45 @@ def _wsl_tool_probe_command(env_name: str, tool: str) -> str:
         "path=\"$env_prefix/bin/$tool\"; "
         "test -x \"$path\" && echo \"$path\""
     )
+
+
+def _r_packages_check_code(packages: tuple[str, ...]) -> str:
+    # One-liner R that prints OK or "missing: pkg,pkg" — checks the analysis-stack packages.
+    pkg_vec = ", ".join(f'"{p}"' for p in packages)
+    return (
+        f'p<-c({pkg_vec}); m<-setdiff(p, rownames(installed.packages())); '
+        'cat(if (length(m)==0) "OK" else paste("missing:", paste(m, collapse=",")))'
+    )
+
+
+def _wsl_r_packages_probe_command(env_name: str, packages: tuple[str, ...]) -> str:
+    prefix_command = _wsl_env_prefix_command(env_name)
+    return (
+        f"env_prefix=$({prefix_command}); "
+        f"\"$env_prefix/bin/Rscript\" -e '{_r_packages_check_code(packages)}'"
+    )
+
+
+def _r_packages_item(name: str, out: str, ok: bool) -> ReadinessItem:
+    if ok and out == "OK":
+        return ReadinessItem(name, "PASS", "DESeq2, edgeR, limma, GSVA, clusterProfiler, apeglm, ashr installed",
+                             "DESeq2 / engines / enrichment / GSVA")
+    return ReadinessItem(name, "REVIEW_REQUIRED", out or "R analysis packages not verified",
+                         "DESeq2 / engines / enrichment / GSVA")
+
+
+def _native_r_packages_item() -> ReadinessItem:
+    if shutil.which("Rscript") is None:
+        return ReadinessItem("R packages", "REVIEW_REQUIRED", "Rscript not on PATH",
+                             "DESeq2 / engines / enrichment / GSVA")
+    try:
+        rp = subprocess.run(["Rscript", "-e", _r_packages_check_code(R_ANALYSIS_PACKAGES)],
+                            capture_output=True, text=True, timeout=60, check=False)
+        text = (rp.stdout or rp.stderr or "").strip()
+        out = text.splitlines()[-1][:240] if text else ""
+        return _r_packages_item("R packages", out, rp.returncode == 0)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return ReadinessItem("R packages", "REVIEW_REQUIRED", str(exc), "DESeq2 / engines / enrichment / GSVA")
 
 
 def _short_output(result: subprocess.CompletedProcess[str]) -> str:
