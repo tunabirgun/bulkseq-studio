@@ -24,7 +24,7 @@
   --shadow-sm: 0 1px 2px rgba(17,24,39,.04);
   --shadow: 0 1px 2px rgba(17,24,39,.04), 0 10px 28px rgba(17,24,39,.05);
   --sidebar-w: 280px;
-  --measure: 70ch;
+  --measure: 82ch;
 }
 
 * { box-sizing: border-box; }
@@ -59,7 +59,9 @@ img { max-width: 100%; height: auto; }
   flex: 1 1 auto; min-width: 0;
   padding: 3rem clamp(1.2rem, 5vw, 4.5rem) 5rem;
 }
-.content section { max-width: var(--measure); margin: 0 auto; padding-bottom: 3.6rem; }
+.content section { max-width: 1080px; margin: 0; padding-bottom: 3.6rem; }
+.content section > p, .content section > ul, .content section > ol,
+.content section > blockquote, .content section .lead { max-width: var(--measure); }
 .content section + section { border-top: 1px solid var(--border); padding-top: 3.4rem; }
 .content section.wide { max-width: 1080px; }
 #overview { border-top: none; padding-top: 0; }
@@ -140,8 +142,8 @@ ol.steps > li h4 { margin: .2rem 0 .3rem; }
 ol.steps > li p { margin: 0; }
 
 /* ---------- tables (sans) ---------- */
-.tablewrap { overflow-x: auto; margin: 1.3rem 0; border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
-table { border-collapse: collapse; width: 100%; font-family: var(--font-sans); font-size: .88rem; background: var(--surface); }
+.tablewrap { overflow-x: auto; margin: 1.3rem 0; border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); width: max-content; max-width: 100%; }
+table { border-collapse: collapse; width: auto; max-width: 100%; font-family: var(--font-sans); font-size: .88rem; background: var(--surface); }
 th, td { text-align: left; padding: .6rem .85rem; border-bottom: 1px solid var(--border); }
 thead th { background: #f1f4f3; color: var(--text); font-weight: 600; font-size: .8rem; letter-spacing: .01em; }
 tbody tr:last-child td { border-bottom: none; }

@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/site.css?v=2">
+<link rel="stylesheet" href="assets/site.css?v=3">
 <script>
 (function(){
   try{var t=localStorage.getItem('bsq-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}
@@ -31,7 +31,6 @@
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
       <span><b>BulkSeq Studio</b><span class="ver">v0.16.0</span></span>
     </a>
-    <p class="tagline">Bulk RNA-seq &amp; microarray analysis, no code.</p>
     <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
     <nav>
       <ul class="nav">
@@ -83,9 +82,11 @@
 
 <h4>B7.2 — cross-platform RNA-seq versus microarray</h4>
 <p>The microarray and RNA-seq routes were compared on the same biology measured by both technologies: human liver versus kidney (Marioni 2008). The RNA-seq arm (SRA000299, Salmon + DESeq2) and the microarray arm (GSE11045, limma) were joined on gene symbol. Across 16,640 shared genes the per-gene log2 fold changes correlated at Pearson 0.69 (Spearman 0.62), and among the 3,967 genes significant on both platforms the direction agreed for 95.7%. The canonical tissue markers were concordant on both platforms — <em>ALB</em>, <em>APOA1</em>, <em>SERPINA1</em> up in liver; <em>UMOD</em>, <em>SLC34A1</em> up in kidney. The moderate fold-change correlation is expected (the two technologies measure expression differently); the strong directional agreement and the marker controls confirm the two routes recover the same biology.</p>
+<figure class="bench"><img src="assets/b7_2_cross_platform_scatter.png" alt="Per-gene log2 fold-change scatter comparing the RNA-seq (DESeq2) and microarray (limma) routes on human liver versus kidney; points follow the identity trend and the tissue markers are labelled"><figcaption>B7.2: cross-platform agreement between the RNA-seq and microarray routes on human liver versus kidney, with the liver and kidney markers labelled.</figcaption></figure>
 
 <h4>B8 — g:Profiler-versus-OrgDb GO concordance</h4>
 <p>The g:Profiler route (the fallback used for non-model organisms) was checked against the gold-standard clusterProfiler + Bioconductor-OrgDb route on one identical gene set, using an organism that has both (the human airway differentially expressed genes). The OrgDb route returned 33 significant GO:BP terms and g:Profiler 69. Exact-term overlap was moderate (Jaccard 0.19), as expected from the different multiple-testing corrections, GO snapshots, and identifier mapping — but every OrgDb term was recovered by g:Profiler at the exact or parent/child level (100%), the two routes ranked the shared terms almost identically (Spearman 0.86), and identifier mapping was high both ways (97% and 99%). The fallback therefore recovers the same GO biology as the OrgDb route, over a somewhat broader term set — support for its use on the non-model organisms that lack an OrgDb.</p>
+<figure class="bench"><img src="assets/b8_go_concordance_venn.png" alt="Venn diagram of significant GO biological-process terms from the OrgDb route and the g:Profiler route on the same human airway gene set, sharing 16 terms"><figcaption>B8: overlap of significant GO:BP terms between the clusterProfiler + OrgDb route and the g:Profiler fallback on one identical gene set (33 vs 69 terms, 16 shared; 100% recovered at the exact or parent/child level).</figcaption></figure>
 
 <h3>New in 0.15.0 (B11-B13)</h3>
 <p>The 0.15.0 snapshot adds three benchmarks covering the analytical surfaces introduced since 0.12.1: the STAR gene-counts quantifier, custom gene-set enrichment, and the rRNA-filtering path. Each was adversarially reviewed before deposit.</p>
@@ -153,10 +154,12 @@
 </table>
 </div>
 <p>The two alternatives track DESeq2 closely and agree with it on the direction of every shared differentially expressed gene. DESeq2 remains the default and its result on this set is byte-for-byte unchanged (2,723 up / 2,478 down), so the alternative engines add a cross-check without altering the validated default.</p>
+<figure class="bench"><img src="assets/b14_de_engines_lfc.png" alt="Per-gene log2 fold-change scatter of limma-voom and edgeR against DESeq2; points lie on the identity line"><figcaption>B14: log2 fold-change agreement of limma-voom and edgeR quasi-likelihood against DESeq2 on identical count matrices (Spearman 0.997 and 1.000).</figcaption></figure>
 
 <h4>B15 — human-dataset applicability</h4>
 <p>The other benchmarks use a fungus, a crop, and model animals; B15 checks that the human annotation path runs end to end and recovers known biology. The airway smooth-muscle dexamethasone study (two treated, two control) was processed through the Salmon route against GRCh38 (Ensembl release 111) with <code>org.Hs.eg.db</code>-based enrichment and a STRING network at taxon 9606. Reads were subsampled to about two million pairs per sample, so this is a signature-recovery check on reduced depth, not a full-depth reanalysis.</p>
 <p>Under that constraint the pipeline recovered the canonical glucocorticoid-response programme: the most strongly up-regulated genes were the expected dexamethasone targets <em>FKBP5</em> (adjusted p ~5 × 10⁻²⁴), <em>ZBTB16</em>, <em>KLF15</em>, and <em>SPARCL1</em>, while the pro-inflammatory adhesion molecule <em>VCAM1</em> was down-regulated, consistent with the known anti-inflammatory action of glucocorticoids. The enrichment step returned GO and KEGG terms and the STRING network built to 117 nodes, so the human path delivers the same enrichment and network outputs as the non-human organisms and confirms the human GRCh38 / Salmon / <code>org.Hs.eg.db</code> route end to end.</p>
+<figure class="bench"><img src="assets/b15_human_airway_volcano.png" alt="Volcano plot of the human airway dexamethasone contrast with canonical glucocorticoid-response genes labelled: FKBP5, ZBTB16, KLF15, SPARCL1 up and VCAM1 down"><figcaption>B15: volcano of the human airway dexamethasone contrast; the canonical glucocorticoid-response signature is recovered (FKBP5, ZBTB16, KLF15, SPARCL1 up; VCAM1 down).</figcaption></figure>
 
 <div class="note"><span class="t">Default pipeline unchanged</span> The 0.13-0.16 features are additive, so B1-B10 carry over without re-running. The core scripts (DESeq2, enrichment, limma, salmon/tximport, count ingest, strandedness inference) are unchanged, the environment lock changed by addition only (no package removed or downgraded), and the F. graminearum baseline of 2723 up / 2478 down reproduces exactly.</div></section>
     <div class="footer" style="max-width:70ch;margin:0 auto;">
