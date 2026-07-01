@@ -70,13 +70,22 @@
 <tr><td>B4</td><td>Concordance vs nf-core/rnaseq 3.14.0</td><td>LFC Spearman 0.97-0.99, DEG Jaccard 0.81-0.91, CAT top-100 0.85-0.93 across a fly and a fungus; all acceptance criteria met</td></tr>
 <tr><td>B5</td><td>Internal aligner concordance (STAR / HISAT2 / Salmon)</td><td>STAR and HISAT2 near-identical (LFC r 0.985-0.9997); Salmon agrees on fold change (r 0.94-0.996) with expected boundary-DEG differences</td></tr>
 <tr><td>B6</td><td>Input-mode equivalence (count-matrix, bring-your-own DESeq2)</td><td>Both entry points reproduce the FASTQ-path DESeq2 <em>exactly</em> (max abs diff = 0 on all result columns; up/down Jaccard 1.0) across three anchors</td></tr>
-<tr><td>B7</td><td>Microarray (limma) route validation</td><td>vs canonical limma-trend-robust: logFC Pearson 1.0, max abs diff 0, identical DEG sets (440 vs 440), positive control reproduced exactly</td></tr>
-<tr><td>B8</td><td>Multi-organism breadth + non-model enrichment</td><td>Real KEGG ORA and STRING networks for a fungus (FGSG_ locus tags) and a crop (RefSeq LOC route) <em>without</em> a Bioconductor OrgDb</td></tr>
+<tr><td>B7</td><td>Microarray (limma) route validation</td><td>vs canonical limma-trend-robust: logFC Pearson 1.0, max abs diff 0, identical DEG sets (440 vs 440), positive control reproduced exactly; cross-platform arm (B7.2) agrees RNA-seq vs microarray (95.7% directional)</td></tr>
+<tr><td>B8</td><td>Multi-organism breadth + non-model enrichment</td><td>Real KEGG ORA and STRING networks for a fungus (FGSG_ locus tags) and a crop (RefSeq LOC route) <em>without</em> a Bioconductor OrgDb; g:Profiler fallback recovers 100% of OrgDb GO (exact-or-parent/child)</td></tr>
 <tr><td>B9</td><td>Runtime / memory scaling + large-genome rescue</td><td>STAR index RAM scales with genome length (1 to 57.9 GiB) and overflows on wheat; Salmon indexes the same genomes at ~1 GiB, restoring quantification</td></tr>
 <tr><td>B10</td><td>Reproducibility and determinism</td><td>Identical sha256 across reruns and thread counts (4 vs 16 cores), max abs LFC diff 0; databases pinned (Ensembl 111, STRING v12.0)</td></tr>
 </tbody>
 </table>
 </div>
+
+<h3>B7.2 and B8: cross-platform and non-model concordance</h3>
+<p>Two arms within existing families (added in the 0.16.0 revision; still B1–B15, no new families), shown here in benchmark-number order.</p>
+
+<h4>B7.2 — cross-platform RNA-seq versus microarray</h4>
+<p>The microarray and RNA-seq routes were compared on the same biology measured by both technologies: human liver versus kidney (Marioni 2008). The RNA-seq arm (SRA000299, Salmon + DESeq2) and the microarray arm (GSE11045, limma) were joined on gene symbol. Across 16,640 shared genes the per-gene log2 fold changes correlated at Pearson 0.69 (Spearman 0.62), and among the 3,967 genes significant on both platforms the direction agreed for 95.7%. The canonical tissue markers were concordant on both platforms — <em>ALB</em>, <em>APOA1</em>, <em>SERPINA1</em> up in liver; <em>UMOD</em>, <em>SLC34A1</em> up in kidney. The moderate fold-change correlation is expected (the two technologies measure expression differently); the strong directional agreement and the marker controls confirm the two routes recover the same biology.</p>
+
+<h4>B8 — g:Profiler-versus-OrgDb GO concordance</h4>
+<p>The g:Profiler route (the fallback used for non-model organisms) was checked against the gold-standard clusterProfiler + Bioconductor-OrgDb route on one identical gene set, using an organism that has both (the human airway differentially expressed genes). The OrgDb route returned 33 significant GO:BP terms and g:Profiler 69. Exact-term overlap was moderate (Jaccard 0.19), as expected from the different multiple-testing corrections, GO snapshots, and identifier mapping — but every OrgDb term was recovered by g:Profiler at the exact or parent/child level (100%), the two routes ranked the shared terms almost identically (Spearman 0.86), and identifier mapping was high both ways (97% and 99%). The fallback therefore recovers the same GO biology as the OrgDb route, over a somewhat broader term set — support for its use on the non-model organisms that lack an OrgDb.</p>
 
 <h3>New in 0.15.0 (B11-B13)</h3>
 <p>The 0.15.0 snapshot adds three benchmarks covering the analytical surfaces introduced since 0.12.1: the STAR gene-counts quantifier, custom gene-set enrichment, and the rRNA-filtering path. Each was adversarially reviewed before deposit.</p>
