@@ -19,6 +19,20 @@ dependencies:
   - gffread=0.12.9
   - samtools=1.22.1
   - subread=2.1.1
+  # Preprocessing alternatives (opt-in; fastp + SortMeRNA remain the defaults): the Trim Galore
+  # and Trimmomatic trimmers, the FastQ Screen contamination screen (needs bowtie2), and the
+  # RiboDetector reference-free rRNA filter (pulls a CPU torch stack).
+  - trim-galore
+  - cutadapt
+  - pigz
+  - trimmomatic
+  - fastq-screen
+  - bowtie2
+  - ribodetector
+  # RSeQC extended alignment QC (opt-in) + the GTF->BED12 gene-model tools it needs.
+  - rseqc
+  - ucsc-gtftogenepred
+  - ucsc-genepredtobed
   - pandas
   - pyyaml
   # R / Bioconductor (versions float; recorded via sessionInfo)
@@ -32,6 +46,8 @@ dependencies:
   - bioconductor-clusterprofiler
   - bioconductor-enrichplot
   - bioconductor-fgsea
+  # GSVA sample-level gene-set activity (optional, organism-safe on user gene sets).
+  - bioconductor-gsva
   - bioconductor-biomart
   - bioconductor-complexheatmap
   - bioconductor-enhancedvolcano
@@ -40,6 +56,9 @@ dependencies:
   # human/mouse OrgDbs for symbol-based enrichment.
   - bioconductor-geoquery
   - bioconductor-limma
+  # edgeR (limma companion): DGEList/filterByExpr/TMM for the optional limma-voom
+  # differential-expression engine (run_voom.R).
+  - bioconductor-edger
   - bioconductor-affy
   - bioconductor-biobase
   - bioconductor-org.hs.eg.db

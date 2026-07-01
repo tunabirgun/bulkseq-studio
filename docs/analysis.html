@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BulkSeq Studio — Analysis options</title>
+<meta name="description" content="Every choice on the Workflow Settings tab: trimmer, rRNA tool, contamination screen, aligners and quantifiers, three differential-expression engines, the design helper, GSVA, RSeQC, and functional enrichment.">
+<link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html">
+      <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
+      <span><b>BulkSeq Studio</b><span class="ver">v0.16.0</span></span>
+    </a>
+    <p class="tagline">Bulk RNA-seq &amp; microarray analysis, no code.</p>
+    <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
+    <nav>
+      <ul class="nav">
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="guide.html">Install &amp; quick start</a></li>
+        <li><a class="active" href="analysis.html">Analysis options</a></li>
+        <li><a href="outputs.html">Outputs</a></li>
+        <li><a href="benchmarks.html">Benchmarks</a></li>
+        <li><a href="faq.html">FAQ &amp; cite</a></li>
+      </ul>
+      <div class="ext">
+        <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
+        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download latest release ↗</a>
+        <a href="https://doi.org/10.5281/zenodo.20955660" target="_blank" rel="noopener">Benchmark archive (Zenodo) ↗</a>
+      </div>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <section id="analysis"><p class="kicker">What the pipeline does</p>
+<h2>Analysis options</h2>
+<p class="lead">BulkSeq Studio runs a fixed, transparent sequence of steps from reads to results. Each stage exposes a small set of choices on the Workflow Settings tab. The defaults are set for a standard study, so a typical run only needs an organism, a contrast, and the data.</p>
+
+<figure>
+  <img src="assets/screenshot-workflow-settings.png" alt="The Workflow Settings tab gathering every pipeline choice: aligner and quantifier, trimmer, rRNA tool and contamination screen, differential-expression engine, the design formula with the Design helper, significance thresholds, organellar handling, GSVA and RSeQC toggles, and a custom-gene-set panel">
+  <figcaption>The Workflow Settings tab is the single place all pipeline choices live: the aligner and quantifier, the trimmer, the rRNA tool and contamination screen, the differential-expression engine, the design formula and its Design helper, the significance thresholds, organellar-gene handling, the optional GSVA and RSeQC outputs, and the custom gene-set panel.</figcaption>
+</figure>
+
+<h3>Quality control and trimming</h3>
+<p>Every FASTQ or SRA run starts with FastQC on the raw reads, then adapter and quality trimming, then FastQC again on the trimmed reads. The per-sample reports are collected into a single MultiQC summary you can open from the Run Monitor.</p>
+<p>The trimmer is selectable. <strong>fastp</strong> is the default; you can also pick <strong>Trim Galore</strong> or <strong>Trimmomatic</strong>. Whichever you choose, the before/after FastQC steps and the MultiQC inputs follow along. Trimming is on by default; if your reads are already trimmed, uncheck it and the raw reads go straight to the aligner.</p>
+
+<h3>Optional ribosomal RNA removal</h3>
+<p>You can filter ribosomal RNA out of the reads before alignment, with a choice of two tools:</p>
+<ul>
+  <li><strong>SortMeRNA</strong> (default): reference-based. Trimmed reads are matched against an rRNA database and only the non-rRNA reads continue to the aligner. The database is downloaded and indexed once, each sample is filtered in its own working directory, and the per-sample rRNA percentage is added to the MultiQC report. The default reference is <code>smr_v4.3_default_db</code>; you can point <code>sortmerna.database</code> at a local FASTA, a FASTA URL, or a database tarball instead.</li>
+  <li><strong>RiboDetector</strong>: reference-free. A machine-learning classifier that identifies rRNA reads without any database, running on CPU. Useful when no suitable rRNA reference is available for your organism.</li>
+</ul>
+<p>Either tool runs on all three aligner routes and leaves the default (SortMeRNA) results unchanged.</p>
+
+<h3>Contamination screening (FastQ Screen)</h3>
+<p>An optional <strong>FastQ Screen</strong> pass maps a subset of each sample's reads against a panel of reference genomes and reports the fraction that matches each one, a quick check for cross-species contamination or unexpected sources. The result lands in the MultiQC report alongside the other QC modules.</p>
+
+<h3>Alignment and quantification</h3>
+<p>Three aligners are available, all validated end to end. They feed a gene-level count matrix in the same format, so everything after counting (differential expression, enrichment, the network, every figure) runs identically whichever you pick. Both single-end and paired-end reads run through all three routes.</p>
+<ul>
+  <li><strong>STAR</strong> (default): the standard splice-aware aligner; the genome index grows with genome size and needs the most RAM. Writes sorted BAM files.</li>
+  <li><strong>HISAT2</strong>: a graph aligner with a small index and low memory, for large crop genomes that overflow STAR while you still want BAM files.</li>
+  <li><strong>Salmon</strong>: alignment-free transcriptome quantification, the lowest memory of the three and the fastest. No BAM files; the transcriptome is built automatically from the genome and annotation.</li>
+</ul>
+<p>Library strandedness is detected automatically on all three routes, so a stranded library is counted correctly without you setting it by hand.</p>
+<p>The quantifier is matched to the aligner. featureCounts is the default counter. With the STAR aligner the Quantifier control becomes a real choice: alongside featureCounts you can pick <strong>STAR gene-counts</strong>, which reads gene counts straight from STAR's own <code>--quantMode GeneCounts</code> output with no extra counting pass. STAR gene-counts is a 0.15.0 option, validated against featureCounts on the same BAMs at Pearson r of about 0.998 (unstranded) to 1.000 (stranded). HISAT2 always pairs with featureCounts and Salmon with tximport, so they cannot be mis-set.</p>
+<div class="note"><span class="t">Sane defaults</span> Leave the aligner on STAR and the quantifier on featureCounts unless STAR will not fit in memory; the app estimates the index size and warns before a run. Strandedness is auto-detected, fastp trimming is on, and the quantifier is paired to the aligner. The one quantifier you actively choose is STAR gene-counts versus featureCounts on the STAR route.</div>
+
+<h3>Extended alignment QC (RSeQC)</h3>
+<p>An optional <strong>RSeQC</strong> pass adds two extra views to the MultiQC report: the genomic-context read distribution (how reads split across exon, intron, and intergenic regions) and the 5′→3′ gene-body coverage. Because it works from the alignment, RSeQC runs only on the genome-BAM routes (STAR and HISAT2), not on Salmon, which produces no BAM files.</p>
+
+<h3>Differential expression</h3>
+<p>The differential-expression engine follows the input mode. RNA-seq and count-matrix runs use <strong>DESeq2</strong> by default (with apeglm shrinkage and VST); GEO microarray runs use <strong>limma</strong> and produce a DESeq2-shaped results table, so the figures and downstream steps are the same. You configure the design formula and the contrast (numerator, denominator, reference level), the significance threshold <code>alpha</code>, and the absolute log2 fold-change cutoff, which together split the genes into up- and down-regulated lists. A TOST equivalence test is also run to flag genes that are statistically unchanged, the complement of the significance call.</p>
+<p>Two alternative engines are available for RNA-seq counts as a cross-check, best suited to larger designs: <strong>limma-voom</strong> and <strong>edgeR quasi-likelihood</strong>. All three engines emit the same result tables and figures, so everything downstream is identical whichever you run. DESeq2 remains the default and its result is unchanged. On <em>Fusarium graminearum</em> (spore vs mycelium) the alternatives track DESeq2 closely: limma-voom reaches a log2 fold-change Spearman correlation of 0.997 and a top-DEG Jaccard index of 0.94, edgeR quasi-likelihood reaches 1.000 and 0.97, and the shared differentially expressed genes agree on direction 100% of the time (benchmark B14).</p>
+
+<h3>The design helper: adjusting for batch and covariates</h3>
+<p>Differential expression compares gene expression between conditions, but other differences between samples can distort that comparison. If your controls were sequenced in one batch and your treated samples in another, or the samples come from different donors, sexes, or time points, that unwanted variation can be mistaken for a treatment effect (or can hide a real one). The standard fix is to tell the statistical model about those nuisance variables so it holds them constant while it measures the effect of interest. In the DESeq2 <strong>design formula</strong>, <code>~ condition</code> compares conditions only, while <code>~ batch + condition</code> first removes the batch differences and then compares conditions.</p>
+<p>The <strong>Design helper</strong> (on the Workflow Settings tab, next to the design formula) builds this formula for you from your metadata columns, so you do not have to write R. It lists the extra columns in your sample table — anything that is not the sample ID, file paths, or the condition — and you tick the ones to adjust for (batch, sequencing run, donor, sex, time, and so on). It then writes an additive formula with the effect of interest last, for example <code>~ batch + condition</code>. Adjusting for a known covariate removes its variation from the comparison, so a batch or donor difference is not counted as the treatment effect. Only additive adjustment is offered here, which covers the common case; genuine interaction terms (such as <code>genotype:treatment</code>) can still be typed directly into the formula field. Add the relevant columns on the Metadata tab first so the helper can see them. Adjust for a variable only if you know it differs systematically between your groups and could affect expression; adding irrelevant covariates costs statistical power.</p>
+
+<h3>Functional enrichment</h3>
+<p>Enrichment runs separately on the up- and down-regulated sets. GO over-representation and GSEA come from clusterProfiler when a Bioconductor OrgDb is installed for the organism (human, mouse, fly, and others); for human and mouse it also adds disease-ontology terms. Organisms without an OrgDb fall back to g:Profiler for GO. <strong>KEGG pathway ORA and GSEA run for any organism that has a KEGG code, even without an OrgDb</strong>, so fungi, bacteria, and other non-model organisms are not skipped. Selecting an organism preset auto-configures its enrichment databases and STRING taxon.</p>
+<p>You can also supply your own gene sets: a GMT file and/or an id-to-term annotation table, with an optional background list for the over-representation universe. This runs a clusterProfiler ORA and GSEA alongside the built-in GO and KEGG and is organism-agnostic, so it works where the built-in GO route is skipped. Custom gene-set enrichment is a 0.15.0 option. The gene IDs must use the run's identifier format; a namespace mismatch is flagged as <code>REVIEW_REQUIRED</code> rather than returned as a silent empty result.</p>
+<p>For a focused look, a genes-of-interest list produces its own z-scored heatmap, per-condition expression panel, and counts table from an existing run without re-analysis. The IDs you paste are matched to the run's genes by locus tag, Ensembl/RefSeq ID, or symbol; when few or none match, the report leads with a warning and shows examples of the run's actual ID format so you can correct the list.</p>
+
+<h3>GSVA pathway activity</h3>
+<p>An optional <strong>GSVA</strong> module scores gene-set activity per sample from your own custom gene sets, drawn as a sample-by-set heatmap. Because it uses only the gene sets you supply, it is organism-safe and valid for non-model organisms. GSVA produces descriptive per-sample activity scores, not a significance test, so read the heatmap as a view of how each set's activity varies across samples rather than as a formal enrichment result.</p>
+
+<h3>Protein-interaction networks</h3>
+<p>BulkSeq Studio builds a STRING protein-protein interaction network for the significant genes and seeds it by symbol or, for symbol-less annotations like the <code>FGSG_</code> locus tags of <em>Fusarium graminearum</em>, by gene ID. The network exports to Cytoscape as GraphML, SIF, and cytoscape.js JSON for external editing. A dedicated PPI Network tab embeds the same network in an interactive view.</p>
+
+<figure>
+  <img src="assets/screenshot-ppi-interactive.png" alt="The PPI Network tab: an interactive STRING network of 82 proteins and 158 interactions with Fusarium FGSG_ ids, layout/colour/size/confidence controls, export buttons, and a node hover tooltip">
+  <figcaption>The interactive PPI tab. Hover a protein for its fold-change, adjusted p-value, mean expression, and degree; recolour by log2 fold change, resize by node degree, filter by confidence, re-layout, and export PNG/SVG or the Cytoscape files.</figcaption>
+</figure>
+
+<h3>Extra statistics</h3>
+<p>Beyond the differential test, the pipeline writes a set of diagnostics: sample-to-sample correlation heatmaps (Pearson and Spearman), a Wilcoxon rank-sum concordance check, the TOST equivalence call described above, and an MSigDB Hallmark set-overlap.</p>
+
+<h3>Advanced parameters</h3>
+<p>A collapsible <strong>Advanced parameters</strong> panel on the Workflow Settings tab surfaces the important knobs of each tool (fastp, Trimmomatic, RiboDetector, FastQ Screen, STAR, featureCounts, DESeq2, and the rest), with the validated defaults pre-filled. Leave it collapsed for a standard run; open it only when you need to change a specific parameter. Because the defaults reproduce the standard behaviour, a run is unchanged unless you edit a value.</p>
+
+<h3>Non-model organisms</h3>
+<p>Crops and fungi that have no Bioconductor OrgDb are not left without downstream analysis. As long as the organism has a KEGG code and a STRING taxon, KEGG enrichment and the STRING network still run, and g:Profiler supplies GO where it is available. This is how rice, the other crop presets, and <em>Fusarium graminearum</em> reach full enrichment and network outputs.</p></section>
+    <div class="footer" style="max-width:70ch;margin:0 auto;">
+      <p>Free and open-source under the MIT License · Tuna Birgün</p>
+    </div>
+  </main>
+</div>
+
+<script>
+// Mobile menu toggle (nav is cross-page, so no scroll-spy is needed).
+(function () {
+  var btn = document.querySelector('.menu-toggle');
+  var nav = document.querySelector('.nav');
+  if (btn && nav) {
+    btn.addEventListener('click', function () {
+      var open = nav.classList.toggle('open');
+      btn.setAttribute('aria-expanded', String(open));
+    });
+  }
+})();
+</script>
+<script src="assets/lightbox.js" defer></script>
+</body>
+</html>

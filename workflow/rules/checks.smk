@@ -46,6 +46,9 @@ else:
     # results/salmon/<sample>/logs), so the formal 06 check is STAR-only.
     if not (USE_HISAT2 or USE_SALMON):
         ALL_CHECKS.insert(3, "checks/06_alignment_qc.json")
+# limma-voom / edgeR do not run the DESeq2-specific equivalence (TOST) test.
+if ALT_DE_MODE and "checks/13_equivalence_qc.json" in ALL_CHECKS:
+    ALL_CHECKS.remove("checks/13_equivalence_qc.json")
 if WF.get("enrichment", True):
     ALL_CHECKS.append("checks/10_enrichment_qc.json")
 # Wilcoxon sensitivity diagnostic reads the normalized matrix, which the

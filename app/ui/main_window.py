@@ -374,7 +374,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(QLabel("SRA / ENA accessions"))
         layout.addWidget(self.sra_box)
         layout.addLayout(buttons)
-        layout.addWidget(QLabel("Fetched from the ENA Portal API: layout, FASTQ URLs, read counts. Condition is set to 'unknown' for you to edit in the Metadata tab."))
+        _ena_hint = QLabel("Fetched from the ENA Portal API: layout, FASTQ URLs, read counts. Condition is set to 'unknown' for you to edit in the Metadata tab.")
+        _ena_hint.setWordWrap(True)  # long hint must wrap, not force width / clip on narrow windows
+        layout.addWidget(_ena_hint)
         layout.addWidget(self.input_preview)
         cm_row = QHBoxLayout()
         cm_btn = QPushButton("Use a Count Matrix (skip alignment)")
@@ -985,6 +987,38 @@ class MainWindow(QMainWindow):
             "(the index is a few GB on disk). Useful for total-RNA / ribo-depleted libraries; "
             "poly-A selected libraries usually have little rRNA and may not need it."
         )
+        # Trimmer selector (opt-in alternatives to fastp; enabled only when trimming is on).
+        self.trimmer = QComboBox()
+        self.trimmer.addItem("fastp (default)", "fastp")
+        self.trimmer.addItem("Trim Galore", "trim-galore")
+        self.trimmer.addItem("Trimmomatic", "trimmomatic")
+        self.trimmer.setToolTip(
+            "Adapter and quality trimmer. fastp (default) is fast and detects adapters "
+            "automatically. Trim Galore (Cutadapt) and Trimmomatic are established alternatives. "
+            "The quality (-q) and minimum-length settings apply to all three; poly-G is fastp-only. "
+            "All three produce the same trimmed reads for the rest of the pipeline."
+        )
+        self.trim.toggled.connect(lambda on: self.trimmer.setEnabled(on))
+        self.trimmer.setEnabled(self.trim.isChecked())
+        # rRNA removal tool (enabled only when rRNA filtering is on).
+        self.rrna_tool = QComboBox()
+        self.rrna_tool.addItem("SortMeRNA (default)", "sortmerna")
+        self.rrna_tool.addItem("RiboDetector", "ribodetector")
+        self.rrna_tool.setToolTip(
+            "Tool used when rRNA filtering is on. SortMeRNA (reference-based, default) downloads a "
+            "~150 MB rRNA database and indexes it once. RiboDetector is a reference-free "
+            "machine-learning classifier (no database download); it needs the full environment."
+        )
+        self.rrna.toggled.connect(lambda on: self.rrna_tool.setEnabled(on))
+        self.rrna_tool.setEnabled(self.rrna.isChecked())
+        # Contamination screening (FastQ Screen): a QC report, not a filter.
+        self.contam_screen = QCheckBox()
+        self.contam_screen.setToolTip(
+            "Screen a read subsample against a panel of reference genomes (FastQ Screen) and report "
+            "the percentage matching each — a contamination QC report, not a filter (no reads are "
+            "removed). Downloads a multi-GB genome panel on first use. Results appear in the MultiQC "
+            "report. Leave off unless you suspect cross-species or vector/rRNA contamination."
+        )
         self.enrichment = QCheckBox()
         self.enrichment.setChecked(True)
         self.enrichment.toggled.connect(lambda _=False: self._update_enrichment_warning())
@@ -996,6 +1030,17 @@ class MainWindow(QMainWindow):
         self.enrichment_warn.setVisible(False)
         self.figures = QCheckBox()
         self.figures.setChecked(True)
+        self.gsva = QCheckBox()
+        self.gsva.setToolTip(
+            "GSVA sample-level pathway activity scores, computed against your custom gene sets "
+            "(set them under Custom gene sets). Organism-safe: it uses only your gene sets, so it "
+            "works for non-model organisms. Descriptive scores, not a significance test. Needs a "
+            "custom GMT; ignored otherwise.")
+        self.rseqc = QCheckBox()
+        self.rseqc.setToolTip(
+            "Extended alignment QC with RSeQC: read genomic-context distribution (exon / intron / "
+            "intergenic) and 5' to 3' gene-body coverage, added to the MultiQC report. Needs a "
+            "genome BAM, so it is unavailable on the Salmon route.")
         # fastp parameters
         self.fastp_q = QSpinBox()
         self.fastp_q.setRange(0, 40)
@@ -1029,6 +1074,19 @@ class MainWindow(QMainWindow):
         self.lfc_threshold.setSingleStep(0.25)
         self.lfc_threshold.setDecimals(2)
         self.lfc_threshold.setValue(1.0)
+        # Differential-expression engine (count-based routes). DESeq2 is the default;
+        # limma-voom is an opt-in cross-check emitting the same tables/figures.
+        self.de_engine = QComboBox()
+        self.de_engine.addItem("DESeq2 (default)", "DESeq2")
+        self.de_engine.addItem("limma-voom", "limma-voom")
+        self.de_engine.addItem("edgeR (QLF)", "edgeR")
+        self.de_engine.setToolTip(
+            "Statistical engine for the differential test on count data. DESeq2 (default) suits "
+            "most designs, including small ones. limma-voom and edgeR quasi-likelihood are optional "
+            "cross-checks best suited to larger designs (about 6+ samples per group); at small n "
+            "keep DESeq2. All three produce the same result tables and figures. Not used in "
+            "microarray mode (which uses limma-trend) or when a ready DESeq2 results table is uploaded."
+        )
         save = QPushButton("Save Workflow Settings")
         save.setProperty("primary", True)
         save.clicked.connect(self._save_workflow_settings)
@@ -1041,17 +1099,27 @@ class MainWindow(QMainWindow):
         align_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         align_form.addRow(self._info_label("Aligner", "Read aligner. STAR (default) suits most studies; HISAT2 uses far less memory and still makes BAMs; Salmon is alignment-free, lowest memory, best for very large genomes. All three give the same gene counts. If unsure, keep STAR."), self.aligner)
         align_form.addRow(self._info_label("Quantifier", "How reads are summarised to gene counts. STAR can use featureCounts (default) or STAR_GeneCounts (STAR's own per-gene counts, no extra pass); HISAT2 uses featureCounts and Salmon uses tximport (those are fixed)."), self.quantifier)
-        align_form.addRow("fastp trimming", self.trim)
+        align_form.addRow(self._info_label("Read trimming", "Adapter and quality trimming (recommended). Uncheck only if your reads are already trimmed. Pick the trimmer below."), self.trim)
+        align_form.addRow(self._info_label("Trimmer", "fastp (default), Trim Galore, or Trimmomatic. Opt-in alternatives to fastp; all three yield the same trimmed reads for the rest of the pipeline. Enabled only when trimming is on."), self.trimmer)
         align_form.addRow(self._info_label("fastp quality (-q)", "Minimum acceptable per-base Phred quality. Bases below this count as low quality. fastp default 15."), self.fastp_q)
         align_form.addRow(self._info_label("fastp min length (-l)", "Reads shorter than this (after trimming) are discarded. Protocol default 36."), self.fastp_len)
         align_form.addRow(self._info_label("fastp poly-G (-g)", "Trim poly-G tails, an artefact of 2-colour chemistry (NextSeq/NovaSeq). Leave off for HiSeq/MiSeq."), self.trim_poly_g)
         align_form.addRow("rRNA filtering", self.rrna)
+        align_form.addRow(self._info_label("rRNA tool", "SortMeRNA (default, reference-based, ~150 MB database) or RiboDetector (reference-free, no database). Used only when rRNA filtering is on."), self.rrna_tool)
+        align_form.addRow(self._info_label("Contamination screen", "Optional FastQ Screen report of the % of reads matching a panel of reference genomes — a QC report, not a filter. Downloads a multi-GB genome panel on first use; results appear in MultiQC."), self.contam_screen)
         layout.addWidget(align_group)
 
         de_group = QGroupBox("Differential expression")
         de_form = QFormLayout(de_group)
         de_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        de_form.addRow(self._info_label("DESeq2 design", "R model formula. The last term is the effect of interest; put known batch effects before it, e.g. '~ batch + condition'."), self.design)
+        de_form.addRow(self._info_label("DE engine", "Statistical engine for the differential test on count data. DESeq2 (default) fits most studies, including small ones; limma-voom is an optional cross-check for larger designs (about 6+ samples per group). Both write the same result tables and figures. Ignored in microarray mode and for DESeq2-results uploads."), self.de_engine)
+        de_form.addRow(self._info_label("Design formula", "R model formula used by every engine. The last term is the effect of interest; put known batch effects before it, e.g. '~ batch + condition'."), self.design)
+        design_helper = QPushButton("Design helper: adjust for batch / covariates…")
+        design_helper.setToolTip(
+            "Compose the design formula from your metadata columns without typing R. Tick the "
+            "batch/covariate columns to adjust for; the condition of interest is added last.")
+        design_helper.clicked.connect(self._open_design_helper)
+        de_form.addRow("", design_helper)
         de_form.addRow(refresh)
         de_form.addRow(self._info_label("Contrast factor", "The metadata column compared in the differential test (usually 'condition')."), self.contrast_factor)
         de_form.addRow(self._info_label("Numerator (treated)", "The group whose change is measured. log2 fold change is numerator relative to denominator."), self.numerator)
@@ -1074,20 +1142,75 @@ class MainWindow(QMainWindow):
             "STAR/HISAT2/Salmon runs (needs a reference genome)."), self.organellar)
         layout.addWidget(de_group)
 
+        # ---- Advanced tool parameters (collapsible). Defaults reproduce the validated
+        # behaviour; users can set each tool's important parameters manually here. ----
+        adv_group = QGroupBox("Advanced parameters")
+        adv_outer = QVBoxLayout(adv_group)
+        self.adv_toggle = QCheckBox("Show advanced tool parameters")
+        self.adv_toggle.setToolTip(
+            "Per-tool parameters for fine control. The defaults reproduce the validated pipeline "
+            "behaviour, so leave them unless you have a specific reason to change them.")
+        self.adv_container = QWidget()
+        adv_form = QFormLayout(self.adv_container)
+        adv_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.fastp_u = QSpinBox(); self.fastp_u.setRange(0, 100); self.fastp_u.setValue(40)
+        self.fastp_polyx = QCheckBox()
+        adv_form.addRow(self._info_label("fastp: unqualified % limit (-u)", "Maximum percentage of low-quality bases before a read is discarded. fastp default 40."), self.fastp_u)
+        adv_form.addRow(self._info_label("fastp: trim poly-X (3')", "Trim 3' poly-A/poly-X tails (degraded or 3'-biased libraries). fastp default off."), self.fastp_polyx)
+        self.tm_sw_q = QSpinBox(); self.tm_sw_q.setRange(0, 40); self.tm_sw_q.setValue(15)
+        self.tm_leading = QSpinBox(); self.tm_leading.setRange(0, 40); self.tm_leading.setValue(3)
+        self.tm_trailing = QSpinBox(); self.tm_trailing.setRange(0, 40); self.tm_trailing.setValue(3)
+        adv_form.addRow(self._info_label("Trimmomatic: sliding-window quality", "Average Phred required over a 4-base sliding window (SLIDINGWINDOW:4:Q). Default 15."), self.tm_sw_q)
+        adv_form.addRow(self._info_label("Trimmomatic: leading quality", "Trim leading bases below this quality (LEADING). Default 3."), self.tm_leading)
+        adv_form.addRow(self._info_label("Trimmomatic: trailing quality", "Trim trailing bases below this quality (TRAILING). Default 3."), self.tm_trailing)
+        self.rd_ensure = QComboBox()
+        for _lbl, _v in (("norrna (keep confident non-rRNA)", "norrna"), ("rrna", "rrna"), ("both", "both"), ("none", "none")):
+            self.rd_ensure.addItem(_lbl, _v)
+        self.rd_chunk = QSpinBox(); self.rd_chunk.setRange(16, 4096); self.rd_chunk.setValue(256)
+        adv_form.addRow(self._info_label("RiboDetector: ensure mode (-e)", "Which class is kept with high confidence. norrna keeps high-confidence non-rRNA reads (recommended)."), self.rd_ensure)
+        adv_form.addRow(self._info_label("RiboDetector: chunk size", "Reads per batch (x1024): a memory/speed trade-off. Default 256."), self.rd_chunk)
+        self.fs_subset = QSpinBox(); self.fs_subset.setRange(1000, 5000000); self.fs_subset.setSingleStep(10000); self.fs_subset.setValue(100000)
+        adv_form.addRow(self._info_label("Contamination: reads subsampled", "How many reads FastQ Screen subsamples per sample. Default 100000."), self.fs_subset)
+        self.star_twopass = QCheckBox()
+        self.star_multimap = QSpinBox(); self.star_multimap.setRange(1, 200); self.star_multimap.setValue(10)
+        self.star_mismatch = QDoubleSpinBox(); self.star_mismatch.setRange(0.0, 1.0); self.star_mismatch.setSingleStep(0.02); self.star_mismatch.setDecimals(2); self.star_mismatch.setValue(1.0)
+        adv_form.addRow(self._info_label("STAR: two-pass mode", "Two-pass mapping improves novel-junction detection (slower). STAR default off."), self.star_twopass)
+        adv_form.addRow(self._info_label("STAR: max multimappers", "Reads mapping to more than this many loci are discarded (outFilterMultimapNmax). Default 10."), self.star_multimap)
+        adv_form.addRow(self._info_label("STAR: max mismatch ratio", "Max mismatches as a fraction of read length (outFilterMismatchNoverReadLmax). 1.0 = STAR default."), self.star_mismatch)
+        self.fc_feature = QLineEdit("exon")
+        self.fc_attribute = QLineEdit("gene_id")
+        adv_form.addRow(self._info_label("featureCounts: feature type", "GTF feature counted (-t). Default exon."), self.fc_feature)
+        adv_form.addRow(self._info_label("featureCounts: attribute type", "GTF attribute grouped into genes (-g). Default gene_id."), self.fc_attribute)
+        self.de_min_count = QSpinBox(); self.de_min_count.setRange(0, 1000); self.de_min_count.setValue(10)
+        self.de_shrink = QComboBox()
+        for _v in ("apeglm", "ashr", "normal"):
+            self.de_shrink.addItem(_v, _v)
+        adv_form.addRow(self._info_label("DESeq2: min count prefilter", "Keep genes with at least this many reads in the smallest group. Default 10 (the validated value)."), self.de_min_count)
+        adv_form.addRow(self._info_label("DESeq2: LFC shrinkage", "lfcShrink estimator for the MA/volcano effect sizes. Default apeglm (the validated value)."), self.de_shrink)
+        self.adv_container.setVisible(False)
+        self.adv_toggle.toggled.connect(self.adv_container.setVisible)
+        adv_outer.addWidget(self.adv_toggle)
+        adv_outer.addWidget(self.adv_container)
+        layout.addWidget(adv_group)
+
         out_group = QGroupBox("Outputs")
         out_form = QFormLayout(out_group)
         out_form.addRow("Enrichment", self.enrichment)
         out_form.addRow("", self.enrichment_warn)
         out_form.addRow("Figures", self.figures)
+        out_form.addRow(self._info_label("GSVA pathway activity", "Sample-level gene-set activity scores from your custom gene sets (organism-safe). Needs a custom GMT under Custom gene sets."), self.gsva)
+        out_form.addRow(self._info_label("Extended QC (RSeQC)", "Read-distribution + gene-body-coverage QC added to the MultiQC report. Genome-BAM routes only (not Salmon)."), self.rseqc)
         layout.addWidget(out_group)
 
         cs_group = QGroupBox("Custom gene sets (enrichment, optional)")
         cs_form = QFormLayout(cs_group)
         cs_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        cs_form.addRow(QLabel(
+        cs_help = QLabel(
             "Run enrichment against your own gene sets, alongside the built-in GO/KEGG. The gene "
             "IDs in these files must use the same identifier format as your reference (locus tags, "
-            "Ensembl/RefSeq IDs, or symbols); a mismatch is flagged in the custom-enrichment check."))
+            "Ensembl/RefSeq IDs, or symbols); a mismatch is flagged in the custom-enrichment check.")
+        cs_help.setWordWrap(True)  # without this the long label is clipped at the panel edge
+        cs_form.addRow(cs_help)
         self.custom_gmt = QLineEdit()
         self.custom_annot = QLineEdit()
         self.custom_background = QLineEdit()
@@ -1116,6 +1239,47 @@ class MainWindow(QMainWindow):
         layout.addLayout(save_row)
         layout.addStretch(1)
         self.tabs.addTab(self._scrollable(page), "Workflow Settings")
+
+    def _open_design_helper(self) -> None:
+        # Compose an additive design formula (~ covariates + condition) from the metadata
+        # columns, so a non-expert can adjust for batch/covariates without typing R. Only
+        # additive terms; interactions stay in the raw formula field.
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox
+
+        cols = list(self.metadata_table.column_names()) if hasattr(self.metadata_table, "column_names") else []
+        factor = self.contrast_factor.text().strip() or "condition"
+        exclude = {"sample_id", "fastq_1", "fastq_2", "fastq_1_url", "fastq_2_url", "layout",
+                   "original_accession", "experiment_accession", "gsm_accession", "platform",
+                   "original_filename", "detected_pair_id", "condition", factor}
+        candidates = [c for c in cols if c and c not in exclude]
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Design helper")
+        dlg.setMinimumWidth(460)
+        lay = QVBoxLayout(dlg)
+        _dh_help = QLabel(
+            "Adjust the differential test for known batch / covariate columns. They are added "
+            f"additively before the effect of interest:\n    ~ [covariates] + {factor}\n"
+            "Interactions (e.g. genotype:treatment) must be typed in the formula field.")
+        _dh_help.setWordWrap(True)
+        lay.addWidget(_dh_help)
+        current = self.design.text()
+        boxes: list[tuple[str, QCheckBox]] = []
+        if not candidates:
+            _dh_none = QLabel("No extra metadata columns found — add columns on the Metadata tab first.")
+            _dh_none.setWordWrap(True)
+            lay.addWidget(_dh_none)
+        for c in candidates:
+            cb = QCheckBox(c)
+            cb.setChecked(c in current.split())
+            lay.addWidget(cb)
+            boxes.append((c, cb))
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            chosen = [c for c, cb in boxes if cb.isChecked()]
+            self.design.setText("~ " + " + ".join(chosen + [factor]))
 
     def _refresh_conditions(self) -> None:
         df = self.metadata_table.to_dataframe()
@@ -1287,6 +1451,11 @@ class MainWindow(QMainWindow):
         open_folder.clicked.connect(self._open_folder)
         open_report = QPushButton("Open MultiQC Report")
         open_report.clicked.connect(self._open_report)
+        open_html = QPushButton("Open Results Report")
+        open_html.setToolTip(
+            "Open the self-contained HTML results report (figures, top genes, enrichment, and "
+            "provenance in one file) in your browser. Produced when a run finishes.")
+        open_html.clicked.connect(self._open_results_report)
         self.export_toolsref_button = QPushButton("Export Tools && References")
         self.export_toolsref_button.setToolTip(
             "Save a text file listing the tool versions, reference genome/annotation (accession, "
@@ -1297,7 +1466,7 @@ class MainWindow(QMainWindow):
             "Save a text file describing the study design: samples, conditions, layout, the DESeq2 "
             "design formula and contrasts. Available after the run completes.")
         self.export_design_button.clicked.connect(self._export_study_design)
-        for w in (stop, open_folder, open_report, self.export_toolsref_button, self.export_design_button):
+        for w in (stop, open_folder, open_report, open_html, self.export_toolsref_button, self.export_design_button):
             actions.addWidget(w)
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -1584,6 +1753,15 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(report)))
         else:
             self.log_text.append(f"MultiQC report not found yet: {report}")
+
+    def _open_results_report(self) -> None:
+        if self.project_root is None:
+            return
+        report = self.project_root / "results" / "reports" / "results_report.html"
+        if report.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(report)))
+        else:
+            self.log_text.append(f"Results report not found yet: {report}")
 
     def _refresh_export_buttons(self) -> None:
         # Enable the Run-Monitor provenance exports once a run has produced the files.
@@ -2630,13 +2808,43 @@ class MainWindow(QMainWindow):
             self.quantifier.setCurrentText(wf.quantifier)
         self.trim.setChecked(wf.trimming)
         self.rrna.setChecked(wf.rrna_filtering)
+        _tr_idx = self.trimmer.findData(getattr(wf, "trimmer", "fastp"))
+        self.trimmer.setCurrentIndex(_tr_idx if _tr_idx >= 0 else 0)
+        _rt_idx = self.rrna_tool.findData(getattr(wf, "rrna_tool", "sortmerna"))
+        self.rrna_tool.setCurrentIndex(_rt_idx if _rt_idx >= 0 else 0)
+        self.contam_screen.setChecked(getattr(wf, "contamination_screen", False))
+        self.trimmer.setEnabled(self.trim.isChecked())
+        self.rrna_tool.setEnabled(self.rrna.isChecked())
         self.enrichment.setChecked(wf.enrichment)
         self.figures.setChecked(wf.figures)
+        self.gsva.setChecked(getattr(wf, "gsva", False))
+        self.rseqc.setChecked(getattr(wf, "rseqc", False))
+        _eng_idx = self.de_engine.findData(getattr(wf, "de_engine", "DESeq2"))
+        self.de_engine.setCurrentIndex(_eng_idx if _eng_idx >= 0 else 0)
         _org_idx = self.organellar.findData(getattr(wf, "organellar_genes", "keep"))
         self.organellar.setCurrentIndex(_org_idx if _org_idx >= 0 else 0)
         self.fastp_q.setValue(self.config.fastp.qualified_quality_phred)
         self.fastp_len.setValue(self.config.fastp.length_required)
         self.trim_poly_g.setChecked(self.config.fastp.trim_poly_g)
+        # Advanced tool parameters (all NULL-safe so older configs still load).
+        self.fastp_u.setValue(self.config.fastp.unqualified_percent_limit)
+        self.fastp_polyx.setChecked(getattr(self.config.fastp, "trim_poly_x", False))
+        _tm = self.config.trimmomatic
+        self.tm_sw_q.setValue(getattr(_tm, "sliding_window_quality", 15))
+        self.tm_leading.setValue(getattr(_tm, "leading", 3))
+        self.tm_trailing.setValue(getattr(_tm, "trailing", 3))
+        _rde = self.rd_ensure.findData(getattr(self.config.ribodetector, "ensure", "norrna"))
+        self.rd_ensure.setCurrentIndex(_rde if _rde >= 0 else 0)
+        self.rd_chunk.setValue(getattr(self.config.ribodetector, "chunk_size", 256))
+        self.fs_subset.setValue(getattr(self.config.contamination, "subset", 100000))
+        self.star_twopass.setChecked(self.config.star.twopass_mode)
+        self.star_multimap.setValue(self.config.star.multimap_nmax)
+        self.star_mismatch.setValue(self.config.star.mismatch_nover_read_lmax)
+        self.fc_feature.setText(self.config.featurecounts.feature_type)
+        self.fc_attribute.setText(self.config.featurecounts.attribute_type)
+        self.de_min_count.setValue(self.config.deseq2.min_count)
+        _des = self.de_shrink.findData(self.config.deseq2.shrinkage_method)
+        self.de_shrink.setCurrentIndex(_des if _des >= 0 else 0)
         self.design.setText(self.config.deseq2.design_formula)
         self.alpha.setValue(self.config.deseq2.alpha)
         self.lfc_threshold.setValue(self.config.deseq2.lfc_threshold)
@@ -2942,9 +3150,15 @@ class MainWindow(QMainWindow):
         self.config.workflow.aligner = self.aligner.currentText()  # type: ignore[assignment]
         self.config.workflow.quantifier = self.quantifier.currentText()  # type: ignore[assignment]
         self.config.workflow.trimming = self.trim.isChecked()
+        self.config.workflow.trimmer = self.trimmer.currentData()  # type: ignore[assignment]
         self.config.workflow.rrna_filtering = self.rrna.isChecked()
+        self.config.workflow.rrna_tool = self.rrna_tool.currentData()  # type: ignore[assignment]
+        self.config.workflow.contamination_screen = self.contam_screen.isChecked()
         self.config.workflow.enrichment = self.enrichment.isChecked()
         self.config.workflow.figures = self.figures.isChecked()
+        self.config.workflow.gsva = self.gsva.isChecked()
+        self.config.workflow.rseqc = self.rseqc.isChecked()
+        self.config.workflow.de_engine = self.de_engine.currentData()  # type: ignore[assignment]
         self.config.workflow.organellar_genes = self.organellar.currentData()  # type: ignore[assignment]
         self.config.gene_sets.custom_gene_sets = self.custom_gmt.text().strip() or None
         self.config.gene_sets.functional_annotation_table = self.custom_annot.text().strip() or None
@@ -2952,6 +3166,22 @@ class MainWindow(QMainWindow):
         self.config.fastp.qualified_quality_phred = self.fastp_q.value()
         self.config.fastp.length_required = self.fastp_len.value()
         self.config.fastp.trim_poly_g = self.trim_poly_g.isChecked()
+        # Advanced tool parameters.
+        self.config.fastp.unqualified_percent_limit = self.fastp_u.value()
+        self.config.fastp.trim_poly_x = self.fastp_polyx.isChecked()
+        self.config.trimmomatic.sliding_window_quality = self.tm_sw_q.value()
+        self.config.trimmomatic.leading = self.tm_leading.value()
+        self.config.trimmomatic.trailing = self.tm_trailing.value()
+        self.config.ribodetector.ensure = self.rd_ensure.currentData()  # type: ignore[assignment]
+        self.config.ribodetector.chunk_size = self.rd_chunk.value()
+        self.config.contamination.subset = self.fs_subset.value()
+        self.config.star.twopass_mode = self.star_twopass.isChecked()
+        self.config.star.multimap_nmax = self.star_multimap.value()
+        self.config.star.mismatch_nover_read_lmax = self.star_mismatch.value()
+        self.config.featurecounts.feature_type = self.fc_feature.text().strip() or "exon"
+        self.config.featurecounts.attribute_type = self.fc_attribute.text().strip() or "gene_id"
+        self.config.deseq2.min_count = self.de_min_count.value()
+        self.config.deseq2.shrinkage_method = self.de_shrink.currentData()  # type: ignore[assignment]
         self.config.deseq2.design_formula = self.design.text()
         self.config.deseq2.alpha = self.alpha.value()
         self.config.deseq2.lfc_threshold = self.lfc_threshold.value()
@@ -3121,26 +3351,22 @@ class MainWindow(QMainWindow):
                     "annotation. Then start the run again.",
                 )
                 return False
-            # Single-end FASTQ is not yet supported on the alignment route; block
-            # early instead of letting the run dead-end at the trim step.
+            # Single-end and paired-end are both supported, but a run must be homogeneous
+            # (one rule cannot emit both a 1- and a 2-file trimmed output). Block mixed layouts.
             if not no_reference_mode and self.project_root is not None:
                 samples_path = self.project_root / "config" / "samples.tsv"
                 if samples_path.exists():
                     try:
                         sdf = pd.read_csv(samples_path, sep="\t", dtype=str).fillna("")
-                        se = (
-                            sdf.loc[sdf["layout"].str.lower() == "single", "sample_id"].tolist()
-                            if "layout" in sdf.columns else []
-                        )
+                        layouts = ({str(v).lower() for v in sdf["layout"].tolist()} & {"single", "paired"}
+                                   if "layout" in sdf.columns else set())
                     except Exception:
-                        se = []
-                    if se:
+                        layouts = set()
+                    if {"single", "paired"} <= layouts:
                         QMessageBox.warning(
                             self, APP_NAME,
-                            "Single-end FASTQ input is not yet supported (paired-end only).\n\n"
-                            f"Single-end sample(s): {', '.join(se)}.\n"
-                            "Provide paired-end reads, or use the count-matrix or GEO "
-                            "microarray input mode.",
+                            "Mixed paired-end and single-end samples in one run are not supported.\n\n"
+                            "Split them into two projects (one per layout), then start the run again.",
                         )
                         return False
             goi = self.config.gene_sets.custom_gene_list
@@ -3326,6 +3552,8 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "output_table_pick"):
             return
         itype = self.config.input.type if self.config is not None else "sra"
+        # limma-voom does not produce the DESeq2-specific equivalence (unchanged) table.
+        voom = self.config is not None and getattr(self.config.workflow, "de_engine", "DESeq2") == "limma-voom"
         if itype == "deseq2_results":
             # No counts/normalized/unchanged/wilcoxon outputs in this mode.
             items = ["results/deseq2/deseq2_results.csv",
@@ -3338,8 +3566,9 @@ class MainWindow(QMainWindow):
                      "results/networks/string_ppi_nodes.csv", "results/networks/ppi_hub_genes.csv"]
         else:
             items = ["results/deseq2/deseq2_results.csv",
-                     "results/deseq2/normalized_counts.csv",
-                     "results/deseq2/unchanged_genes.csv"]
+                     "results/deseq2/normalized_counts.csv"]
+            if not voom:
+                items.append("results/deseq2/unchanged_genes.csv")
             if itype in ("sra", "fastq"):
                 items.insert(0, "results/counts/counts.txt")
             items += ["results/enrichment/kegg_ora.csv", "results/enrichment/kegg_gsea.csv",

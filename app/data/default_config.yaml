@@ -39,12 +39,25 @@ reference:
 workflow:
   fastqc_pre_trim: true
   trimming: true
+  # Trimmer: fastp (default) | trim-galore | trimmomatic.
+  trimmer: fastp
   fastqc_post_trim: true
   rrna_filtering: false
+  # rRNA filtering tool: sortmerna (default) | ribodetector (reference-free).
+  rrna_tool: sortmerna
+  # Contamination screening (FastQ Screen), a QC report, not a filter. Off by default.
+  contamination_screen: false
   aligner: STAR
   quantifier: featureCounts
   enrichment: true
   figures: true
+  # GSVA sample-level pathway activity (organism-safe; needs a custom GMT). Off by default.
+  gsva: false
+  # RSeQC extended alignment QC (genome-BAM routes only). Off by default.
+  rseqc: false
+  # Differential-expression engine (count-based routes): DESeq2 | limma-voom.
+  # DESeq2 is the default; limma-voom is an opt-in cross-check.
+  de_engine: DESeq2
   custom_gene_list_analysis: true
   # Mitochondrial + chloroplast genes: keep | discard | separate (default keep).
   organellar_genes: keep
@@ -54,6 +67,17 @@ fastp:
   unqualified_percent_limit: 40
   length_required: 36
   trim_poly_g: false
+  trim_poly_x: false
+trimmomatic:
+  sliding_window_size: 4
+  sliding_window_quality: 15
+  leading: 3
+  trailing: 3
+ribodetector:
+  chunk_size: 256
+  ensure: norrna
+contamination:
+  subset: 100000
 sortmerna:
   paired_mode: paired_in
   database: null

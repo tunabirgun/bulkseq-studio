@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BulkSeq Studio — Benchmarks</title>
+<meta name="description" content="The B1–B15 validation suite behind BulkSeq Studio: correctness against simulated ground truth, concordance with established tools, cross-aligner and cross-engine agreement, non-model breadth, and a human-dataset applicability check. Archived on Zenodo.">
+<link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html">
+      <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
+      <span><b>BulkSeq Studio</b><span class="ver">v0.16.0</span></span>
+    </a>
+    <p class="tagline">Bulk RNA-seq &amp; microarray analysis, no code.</p>
+    <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
+    <nav>
+      <ul class="nav">
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="guide.html">Install &amp; quick start</a></li>
+        <li><a href="analysis.html">Analysis options</a></li>
+        <li><a href="outputs.html">Outputs</a></li>
+        <li><a class="active" href="benchmarks.html">Benchmarks</a></li>
+        <li><a href="faq.html">FAQ &amp; cite</a></li>
+      </ul>
+      <div class="ext">
+        <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
+        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download latest release ↗</a>
+        <a href="https://doi.org/10.5281/zenodo.20955660" target="_blank" rel="noopener">Benchmark archive (Zenodo) ↗</a>
+      </div>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <section id="benchmarks" class="wide"><p class="kicker">Validation</p>
+<h2>Benchmarks</h2>
+<p class="lead">BulkSeq Studio is validated by a benchmark suite (B1–B15) that tests the pipeline against simulated ground truth, established tools, and itself across input modes, aligners, differential-expression engines, and organisms. The full benchmark snapshot — tables, figures, and pinned environments — is deposited on Zenodo, and the accompanying manuscript is in preparation for submission to a peer-reviewed journal.</p>
+<p>Every number below traces to a checksummed result table in the deposited archive. Cite the snapshot as <a href="https://doi.org/10.5281/zenodo.20955660">10.5281/zenodo.20955660</a>.</p>
+
+<h3>B1–B10: the core validation</h3>
+<p>Ten benchmark families, each probing one part of the default analysis (STAR to featureCounts to DESeq2 to clusterProfiler enrichment). Headline results:</p>
+<div class="tablewrap">
+<table>
+<thead>
+<tr><th>Benchmark</th><th>What it tests</th><th>Headline result</th></tr>
+</thead>
+<tbody>
+<tr><td>B1</td><td>Correctness vs simulated ground truth (count- and read-level)</td><td>Power, precision, and fold-change recovery rise with replication; read-level FDR controlled (0.048 +/- 0.006 over 6 seeds), LFC Pearson 0.976</td></tr>
+<tr><td>B2</td><td>FDR / null calibration under a true null</td><td>Raw p-values near nominal 0.05; BH false positives essentially absent at n=10 (mean 0.8 / 12000 genes); inherits DESeq2 small-sample behaviour, motivating the 4-6 replicate guidance</td></tr>
+<tr><td>B3</td><td>Accuracy curves (iCOBRA TPR vs observed FDR)</td><td>Power ordered n10 > n5 > n3 at every FDR; observed FDR tightens toward nominal as replication grows</td></tr>
+<tr><td>B4</td><td>Concordance vs nf-core/rnaseq 3.14.0</td><td>LFC Spearman 0.97-0.99, DEG Jaccard 0.81-0.91, CAT top-100 0.85-0.93 across a fly and a fungus; all acceptance criteria met</td></tr>
+<tr><td>B5</td><td>Internal aligner concordance (STAR / HISAT2 / Salmon)</td><td>STAR and HISAT2 near-identical (LFC r 0.985-0.9997); Salmon agrees on fold change (r 0.94-0.996) with expected boundary-DEG differences</td></tr>
+<tr><td>B6</td><td>Input-mode equivalence (count-matrix, bring-your-own DESeq2)</td><td>Both entry points reproduce the FASTQ-path DESeq2 <em>exactly</em> (max abs diff = 0 on all result columns; up/down Jaccard 1.0) across three anchors</td></tr>
+<tr><td>B7</td><td>Microarray (limma) route validation</td><td>vs canonical limma-trend-robust: logFC Pearson 1.0, max abs diff 0, identical DEG sets (440 vs 440), positive control reproduced exactly</td></tr>
+<tr><td>B8</td><td>Multi-organism breadth + non-model enrichment</td><td>Real KEGG ORA and STRING networks for a fungus (FGSG_ locus tags) and a crop (RefSeq LOC route) <em>without</em> a Bioconductor OrgDb</td></tr>
+<tr><td>B9</td><td>Runtime / memory scaling + large-genome rescue</td><td>STAR index RAM scales with genome length (1 to 57.9 GiB) and overflows on wheat; Salmon indexes the same genomes at ~1 GiB, restoring quantification</td></tr>
+<tr><td>B10</td><td>Reproducibility and determinism</td><td>Identical sha256 across reruns and thread counts (4 vs 16 cores), max abs LFC diff 0; databases pinned (Ensembl 111, STRING v12.0)</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>New in 0.15.0 (B11-B13)</h3>
+<p>The 0.15.0 snapshot adds three benchmarks covering the analytical surfaces introduced since 0.12.1: the STAR gene-counts quantifier, custom gene-set enrichment, and the rRNA-filtering path. Each was adversarially reviewed before deposit.</p>
+
+<h4>B11 — STAR gene-counts vs featureCounts</h4>
+<p>Does the new STAR gene-counts quantifier (counts from STAR's <code>--quantMode GeneCounts</code>) agree with the default featureCounts? Both arms ran on the <em>same</em> BAM and through the identical DESeq2 path, so only the counting algorithm differs.</p>
+<div class="tablewrap">
+<table>
+<thead>
+<tr><th>Dataset</th><th>Strand</th><th>Count r (log2)</th><th>LFC Pearson</th><th>DEG Jaccard (padj<0.05)</th><th>DEG Jaccard (+|LFC|≥1)</th></tr>
+</thead>
+<tbody>
+<tr><td>fgval (F. graminearum)</td><td>unstranded</td><td class="num">0.9997</td><td class="num">0.9999</td><td class="num">0.9950</td><td class="num">0.9956</td></tr>
+<tr><td>fghs (F. graminearum)</td><td>reverse</td><td class="num">1.0000</td><td class="num">1.0000</td><td class="num">0.9993</td><td class="num">0.9991</td></tr>
+<tr><td>pasilla (D. melanogaster)</td><td>unstranded</td><td class="num">0.9981</td><td class="num">0.9969</td><td class="num">0.9619</td><td class="num">0.9463</td></tr>
+</tbody>
+</table>
+</div>
+<p>The two quantifiers are effectively interchangeable on these data: per-gene counts correlate at r ≥ 0.998, fold changes at Pearson ≥ 0.997, and DEG sets overlap at Jaccard 0.95-1.0. The reverse-stranded case is exact (1.0000). pasilla is the most divergent arm, reflecting its small DEG set, and is reported as-is. The claim is equivalence on these three datasets (two organisms, strand 0 and 2, paired-end), not a universal guarantee.</p>
+<figure class="bench"><img src="assets/b11_lfc_scatter.png" alt="Log2 fold-change scatter comparing STAR gene-counts against featureCounts for three datasets; points hug the identity line"><figcaption>B11: log2 fold-change agreement between STAR gene-counts and featureCounts across the three datasets.</figcaption></figure>
+
+<h4>B12 — custom gene-set enrichment (equivalence check)</h4>
+<p>This benchmark is an implementation-equivalence / regression check, not an independent validation of the enrichment statistics. A gene set built from the same KEGG sets the built-in route uses is fed back through the custom enrichment engine, and the output is compared to the built-in KEGG result.</p>
+<ul>
+<li>GSEA reproduces the built-in KEGG GSEA <em>exactly</em> (12 of 12 terms, Jaccard 1.0).</li>
+<li>ORA reproduces the built-in 4 terms exactly when the universe is matched to the KEGG-annotated background (2619 genes).</li>
+<li>With its own default universe (all 8280 tested genes) the custom ORA returns 0 terms — the more conservative, defensible background. This is the genuinely informative result, not a discrepancy.</li>
+<li>A wrong-namespace input (human symbols against FGSG_ ids, 0 overlap) returns REVIEW_REQUIRED rather than a silent empty result — the namespace-mismatch guard fires.</li>
+</ul>
+
+<h4>B13 — rRNA filtering (SortMeRNA)</h4>
+<p>The shipped SortMeRNA command filtered rRNA from six fungal total-RNA samples, then STAR, featureCounts, and DESeq2 ran on the filtered reads. The unfiltered arm is the B11 fghs result, so the two arms differ only in rRNA filtering.</p>
+<div class="tablewrap">
+<table>
+<thead>
+<tr><th>Metric</th><th>Value</th></tr>
+</thead>
+<tbody>
+<tr><td>Mean rRNA removed</td><td class="num">13.1% (11.65-16.09%)</td></tr>
+<tr><td>LFC Pearson / Spearman (filtered vs unfiltered)</td><td class="num">1.000 / 1.000</td></tr>
+<tr><td>DEG count padj<0.05 (unfiltered → filtered)</td><td class="num">5836 → 5827</td></tr>
+<tr><td>DEG Jaccard padj<0.05</td><td class="num">0.9978</td></tr>
+<tr><td>DEG Jaccard +|LFC|≥1</td><td class="num">0.9963</td></tr>
+</tbody>
+</table>
+</div>
+<p>Removing ~13% of reads as rRNA leaves the differential-expression result essentially unchanged (DEG Jaccard 0.998, fold-change correlation 1.0). The mechanism is direct: although SortMeRNA flagged 12-16% of reads as rRNA, the featureCounts-assigned read pairs fell by only 0.27-0.49% per sample. The rRNA reads were landing on rRNA loci or NoFeatures, not in the protein-coding gene counts that feed DESeq2, so the count matrix is barely perturbed.</p>
+<figure class="bench"><img src="assets/b13_lfc_scatter.png" alt="Log2 fold-change scatter comparing rRNA-filtered against unfiltered analysis; points fall on the identity line"><figcaption>B13: fold changes are unchanged after rRNA filtering on this library.</figcaption></figure>
+<div class="note warn"><span class="t">Scope</span> This is one fungal total-RNA library with a modest (~13%) rRNA fraction. The supported claim is "filtering had no effect here", not "filtering is unnecessary". Filtering would matter for heavily rRNA-contaminated libraries (degraded, FFPE, or meta-transcriptomic, 50-80% rRNA) and is near-moot for poly-A-selected libraries.</div>
+
+<h3>New in 0.16.0 (B14-B15)</h3>
+<p>The 0.16.0 snapshot adds two benchmarks: concordance of the two optional differential-expression engines against DESeq2, and an applicability check on a human dataset. Both were reviewed before deposit.</p>
+
+<h4>B14 — differential-expression engine concordance</h4>
+<p>The two optional engines (limma-voom and edgeR quasi-likelihood) are validated against DESeq2 on identical count matrices, so only the engine differs. On the <em>Fusarium graminearum</em> spore-versus-mycelium set:</p>
+<div class="tablewrap">
+<table>
+<thead>
+<tr><th>Engine vs DESeq2</th><th>LFC Spearman</th><th>Top-DEG Jaccard</th><th>Direction agreement</th></tr>
+</thead>
+<tbody>
+<tr><td>limma-voom</td><td class="num">0.997</td><td class="num">0.94</td><td class="num">100%</td></tr>
+<tr><td>edgeR quasi-likelihood</td><td class="num">1.000</td><td class="num">0.97</td><td class="num">100%</td></tr>
+</tbody>
+</table>
+</div>
+<p>The two alternatives track DESeq2 closely and agree with it on the direction of every shared differentially expressed gene. DESeq2 remains the default and its result on this set is byte-for-byte unchanged (2,723 up / 2,478 down), so the alternative engines add a cross-check without altering the validated default.</p>
+
+<h4>B15 — human-dataset applicability</h4>
+<p>The other benchmarks use a fungus, a crop, and model animals; B15 checks that the human annotation path runs end to end and recovers known biology. The airway smooth-muscle dexamethasone study (two treated, two control) was processed through the Salmon route against GRCh38 (Ensembl release 111) with <code>org.Hs.eg.db</code>-based enrichment and a STRING network at taxon 9606. Reads were subsampled to about two million pairs per sample, so this is a signature-recovery check on reduced depth, not a full-depth reanalysis.</p>
+<p>Under that constraint the pipeline recovered the canonical glucocorticoid-response programme: the most strongly up-regulated genes were the expected dexamethasone targets <em>FKBP5</em> (adjusted p ~5 × 10⁻²⁴), <em>ZBTB16</em>, <em>KLF15</em>, and <em>SPARCL1</em>, while the pro-inflammatory adhesion molecule <em>VCAM1</em> was down-regulated, consistent with the known anti-inflammatory action of glucocorticoids. The enrichment step returned GO and KEGG terms and the STRING network built to 117 nodes, so the human path delivers the same enrichment and network outputs as the non-human organisms and confirms the human GRCh38 / Salmon / <code>org.Hs.eg.db</code> route end to end.</p>
+
+<div class="note"><span class="t">Default pipeline unchanged</span> The 0.13-0.16 features are additive, so B1-B10 carry over without re-running. The core scripts (DESeq2, enrichment, limma, salmon/tximport, count ingest, strandedness inference) are unchanged, the environment lock changed by addition only (no package removed or downgraded), and the F. graminearum baseline of 2723 up / 2478 down reproduces exactly.</div></section>
+    <div class="footer" style="max-width:70ch;margin:0 auto;">
+      <p>Free and open-source under the MIT License · Tuna Birgün</p>
+    </div>
+  </main>
+</div>
+
+<script>
+// Mobile menu toggle (nav is cross-page, so no scroll-spy is needed).
+(function () {
+  var btn = document.querySelector('.menu-toggle');
+  var nav = document.querySelector('.nav');
+  if (btn && nav) {
+    btn.addEventListener('click', function () {
+      var open = nav.classList.toggle('open');
+      btn.setAttribute('aria-expanded', String(open));
+    });
+  }
+})();
+</script>
+<script src="assets/lightbox.js" defer></script>
+</body>
+</html>

@@ -25,25 +25,48 @@ if COUNT_MATRIX_MODE:
 elif USE_SALMON:
 
     # Salmon mapping-based quantification straight from the trimmed FASTQ (no BAM).
-    rule salmon_quant:
-        input:
-            index=SALMON_INDEX,
-            r1=lambda wc: aligner_read(wc.sample, 1),
-            r2=lambda wc: aligner_read(wc.sample, 2),
-        output:
-            quant="results/salmon/{sample}/quant.sf",
-        threads:
-            rule_threads("salmon_quant", 8)
-        resources:
-            mem_mb=rule_mem_mb("salmon_quant", 8),
-        benchmark:
-            "benchmarks/salmon_quant_{sample}.tsv"
-        log:
-            "logs/salmon_quant_{sample}.log",
-        shell:
-            "salmon quant -i {input.index:q} -l A -1 {input.r1:q} -2 {input.r2:q} "
-            "-p {threads} --validateMappings --gcBias "
-            "-o results/salmon/{wildcards.sample} > {log} 2>&1"
+    if SINGLE_END:
+
+        rule salmon_quant:
+            input:
+                index=SALMON_INDEX,
+                r1=lambda wc: aligner_read(wc.sample, 1),
+            output:
+                quant="results/salmon/{sample}/quant.sf",
+            threads:
+                rule_threads("salmon_quant", 8)
+            resources:
+                mem_mb=rule_mem_mb("salmon_quant", 8),
+            benchmark:
+                "benchmarks/salmon_quant_{sample}.tsv"
+            log:
+                "logs/salmon_quant_{sample}.log",
+            shell:
+                "salmon quant -i {input.index:q} -l A -r {input.r1:q} "
+                "-p {threads} --validateMappings "
+                "-o results/salmon/{wildcards.sample} > {log} 2>&1"
+
+    else:
+
+        rule salmon_quant:
+            input:
+                index=SALMON_INDEX,
+                r1=lambda wc: aligner_read(wc.sample, 1),
+                r2=lambda wc: aligner_read(wc.sample, 2),
+            output:
+                quant="results/salmon/{sample}/quant.sf",
+            threads:
+                rule_threads("salmon_quant", 8)
+            resources:
+                mem_mb=rule_mem_mb("salmon_quant", 8),
+            benchmark:
+                "benchmarks/salmon_quant_{sample}.tsv"
+            log:
+                "logs/salmon_quant_{sample}.log",
+            shell:
+                "salmon quant -i {input.index:q} -l A -1 {input.r1:q} -2 {input.r2:q} "
+                "-p {threads} --validateMappings --gcBias "
+                "-o results/salmon/{wildcards.sample} > {log} 2>&1"
 
     # tximport (lengthScaledTPM) -> gene-level counts in featureCounts layout so DESeq2
     # and everything downstream are unchanged.

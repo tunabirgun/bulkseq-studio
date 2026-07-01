@@ -12,7 +12,29 @@ _STAR_EXTRA = _STAR.get("extra", "")
 
 if not USE_SALMON:
 
-    if USE_HISAT2:
+    if USE_HISAT2 and SINGLE_END:
+
+        rule hisat2_align:
+            input:
+                idx=HISAT2_INDEX_DIR,
+                r1=lambda wc: aligner_read(wc.sample, 1),
+            output:
+                bam="results/aligned/{sample}_Aligned.sortedByCoord.out.bam",
+            threads:
+                rule_threads("hisat2_align", 8)
+            resources:
+                mem_mb=rule_mem_mb("hisat2_align", 8),
+            benchmark:
+                "benchmarks/hisat2_align_{sample}.tsv"
+            log:
+                "logs/hisat2_align_{sample}.log",
+            shell:
+                "hisat2 -p {threads} -x {input.idx}/genome -U {input.r1:q} "
+                "--summary-file results/aligned/{wildcards.sample}_hisat2_summary.txt 2> {log} "
+                "| samtools sort -@ {threads} -m 1G "
+                "-T {resources.tmpdir}/sort_{wildcards.sample} -o {output.bam:q} - 2>> {log}"
+
+    elif USE_HISAT2:
 
         rule hisat2_align:
             input:

@@ -70,6 +70,74 @@ elif DE_RESULTS_MODE:
         script:
             "../scripts/ingest_deseq2_results.R"
 
+elif VOOM_MODE:
+
+    # limma-voom (optional DE engine for count-based routes). Emits the SAME core
+    # outputs as `rule deseq2` MINUS the DESeq2-specific TOST equivalence test
+    # (unchanged_genes / check 13), so figures/enrichment/GOI stay backend-agnostic.
+    # DESeq2 remains the default engine.
+    rule voom_de:
+        input:
+            counts="results/counts/counts.txt",
+            samples=config["input"]["samples"],
+        output:
+            results="results/deseq2/deseq2_results.csv",
+            up="results/deseq2/upregulated_genes.csv",
+            down="results/deseq2/downregulated_genes.csv",
+            rds="results/deseq2/deseq2_objects.rds",
+            normalized="results/deseq2/normalized_counts.csv",
+            session="results/reports/sessionInfo.txt",
+            design_check="checks/08_metadata_design_qc.json",
+            deseq_check="checks/09_deseq2_qc.json",
+        params:
+            design=_DE.get("design_formula", "~ condition"),
+            contrast_factor=_CONTRAST.get("factor", "condition"),
+            numerator=_CONTRAST.get("numerator", ""),
+            denominator=_CONTRAST.get("denominator", ""),
+            alpha=_DE.get("alpha", 0.05),
+            lfc_threshold=_DE.get("lfc_threshold", 1.0),
+            # Path (not input) so count-matrix mode, which has no reference, still
+            # runs; run_voom.R reads symbol/biotype from it only when it exists.
+            gtf=ANNOTATION_GTF,
+        benchmark:
+            "benchmarks/voom_de.tsv"
+        log:
+            "logs/voom_de.log",
+        script:
+            "../scripts/run_voom.R"
+
+elif EDGER_MODE:
+
+    # edgeR quasi-likelihood (optional DE engine, count-based routes). Same core outputs as
+    # `rule deseq2` MINUS the DESeq2-specific TOST equivalence test. DESeq2 stays the default.
+    rule edger_de:
+        input:
+            counts="results/counts/counts.txt",
+            samples=config["input"]["samples"],
+        output:
+            results="results/deseq2/deseq2_results.csv",
+            up="results/deseq2/upregulated_genes.csv",
+            down="results/deseq2/downregulated_genes.csv",
+            rds="results/deseq2/deseq2_objects.rds",
+            normalized="results/deseq2/normalized_counts.csv",
+            session="results/reports/sessionInfo.txt",
+            design_check="checks/08_metadata_design_qc.json",
+            deseq_check="checks/09_deseq2_qc.json",
+        params:
+            design=_DE.get("design_formula", "~ condition"),
+            contrast_factor=_CONTRAST.get("factor", "condition"),
+            numerator=_CONTRAST.get("numerator", ""),
+            denominator=_CONTRAST.get("denominator", ""),
+            alpha=_DE.get("alpha", 0.05),
+            lfc_threshold=_DE.get("lfc_threshold", 1.0),
+            gtf=ANNOTATION_GTF,
+        benchmark:
+            "benchmarks/edger_de.tsv"
+        log:
+            "logs/edger_de.log",
+        script:
+            "../scripts/run_edger.R"
+
 else:
 
     rule deseq2:

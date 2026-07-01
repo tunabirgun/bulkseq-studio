@@ -39,3 +39,18 @@ rule final_reports:
     shell:
         "python workflow/scripts/make_run_summary.py --project . && "
         "python workflow/scripts/make_timing_summary.py --project ."
+
+
+# Self-contained HTML results report: inlines the figures + top DE results + enrichment +
+# provenance into one shareable file. Depends on the run summary (so provenance is written)
+# and the DE table; reads figures/enrichment opportunistically. Runs in every input mode.
+rule html_report:
+    input:
+        run_txt="results/reports/run_summary.txt",
+        results="results/deseq2/deseq2_results.csv",
+    output:
+        html="results/reports/results_report.html",
+    log:
+        "logs/html_report.log",
+    shell:
+        "python workflow/scripts/make_html_report.py --project . > {log} 2>&1"

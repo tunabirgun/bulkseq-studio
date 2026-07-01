@@ -69,20 +69,33 @@ def trimmed_fastqs(sample):
 # TRIMMING and RRNA_FILTER (defined below) are read at rule-eval time. Paired-end only
 # (single-end is rejected up front). _reads_pre_rrna is also the input to sortmerna.
 def _reads_pre_rrna(sample, read):
-    # After optional fastp trimming, before optional rRNA filtering.
+    # After optional trimming, before optional rRNA filtering. Single-end trimmed reads
+    # drop the _{read} tag (there is only one file).
     if TRIMMING:
-        return f"results/trimmed/{sample}_{read}.trim.fastq.gz"
+        if is_paired(sample):
+            return f"results/trimmed/{sample}_{read}.trim.fastq.gz"
+        return f"results/trimmed/{sample}.trim.fastq.gz"
     return raw_fastq(sample, read)
+
+
+def rrna_filtered_fastqs(sample):
+    if is_paired(sample):
+        return [f"results/rrna_filtered/{sample}_1.fastq.gz", f"results/rrna_filtered/{sample}_2.fastq.gz"]
+    return [f"results/rrna_filtered/{sample}.fastq.gz"]
 
 
 def aligner_read(sample, read):
     if RRNA_FILTER:
-        return f"results/rrna_filtered/{sample}_{read}.fastq.gz"
+        if is_paired(sample):
+            return f"results/rrna_filtered/{sample}_{read}.fastq.gz"
+        return f"results/rrna_filtered/{sample}.fastq.gz"
     return _reads_pre_rrna(sample, read)
 
 
 def aligner_fastqs(sample):
-    return [aligner_read(sample, 1), aligner_read(sample, 2)]
+    if is_paired(sample):
+        return [aligner_read(sample, 1), aligner_read(sample, 2)]
+    return [aligner_read(sample, 1)]
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +118,22 @@ MICROARRAY_MODE = INPUT.get("type") == "microarray"
 # raw/normalized counts (PCA, sample correlation, count heatmaps, GOI) are gated off.
 DE_RESULTS_MODE = INPUT.get("type") == "deseq2_results"
 DE_RESULTS_TABLE = INPUT.get("deseq2_results")
+# Differential-expression engine (count-based routes only). DESeq2 is the default;
+# limma-voom is an opt-in cross-check that consumes the same counts.txt and emits the
+# same canonical artifacts (results CSV, up/down, deseq2_objects.rds, normalized,
+# checks 08/09), minus the DESeq2-specific TOST equivalence test. Not applicable to
+# microarray (limma-trend) or deseq2-results (no counts) modes.
+DE_ENGINE = WF.get("de_engine") or "DESeq2"
+_VALID_DE_ENGINES = ("DESeq2", "limma-voom", "edgeR")
+if DE_ENGINE not in _VALID_DE_ENGINES:
+    raise ValueError(
+        f"workflow.de_engine '{DE_ENGINE}' is invalid. Allowed: {', '.join(_VALID_DE_ENGINES)}."
+    )
+VOOM_MODE = DE_ENGINE == "limma-voom" and not (MICROARRAY_MODE or DE_RESULTS_MODE)
+EDGER_MODE = DE_ENGINE == "edgeR" and not (MICROARRAY_MODE or DE_RESULTS_MODE)
+# Alternative count-based DE engines (limma-voom, edgeR) skip the DESeq2-specific TOST
+# equivalence test, so unchanged_genes / check 13 are gated off for both.
+ALT_DE_MODE = VOOM_MODE or EDGER_MODE
 # Aligner / quantifier (fastq/sra modes only). STAR or HISAT2 -> sorted BAM -> featureCounts;
 # Salmon -> transcript-level quantification -> tximport (no BAM). All three converge on the
 # canonical results/counts/counts.txt so DESeq2 and the whole downstream are identical.
@@ -120,6 +149,22 @@ RRNA_FILTER = (
     bool(WF.get("rrna_filtering", False))
     and not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)
 )
+# rRNA filtering tool. SortMeRNA (reference-based, default, needs the rRNA db + index) or
+# RiboDetector (reference-free ML, no db download). Both emit the same
+# results/rrna_filtered/{sample}_{1,2}.fastq.gz so the aligner input is identical.
+RRNA_TOOL = (WF.get("rrna_tool") or "sortmerna").lower()
+_VALID_RRNA_TOOLS = ("sortmerna", "ribodetector")
+if RRNA_TOOL not in _VALID_RRNA_TOOLS:
+    raise ValueError(
+        f"workflow.rrna_tool '{RRNA_TOOL}' is invalid. Allowed: {', '.join(_VALID_RRNA_TOOLS)}."
+    )
+# Contamination screening (FastQ Screen): optional QC, off by default. Aligns a read subsample
+# against a panel of reference genomes and reports the % hitting each — a QC report, NOT a
+# filter (reads are not removed). fastq/sra route only; the genome panel is fetched on demand.
+CONTAM_SCREEN = (
+    bool(WF.get("contamination_screen", False))
+    and not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)
+)
 RRNA_DB = "references/rrna_db.fasta"
 RRNA_IDX = "references/rrna_idx"
 # fastp trimming toggle. When off, raw reads go straight to the rRNA filter / aligner
@@ -129,6 +174,15 @@ TRIMMING = (
     bool(WF.get("trimming", True))
     and not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)
 )
+# Trimmer choice (fastq/sra route). fastp is the default; Trim Galore and Trimmomatic are
+# opt-in. All three emit results/trimmed/{sample}_{1,2}.trim.fastq.gz, so the downstream is
+# identical and the default (fastp) path is byte-for-byte unchanged.
+TRIMMER = (WF.get("trimmer") or "fastp").lower()
+_VALID_TRIMMERS = ("fastp", "trim-galore", "trimmomatic")
+if TRIMMER not in _VALID_TRIMMERS:
+    raise ValueError(
+        f"workflow.trimmer '{TRIMMER}' is invalid. Allowed: {', '.join(_VALID_TRIMMERS)}."
+    )
 FASTQC_PRE = (
     bool(WF.get("fastqc_pre_trim", True))
     and not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)
@@ -158,16 +212,24 @@ USE_STAR_GENECOUNTS = (
     QUANTIFIER == "STAR_GeneCounts" and ALIGNER == "STAR"
     and not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)
 )
-# Single-end FASTQ is not yet supported on the alignment route (only fastp_pe
-# exists); reject it up front with a clear message instead of dead-ending at the
-# trim step. Count-matrix / microarray / deseq2-results modes have no layout.
-if not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE) and not ALL_PAIRED:
-    _se_samples = [s for s in SAMPLES if not is_paired(s)]
-    raise ValueError(
-        "Single-end FASTQ input is not yet supported (paired-end only). "
-        f"Single-end sample(s): {', '.join(_se_samples)}. Provide paired-end "
-        "reads, or use the count-matrix or GEO microarray input mode."
-    )
+# Single-end and paired-end are both supported on the alignment route, but a run must be
+# homogeneous: one rule can't emit both a 1-file and a 2-file trimmed output, so mixed layouts
+# are rejected with guidance. Count-matrix / microarray / deseq2-results modes have no layout.
+if not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE):
+    _paired_samples = [s for s in SAMPLES if is_paired(s)]
+    _single_samples = [s for s in SAMPLES if not is_paired(s)]
+    if _paired_samples and _single_samples:
+        raise ValueError(
+            "Mixed paired-end and single-end samples in one run are not supported. "
+            f"Paired: {', '.join(_paired_samples[:3])}; single: {', '.join(_single_samples[:3])}. "
+            "Split them into two projects (one per layout)."
+        )
+# True when every sample is single-end (fastq/sra route only). Selects the single-end rule
+# variants; STAR / featureCounts / strandedness inference are already layout-aware.
+SINGLE_END = (
+    not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)
+    and bool(SAMPLES) and all(not is_paired(s) for s in SAMPLES)
+)
 # Mitochondrial + chloroplast (organellar) gene handling: keep | discard | separate.
 # Only meaningful on the alignment routes (they have a genome + GTF to identify organellar
 # contigs). When not "keep", featureCounts/Salmon write counts.raw.txt and filter_organellar
@@ -177,6 +239,18 @@ ORGANELLAR_MODE = (WF.get("organellar_genes") or "keep").lower()
 ORGANELLAR_FILTER = (
     ORGANELLAR_MODE in ("discard", "separate")
     and not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)
+)
+# GSVA sample-level pathway activity: organism-safe (runs only on the user's custom gene sets,
+# never a bundled human collection). RSeQC extended alignment QC needs a genome BAM (no Salmon).
+GSVA_ON = (
+    bool(WF.get("gsva", False))
+    and bool(config.get("gene_sets", {}).get("custom_gene_sets"))
+    and not DE_RESULTS_MODE  # needs the normalized expression matrix
+)
+RSEQC_ON = (
+    bool(WF.get("rseqc", False))
+    and not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)
+    and not USE_SALMON
 )
 COUNTS_FILE = "results/counts/counts.txt"
 COUNTS_RAW = "results/counts/counts.raw.txt" if ORGANELLAR_FILTER else COUNTS_FILE
@@ -236,6 +310,7 @@ def final_targets():
         "results/reports/run_summary.txt",
         "results/reports/timing_summary.txt",
         "results/reports/software_versions.txt",
+        "results/reports/results_report.html",
         "checks/sanity_checks.txt",
     ]
     # Per-sample / normalized-count outputs: every mode produces them EXCEPT
@@ -257,7 +332,9 @@ def final_targets():
     # counts at all; every other mode does.
     if not (MICROARRAY_MODE or DE_RESULTS_MODE):
         targets.insert(0, "results/counts/counts.txt")
-        targets.append("results/deseq2/unchanged_genes.csv")
+        # The DESeq2-specific TOST equivalence output is not produced by voom / edgeR.
+        if not ALT_DE_MODE:
+            targets.append("results/deseq2/unchanged_genes.csv")
     if not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE):
         # MultiQC aggregates FastQC/fastp/STAR — irrelevant without alignment.
         targets.insert(0, "results/qc/multiqc/multiqc_report.html")
@@ -291,6 +368,10 @@ def final_targets():
             targets.append("results/enrichment/custom_enrichment_summary.txt")
             targets.append("results/figures/custom_enrichment_dotplot.png")
             targets.append("results/figures/custom_enrichment_dotplot.svg")
+    if GSVA_ON:
+        targets.append("results/gsva/gsva_scores.csv")
+        targets.append("results/figures/gsva_heatmap.png")
+        targets.append("results/figures/gsva_heatmap.svg")
     if config.get("gene_sets", {}).get("custom_gene_list") and not DE_RESULTS_MODE:
         targets.append("results/figures/goi_heatmap.png")
         targets.append("results/figures/goi_expression.png")

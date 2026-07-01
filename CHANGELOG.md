@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.16.0 — 2026-07-01
+
+### Added
+
+- **Alternative differential-expression engines.** Alongside the default DESeq2, RNA-seq counts can now be tested with **limma-voom** or **edgeR** (quasi-likelihood F-test). All three engines emit the same result schema (`deseq2_results.csv`, up/down gene lists, figures), so downstream enrichment and PPI steps are identical regardless of engine. Concordance with DESeq2 is high (fgval Jaccard ≈ 0.94 for limma-voom, direction agreement 100%); see benchmark B14.
+- **Alternative read trimmers.** The trimmer is now selectable: **fastp** (default), **Trim Galore**, or **Trimmomatic**. Each exposes its own parameters in the GUI.
+- **Alternative rRNA removal.** rRNA filtering can use **SortMeRNA** (default, reference-based) or **RiboDetector** (reference-free, machine-learning). RiboDetector runs on CPU and needs no rRNA reference database.
+- **Contamination screening.** Optional **FastQ Screen** step maps a read subsample against a panel of reference genomes to flag cross-species or adapter/vector contamination before alignment.
+- **Single-end FASTQ support.** The FASTQ route now accepts single-end libraries end to end (trimming, rRNA filtering, STAR/HISAT2/Salmon, featureCounts). Mixed single- and paired-end samples in one project are rejected with a clear message.
+- **GSVA pathway-activity module.** Optional per-sample gene-set variation analysis on the normalized expression matrix, with a sample-by-set activity heatmap. Organism-safe: it runs only on user-supplied gene sets, so it works for any organism.
+- **RSeQC alignment QC.** Optional read-distribution and gene-body-coverage reports from aligned BAMs (BED12 derived from the annotation with `gtfToGenePred`/`genePredToBed`).
+- **Self-contained HTML report.** A new `results_report.html` inlines the key figures, top differentially expressed genes, enrichment summary, and run provenance into a single file that opens in any browser with no external assets. Reachable from the GUI via **Open Results Report**.
+- **Guided design/covariate builder (GUI).** A dialog reads the sample metadata columns and helps assemble the design formula and contrast (for example adding a batch covariate), instead of typing the formula by hand.
+- **Advanced parameters panel (GUI).** A collapsible per-tool section exposes the important parameters of fastp, Trim Galore, Trimmomatic, SortMeRNA, RiboDetector, and the aligners for manual tuning; defaults are unchanged.
+- **fastp poly-X trimming** is now an exposed option (`--trim_poly_x`).
+
+### Changed
+
+- **Pipeline environments** gained the new tools: `edger`, `trim-galore`, `cutadapt`, `pigz`, `trimmomatic`, `fastq-screen`, `bowtie2`, `ribodetector`, `gsva`, `rseqc`, and the UCSC `gtfToGenePred`/`genePredToBed` utilities. The pinned lock (`bulkseq.lock.yaml`) was regenerated; RiboDetector installs its CPU ONNX runtime (no CUDA).
+- **Overview figure** (`figure1_overview`) was redrawn to show all three DE engines, the alternative preprocessing tools, single-end input, and the existing DESeq2-results-upload path that feeds enrichment, PPI, and figures without recomputing DE.
+- **Validation** was extended with a human dataset (airway smooth muscle ± dexamethasone, GRCh38/Ensembl via the Salmon route): the run recovers the canonical glucocorticoid signature (FKBP5, ZBTB16, KLF15, SPARCL1 up; VCAM1 down), confirming the human/`org.Hs.eg.db` path end to end.
+
+### Removed
+
+- **htseq-count** was dropped as a quantifier option; featureCounts, STAR gene counts, and Salmon/tximport cover the same ground.
+
 ## 0.15.2 — 2026-06-29
 
 ### Fixed

@@ -44,3 +44,87 @@ def test_organellar_genes_default_and_round_trip():
     for mode in ("keep", "discard", "separate"):
         wf = WorkflowConfig(organellar_genes=mode)
         assert WorkflowConfig(**wf.model_dump()).organellar_genes == mode
+
+
+def test_de_engine_default_and_round_trip():
+    # DESeq2 is the default engine; the choice survives a dump -> reload round-trip.
+    assert WorkflowConfig().de_engine == "DESeq2"
+    for engine in ("DESeq2", "limma-voom", "edgeR"):
+        wf = WorkflowConfig(de_engine=engine)
+        assert WorkflowConfig(**wf.model_dump()).de_engine == engine
+
+
+def test_de_engine_rejects_unknown():
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        WorkflowConfig(de_engine="sleuth")
+
+
+def test_quantifier_dead_htseq_value_removed():
+    # C1 cleanup: the unreachable htseq-count value (the Snakefile rejects it) is gone.
+    assert "htseq-count" not in WorkflowConfig.model_fields["quantifier"].annotation.__args__
+
+
+def test_trimmer_default_and_round_trip():
+    assert WorkflowConfig().trimmer == "fastp"
+    for t in ("fastp", "trim-galore", "trimmomatic"):
+        assert WorkflowConfig(**WorkflowConfig(trimmer=t).model_dump()).trimmer == t
+
+
+def test_rrna_tool_default_and_round_trip():
+    assert WorkflowConfig().rrna_tool == "sortmerna"
+    for t in ("sortmerna", "ribodetector"):
+        assert WorkflowConfig(**WorkflowConfig(rrna_tool=t).model_dump()).rrna_tool == t
+
+
+def test_contamination_screen_default_and_round_trip():
+    assert WorkflowConfig().contamination_screen is False
+    for v in (True, False):
+        assert WorkflowConfig(**WorkflowConfig(contamination_screen=v).model_dump()).contamination_screen is v
+
+
+def test_preproc_selectors_reject_unknown():
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        WorkflowConfig(trimmer="cutadapt")
+    with pytest.raises(ValidationError):
+        WorkflowConfig(rrna_tool="bbduk")
+
+
+def test_gsva_rseqc_defaults_and_round_trip():
+    assert WorkflowConfig().gsva is False
+    assert WorkflowConfig().rseqc is False
+    for field in ("gsva", "rseqc"):
+        wf = WorkflowConfig(**{field: True})
+        assert getattr(WorkflowConfig(**wf.model_dump()), field) is True
+
+
+def test_advanced_tool_params_round_trip():
+    # The new per-tool advanced parameters serialize and reload through the full config.
+    from app.core.config_models import (
+        AppConfig, ContaminationConfig, FastpConfig, RibodetectorConfig, TrimmomaticConfig,
+    )
+
+    assert FastpConfig().trim_poly_x is False
+    assert TrimmomaticConfig().sliding_window_quality == 15
+    assert RibodetectorConfig().ensure == "norrna"
+    assert ContaminationConfig().subset == 100000
+
+    cfg = default_config("demo", BASE / "adv")
+    cfg.fastp.trim_poly_x = True
+    cfg.trimmomatic.sliding_window_quality = 20
+    cfg.ribodetector.chunk_size = 512
+    cfg.contamination.subset = 250000
+    cfg.star.twopass_mode = True
+    cfg.deseq2.min_count = 5
+    reloaded = AppConfig(**cfg.model_dump())
+    assert reloaded.fastp.trim_poly_x is True
+    assert reloaded.trimmomatic.sliding_window_quality == 20
+    assert reloaded.ribodetector.chunk_size == 512
+    assert reloaded.contamination.subset == 250000
+    assert reloaded.star.twopass_mode is True
+    assert reloaded.deseq2.min_count == 5

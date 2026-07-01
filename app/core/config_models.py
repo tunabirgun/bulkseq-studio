@@ -72,12 +72,34 @@ class ReferenceConfig(BaseModel):
 class WorkflowConfig(BaseModel):
     fastqc_pre_trim: bool = True
     trimming: bool = True
+    # Trimmer for the adapter/quality step (count-based fastq/sra route). fastp is the
+    # default; Trim Galore and Trimmomatic are opt-in alternatives that emit the same
+    # trimmed reads, so the rest of the pipeline is unchanged.
+    trimmer: Literal["fastp", "trim-galore", "trimmomatic"] = "fastp"
     fastqc_post_trim: bool = True
     rrna_filtering: bool = False
+    # rRNA filtering tool (only used when rrna_filtering is on). SortMeRNA (reference-based,
+    # default) or RiboDetector (reference-free, no database download).
+    rrna_tool: Literal["sortmerna", "ribodetector"] = "sortmerna"
+    # Contamination screening (FastQ Screen): optional QC that reports the % of reads matching
+    # a panel of reference genomes (a report, not a filter). Off by default.
+    contamination_screen: bool = False
     aligner: Literal["STAR", "HISAT2", "Salmon"] = "STAR"
-    quantifier: Literal["featureCounts", "STAR_GeneCounts", "Salmon_tximport", "htseq-count"] = "featureCounts"
+    quantifier: Literal["featureCounts", "STAR_GeneCounts", "Salmon_tximport"] = "featureCounts"
     enrichment: bool = True
     figures: bool = True
+    # GSVA sample-level gene-set activity scores. Organism-safe: runs only on the
+    # user-supplied custom gene sets (gene_sets.custom_gene_sets), never a bundled
+    # human collection, so it is valid for non-model organisms.
+    gsva: bool = False
+    # RSeQC extended alignment QC (read distribution + gene-body coverage). Needs a
+    # genome BAM, so it is unavailable on the Salmon route.
+    rseqc: bool = False
+    # Differential-expression engine for count-based routes (fastq/sra/count_matrix).
+    # DESeq2 is the default; limma-voom is an opt-in cross-check that emits the same
+    # canonical artifacts. Microarray uses limma-trend and deseq2-results uploads
+    # bypass DE, regardless of this value.
+    de_engine: Literal["DESeq2", "limma-voom", "edgeR"] = "DESeq2"
     custom_gene_list_analysis: bool = True
     # Mitochondrial + chloroplast/plastid genes: keep them, discard them before DE, or
     # separate them into their own count subset (and run the main DE on nuclear genes only).
@@ -90,6 +112,31 @@ class FastpConfig(BaseModel):
     unqualified_percent_limit: int = 40
     length_required: int = 36
     trim_poly_g: bool = False
+    # 3' poly-X (poly-A/poly-T) trimming, useful for 3'-biased / degraded libraries.
+    trim_poly_x: bool = False
+
+
+class TrimmomaticConfig(BaseModel):
+    # Sliding-window quality trim (SLIDINGWINDOW:size:quality) and end quality
+    # (LEADING/TRAILING). Min length reuses fastp.length_required. Defaults match the
+    # widely used Trimmomatic PE recipe.
+    sliding_window_size: int = 4
+    sliding_window_quality: int = 15
+    leading: int = 3
+    trailing: int = 3
+
+
+class RibodetectorConfig(BaseModel):
+    # chunk_size * 1024 reads per batch (memory/speed trade-off). ensure: which class
+    # is kept with high confidence (norrna keeps high-confidence non-rRNA reads).
+    chunk_size: int = 256
+    ensure: Literal["norrna", "rrna", "both", "none"] = "norrna"
+
+
+class ContaminationConfig(BaseModel):
+    # FastQ Screen: number of reads subsampled per sample for the screen (faster than
+    # screening every read; the default is FastQ Screen's own).
+    subset: int = 100000
 
 
 class SortmernaConfig(BaseModel):
@@ -303,6 +350,9 @@ class AppConfig(BaseModel):
     reference: ReferenceConfig = Field(default_factory=ReferenceConfig)
     workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
     fastp: FastpConfig = Field(default_factory=FastpConfig)
+    trimmomatic: TrimmomaticConfig = Field(default_factory=TrimmomaticConfig)
+    ribodetector: RibodetectorConfig = Field(default_factory=RibodetectorConfig)
+    contamination: ContaminationConfig = Field(default_factory=ContaminationConfig)
     sortmerna: SortmernaConfig = Field(default_factory=SortmernaConfig)
     star: StarConfig = Field(default_factory=StarConfig)
     featurecounts: FeatureCountsConfig = Field(default_factory=FeatureCountsConfig)

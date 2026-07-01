@@ -27,9 +27,11 @@ out <- snakemake@output
 # diagnostics) degrade to labelled placeholders; MA, volcano and the p-value
 # histogram render from res/resLFC as usual.
 has_counts <- !is.null(vsd) && !is.null(dds)
-# Microarray (limma) backend: baseMean is average log2 intensity, not a count
-# mean, so count-scale transforms (log10 on baseMean) are skipped below.
-is_intensity <- identical(tryCatch(obj$assay_kind, error = function(e) NULL), "log2_intensity")
+# Log-scale backends (microarray log2 intensity; limma-voom logCPM): baseMean is a
+# log-scale mean, not a count mean, so count-scale transforms (log10 on baseMean)
+# are skipped below and the DESeq2-only model diagnostics degrade to placeholders.
+assay_kind <- tryCatch(obj$assay_kind, error = function(e) NULL)
+is_intensity <- isTRUE(assay_kind %in% c("log2_intensity", "log2_cpm"))
 
 # Gene-id -> symbol labels (from the DE step). Falls back to the gene id when no
 # symbol is known, so RefSeq/locus-tag references and older RDS files still work.
@@ -405,7 +407,7 @@ if (!is_intensity && has_counts) {
   lib_dim <- fig_dim("library_size")
   save_gg(p_lib, out[["libsize_png"]], out[["libsize_svg"]], w = lib_dim[1], h = lib_dim[2])
 } else {
-  na_msg <- if (is_intensity) "Diagnostic not applicable (microarray)" else "Diagnostic needs the count model (unavailable for a DESeq2-results upload)"
+  na_msg <- if (identical(assay_kind, "log2_intensity")) "Diagnostic not applicable (microarray)" else if (identical(assay_kind, "log2_cpm")) "Diagnostic not applicable (limma-voom logCPM backend)" else "Diagnostic needs the count model (unavailable for a DESeq2-results upload)"
   save_placeholder(na_msg, out[["disp_png"]], out[["disp_svg"]])
   save_placeholder(na_msg, out[["cooks_png"]], out[["cooks_svg"]])
   save_placeholder(na_msg, out[["libsize_png"]], out[["libsize_svg"]])

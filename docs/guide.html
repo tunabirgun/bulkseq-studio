@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BulkSeq Studio — Install &amp; quick start</title>
+<meta name="description" content="Install BulkSeq Studio on Windows or Linux, let the first-run setup install the tools, and run your first bulk RNA-seq or microarray analysis. Covers all five input modes.">
+<link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html">
+      <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
+      <span><b>BulkSeq Studio</b><span class="ver">v0.16.0</span></span>
+    </a>
+    <p class="tagline">Bulk RNA-seq &amp; microarray analysis, no code.</p>
+    <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
+    <nav>
+      <ul class="nav">
+        <li><a href="index.html">Overview</a></li>
+        <li><a class="active" href="guide.html">Install &amp; quick start</a></li>
+        <li><a href="analysis.html">Analysis options</a></li>
+        <li><a href="outputs.html">Outputs</a></li>
+        <li><a href="benchmarks.html">Benchmarks</a></li>
+        <li><a href="faq.html">FAQ &amp; cite</a></li>
+      </ul>
+      <div class="ext">
+        <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
+        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download latest release ↗</a>
+        <a href="https://doi.org/10.5281/zenodo.20955660" target="_blank" rel="noopener">Benchmark archive (Zenodo) ↗</a>
+      </div>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <section id="install"><p class="kicker">Get started</p>
+<h2>Install & setup</h2>
+<p class="lead">BulkSeq Studio is free and runs on Windows and Linux. You download one file, launch it, and let the app set up the bioinformatics tools for you the first time. No coding, and on Windows no administrator account for the install itself.</p>
+
+<div class="grid cols-2">
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>Windows</h4>
+    <p>Two downloads on the <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">Releases</a> page, pick either:</p>
+    <ul>
+      <li><strong>Installer</strong> — <code>BulkSeqStudio-Setup-0.16.0.exe</code>. A per-user install that needs no administrator rights; afterwards you launch it from the Start Menu.</li>
+      <li><strong>Portable</strong> — <code>BulkSeqStudio-Portable-0.16.0.zip</code>. Unzip it anywhere and double-click <code>BulkSeqStudio.exe</code>. Nothing is installed.</li>
+    </ul>
+  </div>
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>Linux</h4>
+    <p>Download from the same Releases page and pick either:</p>
+    <ul>
+      <li><strong>AppImage</strong> — a single self-contained file. Make it executable, then run it; nothing to extract or install.</li>
+      <li><strong>Tarball</strong> — extract it and run the bundled launcher <code>BulkSeqStudio</code>.</li>
+    </ul>
+    <p class="muted">Both bundle the interface, so you do not need system Python. They are built on Ubuntu 24.04 and need glibc 2.39 or newer.</p>
+  </div>
+</div>
+
+<h3>What is WSL2, and why does Windows need it?</h3>
+<p>The bioinformatics tools that do the analysis (alignment, counting, DESeq2, enrichment) are Linux programs. On Windows, BulkSeq Studio runs them inside <strong>WSL2</strong> — the Windows Subsystem for Linux, a lightweight Linux that Windows runs quietly in the background. You never open a Linux terminal yourself. The window you see is only the graphical interface; the actual computation happens in a managed <em>micromamba</em> environment inside WSL2. The app can enable WSL2 and install that environment for you from its setup screen, so you do not configure anything by hand.</p>
+<p class="muted">On Linux there is no WSL: the same interface runs the same pipeline directly in a local environment, and the results are identical.</p>
+
+<h3>Install and first run, step by step</h3>
+<ol class="steps">
+  <li>
+    <h4>Download and open the app</h4>
+    <p>Grab the Windows installer or portable ZIP (or, on Linux, the AppImage or tarball) from the Releases page, then launch BulkSeq Studio. The per-user Windows install does not ask for an administrator password.</p>
+  </li>
+  <li>
+    <h4>Let the Environment setup screen check your machine</h4>
+    <p>On first launch (and any time later from <strong>Check Environment</strong> on the Project tab), a readiness screen checks the pieces it needs and shows each one as <em>Ready</em> or <em>Action needed</em>, with an install button when something is missing.</p>
+  </li>
+  <li>
+    <h4>Install anything marked "Action needed"</h4>
+    <p>Work top to bottom: click each <em>Install…</em> button, then press <strong>Re-check</strong> to refresh the statuses. The downloads run inside your own WSL user account with no sudo password. <em>Show details / log</em> expands the full setup log if a step needs attention.</p>
+  </li>
+  <li>
+    <h4>Click Continue when the header reads "4 of 4 ready"</h4>
+    <p>Once every row is <em>Ready</em>, the screen is done. You can already create projects, edit metadata, and build configs while the tools finish installing; only starting a pipeline run needs them.</p>
+  </li>
+</ol>
+
+<figure>
+  <img src="assets/screenshot-environment-check.png" alt="The Environment setup window: four readiness rows, each Ready or Action needed, with install buttons and a Continue button.">
+  <figcaption>The first-run Environment setup screen on Windows. Each row has a status and, when needed, a one-click install.</figcaption>
+</figure>
+
+<h4>The four readiness rows (Windows first run)</h4>
+<ul>
+  <li><strong>Python GUI / core packages</strong> — the libraries the interface itself needs.</li>
+  <li><strong>WSL2</strong> — the lightweight Linux the pipeline runs inside, plus the micromamba package manager. If WSL2 is not yet enabled, this single step opens an Administrator PowerShell window once (Windows requires elevation only to turn the feature on), and you may be asked to reboot.</li>
+  <li><strong>Core bioinformatics environment ("bulkseq")</strong> — Snakemake, the three aligners (STAR, HISAT2, Salmon), featureCounts, samtools, fastp, FastQC, and MultiQC. The download takes a few minutes.</li>
+  <li><strong>R / DESeq2 stack</strong> — R with DESeq2, the enrichment packages, and the figure toolchain. This is the largest, slowest install and can take a while; you only do it once.</li>
+</ul>
+<p class="muted">On Linux the WSL2 row does not apply — the pipeline runs locally and those controls are hidden.</p>
+
+<div class="note"><span class="t">Disk space</span> Set aside about 10 GB of free disk for the toolchain and reference indices, and 16 GB or more of RAM is recommended (STAR alignment is the memory-heavy step; for very large genomes the HISAT2 or Salmon aligner needs far less). The one-time environment setup downloads several packages, so the first run is slower than later ones — give it time and a stable internet connection.</div>
+
+<figure>
+  <img src="assets/screenshot-linux.png" alt="BulkSeq Studio running natively on a Linux desktop.">
+  <figcaption>The same application running natively on Linux. Every tab, the Figure Style editor, and the interactive PPI viewer work the same as on Windows.</figcaption>
+</figure></section>
+
+    <section id="quickstart"><p class="kicker">Your first analysis</p>
+<h2>Quick start</h2>
+<p class="lead">From a public study to differential expression, enrichment, and an interactive protein network, without writing any code. The example below follows the most common path: paste study accessions, let the app fetch the data, and run.</p>
+
+<div class="note"><span class="t">Before you start</span> On the Project tab, click <strong>Check Environment</strong> first. The setup window checks four things (Python GUI, WSL2, the core bioinformatics environment, and the R/DESeq2 stack) and installs anything that is missing. When the header reads <strong>4 of 4 ready</strong>, you are clear to run. You can keep building the project while the tools install; only starting a run needs them.</div>
+
+<ol class="steps">
+  <li>
+    <h4>Create or open a project</h4>
+    <p>On the <strong>Project</strong> tab, make a new project folder. The app scaffolds the <code>config/</code> folder, a copy of the Snakemake <code>workflow/</code>, and a provenance manifest. On Windows, click <em>Use WSL filesystem</em> when prompted so the project lives on the fast Linux disk rather than a <code>C:\</code> drive.</p>
+  </li>
+  <li>
+    <h4>Choose an input</h4>
+    <p>On the <strong>Input Data</strong> tab, pick how your data comes in. The simplest is to paste SRR / SRP / PRJ accessions and click <em>Fetch metadata & build samples</em>; the ENA fetch reads the layout, FASTQ URLs, and read counts and builds the sample sheet for you. You can also select local FASTQ files, or skip alignment entirely with <em>Use a Count Matrix</em>, <em>Upload DESeq2 Results</em>, or a GEO microarray series (GSE).</p>
+  </li>
+  <li>
+    <h4>Confirm the metadata and contrast</h4>
+    <p>On the <strong>Metadata</strong> tab, the samples appear in an editable table. Assign each one a <code>condition</code> (for example <em>treated</em> vs <em>control</em>) and check that the layout (paired or single-end) is correct. These groups define the comparison DESeq2 will run.</p>
+  </li>
+  <li>
+    <h4>Pick a reference and analysis options</h4>
+    <p>On the <strong>Reference Manager</strong> tab, choose your organism from the Ensembl / NCBI RefSeq catalog (or import a custom genome and annotation), then click <em>Use Selected Preset</em>. A reference is required before a run will start. On the <strong>Workflow Settings</strong> tab, set the trimmer, aligner, and rRNA tool (leave the aligner on <strong>STAR</strong> if unsure), pick the differential-expression engine, build the DESeq2 design and contrast (a <em>Design helper</em> can compose the formula from your metadata), the <code>alpha</code> and <code>|log2FC|</code> thresholds, and how to handle organellar genes. The defaults are sane, so most first runs only need the contrast confirmed.</p>
+  </li>
+  <li>
+    <h4>Start the run and watch the Run Monitor</h4>
+    <p>Clear any flagged items on the <strong>Sanity Checks</strong> tab, then go to <strong>Run Monitor</strong> and click <strong>Start Run</strong>. The progress bar and a plain-language current phase (Downloading, Aligning, DESeq2, and so on) track the pipeline above the raw log. Use <strong>Stop</strong> to cancel, <strong>Resume</strong> to continue an interrupted run, and <strong>Unlock</strong> if a run was interrupted hard.</p>
+    <figure>
+      <img src="assets/screenshot-run-monitor.png" alt="The Run Monitor tab showing a completed run at 100%, with Start Run, Resume, Unlock, Stop, and the Export Tools & References and Export Study Design buttons">
+      <figcaption>The Run Monitor after a finished run. The Export Tools & References and Export Study Design buttons save the exact tool versions, reference, and study design for that run.</figcaption>
+    </figure>
+  </li>
+  <li>
+    <h4>Read the results</h4>
+    <p>When the run finishes, the <strong>Outputs</strong> tab lets you browse the count matrix and DESeq2 table and view the figures (PCA, volcano, MA, heatmaps); toggle <em>Vector (SVG)</em> for a crisp preview at any zoom. Open the <strong>PPI Network</strong> tab to explore the STRING protein network interactively, and click <strong>Open MultiQC Report</strong> on the Run Monitor for the read-quality summary. A self-contained <code>results_report.html</code> gathers the figures, top genes, enrichment, and provenance into one shareable file. Export the tools & references and study design files to capture the run's provenance.</p>
+  </li>
+</ol>
+
+<div class="note"><span class="t">Tip</span> Not sure the configuration is right? Use <strong>Dry Run</strong> before <strong>Start Run</strong>. A dry run validates the configuration and reports exactly which steps would execute, without downloading or computing anything.</div></section>
+
+    <section id="input"><p class="kicker">Five ways in</p>
+<h2>Input modes</h2>
+<p class="lead">BulkSeq Studio meets your data wherever it already is. You can start from raw reads, from public accessions, from a count table, from a finished differential-expression table, or from a GEO microarray series. The mode you choose decides which steps run and which outputs you get; everything downstream of the entry point is shared, so the figures and enrichment look the same no matter how you got there.</p>
+
+<div class="grid cols-2">
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 13v8"/><path d="m8 17 4 4 4-4"/><path d="M20 16.5A4.5 4.5 0 0 0 17.5 8h-1.8A7 7 0 1 0 4 14.9"/></svg>1. SRA / ENA accessions</h4>
+    <p>Paste SRR / SRP / PRJ accessions and the app fetches the ENA metadata, builds the sample sheet (layout, FASTQ URLs, read counts), and downloads the reads for you.</p>
+    <p class="muted">Unlocks the full pipeline: FastQC / MultiQC, trimming, alignment, gene counting, DESeq2, enrichment, figures, and the PPI network.</p>
+  </div>
+
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>2. Local FASTQ files</h4>
+    <p>Already downloaded your reads? Point the app at FASTQ files on disk. Single-end or paired-end, detected automatically from the sample sheet; both layouts run the full alignment route.</p>
+    <p class="muted">Same full pipeline as the accession route, minus the download step: QC, trimming, alignment, counting, DESeq2, enrichment, figures, PPI.</p>
+  </div>
+
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M12 3v18"/></svg>3. Count matrix (skip alignment)</h4>
+    <p>Upload a gene-by-sample counts table (featureCounts output or any TSV/CSV) to skip download, QC, and alignment.</p>
+    <p class="muted">Goes straight to DESeq2, then figures, enrichment, statistics, and the PPI network. Use this when alignment is already done elsewhere.</p>
+  </div>
+
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M12 18v-6"/><path d="m9 15 3-3 3 3"/></svg>4. DESeq2 results table (bring your own)</h4>
+    <p>Upload a finished differential-expression table (the format <code>DESeq2::results()</code> writes). Required columns are <code>gene_id</code>, <code>log2FoldChange</code>, and <code>padj</code>; the up- and down-regulated lists are derived from your significance thresholds.</p>
+    <p class="muted">No FASTQ, alignment, counts, or DESeq2 step. Produces functional enrichment, the volcano / MA / p-value figures, the STRING PPI network, the MSigDB set-overlap test, and a preranked <code>.rnk</code>. Outputs that need per-sample counts (PCA, sample-correlation, count heatmaps, the Wilcoxon test, the normalized-expression export) are skipped.</p>
+  </div>
+
+  <div class="card feature">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>5. GEO microarray series (GSE)</h4>
+    <p>Enter a GEO series accession. The app ingests the normalized intensities (GEOquery series matrix, or RMA from raw Affymetrix CEL), maps probes to gene symbols, and runs <strong>limma</strong> differential expression into a DESeq2-shaped results table.</p>
+    <p class="muted">From there it runs the same figures, enrichment, genes-of-interest, and networks as the RNA-seq routes. RNA-seq series pasted here are redirected to the SRA box.</p>
+  </div>
+</div>
+
+<figure>
+  <img src="assets/screenshot-input-deseq2.png" alt="The Input Data tab configured for the bring-your-own DESeq2-results input mode, with the results-table upload control selected.">
+  <figcaption>The Input Data tab in DESeq2-results mode: upload a finished table and go straight to enrichment, figures, and the STRING network, with no reads or alignment.</figcaption>
+</figure>
+
+<div class="note"><span class="t">Tip</span> The three aligner routes (STAR, HISAT2, Salmon) converge on a common count matrix, so once a run reaches the counting step, everything afterward is identical regardless of how the reads were aligned, or which input mode you started from.</div>
+
+<div class="note warn"><span class="t">One layout per run</span> Single-end and paired-end reads both run the full alignment route, but a single run must use one layout. A mixed-layout sample sheet is rejected with guidance so the two are not counted together by accident.</div>
+
+<div class="note warn"><span class="t">Match your gene IDs</span> For modes that skip alignment (count matrix, DESeq2 results), the IDs in your table must match the keytype of the organism you select on the Reference tab, or enrichment, KEGG, and STRING will not map. Pick the preset for your organism so the gene-ID namespace lines up.</div></section>
+    <div class="footer" style="max-width:70ch;margin:0 auto;">
+      <p>Free and open-source under the MIT License · Tuna Birgün</p>
+    </div>
+  </main>
+</div>
+
+<script>
+// Mobile menu toggle (nav is cross-page, so no scroll-spy is needed).
+(function () {
+  var btn = document.querySelector('.menu-toggle');
+  var nav = document.querySelector('.nav');
+  if (btn && nav) {
+    btn.addEventListener('click', function () {
+      var open = nav.classList.toggle('open');
+      btn.setAttribute('aria-expanded', String(open));
+    });
+  }
+})();
+</script>
+<script src="assets/lightbox.js" defer></script>
+</body>
+</html>

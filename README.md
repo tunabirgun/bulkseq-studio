@@ -8,7 +8,7 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 
 ## Features
 
-- **End-to-end pipeline.** ENA/SRA FASTQ download, FastQC/MultiQC, fastp trimming, alignment (STAR, HISAT2, or Salmon), gene counting (featureCounts, STAR gene counts, or Salmon tximport), DESeq2, GO/KEGG and custom-gene-set enrichment, and figures, orchestrated by Snakemake.
+- **End-to-end pipeline.** ENA/SRA FASTQ download, FastQC/MultiQC, adapter/quality trimming (fastp, Trim Galore, or Trimmomatic), optional rRNA filtering (SortMeRNA or RiboDetector) and contamination screening (FastQ Screen), alignment (STAR, HISAT2, or Salmon), gene counting (featureCounts, STAR gene counts, or Salmon tximport), differential expression (DESeq2, limma-voom, or edgeR), GO/KEGG and custom-gene-set enrichment, optional GSVA pathway activity, and publication figures, orchestrated by Snakemake. Paired-end and single-end reads are both supported.
 - **No command line needed.** A tabbed GUI walks you from project setup through metadata, reference selection, a sanity-check gate, and an interactive Outputs browser. The Run Monitor shows a plain-language current phase (Downloading, Aligning, DESeq2, and so on) above the raw log.
 - **Choice of aligner.** STAR (default, genome-size-aware index), HISAT2 (graph aligner, small index and low memory, for large crop genomes that overflow STAR), or Salmon (alignment-free transcriptome quantification, lowest memory). The three routes produce a common count matrix, so everything after counting is the same. See [Choosing an aligner](#choosing-an-aligner).
 - **Sizes itself to your machine.** Resource recommendations are based on the WSL2 VM's real RAM/CPU caps (not the Windows host total), so memory-heavy steps like STAR do not over-subscribe and thrash. A runtime estimate is shown before you start.
@@ -16,7 +16,13 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 - **Start from a count matrix.** Already have counts? Upload a gene-by-sample table (featureCounts output or any TSV/CSV) to skip download, QC, and alignment and go straight to DESeq2, figures, and enrichment.
 - **GEO microarray (GSE).** Enter a GEO series accession; the app ingests the normalized intensities (GEOquery series matrix, or RMA from raw Affymetrix CEL), maps probes to gene symbols, and runs **limma** differential expression, then the same figures, enrichment, and genes-of-interest. RNA-seq series are redirected to the SRA box.
 - **Bring your own DESeq2 results.** Upload a differential-expression table to run enrichment, the volcano / MA / p-value figures, and the STRING PPI network directly, with no FASTQ, alignment, or counts. See [Bring your own DESeq2 results](#bring-your-own-deseq2-results).
-- **Differential expression with DESeq2.** apeglm shrinkage, VST, configurable significance thresholds (`alpha`, `|log2FC|`), and separate up- and down-regulated gene lists.
+- **Three differential-expression engines.** DESeq2 is the default (apeglm shrinkage, VST, configurable `alpha` and `|log2FC|` thresholds, separate up- and down-regulated gene lists). Optional **limma-voom** and **edgeR quasi-likelihood** engines are provided as cross-checks, best suited to larger designs; all three emit the same result tables and figures, so everything downstream is identical. DESeq2 remains the default and its results are unchanged (validated log2FC correlation ≈ 0.997–1.000 and top-DEG Jaccard 0.94–0.97 against DESeq2 on *Fusarium graminearum*).
+- **Choice of trimmer, rRNA tool, and a contamination screen.** Adapter/quality trimming with **fastp** (default), **Trim Galore**, or **Trimmomatic**; optional ribosomal-RNA removal with **SortMeRNA** (reference-based, default) or **RiboDetector** (reference-free); and an optional **FastQ Screen** contamination report (percentage of reads matching a panel of reference genomes) that lands in the MultiQC report. The defaults (fastp, SortMeRNA) are unchanged, so existing results are unaffected.
+- **Single-end and paired-end input.** Both layouts run the full pipeline through every trimmer, aligner, and rRNA tool; the app detects the layout from the sample sheet and blocks a mixed-layout run with guidance.
+- **GSVA pathway activity.** Optional sample-level gene-set activity scores (GSVA) computed against your own custom gene sets, with a per-sample heatmap. Organism-safe: it uses only your gene sets, so it is valid for non-model organisms. Descriptive scores, not a significance test.
+- **Extended alignment QC (RSeQC).** An optional read genomic-context distribution (exon / intron / intergenic) and 5′→3′ gene-body coverage, added to the MultiQC report (genome-BAM routes only).
+- **Advanced parameters, exposed.** A collapsible Advanced parameters panel on the Workflow tab surfaces the important knobs of every tool (fastp, Trimmomatic, RiboDetector, FastQ Screen, STAR, featureCounts, DESeq2), with the validated defaults pre-filled so a run reproduces the standard behaviour unless you change them.
+- **Self-contained HTML report + design helper.** One shareable HTML results report embeds the figures, top genes, enrichment, and provenance in a single file (no external assets). A **Design helper** composes the DESeq2 design formula from your metadata columns without typing R: tick the nuisance variables you want to adjust for (batch, sequencing run, donor, sex, and so on) and it builds an additive formula such as `~ batch + condition`, putting the effect of interest last. Accounting for these known covariates removes their variation from the comparison, so a batch or donor difference is not mistaken for the treatment effect. See [The design helper: adjusting for batch and covariates](#the-design-helper-adjusting-for-batch-and-covariates).
 - **Mitochondrial and chloroplast gene handling.** Organellar transcripts can dominate library size and skew normalization. On the Workflow tab you choose to keep them, discard them before differential expression, or analyse them separately (the main DE runs on nuclear genes only; a separate organellar count subset and a per-sample organellar-fraction table are written). Organellar contigs are detected from the reference (mitochondrion and chloroplast/plastid), so it works for plants and animals without a gene list.
 - **Directional functional enrichment.** GO over-representation and GSEA (clusterProfiler) run separately on the up- and down-regulated sets. Selecting an organism preset auto-configures its enrichment databases and STRING taxon, so KEGG pathway ORA and GSEA run for any organism with a KEGG code (fungi, bacteria, yeast, for example *Fusarium graminearum*, code `fgr`), and GO and Reactome are available without a Bioconductor OrgDb through g:Profiler (`gprofiler2`). Organisms with an installed OrgDb (human, mouse, fly) use clusterProfiler and additionally get disease-ontology terms, so an organism is not skipped for lacking an OrgDb. Enrichment figures (GO and KEGG dotplots, GSEA running-score, ridgeplot, gene-concept and term-similarity networks) use enrichplot / ggplot2. You can also supply your own gene sets — a GMT and/or an id→term annotation table, with an optional background list for the ORA universe — for a custom over-representation + GSEA run alongside GO/KEGG (the gene IDs must match the run's identifier format; a mismatch is flagged).
 - **Interactive protein-interaction network.** A dedicated PPI Network tab embeds the STRING network in an interactive [cytoscape.js](https://js.cytoscape.org/) view: hover a protein for its symbol, mean expression, log2 fold-change, adjusted p-value, degree, and module; drag, zoom, and re-layout (fcose/cose/circle and others); recolour by fold-change or module; resize by degree, expression, or significance; filter by confidence; and export PNG or SVG (white or transparent background). The network also exports to Cytoscape (GraphML, SIF, cytoscape.js JSON) for external editing.
@@ -30,7 +36,7 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 - **Reproducibility built in.** Every run records a default-vs-used parameter diff, software versions, an environment lock hash, the reference accession/MD5, and R `sessionInfo`. The conda environment is pinned in `workflow/envs/bulkseq.lock.yaml`.
 - **An accessible desktop UI.** Light and dark themes (WCAG-AA contrast), grouped settings cards with a clear primary action per tab, plain-language controls, empty-state guidance, a resizable Outputs workspace that remembers its size, keyboard shortcuts (Ctrl+O open, F5 dry-run, F9 run), and a recent-projects list.
 
-The three aligner routes (STAR, HISAT2, Salmon), the featureCounts / STAR-gene-counts / Salmon-tximport quantifiers, optional SortMeRNA rRNA filtering, custom gene-set enrichment, and the count-matrix, GEO microarray (limma), and DESeq2-results input routes are implemented and validated (see [Validation](#validation)). The htseq-count quantifier is scaffolded but not yet implemented and is disabled in the GUI so a run cannot start down an unfinished path.
+The three aligner routes (STAR, HISAT2, Salmon), the featureCounts / STAR-gene-counts / Salmon-tximport quantifiers, the three trimmers (fastp / Trim Galore / Trimmomatic), the two rRNA tools (SortMeRNA / RiboDetector) and the optional FastQ Screen contamination report, the three differential-expression engines (DESeq2 / limma-voom / edgeR), single-end and paired-end input, GSVA pathway activity, RSeQC extended QC, custom gene-set enrichment, and the count-matrix, GEO microarray (limma), and DESeq2-results input routes are all implemented and validated (see [Validation](#validation)).
 
 ## Choosing an aligner
 
@@ -49,6 +55,10 @@ If you are not sure, leave it on STAR. It is the safe default and the most commo
 From data to results in one window: bring in a study on the Input tab, configure the aligner and DESeq2 design on the Workflow tab, browse publication figures in the Outputs tab, and explore the protein network on the PPI tab. The same four-tab workflow in dark mode:
 
 ![BulkSeq Studio in dark mode: the Input, Workflow Settings, Outputs (volcano plot) and PPI Network tabs](docs/screenshot-overview-dark.png)
+
+The Workflow Settings tab gathers every pipeline choice in one place — aligner and quantifier, trimmer, rRNA tool and contamination screen, the differential-expression engine, the design formula (with the Design helper), significance thresholds, organellar-gene handling, the optional GSVA and RSeQC outputs, and a custom-gene-set panel:
+
+![The Workflow Settings tab: aligner, trimmer, rRNA tool, DE engine, design, and output options](docs/screenshot-workflow-settings.png)
 
 The interactive PPI Network tab. Hover a protein to read its fold-change, adjusted p-value, mean expression, and degree; recolour and resize the nodes, filter by confidence, export PNG/SVG, or save the Cytoscape files:
 
@@ -157,7 +167,7 @@ A minimal launcher (`python -m app.simple_gui`) is also available for opening an
 2. **Input Data:** select FASTQ files, or paste SRR/SRP/PRJ accessions and click *Fetch metadata & build samples*. Already have counts? Click *Use a Count Matrix (skip alignment)*. Already have a DESeq2 table? Click *Upload DESeq2 Results*. For a GEO microarray study, enter a GSE accession and click *Fetch a GEO microarray series*; the pipeline ingests the intensities and runs limma, figures, and enrichment.
 3. **Metadata:** assign each sample a `condition` and check the layout (paired/single) in the editable table.
 4. **Reference Manager:** pick an organism from the catalog (Ensembl / NCBI RefSeq) or import a custom genome and annotation.
-5. **Workflow Settings:** choose the aligner, set the DESeq2 design and contrast, `alpha`, `|log2FC|` threshold, and how to handle organellar genes.
+5. **Workflow Settings:** choose the trimmer, aligner, rRNA tool, and differential-expression engine; set the design and contrast (a Design helper can build the formula from your metadata), `alpha`, `|log2FC|` threshold, and how to handle organellar genes; optionally enable the contamination screen, GSVA, or extended QC. An Advanced parameters panel exposes each tool's important settings.
 6. **Sanity Checks:** resolve any flagged issues before running.
 7. **Run Monitor:** start the pipeline and watch progress. When it finishes, export the tools & references and study design files for the run.
 8. **Outputs:** browse the count matrix and DESeq2 table, view and zoom figures (toggle *Vector (SVG)* for a crisp preview at any zoom), restyle and regenerate them, and define genes of interest.
@@ -195,16 +205,18 @@ snakemake --cores 8 --resources mem_mb=24000 --configfile config/config.yaml
 The pipeline is validated end-to-end on real datasets:
 
 - **Drosophila, pasilla** (Ensembl): 467 DE genes, the *pasilla* gene strongly down-regulated, all sanity checks PASS. The four-sample subset ships as a one-click benchmark project (`examples/benchmarks/pasilla_paired_subset`).
-- **Fusarium graminearum, spore vs mycelium** (SRP039087; PH-1, NCBI RefSeq): PC1 separates the conditions at 98%, 5,734 DE genes (2,723 up / 2,478 down at |log2FC| > 1), top hits at log2FC 11 to 14, consistent with the known conidium-to-mycelium developmental transition.
+- **Fusarium graminearum, spore vs mycelium** (SRP039087; PH-1, NCBI RefSeq): PC1 separates the conditions at 98%, 5,734 DE genes at padj < 0.05 (5,201 at |log2FC| > 1: 2,723 up / 2,478 down), top hits at log2FC 11 to 14, consistent with the known conidium-to-mycelium developmental transition.
 - **Oryza sativa (rice), salt stress** (PRJDB38133; super-hybrid CY1000, IRGSP-1.0 NCBI RefSeq): 12,171 DE genes (5,732 up / 6,439 down at padj < 0.05) on the six-sample control vs 5-day salt subset; KEGG ORA/GSEA, g:Profiler GO enrichment, and a 58-node STRING PPI network reproduce the canonical salt-stress response (ROS detoxification and glutathione metabolism, ABA and plant-hormone signalling, ion and amino-acid transport; photosynthesis and primary carbon metabolism down-regulated).
 
 The pasilla and Fusarium runs reproduce byte-for-byte across pipeline revisions, confirming the analysis is deterministic.
 
 The two alternative aligners are validated against STAR on these datasets. HISAT2 runs pasilla (unstranded) and the reverse-stranded Fusarium set (strandedness auto-detected as 2; 5,812 DE genes, concordant with STAR's 5,836). Salmon (1.10.3) runs pasilla (24,278 genes, 477 DE genes) and the rice crop benchmark (33,844 genes, 12,609 DE genes, KEGG `osa` enrichment, a 56-node PPI). Each route reaches the same enrichment and network outputs.
 
+The two alternative differential-expression engines are validated against DESeq2 on the same counts. On *Fusarium graminearum* (spore vs mycelium), limma-voom reaches a log2 fold-change Spearman correlation of 0.997 and a top-DEG Jaccard index of 0.94 against DESeq2, and edgeR quasi-likelihood reaches 1.000 and 0.97, both with 100% agreement on the direction of the shared differentially expressed genes. DESeq2 remains the default, and its result on the *Fusarium* set is byte-for-byte unchanged (2,723 up / 2,478 down at |log2FC| > 1), so the alternative engines add a cross-check without perturbing the validated default. The trimmers and rRNA tools were confirmed to run to completion on real reads (including a human airway subset), each producing valid trimmed / filtered output.
+
 **Bundled benchmark projects.** Three one-click datasets are available from *Create Benchmark Project* on the Project tab: the Drosophila pasilla subset above, a *Saccharomyces cerevisiae* wild-type vs *ume6Δ* subset (PRJNA630199 / SRP260000; R64-1-1, Ensembl), a small, fast genome on a different organism that exercises the g:Profiler and KEGG enrichment route, and an *Oryza sativa* (rice) super-hybrid CY1000 control vs 5-day salt-stress subset (PRJDB38133; IRGSP-1.0 NCBI RefSeq) that exercises the crop route (KEGG `osa` via the NCBI-RefSeq `LOC<GeneID>` strip, g:Profiler `osativa`, STRING taxid 39947). Each scaffolds an SRA-mode project (samples, contrast, reference) that downloads its reads and runs the full pipeline.
 
-**Benchmark archive (Zenodo).** The full quantitative validation suite behind the BulkSeq Studio paper (correctness against simulated ground truth, false-discovery and null calibration, accuracy curves, concordance with [nf-core/rnaseq](https://nf-co.re/rnaseq), cross-aligner agreement, input-mode and microarray-route equivalence, multi-organism breadth, runtime/memory scaling, and determinism, plus STAR gene-counts quantifier concordance, custom gene-set enrichment, and ribosomal RNA filtering — families B1–B13) is archived on Zenodo, together with the simulation and scoring code, the pinned scoring environment, the per-benchmark result tables and figures, and a step-by-step reproduction guide: **DOI [10.5281/zenodo.20955660](https://doi.org/10.5281/zenodo.20955660)**.
+**Benchmark archive (Zenodo).** The full quantitative validation suite behind the BulkSeq Studio paper (correctness against simulated ground truth, false-discovery and null calibration, accuracy curves, concordance with [nf-core/rnaseq](https://nf-co.re/rnaseq), cross-aligner agreement, input-mode and microarray-route equivalence, multi-organism breadth, runtime/memory scaling, and determinism, plus STAR gene-counts quantifier concordance, custom gene-set enrichment, ribosomal RNA filtering, differential-expression engine concordance, and human-dataset applicability — families B1–B15) is archived on Zenodo, together with the simulation and scoring code, the pinned scoring environment, the per-benchmark result tables and figures, and a step-by-step reproduction guide: **DOI [10.5281/zenodo.20955660](https://doi.org/10.5281/zenodo.20955660)**.
 
 ## Bring your own DESeq2 results
 
@@ -242,6 +254,27 @@ LOC4327274,-7.12,4.3e-277
 
 Outputs that need per-sample counts (PCA, sample-distance and expression heatmaps, sample
 correlation, the Wilcoxon diagnostic, and genes-of-interest) are not produced in this mode.
+
+## The design helper: adjusting for batch and covariates
+
+Differential expression compares gene expression between conditions, but other differences between
+samples can distort that comparison. If your controls were sequenced in one batch and your treated
+samples in another, or the samples come from different donors, sexes, or time points, that unwanted
+variation can be mistaken for a treatment effect (or can hide a real one). The standard fix is to
+tell the statistical model about those nuisance variables so it can hold them constant while it
+measures the effect of interest. In DESeq2 (and limma/edgeR) this is done with the **design
+formula**: `~ condition` compares conditions only, while `~ batch + condition` first removes the
+batch differences and then compares conditions.
+
+The **Design helper** (on the Workflow Settings tab, next to the design formula) builds this formula
+for you from your metadata columns, so you do not have to write R. It lists the extra columns in
+your sample table — anything that is not the sample ID, file paths, or the condition — and you tick
+the ones to adjust for. It then writes an additive formula with the effect of interest last, for
+example `~ donor + condition`. Only additive adjustment is offered here, which covers the common
+case; genuine interaction terms (such as `genotype:treatment`) can still be typed directly into the
+formula field. Add the relevant columns on the **Metadata** tab first so the helper can see them.
+When in doubt, adjust for a variable only if you know it differs systematically between your groups
+and could affect expression; adding irrelevant covariates costs statistical power.
 
 ## Project layout
 

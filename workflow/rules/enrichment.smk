@@ -169,3 +169,25 @@ if _CUSTOM_GMT or _CUSTOM_ANNOT:
             "logs/custom_enrichment_figure.log",
         script:
             "../scripts/make_custom_enrichment_figure.R"
+
+
+# GSVA sample-level gene-set activity (optional). Organism-safe: scores samples against the
+# user's custom gene sets only, so it works for non-model organisms. Reads the normalized
+# expression matrix; writes a pathway x sample score matrix + a heatmap. Descriptive, not a test.
+if GSVA_ON:
+
+    rule gsva:
+        input:
+            normalized="results/deseq2/normalized_counts.csv",
+            gmt=config.get("gene_sets", {}).get("custom_gene_sets"),
+            samples=config["input"]["samples"],
+        output:
+            scores="results/gsva/gsva_scores.csv",
+            heatmap_png="results/figures/gsva_heatmap.png",
+            heatmap_svg="results/figures/gsva_heatmap.svg",
+        benchmark:
+            "benchmarks/gsva.tsv"
+        log:
+            "logs/gsva.log",
+        script:
+            "../scripts/run_gsva.R"

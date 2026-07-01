@@ -152,6 +152,9 @@ figure { margin: 1.6rem 0; }
 figure img { width: 100%; height: auto; border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); background: #fff; }
 figure.bench img { box-shadow: var(--shadow-sm); }
 figcaption { font-family: var(--font-sans); color: var(--muted); font-size: .85rem; line-height: 1.5; margin-top: .65rem; }
+/* inline pipeline diagram (SVG rendered as a live vector object, not a raster image) */
+figure.diagram { margin: 1.8rem 0; }
+figure.diagram object { width: 100%; height: auto; display: block; border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); background: #fff; padding: .6rem; box-sizing: border-box; }
 
 /* ---------- misc ---------- */
 .pill { font-family: var(--font-mono); font-size: .72rem; padding: .12rem .5rem; border-radius: 5px; background: var(--accent-tint); color: var(--accent-2); }
@@ -181,4 +184,93 @@ strong { font-weight: 600; }
   .btn { flex: 1 1 auto; justify-content: center; }
   pre { font-size: .92em; }
   body { font-size: 18px; }
+}
+
+/* ---------- image lightbox ---------- */
+/* full-screen zoomable viewer for <figure> images; wired by assets/lightbox.js.
+   Reuses the site tokens (--surface, --border, --radius, --accent) for controls. */
+html.lb-lock, body.lb-lock { overflow: hidden; }
+
+.lb-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(10, 12, 20, 0.86);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  transition: opacity .18s ease;
+}
+.lb-overlay.lb-open { opacity: 1; }
+.lb-overlay[hidden] { display: none; }
+
+.lb-stage {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+  touch-action: none;              /* let JS handle wheel/pan/pinch */
+}
+.lb-img {
+  max-width: 94vw; max-height: 90vh;
+  width: auto; height: auto;
+  transform-origin: 0 0;           /* zoom math in lightbox.js assumes top-left origin */
+  border-radius: 6px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, .55);
+  background: #fff;
+  cursor: zoom-out;
+  user-select: none; -webkit-user-select: none;
+  -webkit-user-drag: none;
+  will-change: transform;
+}
+
+/* controls styled like the site's buttons (surface chip, accent on hover) */
+.lb-controls {
+  position: absolute; left: 50%; bottom: 1.1rem; transform: translateX(-50%);
+  display: flex; gap: .4rem; z-index: 2;
+  background: rgba(20, 21, 27, .55); border-radius: 999px; padding: .3rem;
+}
+.lb-btn {
+  font-family: var(--font-sans);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 2.3rem; height: 2.3rem; line-height: 1;
+  font-size: 1.3rem; font-weight: 500;
+  color: #fff; background: rgba(255, 255, 255, .12);
+  border: 1px solid rgba(255, 255, 255, .22); border-radius: 999px;
+  cursor: pointer; transition: background .12s, border-color .12s, color .12s;
+}
+.lb-btn:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+.lb-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.lb-close {
+  position: absolute; top: 1rem; right: 1rem; z-index: 3;
+  font-size: 1.6rem;
+}
+
+.lb-hint {
+  position: absolute; top: 1rem; left: 1rem; z-index: 2;
+  font-family: var(--font-mono); font-size: .72rem; letter-spacing: .01em;
+  color: rgba(255, 255, 255, .78);
+  background: rgba(20, 21, 27, .5);
+  padding: .3rem .6rem; border-radius: 6px;
+  pointer-events: none;
+}
+.lb-caption {
+  position: absolute; left: 50%; bottom: 4.2rem; transform: translateX(-50%);
+  z-index: 2; max-width: min(80ch, 90vw); text-align: center;
+  font-family: var(--font-sans); font-size: .85rem; line-height: 1.5;
+  color: rgba(255, 255, 255, .9);
+  background: rgba(20, 21, 27, .5);
+  padding: .5rem .9rem; border-radius: 8px;
+  pointer-events: none;
+}
+
+/* the small "view full size" link inside the SVG diagram's caption */
+.diagram-fullsize { font-family: var(--font-sans); white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lb-overlay { transition: none; }
+  .lb-img { will-change: auto; }
+}
+
+@media (max-width: 880px) {
+  .lb-img { max-width: 96vw; max-height: 84vh; }
+  .lb-caption { bottom: 4.4rem; font-size: .8rem; max-width: 92vw; }
 }
