@@ -59,11 +59,11 @@ img { max-width: 100%; height: auto; }
   flex: 1 1 auto; min-width: 0;
   padding: 3rem clamp(1.2rem, 5vw, 4.5rem) 5rem;
 }
-.content section { max-width: 1080px; margin: 0; padding-bottom: 3.6rem; }
-.content section > p, .content section > ul, .content section > ol,
-.content section > blockquote, .content section .lead { max-width: var(--measure); }
+/* centred content column at a comfortable width: caps on wide monitors (so it does not sprawl),
+   and goes full-width on phones (max-width never forces overflow on a small screen) */
+.content section { max-width: 60rem; margin: 0 auto; padding-bottom: 3.6rem; }
 .content section + section { border-top: 1px solid var(--border); padding-top: 3.4rem; }
-.content section.wide { max-width: 1080px; }
+.content section.wide { max-width: 68rem; }
 #overview { border-top: none; padding-top: 0; }
 
 /* ---------- sidebar (sans UI) ---------- */
