@@ -61,7 +61,7 @@ img { max-width: 100%; height: auto; }
 }
 /* centred content column at a comfortable width: caps on wide monitors (so it does not sprawl),
    and goes full-width on phones (max-width never forces overflow on a small screen) */
-.content section { max-width: 60rem; margin: 0 auto; padding-bottom: 3.6rem; }
+.content section { max-width: 48rem; margin: 0 auto; padding-bottom: 3.6rem; }
 .content section + section { border-top: 1px solid var(--border); padding-top: 3.4rem; }
 .content section.wide { max-width: 68rem; }
 #overview { border-top: none; padding-top: 0; }
