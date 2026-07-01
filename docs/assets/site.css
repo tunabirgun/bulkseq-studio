@@ -40,8 +40,9 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
-/* never let a long token (filename, URL, locus id) force horizontal scroll */
-p, li, figcaption, .note, td, th, h1, h2, h3, h4 { overflow-wrap: break-word; word-break: break-word; }
+/* break only genuinely long tokens (filename, URL, locus id); normal words wrap at spaces.
+   word-break:break-word shattered normal words letter-by-letter in narrow table cells. */
+p, li, figcaption, .note, td, th, h1, h2, h3, h4 { overflow-wrap: break-word; }
 img { max-width: 100%; height: auto; }
 
 /* ---------- layout ---------- */
@@ -165,17 +166,23 @@ strong { font-weight: 600; }
 /* ---------- mobile ---------- */
 .menu-toggle { display: none; }
 @media (max-width: 880px) {
-  .layout { flex-direction: column; width: 100%; }
-  .sidebar { position: static; height: auto; width: 100%; flex-basis: auto; max-width: 100%; border-right: none; border-bottom: 1px solid var(--border); padding: 1.1rem 1.2rem; }
-  .content { width: 100%; max-width: 100%; padding: 2rem 1.2rem 3.5rem; }
+  /* plain block stack on mobile: a flex column kept align-items:flex-start from the
+     desktop rule, which sized the children to content width and overflowed the viewport */
+  .layout { display: block; width: 100%; }
+  .sidebar { position: static; height: auto; width: 100%; max-width: 100%; border-right: none; border-bottom: 1px solid var(--border); padding: 1.1rem 1.2rem; }
+  .content { display: block; width: 100%; max-width: 100%; padding: 2rem 1.2rem 3.5rem; }
   .content section, .content section.wide { max-width: 100%; }
   /* collapsed nav -> reveal both links and external links together */
   .nav, .sidebar .ext { display: none; }
   .nav.open, .nav.open ~ .ext { display: block; }
   .nav.open { margin-top: .6rem; }
   .nav.open ~ .ext { margin-top: .8rem; }
-  .menu-toggle { display: inline-block; margin-top: .7rem; font-family: var(--font-sans); font-size: .9rem; font-weight: 550;
-    background: var(--accent); color: #fff; border: none; padding: .45rem .9rem; border-radius: 7px; cursor: pointer; }
+  /* full-width menu bar with comfortable tap targets on the collapsed nav */
+  .menu-toggle { display: block; width: 100%; text-align: left; margin-top: .8rem; font-family: var(--font-sans);
+    font-size: .95rem; font-weight: 600; background: var(--accent); color: #fff; border: none;
+    padding: .62rem .9rem; border-radius: 8px; cursor: pointer; }
+  .nav.open a { padding: .62rem .75rem; font-size: .96rem; border-radius: 8px; }
+  .sidebar .ext a { padding: .5rem 0; font-size: .9rem; }
   /* stack all multi-column grids */
   .grid, .grid.cols-2 { grid-template-columns: 1fr; }
   .hero { padding: .25rem 0 1.8rem; }
@@ -184,6 +191,12 @@ strong { font-weight: 600; }
   .btn { flex: 1 1 auto; justify-content: center; }
   pre { font-size: .92em; }
   body { font-size: 18px; }
+  /* wide tables scroll horizontally inside .tablewrap rather than crushing columns
+     (a fitted width squeezed cells so tight that normal words broke letter-by-letter) */
+  .tablewrap { -webkit-overflow-scrolling: touch; }
+  .tablewrap table { min-width: 34rem; width: max-content; max-width: none; }
+  table { font-size: .84rem; }
+  th, td { padding: .5rem .65rem; }
 }
 
 /* ---------- image lightbox ---------- */
