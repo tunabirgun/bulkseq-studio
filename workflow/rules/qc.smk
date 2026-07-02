@@ -101,6 +101,10 @@ rule multiqc:
 if CONTAM_SCREEN:
 
     _FS_GUARD = (
+        # Put the env bin on PATH first: an unactivated login shell (or micromamba run in
+        # some configurations) does not reliably inherit it, so command -v would fail even
+        # when the tool is installed. Matches the reference.smk aligner-route rules.
+        "export PATH=\"${{MAMBA_ROOT_PREFIX:-$HOME/micromamba}}/envs/bulkseq/bin:${{PATH}}\" && "
         "command -v fastq_screen >/dev/null 2>&1 || {{ echo 'fastq_screen is not installed in "
         "the bulkseq environment; contamination screening needs it. In the app open Setup and "
         "click Install / repair the environment, then re-run.' >&2; exit 1; }}; "
@@ -153,6 +157,9 @@ if CONTAM_SCREEN:
 if RSEQC_ON:
 
     _RSEQC_GUARD = (
+        # Put the env bin on PATH first (see reference.smk): the activated PATH is not
+        # reliably inherited by the rule shell, so command -v would fail even when installed.
+        "export PATH=\"${{MAMBA_ROOT_PREFIX:-$HOME/micromamba}}/envs/bulkseq/bin:${{PATH}}\" && "
         "command -v read_distribution.py >/dev/null 2>&1 || {{ echo 'rseqc is not installed in "
         "the bulkseq environment; extended alignment QC needs it. In the app open Setup and click "
         "Install / repair the environment, then re-run.' >&2; exit 1; }}; "

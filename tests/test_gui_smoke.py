@@ -38,6 +38,12 @@ def test_main_window_benchmark_smoke() -> None:
     assert (window.project_root / "checks" / "01_input_validation.json").exists()
 
     window._estimate_runtime()
+    # Estimation now runs off the UI thread (it detects the local WSL cores/RAM so
+    # the estimate reflects this machine); wait for the worker before asserting.
+    est_worker = getattr(window, "_estimate_worker", None)
+    if est_worker is not None:
+        est_worker.wait(60000)
+    QApplication.processEvents()
     assert "range:" in window.runtime_text.toPlainText()
 
     window._generate_reports()

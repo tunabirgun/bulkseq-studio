@@ -60,7 +60,12 @@ cp "$APPDIR/bulkseqstudio.png" "$APPDIR/.DirIcon"
 
 mkdir -p "$OUTDIR"
 OUT="$OUTDIR/BulkSeqStudio-${VERSION}-x86_64.AppImage"
-ARCH=x86_64 "$TOOL" --appimage-extract-and-run --no-appstream "$APPDIR" "$OUT"
+# Embed zsync update information so `AppImageUpdate <file>` upgrades in place from the latest
+# GitHub release. This also makes appimagetool write the companion <OUT>.zsync next to the
+# AppImage; publish both as release assets. Override UPDATE_INFO to point elsewhere.
+UPDATE_INFO="${UPDATE_INFO:-gh-releases-zsync|tunabirgun|bulkseq-studio|latest|BulkSeqStudio-*-x86_64.AppImage.zsync}"
+ARCH=x86_64 "$TOOL" --appimage-extract-and-run --no-appstream -u "$UPDATE_INFO" "$APPDIR" "$OUT"
 chmod +x "$OUT"
 echo "APPIMAGE=$OUT"
 ls -lh "$OUT"
+[ -f "$OUT.zsync" ] && { echo "ZSYNC=$OUT.zsync"; ls -lh "$OUT.zsync"; } || echo "WARNING: no .zsync produced"

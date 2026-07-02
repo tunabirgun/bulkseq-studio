@@ -134,10 +134,16 @@ def _wrap_wsl(args: list[str], wsl_root: str, run_tag: str | None) -> str:
     login shell) so stop() can locate and kill the whole tree with `pkill -f`.
     """
     tag_prefix = f"export {run_tag}=1 && " if run_tag else ""
+    # Put the env bin on PATH in the parent snakemake process so EVERY child inherits it:
+    # both bare-command shell rules (fastp, STAR, featureCounts, ...) and script: rules that
+    # resolve Rscript from PATH. micromamba run does not reliably propagate the activated PATH
+    # to rule subshells in all configurations, which otherwise fails command lookups even when
+    # the tool is installed.
     return (
         f"{tag_prefix}"
         f"cd {shlex.quote(wsl_root)} && "
         f'export MAMBA_ROOT_PREFIX="{WSL_MAMBA_ROOT}" && '
+        f'export PATH="{WSL_MAMBA_ROOT}/envs/{WSL_ENV_NAME}/bin:${{PATH}}" && '
         f'"{WSL_MICROMAMBA}" run -n {WSL_ENV_NAME} {shlex.join(args)}'
     )
 

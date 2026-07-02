@@ -31,18 +31,29 @@ INDEX_MINUTES = {
 }
 
 
-def estimate_runtime(config: AppConfig, metadata: pd.DataFrame | None = None) -> dict[str, object]:
+def estimate_runtime(
+    config: AppConfig,
+    metadata: pd.DataFrame | None = None,
+    *,
+    threads: int | None = None,
+    memory_gb: int | None = None,
+) -> dict[str, object]:
     # Phase model calibrated against a real fungal 6-sample paired-end run (4 cores):
     # download 15 min, alignment 18 min, QC 12 min cumulative. Coefficients are
     # per sequenced gigabase (gbase); thread-parallel phases are divided by an
     # efficiency factor, network-bound download by a weaker one.
+    #
+    # threads/memory_gb override the config values so the caller can estimate
+    # against the machine the pipeline will actually run on (the GUI passes the
+    # locally detected/allocated cores and RAM); they default to the config.
     sample_count = len(metadata) if metadata is not None else 0
     gbase = _total_gbase(metadata)
     count_matrix = config.input.type == "count_matrix"
     microarray = config.input.type == "microarray"
     ref_cat = config.reference.genome_size_category
     ref_factor = REFERENCE_FACTORS.get(ref_cat, 1.0)
-    threads = max(config.resources.total_threads, 1)
+    threads = max(threads if threads is not None else config.resources.total_threads, 1)
+    memory_gb = memory_gb if memory_gb is not None else config.resources.total_memory_gb
     compute_par = min(threads, 12) ** 0.5     # compute steps scale ~sqrt(threads)
     io_par = min(threads, 4) ** 0.5           # download/IO scale weakly
 
@@ -65,7 +76,14 @@ def estimate_runtime(config: AppConfig, metadata: pd.DataFrame | None = None) ->
         download = (gbase * 2.3) / io_par if is_sra else 0.0
 
         per_gbase = {"Salmon": 1.6, "HISAT2": 2.7}.get(config.workflow.aligner, 3.4)
-        align = (gbase * per_gbase * ref_factor) / compute_par
+        # Under-provisioned RAM makes STAR on a large genome swap, slowing alignment.
+        # The penalty is 1.0 (no effect) unless RAM is genuinely tight for that case,
+        # so adequately resourced runs are unchanged.
+        low_ram_star = (
+            memory_gb < 16 and config.workflow.aligner == "STAR" and ref_factor >= 1.4
+        )
+        mem_factor = 1.5 if low_ram_star else 1.0
+        align = (gbase * per_gbase * ref_factor * mem_factor) / compute_par
         index = 0.0
         if config.workflow.aligner == "STAR" and not config.reference.star_index:
             index = INDEX_MINUTES.get(ref_cat, 10.0)
@@ -77,8 +95,11 @@ def estimate_runtime(config: AppConfig, metadata: pd.DataFrame | None = None) ->
         downstream = 0.5 + (1.0 if config.workflow.enrichment else 0.0) + (0.3 if config.workflow.figures else 0.0)
 
         minutes = overhead + download + index + align + qc + trim + rrna + quant + downstream
-        # Floor so an estimate with unknown data volume is not unrealistically tiny.
-        minutes = max(minutes, 8.0 + sample_count * 1.5)
+        # Floor only when the data volume is unknown (no base_count and no local
+        # FASTQ), so the estimate is not unrealistically tiny. When gbase is known
+        # the model is trusted, so cores/RAM changes are reflected in the estimate.
+        if gbase <= 0:
+            minutes = max(minutes, 8.0 + sample_count * 1.5)
 
         if index >= 20:
             bottlenecks.append(f"{ref_cat} STAR index build (~{index:.0f} min)")
@@ -86,7 +107,7 @@ def estimate_runtime(config: AppConfig, metadata: pd.DataFrame | None = None) ->
             bottlenecks.append("SRA/ENA download (network-bound)")
         if gbase >= 40:
             bottlenecks.append("large sequencing volume")
-        if config.resources.total_memory_gb < 16 and config.workflow.aligner == "STAR" and ref_factor >= 1.4:
+        if low_ram_star:
             bottlenecks.append("limited RAM for STAR on a large genome")
 
     # Estimates target wall-clock and have historically skewed low, so the range
@@ -105,7 +126,7 @@ def estimate_runtime(config: AppConfig, metadata: pd.DataFrame | None = None) ->
                     else "n/a (count matrix)" if count_matrix
                     else config.workflow.aligner),
         "threads": threads,
-        "memory_gb": config.resources.total_memory_gb,
+        "memory_gb": memory_gb,
         "bottlenecks": bottlenecks or (
             ["microarray mode: GEO download + limma, no alignment"] if microarray
             else ["count-matrix mode: alignment skipped"] if count_matrix

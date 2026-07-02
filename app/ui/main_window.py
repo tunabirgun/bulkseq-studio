@@ -3270,14 +3270,59 @@ class MainWindow(QMainWindow):
     def _estimate_runtime(self) -> None:
         if not self._require_project() or self.config is None:
             return
+        if getattr(self, "_estimate_worker", None) is not None and self._estimate_worker.isRunning():
+            return
+        # Estimate against the machine this instance runs on, not the possibly stale
+        # cores/RAM saved in the project config. Detection probes WSL (~seconds), so
+        # run it off-thread; reuse the last detection if resources were already probed.
         self.runtime_busy.setVisible(True)
-        QApplication.processEvents()
+        cfg = self.config
+        df = self.metadata_table.to_dataframe()
+        root = self.project_root or Path(self.workdir.text())
+        profile = self.profile.currentText()
+        cached = getattr(self, "_last_system", None)
+
+        def work():
+            system = cached or detect_system(root)
+            if profile == "custom":
+                # Custom keeps the cores/RAM the user set by hand.
+                threads = cfg.resources.total_threads
+                mem = cfg.resources.total_memory_gb
+            else:
+                rec = recommend_profile(system, profile)
+                threads = int(rec["total_threads"])
+                mem = int(rec["total_memory_gb"])
+            estimate = estimate_runtime(cfg, df, threads=threads, memory_gb=mem)
+            return system, threads, mem, estimate
+
+        self._estimate_worker = BackgroundWorker(work)
+        self._estimate_worker.done.connect(self._on_estimate_done)
+        self._estimate_worker.failed.connect(self._on_estimate_failed)
+        self._estimate_worker.start()
+
+    def _on_estimate_done(self, result: object) -> None:
+        self.runtime_busy.setVisible(False)
+        system, threads, mem, estimate = result
+        self._last_system = system
+        # Keep the estimate and the actual run in agreement: the run reads these
+        # cores/RAM (via _save_resources -> build_snakemake_command). Update the
+        # in-memory config and the spinboxes; the disk save happens on run/save.
+        if self.profile.currentText() != "custom":
+            self.cores.setValue(int(threads))
+            self.ram.setValue(int(mem))
+            if self.config is not None:
+                self.config.resources.total_threads = int(threads)
+                self.config.resources.total_memory_gb = int(mem)
+        self.runtime_text.setPlainText("\n".join(f"{k}: {v}" for k, v in estimate.items()))
+
+    def _on_estimate_failed(self, exc: object) -> None:
+        self.runtime_busy.setVisible(False)
+        # Fall back to a config-based estimate so the button still works offline.
         try:
-            df = self.metadata_table.to_dataframe()
-            estimate = estimate_runtime(self.config, df)
+            estimate = estimate_runtime(self.config, self.metadata_table.to_dataframe())
             self.runtime_text.setPlainText("\n".join(f"{k}: {v}" for k, v in estimate.items()))
-        finally:
-            self.runtime_busy.setVisible(False)
+        except Exception:
+            self.runtime_text.setPlainText(f"Could not estimate runtime: {exc}")
 
     def _run_sanity_checks(self) -> None:
         if not self._require_project():

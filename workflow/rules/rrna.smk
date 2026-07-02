@@ -7,6 +7,9 @@
 if RRNA_FILTER and RRNA_TOOL == "ribodetector":
 
     _RD_GUARD = (
+        # Put the env bin on PATH first (see reference.smk): the activated PATH is not
+        # reliably inherited by the rule shell, so command -v would fail even when installed.
+        "export PATH=\"${{MAMBA_ROOT_PREFIX:-$HOME/micromamba}}/envs/bulkseq/bin:${{PATH}}\" && "
         "command -v ribodetector_cpu >/dev/null 2>&1 || {{ echo 'ribodetector is not installed "
         "in the bulkseq environment; the RiboDetector rRNA filter needs it. In the app open Setup "
         "and click Install / repair the environment (full profile), then re-run.' >&2; exit 1; }}; "
@@ -64,6 +67,9 @@ elif RRNA_FILTER:
     _SMR = config.get("sortmerna", {})
     _SMR_PAIRED = "--paired_out" if str(_SMR.get("paired_mode", "paired_in")).lower() == "paired_out" else "--paired_in"
     _SMR_GUARD = (
+        # Put the env bin on PATH first (see reference.smk): the activated PATH is not
+        # reliably inherited by the rule shell, so command -v would fail even when installed.
+        "export PATH=\"${{MAMBA_ROOT_PREFIX:-$HOME/micromamba}}/envs/bulkseq/bin:${{PATH}}\" && "
         "command -v sortmerna >/dev/null 2>&1 || {{ echo 'sortmerna is not installed in the "
         "bulkseq environment; rRNA filtering needs it. In the app open Setup and click Install "
         "/ repair core environment (or update the env from workflow/envs/bulkseq_core.yaml), "

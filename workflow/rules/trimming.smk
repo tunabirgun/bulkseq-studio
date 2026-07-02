@@ -17,12 +17,17 @@ _TM_SW = f"{_TM.get('sliding_window_size', 4)}:{_TM.get('sliding_window_quality'
 _TM_LEAD = _TM.get("leading", 3)
 _TM_TRAIL = _TM.get("trailing", 3)
 
+_PATH_PREPEND = "export PATH=\"${{MAMBA_ROOT_PREFIX:-$HOME/micromamba}}/envs/bulkseq/bin:${{PATH}}\" && "
 _TG_GUARD = (
+    # Put the env bin on PATH first (see reference.smk): the activated PATH is not
+    # reliably inherited by the rule shell, so command -v would fail even when installed.
+    _PATH_PREPEND +
     "command -v trim_galore >/dev/null 2>&1 || {{ echo 'trim_galore is not installed in the "
     "bulkseq environment; the Trim Galore trimmer needs it. In the app open Setup and click "
     "Install / repair the environment, then re-run.' >&2; exit 1; }}; "
 )
 _TM_GUARD = (
+    _PATH_PREPEND +
     "command -v trimmomatic >/dev/null 2>&1 || {{ echo 'trimmomatic is not installed in the "
     "bulkseq environment; the Trimmomatic trimmer needs it. In the app open Setup and click "
     "Install / repair the environment, then re-run.' >&2; exit 1; }}; "
