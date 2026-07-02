@@ -30,7 +30,11 @@ from app.core.readiness import (
     next_readiness_actions,
     readiness_summary,
 )
-from app.core.setup_installer import launch_wsl_admin_install, launch_wsl_bioenv_install
+from app.core.setup_installer import (
+    launch_native_bioenv_install,
+    launch_wsl_admin_install,
+    launch_wsl_bioenv_install,
+)
 
 # ---------------------------------------------------------------------------
 # Shared design language (mirrors app.ui.theme when present; defined locally so
@@ -133,13 +137,17 @@ class WslBioenvInstallThread(QThread):
     line = Signal(str)
     finished_with_code = Signal(int)
 
-    def __init__(self, profile: str = "core") -> None:
+    def __init__(self, profile: str = "core", native: bool = False) -> None:
         super().__init__()
         self.profile = profile
+        self.native = native
         self.process = None
 
     def run(self) -> None:
-        self.process = launch_wsl_bioenv_install(profile=self.profile)
+        if self.native:
+            self.process = launch_native_bioenv_install(profile=self.profile)
+        else:
+            self.process = launch_wsl_bioenv_install(profile=self.profile)
         assert self.process.stdout is not None
         for line in self.process.stdout:
             self.line.emit(line.rstrip())
@@ -413,8 +421,18 @@ class ReadinessDialog(QDialog):
         )
         root.addWidget(self.text)
 
-        # Footer.
+        # Footer: a persistent Repair-environment action (reinstalls the full env to fix
+        # a missing or partial tool the per-card "ready" gate does not cover), plus Continue.
         footer = QHBoxLayout()
+        self.repair_button = QPushButton("Repair environment")
+        self.repair_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.repair_button.setStyleSheet(_secondary_button_style())
+        self.repair_button.setToolTip(
+            "Reinstall / update the full bioinformatics environment (all tools and the R/DESeq2 "
+            "stack). Use this if a run reports a tool as missing even though setup looks ready."
+        )
+        self.repair_button.clicked.connect(self.repair_environment)
+        footer.addWidget(self.repair_button)
         footer.addStretch(1)
         self.close_button = QPushButton("Continue")
         self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -668,9 +686,12 @@ class ReadinessDialog(QDialog):
     # -- install actions (preserved behavior) -----------------------------
 
     def install_python_dependencies(self) -> None:
+        if self._installing:
+            return
         requirements = app_root() / "requirements.txt"
         self._installing = True
         self.card_python.set_action_enabled(False)
+        self.repair_button.setEnabled(False)
         self._log(f"Installing Python dependencies from {requirements}…\n")
         self.install_thread = PipInstallThread(requirements)
         self.install_thread.line.connect(self.text.append)
@@ -679,6 +700,7 @@ class ReadinessDialog(QDialog):
 
     def _install_finished(self, code: int) -> None:
         self._installing = False
+        self.repair_button.setEnabled(True)
         self._log(f"Python dependency installer finished with exit code {code}.\n")
         self.refresh()
 
@@ -695,18 +717,26 @@ class ReadinessDialog(QDialog):
     def install_full_wsl_bioenv(self) -> None:
         self._install_wsl_bioenv("full")
 
+    def repair_environment(self) -> None:
+        # Full reinstall/update — the catch-all repair. On a Windows box the environment
+        # lives in WSL; on Linux it is native, so run the setup script directly there.
+        self._install_wsl_bioenv("full")
+
     def _install_wsl_bioenv(self, profile: str) -> None:
+        if self._installing:
+            return
         self._installing = True
         for card in (self.card_wsl, self.card_core, self.card_r):
             card.set_action_enabled(False)
+        self.repair_button.setEnabled(False)
         self.stop_install_button.setVisible(True)
         self.stop_install_button.setEnabled(True)
+        where = "your WSL user account" if self._is_windows else "the local micromamba environment"
         self._log(
-            f"Installing WSL bioinformatics environment profile: {profile}. This can take a "
-            "long time and installs into your WSL user account; it does not need a sudo "
-            "password.\n"
+            f"Installing bioinformatics environment profile: {profile}. This can take a long "
+            f"time and installs into {where}; it does not need a sudo password.\n"
         )
-        self.wsl_install_thread = WslBioenvInstallThread(profile)
+        self.wsl_install_thread = WslBioenvInstallThread(profile, native=not self._is_windows)
         self.wsl_install_thread.line.connect(self.text.append)
         self.wsl_install_thread.finished_with_code.connect(self._wsl_bioenv_finished)
         self.wsl_install_thread.start()
@@ -722,6 +752,7 @@ class ReadinessDialog(QDialog):
             )
         self.stop_install_button.setEnabled(False)
         self.stop_install_button.setVisible(False)
+        self.repair_button.setEnabled(True)
         self.refresh()
 
     def stop_wsl_install(self) -> None:

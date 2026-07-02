@@ -3,7 +3,32 @@
 # are defined BEFORE the rule includes so included rules can reference them.
 import os
 import re
+import shutil
+import sys
 import pandas as pd
+
+
+def _env_bin_dir():
+    # The bulkseq env's bin dir, robust to how snakemake was launched (activated,
+    # micromamba run, or bare absolute path). Prefer the active CONDA_PREFIX, then the
+    # MAMBA_ROOT_PREFIX layout, then the default install path.
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix and os.path.isdir(os.path.join(conda_prefix, "bin")):
+        return os.path.join(conda_prefix, "bin")
+    root = os.environ.get("MAMBA_ROOT_PREFIX") or os.path.expanduser("~/micromamba")
+    return os.path.join(root, "envs", "bulkseq", "bin")
+
+
+def _env_has(*tools):
+    # True only if every tool is present (on PATH or directly in the env bin). Used to
+    # gate OPTIONAL, additive QC steps so a stale environment degrades gracefully instead
+    # of failing the whole run. Never used to gate a chosen aligner/trimmer/DE engine,
+    # whose absence must still be a hard error.
+    env_bin = _env_bin_dir()
+    return all(
+        shutil.which(t) is not None or os.path.exists(os.path.join(env_bin, t))
+        for t in tools
+    )
 
 configfile: "config/config.yaml"
 
@@ -163,11 +188,19 @@ if RRNA_TOOL not in _VALID_RRNA_TOOLS:
 # filter (reads are not removed). fastq/sra route only. Requires a user-provided FastQ Screen
 # config path (contamination.conf); without it the screen is skipped (the app warns), since the
 # built-in --get_genomes auto-download is broken upstream and pulls a multi-GB panel.
-CONTAM_SCREEN = (
+_CONTAM_REQUESTED = (
     bool(WF.get("contamination_screen", False))
     and bool((config.get("contamination") or {}).get("conf"))
     and not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)
 )
+# Optional and additive: skip (don't fail the run) if FastQ Screen / bowtie2 are absent.
+CONTAM_SCREEN = _CONTAM_REQUESTED and _env_has("fastq_screen", "bowtie2")
+if _CONTAM_REQUESTED and not CONTAM_SCREEN:
+    sys.stderr.write(
+        "WARNING: contamination screening was requested but FastQ Screen / bowtie2 are not "
+        "installed in the bulkseq environment; skipping it. Open Setup and click 'Install / "
+        "repair the environment' to enable it. The rest of the pipeline is unaffected.\n"
+    )
 RRNA_DB = "references/rrna_db.fasta"
 RRNA_IDX = "references/rrna_idx"
 # fastp trimming toggle. When off, raw reads go straight to the rRNA filter / aligner
@@ -250,11 +283,22 @@ GSVA_ON = (
     and bool(config.get("gene_sets", {}).get("custom_gene_sets"))
     and not DE_RESULTS_MODE  # needs the normalized expression matrix
 )
-RSEQC_ON = (
+_RSEQC_REQUESTED = (
     bool(WF.get("rseqc", False))
     and not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)
     and not USE_SALMON
 )
+# RSeQC extended QC is optional and additive (it does not affect counts or DE). If its
+# tools are missing from the environment, skip it with a warning rather than failing the
+# whole run, so a stale env still produces the core alignment/counts/DESeq2 outputs.
+_RSEQC_TOOLS = ("read_distribution.py", "geneBody_coverage.py", "gtfToGenePred", "genePredToBed")
+RSEQC_ON = _RSEQC_REQUESTED and _env_has(*_RSEQC_TOOLS)
+if _RSEQC_REQUESTED and not RSEQC_ON:
+    sys.stderr.write(
+        "WARNING: RSeQC extended alignment QC was requested but its tools are not installed "
+        "in the bulkseq environment; skipping it. Open Setup and click 'Install / repair the "
+        "environment' to enable it. The rest of the pipeline is unaffected.\n"
+    )
 COUNTS_FILE = "results/counts/counts.txt"
 COUNTS_RAW = "results/counts/counts.raw.txt" if ORGANELLAR_FILTER else COUNTS_FILE
 # featureCounts auto-names its summary <output>.summary, so the quantification summary

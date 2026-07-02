@@ -84,14 +84,25 @@ begin
          or RegQueryStringValue(HKLM, UNINST_KEY, 'UninstallString', s);
 end;
 
+function InstalledLocation(): String;
+begin
+  Result := '';
+  if not RegQueryStringValue(HKCU, UNINST_KEY, 'InstallLocation', Result) then
+    RegQueryStringValue(HKLM, UNINST_KEY, 'InstallLocation', Result);
+end;
+
 function InitializeSetup(): Boolean;
 var
-  uninst, ver, verText: String;
+  uninst, ver, verText, instLoc: String;
   choice, rc, waited: Integer;
 begin
   Result := True;
   if not GetInstalledUninstaller(uninst, ver) then
     exit;
+
+  { Read the install directory now, while the uninstall registry key still exists;
+    the uninstaller deletes that key, so it cannot be read afterwards. }
+  instLoc := InstalledLocation();
 
   if ver <> '' then
     verText := ' ' + ver
@@ -100,7 +111,7 @@ begin
 
   choice := MsgBox(
     'BulkSeq Studio' + verText + ' is already installed.' + #13#10#13#10 +
-    'Yes - remove it and install version {#MyAppVersion}' + #13#10 +
+    'Yes - remove it completely and install version {#MyAppVersion} fresh' + #13#10 +
     'No - uninstall BulkSeq Studio and exit' + #13#10 +
     'Cancel - do nothing',
     mbConfirmation, MB_YESNOCANCEL);
@@ -126,6 +137,12 @@ begin
       waited := waited + 500;
     end;
   end;
+
+  { Guarantee a completely clean slate: delete any leftover install directory the
+    uninstaller did not remove, so the new version installs fresh with no stale files.
+    Gate on the app name so DelTree can never target an unrelated directory. }
+  if (instLoc <> '') and (Pos('BulkSeq Studio', instLoc) > 0) and DirExists(instLoc) then
+    DelTree(instLoc, True, True, True);
 
   if choice = IDNO then
   begin

@@ -58,6 +58,7 @@ def estimate_runtime(
     io_par = min(threads, 4) ** 0.5           # download/IO scale weakly
 
     overhead = 2.0
+    download_gib = 0.0
     bottlenecks: list[str] = []
 
     if microarray:
@@ -74,6 +75,10 @@ def estimate_runtime(
     else:
         is_sra = config.input.type == "sra"
         download = (gbase * 2.3) / io_par if is_sra else 0.0
+        # Estimated FASTQ download size for SRA/ENA: gzipped FASTQ is ~0.35 bytes/base
+        # (the same factor _total_gbase uses to invert local file sizes to bases).
+        if is_sra and gbase > 0:
+            download_gib = (gbase * 1e9 * 0.35) / (1024 ** 3)
 
         per_gbase = {"Salmon": 1.6, "HISAT2": 2.7}.get(config.workflow.aligner, 3.4)
         # Under-provisioned RAM makes STAR on a large genome swap, slowing alignment.
@@ -127,12 +132,30 @@ def estimate_runtime(
                     else config.workflow.aligner),
         "threads": threads,
         "memory_gb": memory_gb,
+        "download_size": _download_label(config, download_gib),
         "bottlenecks": bottlenecks or (
             ["microarray mode: GEO download + limma, no alignment"] if microarray
             else ["count-matrix mode: alignment skipped"] if count_matrix
             else ["none obvious from current configuration"]
         ),
     }
+
+
+def _download_label(config: AppConfig, download_gib: float) -> str:
+    # Human-readable estimate of what will be downloaded before/at run start, so the
+    # user knows the network cost. Only the SRA/ENA FASTQ size is derivable up front
+    # (from ENA base counts); other routes vary or use local inputs.
+    itype = config.input.type
+    if itype == "sra":
+        if download_gib > 0:
+            return f"~{download_gib:.1f} GiB FASTQ (SRA/ENA), plus the reference genome/annotation if not provided"
+        return "SRA/ENA FASTQ (size not known until ENA metadata is fetched)"
+    if itype == "microarray":
+        return "GEO series matrix (size varies by platform)"
+    if itype in ("count_matrix", "deseq2_results"):
+        return "none (inputs are local)"
+    # Local FASTQ route: reads are already on disk; only the reference may download.
+    return "none for reads (local FASTQ); the reference genome/annotation downloads if not provided"
 
 
 def _total_gbase(df: pd.DataFrame | None) -> float:

@@ -44,3 +44,23 @@ def launch_wsl_bioenv_install(env_name: str = "bulkseq", distro: str | None = No
         bufsize=1,
         stdin=subprocess.DEVNULL,
     )
+
+
+def build_native_bioenv_command(env_name: str = "bulkseq", profile: str = "core") -> list[str]:
+    # Native Linux/macOS: run the same setup script directly (no `wsl` wrapper). It
+    # creates or `env update`s the micromamba environment from the profile's yaml,
+    # which installs any tools missing from an older environment (the repair path).
+    return ["bash", str(wsl_bioenv_script()), env_name, profile]
+
+
+def launch_native_bioenv_install(env_name: str = "bulkseq", profile: str = "core") -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        build_native_bioenv_command(env_name, profile),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+        stdin=subprocess.DEVNULL,
+    )
