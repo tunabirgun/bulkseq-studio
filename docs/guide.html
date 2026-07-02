@@ -116,7 +116,7 @@
 <div class="note"><span class="t">Disk space</span> Set aside about 10 GB of free disk for the toolchain and reference indices, and 16 GB or more of RAM is recommended (STAR alignment is the memory-heavy step; for very large genomes the HISAT2 or Salmon aligner needs far less). The one-time environment setup downloads several packages, so the first run is slower than later ones — give it time and a stable internet connection.</div>
 
 <h3>Raising the WSL2 memory limit (Windows)</h3>
-<p>On Windows the pipeline runs inside WSL2, which by default may use only about half of your host RAM. That VM cap — not the Windows total — is what memory-heavy steps run against (STAR indexing and alignment on large genomes, or DESeq2 on big count matrices). If a run is constrained, raise the cap by creating or editing <code>%UserProfile%\.wslconfig</code> (a plain text file in your user folder), adding a <code>[wsl2]</code> section, then applying it with <code>wsl --shutdown</code> in PowerShell before reopening the app:</p>
+<p>On Windows the pipeline runs inside WSL2, which by default may use only about half of your host RAM. That VM cap — not the Windows total — is what memory-heavy steps run against (STAR indexing and alignment on large genomes, or DESeq2 on big count matrices). The easiest way to raise it is the <strong>Edit WSL2 memory / CPU limits…</strong> button on the Resources tab, which writes the caps and can restart WSL to apply them. To do it by hand instead, create or edit <code>%UserProfile%\.wslconfig</code> (a plain text file in your user folder), add a <code>[wsl2]</code> section, then apply it with <code>wsl --shutdown</code> in PowerShell before reopening the app:</p>
 <pre><code>[wsl2]
 memory=48GB      # cap the VM at 48 GB (default is ~50% of host RAM)
 processors=16    # optional: limit WSL2 to 16 logical processors</code></pre>
@@ -140,11 +140,11 @@ processors=16    # optional: limit WSL2 to 16 logical processors</code></pre>
   </li>
   <li>
     <h4>Choose an input</h4>
-    <p>On the <strong>Input Data</strong> tab, pick how your data comes in. The simplest is to paste SRR / SRP / PRJ accessions and click <em>Fetch metadata & build samples</em>; the ENA fetch reads the layout, FASTQ URLs, and read counts and builds the sample sheet for you. You can also select local FASTQ files, or skip alignment entirely with <em>Use a Count Matrix</em>, <em>Upload DESeq2 Results</em>, or a GEO microarray series (GSE).</p>
+    <p>On the <strong>Input Data</strong> tab, pick how your data comes in. The simplest is to paste SRR / SRP / PRJ accessions — or an RNA-seq <strong>GSE</strong> series, which is resolved to its SRA runs — and click <em>Fetch metadata & build samples</em>; the ENA fetch reads the layout, FASTQ URLs, and read counts and builds the sample sheet for you. You can also select local FASTQ files, or skip alignment entirely with <em>Use a Count Matrix</em>, <em>Upload DESeq2 Results</em>, or a GEO microarray series (GSE).</p>
   </li>
   <li>
     <h4>Confirm the metadata and contrast</h4>
-    <p>On the <strong>Metadata</strong> tab, the samples appear in an editable table. Assign each one a <code>condition</code> (for example <em>treated</em> vs <em>control</em>) and check that the layout (paired or single-end) is correct. These groups define the comparison DESeq2 will run.</p>
+    <p>On the <strong>Metadata</strong> tab, the samples appear in an editable table. The <code>condition</code> column is pre-filled with a group suggested from the fetched metadata (a GEO characteristic such as genotype or treatment, or a sample-title group) — confirm it or edit it, and check that the layout (paired or single-end) is correct. These groups define the comparison DESeq2 will run.</p>
   </li>
   <li>
     <h4>Pick a reference and analysis options</h4>

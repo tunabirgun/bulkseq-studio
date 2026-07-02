@@ -110,6 +110,28 @@ def collect_warnings(sanity_text: str) -> list[str]:
     return [line.strip() for line in sanity_text.splitlines() if "WARNING" in line or "REVIEW_REQUIRED" in line]
 
 
+def download_integrity(root: Path) -> dict:
+    # Aggregate the per-file checksum sidecars written by the download rule: how many FASTQ
+    # downloads were verified against ENA's published MD5 (a data-integrity guarantee).
+    cdir = root / "results" / "qc" / "checksums"
+    if not cdir.is_dir():
+        return {}
+    verified = no_checksum = 0
+    files: list[dict] = []
+    for path in sorted(cdir.glob("*.txt")):
+        parts = path.read_text(encoding="utf-8", errors="replace").strip().split("\t")
+        status = parts[0] if parts else ""
+        name = parts[1] if len(parts) > 1 else path.stem
+        md5 = parts[2] if len(parts) > 2 else ""
+        if status == "PASS":
+            verified += 1
+        elif status == "NO_CHECKSUM":
+            no_checksum += 1
+        files.append({"file": name, "status": status, "md5": md5})
+    return {"verified": verified, "no_checksum": no_checksum,
+            "total": verified + no_checksum, "files": files}
+
+
 def existing_outputs(root: Path) -> list[str]:
     candidates = [
         "results/counts/counts.txt",
@@ -165,6 +187,7 @@ def main() -> int:
         "customized_parameters": customized,
         "warnings": collect_warnings(sanity_text),
         "output_paths": existing_outputs(root),
+        "download_integrity": download_integrity(root),
         "sanity_checks": sanity_text,
     }
     reports = root / "results/reports"
@@ -224,6 +247,12 @@ def render_text(p: dict) -> str:
         lines.append("None detected against bundled defaults.")
     lines += ["", "Warnings", "--------"]
     lines += p["warnings"] or ["None."]
+    di = p.get("download_integrity") or {}
+    if di.get("total"):
+        note = f"Checksum-verified against ENA MD5: {di['verified']} of {di['total']} FASTQ files"
+        if di.get("no_checksum"):
+            note += f" ({di['no_checksum']} without a published checksum)"
+        lines += ["", "Data integrity (FASTQ downloads)", "--------------------------------", note]
     lines += ["", "Output paths", "------------"]
     lines += p["output_paths"] or ["None yet."]
     lines += ["", "Software Versions", "-----------------"]

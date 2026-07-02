@@ -14,6 +14,7 @@ channels:
 dependencies:
   - python=3.12
   - snakemake-minimal
+  - aria2
   - fastqc=0.12.1
   - multiqc=1.30
   - fastp=1.0.1

@@ -42,7 +42,13 @@ def _install_excepthook() -> None:
     # app alive. Unhandled exceptions in Qt slots are routed here by PySide6.
     def handler(exc_type, exc, tb) -> None:
         text = "".join(traceback.format_exception(exc_type, exc, tb))
-        sys.stderr.write(text)
+        # None stderr (frozen windowed build) or a cp1252 encode error must not abort the
+        # excepthook before the log + dialog below run.
+        if sys.stderr is not None:
+            try:
+                sys.stderr.write(text)
+            except Exception:
+                pass
         written = _write_error_log(text)
         try:
             box = QMessageBox(QMessageBox.Icon.Critical, APP_NAME,
@@ -171,7 +177,21 @@ def _ppi_self_test(app, window) -> None:
     QTimer.singleShot(20000, lambda: _report(False, 4))  # hard timeout: engine hung
 
 
+def _harden_stream_encoding() -> None:
+    # Make stdout/stderr UTF-8 so a non-Latin1 metadata glyph (e.g. a Greek delta in a
+    # GEO genotype/title) can never raise UnicodeEncodeError from a stray print()/traceback
+    # on a Windows cp1252 console. No-ops safely when the streams are None (frozen
+    # windowed build). This neutralizes the whole encode-crash class app-wide.
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None:
+            try:
+                stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+            except Exception:
+                pass
+
+
 def main() -> int:
+    _harden_stream_encoding()
     # QtWebEngine reads these at engine init (QApplication construction), so they
     # must be set first. Conservative flags that rendered reliably under flaky GPU
     # drivers and in the frozen sandbox; software GL is the safe default.

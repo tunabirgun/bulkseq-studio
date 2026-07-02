@@ -17,11 +17,13 @@ def dataframe_from_rows(rows: list[dict[str, str]]) -> pd.DataFrame:
 
 def save_metadata(df: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(path, sep="\t", index=False)
+    # Explicit UTF-8 so non-ASCII metadata (e.g. a Greek delta in a GEO genotype) always
+    # writes cleanly regardless of the platform's default encoding.
+    df.to_csv(path, sep="\t", index=False, encoding="utf-8")
 
 
 def load_metadata(path: Path) -> pd.DataFrame:
-    return pd.read_csv(path, sep="\t", dtype=str).fillna("")
+    return pd.read_csv(path, sep="\t", dtype=str, encoding="utf-8").fillna("")
 
 
 def validate_metadata(df: pd.DataFrame, allow_pending_sra: bool = False, design_variables: list[str] | None = None) -> list[dict[str, str]]:

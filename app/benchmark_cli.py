@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from app.core.benchmark_datasets import create_benchmark_project, load_benchmark_catalog
@@ -11,6 +12,13 @@ from app.core.sanity_checks import write_check
 
 
 def main() -> int:
+    # UTF-8 stdout so printing metadata that carries a non-ASCII glyph (e.g. a Greek delta
+    # in a condition) never raises UnicodeEncodeError on a cp1252 console.
+    if sys.stdout is not None:
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except Exception:
+            pass
     parser = argparse.ArgumentParser(description="Create and validate BulkSeq Studio benchmark projects.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 

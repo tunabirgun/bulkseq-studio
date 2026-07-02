@@ -392,6 +392,11 @@ def _meta_cards(run: dict, project: Path) -> str:
     if wall:
         cards.append(("Wall-clock", wall))
 
+    di = run.get("download_integrity") or {}
+    if di.get("total"):
+        extra = f" (+{di['no_checksum']} unverified)" if di.get("no_checksum") else ""
+        cards.append(("Data integrity", f"{di['verified']}/{di['total']} FASTQ verified · ENA MD5{extra}"))
+
     if not cards:
         return ""
     inner = "".join(

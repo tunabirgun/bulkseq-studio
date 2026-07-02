@@ -144,7 +144,7 @@ echo "Setup complete."
 echo "Finished: $(date '+%Y-%m-%d %H:%M:%S')"
 echo ""
 echo "Verification:"
-for tool in snakemake fastqc multiqc fastp STAR hisat2 salmon gffread featureCounts samtools \
+for tool in snakemake aria2c fastqc multiqc fastp STAR hisat2 salmon gffread featureCounts samtools \
             trim_galore trimmomatic sortmerna ribodetector_cpu fastq_screen read_distribution.py genePredToBed; do
   printf "  %-14s" "$tool"
   if timeout 10 "$MICROMAMBA" run -n "$ENV_NAME" bash -lc "command -v $tool" >/tmp/bulkseq_tool_check.txt 2>/tmp/bulkseq_tool_check.err; then

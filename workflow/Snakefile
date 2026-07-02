@@ -72,15 +72,23 @@ def raw_fastq(sample, read):
     return value
 
 
-# Map each downloadable raw FASTQ target to its ENA URL (built from samples.tsv).
+# Map each downloadable raw FASTQ target to its ENA URL and MD5 checksum (from samples.tsv).
 URL_BY_TARGET = {}
+MD5_BY_TARGET = {}
 for _s in SAMPLES:
-    for _url_col, _path_col in (("fastq_1_url", "fastq_1"), ("fastq_2_url", "fastq_2")):
+    for _url_col, _md5_col, _path_col in (
+        ("fastq_1_url", "fastq_1_md5", "fastq_1"),
+        ("fastq_2_url", "fastq_2_md5", "fastq_2"),
+    ):
         if _url_col in samples_df.columns and _path_col in samples_df.columns:
             _url = str(samples_df.loc[_s, _url_col]).strip()
             _target = str(samples_df.loc[_s, _path_col]).strip()
             if _url and _target:
                 URL_BY_TARGET[_target] = _url
+                if _md5_col in samples_df.columns:
+                    _md5 = str(samples_df.loc[_s, _md5_col]).strip()
+                    if _md5:
+                        MD5_BY_TARGET[_target] = _md5
 
 
 def trimmed_fastqs(sample):

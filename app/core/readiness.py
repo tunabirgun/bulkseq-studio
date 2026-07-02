@@ -36,6 +36,7 @@ EXTERNAL_TOOLS = {
 # installed, but they are intentionally NOT part of the default-route gate (has_*_core_environment),
 # so a working STAR-route env is never flagged incomplete; each route is guarded at run time too.
 OPTIONAL_ROUTE_TOOLS = {
+    "aria2c": "Faster multi-connection FASTQ download (aria2; falls back to a single stream)",
     "trim_galore": "Read trimming (Trim Galore route)",
     "trimmomatic": "Read trimming (Trimmomatic route)",
     "sortmerna": "rRNA filtering (SortMeRNA)",

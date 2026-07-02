@@ -74,13 +74,18 @@ def estimate_runtime(
         minutes += 0.4 if config.workflow.figures else 0.0
     else:
         is_sra = config.input.type == "sra"
-        download = (gbase * 2.3) / io_par if is_sra else 0.0
+        # Download is a weak per-gbase anchor only: real ENA download time is network-bound and
+        # spans minutes to hours independent of size (measured ~80x spread across runs), so it is
+        # surfaced separately (download_size + download_note) rather than trusted in the estimate.
+        download = (gbase * 0.8) / io_par if is_sra else 0.0
         # Estimated FASTQ download size for SRA/ENA: gzipped FASTQ is ~0.35 bytes/base
         # (the same factor _total_gbase uses to invert local file sizes to bases).
         if is_sra and gbase > 0:
             download_gib = (gbase * 1e9 * 0.35) / (1024 ** 3)
 
-        per_gbase = {"Salmon": 1.6, "HISAT2": 2.7}.get(config.workflow.aligner, 3.4)
+        # Per-gbase alignment minutes, recalibrated against real benchmark runs (STAR fit from
+        # 3 runs at 4/12 threads; HISAT2/Salmon scaled proportionally, preserving speed order).
+        per_gbase = {"Salmon": 0.8, "HISAT2": 1.3}.get(config.workflow.aligner, 1.65)
         # Under-provisioned RAM makes STAR on a large genome swap, slowing alignment.
         # The penalty is 1.0 (no effect) unless RAM is genuinely tight for that case,
         # so adequately resourced runs are unchanged.
@@ -93,9 +98,11 @@ def estimate_runtime(
         if config.workflow.aligner == "STAR" and not config.reference.star_index:
             index = INDEX_MINUTES.get(ref_cat, 10.0)
 
-        qc = (gbase * 1.8) / compute_par if (config.workflow.fastqc_pre_trim or config.workflow.fastqc_post_trim) else 0.0
-        trim = (gbase * 0.6) / compute_par if config.workflow.trimming else 0.0
-        rrna = (gbase * 2.0) / compute_par if config.workflow.rrna_filtering else 0.0
+        # QC/trim/rRNA/quant per-gbase minutes, recalibrated from benchmark runs (rRNA is high
+        # because SortMeRNA is genuinely slow — one measured run, treated as an anchor).
+        qc = (gbase * 0.63) / compute_par if (config.workflow.fastqc_pre_trim or config.workflow.fastqc_post_trim) else 0.0
+        trim = (gbase * 0.5) / compute_par if config.workflow.trimming else 0.0
+        rrna = (gbase * 9.0) / compute_par if config.workflow.rrna_filtering else 0.0
         quant = (gbase * 0.1) / compute_par
         downstream = 0.5 + (1.0 if config.workflow.enrichment else 0.0) + (0.3 if config.workflow.figures else 0.0)
 
@@ -115,10 +122,11 @@ def estimate_runtime(
         if low_ram_star:
             bottlenecks.append("limited RAM for STAR on a large genome")
 
-    # Estimates target wall-clock and have historically skewed low, so the range
-    # leans toward the high side.
-    low = max(4.0, minutes * 0.75)
-    high = max(low + 5.0, minutes * 1.6)
+    # Range calibrated against real runs: low 0.8 keeps the low bound at/above the physical
+    # critical-path floor (0.75 fell below it); high 2.5 covers ordinary compute + network jitter.
+    # The pathological download tail is not chased here — it is called out in download_note.
+    low = max(4.0, minutes * 0.8)
+    high = max(low + 5.0, minutes * 2.5)
 
     return {
         "low_seconds": int(low * 60),
@@ -133,6 +141,11 @@ def estimate_runtime(
         "threads": threads,
         "memory_gb": memory_gb,
         "download_size": _download_label(config, download_gib),
+        "download_note": (
+            "SRA/ENA download time is network-dependent and can range from minutes to hours "
+            "regardless of size; it is not fully captured by the estimate above."
+            if config.input.type == "sra" else "no read download"
+        ),
         "bottlenecks": bottlenecks or (
             ["microarray mode: GEO download + limma, no alignment"] if microarray
             else ["count-matrix mode: alignment skipped"] if count_matrix

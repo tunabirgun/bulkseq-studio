@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -357,6 +359,9 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         self.sra_box = QTextEdit()
+        # Paste as plain text: strip any source formatting (fonts/colours/links) so pasted
+        # accessions come in clean.
+        self.sra_box.setAcceptRichText(False)
         self.sra_box.setPlaceholderText("Paste SRR/ERR/DRR runs, or an SRP/PRJNA/GSE study accession, one per line")
         buttons = QHBoxLayout()
         fetch_meta = QPushButton("Fetch metadata && build samples")
@@ -1339,6 +1344,16 @@ class MainWindow(QMainWindow):
         system_layout.addWidget(self.system_info_label)
         system_layout.addWidget(self.recommendation_label)
         system_layout.addWidget(detect)
+        # WSL2 caps the VM's RAM/CPU (default ~50% of host) below the machine total, and that
+        # cap — not the host total — bounds memory-heavy steps. Let the user raise it here
+        # instead of hand-editing %UserProfile%\.wslconfig. Windows-only (no WSL on Linux).
+        if sys.platform.startswith("win"):
+            self.wsl_limits_btn = QPushButton("Edit WSL2 memory / CPU limits…")
+            self.wsl_limits_btn.setToolTip(
+                "Set the RAM and processor caps of the WSL2 virtual machine the pipeline runs in "
+                "(%UserProfile%\\.wslconfig [wsl2]). Raising memory helps STAR on large genomes.")
+            self.wsl_limits_btn.clicked.connect(self._edit_wsl_limits)
+            system_layout.addWidget(self.wsl_limits_btn)
         self.resources_busy = self._busy_bar()
         system_layout.addWidget(self.resources_busy)
         layout.addWidget(system_group)
@@ -1380,6 +1395,53 @@ class MainWindow(QMainWindow):
 
         layout.addStretch(1)
         self.tabs.addTab(self._scrollable(page), "Resources")
+
+    def _edit_wsl_limits(self) -> None:
+        from app.core.wslconfig import (
+            apply_wsl_shutdown, read_wsl2_limits, write_wsl2_limits,
+        )
+        cur = read_wsl2_limits()
+        cur_mem = int("".join(ch for ch in str(cur.get("memory") or "") if ch.isdigit()) or 0)
+        cur_proc = int(cur.get("processors") or 0)
+        sysinfo = getattr(self, "_last_system", None)
+        host_gb = int(getattr(sysinfo, "total_ram_gb", 0) or 0) or 2048
+        host_cpu = int(getattr(sysinfo, "logical_threads", 0) or 0) or 256
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("WSL2 memory / CPU limits")
+        form = QFormLayout(dlg)
+        note = QLabel(
+            "These cap the WSL2 virtual machine the pipeline runs in (%UserProfile%\\.wslconfig). "
+            "0 means leave WSL's default (about half your RAM, all CPUs). Changes take effect after "
+            "WSL restarts.")
+        note.setWordWrap(True)
+        form.addRow(note)
+        mem = QSpinBox(); mem.setRange(0, max(host_gb, 8)); mem.setValue(cur_mem); mem.setSuffix(" GB")
+        proc = QSpinBox(); proc.setRange(0, max(host_cpu, 1)); proc.setValue(cur_proc)
+        form.addRow("Memory cap (0 = default)", mem)
+        form.addRow("Processors (0 = default)", proc)
+        box = QDialogButtonBox()
+        save_btn = box.addButton("Save", QDialogButtonBox.ButtonRole.AcceptRole)
+        apply_btn = box.addButton("Save && restart WSL now", QDialogButtonBox.ButtonRole.ApplyRole)
+        box.addButton(QDialogButtonBox.StandardButton.Cancel)
+        form.addRow(box)
+
+        def do_save(and_apply: bool) -> None:
+            path = write_wsl2_limits(mem.value() or None, proc.value() or None)
+            if and_apply:
+                ok, msg = apply_wsl_shutdown()
+                QMessageBox.information(self, APP_NAME, f"Saved {path}.\n\n{msg}")
+            else:
+                QMessageBox.information(
+                    self, APP_NAME,
+                    f"Saved {path}.\n\nRestart WSL to apply — click 'Save & restart WSL now', or run "
+                    "'wsl --shutdown'. Then click 'Detect and Recommend' again to re-read the caps.")
+            dlg.accept()
+
+        save_btn.clicked.connect(lambda: do_save(False))
+        apply_btn.clicked.connect(lambda: do_save(True))
+        box.rejected.connect(dlg.reject)
+        dlg.exec()
 
     def _build_runtime_tab(self) -> None:
         page = QWidget()
@@ -2192,6 +2254,7 @@ class MainWindow(QMainWindow):
         help_label.setWordWrap(True)  # without this the long label forces a huge min width
         v.addWidget(help_label)
         self.goi_box = QTextEdit()
+        self.goi_box.setAcceptRichText(False)  # paste gene IDs as plain text, no source formatting
         self.goi_box.setPlaceholderText("One gene ID per line")
         self.goi_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         save = QPushButton("Save genes of interest")
