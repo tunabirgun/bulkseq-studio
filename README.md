@@ -140,14 +140,14 @@ On Linux, BulkSeq Studio runs **natively** — there is no WSL. The same PySide6
    extraction or install:
 
    ```bash
-   chmod +x BulkSeqStudio-0.12.1-x86_64.AppImage
-   ./BulkSeqStudio-0.12.1-x86_64.AppImage
+   chmod +x BulkSeqStudio-0.16.0-x86_64.AppImage
+   ./BulkSeqStudio-0.16.0-x86_64.AppImage
    ```
 
    **Portable tarball:** extract and run the bundled launcher:
 
    ```bash
-   tar xzf BulkSeqStudio-linux-0.12.1.tar.gz
+   tar xzf BulkSeqStudio-linux-0.16.0.tar.gz
    "BulkSeq Studio/BulkSeqStudio"
    ```
 
@@ -167,10 +167,6 @@ On Linux, BulkSeq Studio runs **natively** — there is no WSL. The same PySide6
 The full GUI — every tab, the Figure Style editor, and the interactive cytoscape.js PPI viewer (QtWebEngine) — runs the same on Linux as on Windows; the WSL2 controls are hidden, since the pipeline runs locally.
 
 ![BulkSeq Studio running natively on Linux](docs/screenshot-linux.png)
-
-A minimal launcher (`python -m app.simple_gui`) is also available for opening an existing project and running, dry-running, or unlocking the pipeline with a live log:
-
-![The simple native GUI on Linux](docs/screenshot-linux-simple.png)
 
 ## Quick start
 
