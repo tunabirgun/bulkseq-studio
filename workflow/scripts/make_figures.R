@@ -330,6 +330,50 @@ hm_dim <- if (!is.null(size_overrides[["top_deg_heatmap"]])) {
 save_grid(ph2$gtable, out[["heatmap_png"]], out[["heatmap_svg"]], w = hm_dim[1], h = hm_dim[2])
 } else save_placeholder("Top-DEG heatmap needs the counts / VST matrix (unavailable for a DESeq2-results upload).", out[["heatmap_png"]], out[["heatmap_svg"]])
 
+# ---- Separate up- / down-regulated top-DEG heatmaps -------------------------
+# Split the significant genes by direction (raw log2FC sign + |log2FC| >= lfc_thr,
+# the same definition as the up/down gene CSVs in run_deseq2.R) and draw a heatmap
+# of the top-N by padj within each side. Called at top level: every declared output
+# is always written (real heatmap, too-few-genes placeholder, or no-counts
+# placeholder), so the rule never fails in count / upload / microarray / voom modes.
+make_dir_heatmap <- function(direction, png_path, svg_path) {
+  if (!has_counts) {
+    save_placeholder(sprintf("%s-regulated heatmap needs the counts / VST matrix (unavailable for a DESeq2-results upload).", direction), png_path, svg_path)
+    return(invisible(NULL))
+  }
+  keep <- !is.na(res$padj) & res$padj < alpha_thr & !is.na(res$log2FoldChange) &
+    (if (identical(direction, "Up")) res$log2FoldChange >= lfc_thr else res$log2FoldChange <= -lfc_thr)
+  ok <- which(keep)
+  if (length(ok) < 2) {
+    save_placeholder(sprintf("Fewer than 2 %s-regulated genes (padj < %.3g, |log2FC| >= %.2g).", tolower(direction), alpha_thr, lfc_thr), png_path, svg_path)
+    return(invisible(NULL))
+  }
+  ord <- ok[order(res$padj[ok])]
+  n_top <- min(heatmap_top, length(ord))
+  top_names <- rownames(res)[head(ord, n_top)]
+  hm <- assay(vsd)[top_names, , drop = FALSE]
+  rownames(hm) <- label_for(top_names)
+  hm <- t(scale(t(hm)))
+  hm <- pmin(pmax(hm, -heatmap_zlim), heatmap_zlim)
+  hm_breaks <- seq(-heatmap_zlim, heatmap_zlim, length.out = 256)
+  ann <- as.data.frame(colData(dds)[, group_var, drop = FALSE])
+  hm_levels <- unique(as.character(ann[[group_var]]))
+  hm_ann_cols <- setNames(pal_spec$discrete[seq_along(hm_levels)], hm_levels)
+  fs_row <- if (heatmap_fs_row > 0) heatmap_fs_row else max(4, base_size - 4)
+  ph <- pheatmap(hm, scale = "none", annotation_col = ann, show_rownames = TRUE,
+                 clustering_method = "ward.D2",
+                 color = pal_spec$div(255), breaks = hm_breaks,
+                 legend_breaks = c(-heatmap_zlim, 0, heatmap_zlim),
+                 legend_labels = c(sprintf("%.1f", -heatmap_zlim), "0  (row z-score)", sprintf("%.1f", heatmap_zlim)),
+                 annotation_colors = setNames(list(hm_ann_cols), group_var),
+                 annotation_names_col = FALSE, cellheight = heatmap_cell_h,
+                 border_color = NA, fontsize = base_size, fontsize_row = fs_row, silent = TRUE)
+  hm_h <- (n_top * heatmap_cell_h) / 72 + 2
+  save_grid(ph$gtable, png_path, svg_path, w = fig_w, h = max(hm_h, fig_h))
+}
+make_dir_heatmap("Up", out[["up_heatmap_png"]], out[["up_heatmap_svg"]])
+make_dir_heatmap("Down", out[["down_heatmap_png"]], out[["down_heatmap_svg"]])
+
 # ---- Raw p-value histogram (DE calibration check) ---------------------------
 # A spike near 0 over a flat background indicates a well-calibrated test; a
 # U-shape or hill flags a mis-specified design or residual confounding. Works

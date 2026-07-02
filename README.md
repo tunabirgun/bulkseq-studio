@@ -28,7 +28,8 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 - **Interactive protein-interaction network.** A dedicated PPI Network tab embeds the STRING network in an interactive [cytoscape.js](https://js.cytoscape.org/) view: hover a protein for its symbol, mean expression, log2 fold-change, adjusted p-value, degree, and module; drag, zoom, and re-layout (fcose/cose/circle and others); recolour by fold-change or module; resize by degree, expression, or significance; filter by confidence; and export PNG or SVG (white or transparent background). The network also exports to Cytoscape (GraphML, SIF, cytoscape.js JSON) for external editing.
 - **More statistics.** Sample-to-sample correlation heatmaps (Pearson and Spearman's ρ), a Wilcoxon rank-sum concordance diagnostic, TOST equivalence testing to flag genuinely unchanged genes, MSigDB Hallmark set-overlap, and disease-ontology (DO) enrichment for human and mouse.
 - **Genes of interest.** Supply a gene list to get a focused z-scored heatmap, a per-condition expression panel, and a counts table — and a STRING network for those genes when PPI seeding is set to the list — generated from an existing run without re-analysis. The IDs are matched to the run's genes by locus tag, Ensembl/RefSeq ID, or symbol; any that do not match are flagged with examples of the run's ID format.
-- **Publication figures.** PCA, sample-distance, MA, volcano, top-DEG heatmap, a raw p-value histogram, and (RNA-seq) dispersion / Cook's-distance / library-size diagnostics, each exported as PNG (raster) and SVG (vector, with an in-app preview toggle). A built-in **Figure Style** editor (palette, fonts, sizes, point size, label counts, dimensions in in/cm/px, DPI) re-renders figures with **Regenerate figures**, without re-running alignment or DESeq2.
+- **Publication figures.** PCA, sample-distance, MA, volcano, a combined top-DEG heatmap, separate **up-** and **down-regulated** top-DEG heatmaps, a raw p-value histogram, and (RNA-seq) dispersion / Cook's-distance / library-size diagnostics, each exported as PNG (raster) and SVG (vector, with an in-app preview toggle). A built-in **Figure Style** editor (palette, fonts, sizes, point size, label counts, dimensions in in/cm/px, DPI) re-renders figures with **Regenerate figures**, without re-running alignment or DESeq2.
+- **Up- and down-regulated genes, separately.** The differential-expression genes are split into up- and down-regulated sets (padj-significant, raw |log2FC| ≥ threshold). View each list on its own in the Outputs tab, and each gets its own top-gene heatmap. The self-contained HTML results report shows both sets side by side, embeds every figure as a zoomable SVG (click to open full size), and lists per-step runtimes.
 - **Gene symbols and biotypes.** The DE table and figures carry gene symbols and a biotype column (parsed from the reference GTF) alongside the gene IDs; genes of interest match IDs or symbols.
 - **Downstream exports.** A normalized-expression matrix (VST counts, or log2 intensities for microarray) as CSV, a stat-ranked `.rnk` for preranked GSEA, and the DESeq2/limma results table.
 - **Provenance you can export.** When a run finishes, the Run Monitor lets you save a **tools & references** file (tool and R/Bioconductor package versions, the reference genome and annotation with source URLs and MD5, and the enrichment database codes) and a **study design** file (samples, conditions, layout, design formula, and contrasts) for that specific run.
@@ -103,6 +104,16 @@ Work top to bottom: click each *Install…* button, press **Re-check** to refres
 
 ![BulkSeq Studio environment-check window: four readiness cards with install buttons](docs/screenshot-environment-check.png)
 
+> **Raising the WSL2 memory limit (Windows).** By default WSL2 may use only about half of your host RAM, and that VM cap (not the Windows total) is what memory-heavy steps run against: STAR indexing and alignment on large genomes, or DESeq2 on big count matrices. To raise it, create or edit `%UserProfile%\.wslconfig` (a plain text file in your user folder) and add a `[wsl2]` section, then apply it by running `wsl --shutdown` in PowerShell and reopening the app:
+>
+> ```ini
+> [wsl2]
+> memory=48GB      # cap the VM at 48 GB (default is ~50% of host RAM)
+> processors=16    # optional: limit WSL2 to 16 logical processors
+> ```
+>
+> See Microsoft's [Advanced settings configuration in WSL](https://learn.microsoft.com/windows/wsl/wsl-config#configuration-setting-for-wslconfig) for the full list of `.wslconfig` options. On Linux there is no cap to configure; the pipeline runs natively with your machine's full RAM.
+
 ### Run from source (development)
 
 ```powershell
@@ -170,7 +181,7 @@ A minimal launcher (`python -m app.simple_gui`) is also available for opening an
 5. **Workflow Settings:** choose the trimmer, aligner, rRNA tool, and differential-expression engine; set the design and contrast (a Design helper can build the formula from your metadata), `alpha`, `|log2FC|` threshold, and how to handle organellar genes; optionally enable the contamination screen, GSVA, or extended QC. An Advanced parameters panel exposes each tool's important settings.
 6. **Sanity Checks:** resolve any flagged issues before running.
 7. **Run Monitor:** start the pipeline and watch progress. When it finishes, export the tools & references and study design files for the run.
-8. **Outputs:** browse the count matrix and DESeq2 table, view and zoom figures (toggle *Vector (SVG)* for a crisp preview at any zoom), restyle and regenerate them, and define genes of interest.
+8. **Outputs:** browse the count matrix and DESeq2 table (including the separate up- and down-regulated gene lists), view and zoom figures (toggle *Vector (SVG)* for a crisp preview at any zoom), restyle and regenerate them, and define genes of interest.
 
 When a run finishes, the Run Monitor enables **Export Tools & References** and **Export Study Design**, which save the provenance recorded for that run (tool and package versions, the reference and its source, the enrichment databases, the sample sheet, and the design):
 

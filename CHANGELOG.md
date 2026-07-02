@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.16.0 — 2026-07-01
+## 0.16.0 — 2026-07-01 (revised 2026-07-02)
 
 ### Added
 
@@ -11,7 +11,8 @@
 - **Single-end FASTQ support.** The FASTQ route now accepts single-end libraries end to end (trimming, rRNA filtering, STAR/HISAT2/Salmon, featureCounts). Mixed single- and paired-end samples in one project are rejected with a clear message.
 - **GSVA pathway-activity module.** Optional per-sample gene-set variation analysis on the normalized expression matrix, with a sample-by-set activity heatmap. Organism-safe: it runs only on user-supplied gene sets, so it works for any organism.
 - **RSeQC alignment QC.** Optional read-distribution and gene-body-coverage reports from aligned BAMs (BED12 derived from the annotation with `gtfToGenePred`/`genePredToBed`).
-- **Self-contained HTML report.** A new `results_report.html` inlines the key figures, top differentially expressed genes, enrichment summary, and run provenance into a single file that opens in any browser with no external assets. Reachable from the GUI via **Open Results Report**.
+- **Redesigned self-contained HTML report.** `results_report.html` is restyled to match the documentation site (logo, version chip, summary cards, footer links to the repo/releases/docs) and now embeds every figure as a **zoomable SVG** (click to open full size, sharp at any magnification; dense scatter figures fall back to PNG), shows **up- and down-regulated genes in separate tables**, renders **functional enrichment as GO/KEGG tables** (top terms by adjusted p-value) instead of a raw text dump, reports **per-step runtimes**, and lists the sanity checks as colour-coded status badges. Still a single file that opens in any browser with no external assets; reachable from the GUI via **Open Results Report**.
+- **Separate up- and down-regulated top-DEG heatmaps.** The figures step now also produces `top_upregulated_heatmap` and `top_downregulated_heatmap` (top genes by significance within each direction) alongside the combined top-DEG heatmap, in every mode. The Outputs tab table picker can preview the up- and down-regulated gene lists separately.
 - **Guided design/covariate builder (GUI).** A dialog reads the sample metadata columns and helps assemble the design formula and contrast (for example adding a batch covariate), instead of typing the formula by hand.
 - **Advanced parameters panel (GUI).** A collapsible per-tool section exposes the important parameters of fastp, Trim Galore, Trimmomatic, SortMeRNA, RiboDetector, and the aligners for manual tuning; defaults are unchanged.
 - **fastp poly-X trimming** is now an exposed option (`--trim_poly_x`).
@@ -21,6 +22,12 @@
 - **Pipeline environments** gained the new tools: `edger`, `trim-galore`, `cutadapt`, `pigz`, `trimmomatic`, `fastq-screen`, `bowtie2`, `ribodetector`, `gsva`, `rseqc`, and the UCSC `gtfToGenePred`/`genePredToBed` utilities. The pinned lock (`bulkseq.lock.yaml`) was regenerated; RiboDetector installs its CPU ONNX runtime (no CUDA).
 - **Overview figure** (`figure1_overview`) was redrawn to show all three DE engines, the alternative preprocessing tools, single-end input, and the existing DESeq2-results-upload path that feeds enrichment, PPI, and figures without recomputing DE.
 - **Validation** was extended with a human dataset (airway smooth muscle ± dexamethasone, GRCh38/Ensembl via the Salmon route): the run recovers the canonical glucocorticoid signature (FKBP5, ZBTB16, KLF15, SPARCL1 up; VCAM1 down), confirming the human/`org.Hs.eg.db` path end to end.
+- **Documentation** now explains how to raise the WSL2 memory cap on Windows via `%UserProfile%\.wslconfig` (`[wsl2] memory=`), linking Microsoft's `.wslconfig` reference, since that VM cap (not the Windows host total) bounds memory-heavy steps such as STAR indexing and DESeq2.
+
+### Fixed
+
+- **Runtime timing phase mapping.** The per-phase runtime rollup now recognises the Salmon, Trim Galore / Trimmomatic, SortMeRNA / RiboDetector, and stats/network steps instead of bucketing them under "Other".
+- **SortMeRNA version string.** The software-versions report now records the SortMeRNA version rather than its startup banner line.
 
 ### Removed
 

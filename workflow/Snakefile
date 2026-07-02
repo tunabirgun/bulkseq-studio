@@ -342,7 +342,8 @@ def final_targets():
         # deseq2-results mode can draw only the results-table figures; PCA / sample
         # distance / top-DEG heatmap need the counts/vst and degrade to placeholders.
         fig_list = ("ma_plot", "volcano", "pvalue_histogram") if DE_RESULTS_MODE else \
-                   ("pca", "sample_distance", "ma_plot", "volcano", "top_deg_heatmap")
+                   ("pca", "sample_distance", "ma_plot", "volcano", "top_deg_heatmap",
+                    "top_upregulated_heatmap", "top_downregulated_heatmap")
         for fig in fig_list:
             targets.append(f"results/figures/{fig}.png")
             targets.append(f"results/figures/{fig}.svg")

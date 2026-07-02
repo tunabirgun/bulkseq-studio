@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sys
 
+import pytest
+
 from app.core.readiness import ReadinessItem, _core_tools_present, check_readiness, check_wsl_bulkseq_environment, has_native_core_environment, has_wsl_core_environment, missing_python_packages, next_readiness_actions, readiness_summary
 
 
@@ -20,6 +22,7 @@ def test_wsl_readiness_probe_is_nonfatal() -> None:
     assert items[0].name.startswith("WSL")
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="WSL install guidance is Windows-only; Linux returns the native-activation hint")
 def test_next_action_points_to_core_env_when_bulkseq_missing() -> None:
     items = [
         ReadinessItem("wsl", "PASS", "", ""),

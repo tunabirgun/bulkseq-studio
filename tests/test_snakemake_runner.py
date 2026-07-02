@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+import pytest
 
 from app.core.config_models import default_config
 from app.core.snakemake_runner import build_snakemake_command
@@ -20,6 +23,7 @@ def test_unlock_command_uses_project_workflow_snakefile() -> None:
     assert "--unlock" in command.command
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows->WSL /mnt/c path translation only applies on a Windows host")
 def test_wsl_command_quotes_project_paths_with_spaces() -> None:
     cfg = default_config("demo", Path("C:/Users/Tuna/Desktop/BulkSeq Studio/demo"))
     command = build_snakemake_command(Path("C:/Users/Tuna/Desktop/BulkSeq Studio/demo"), cfg, mode="dry-run", use_wsl=True)

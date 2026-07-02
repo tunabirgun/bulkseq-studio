@@ -114,6 +114,13 @@
 
 <div class="note"><span class="t">Disk space</span> Set aside about 10 GB of free disk for the toolchain and reference indices, and 16 GB or more of RAM is recommended (STAR alignment is the memory-heavy step; for very large genomes the HISAT2 or Salmon aligner needs far less). The one-time environment setup downloads several packages, so the first run is slower than later ones — give it time and a stable internet connection.</div>
 
+<h3>Raising the WSL2 memory limit (Windows)</h3>
+<p>On Windows the pipeline runs inside WSL2, which by default may use only about half of your host RAM. That VM cap — not the Windows total — is what memory-heavy steps run against (STAR indexing and alignment on large genomes, or DESeq2 on big count matrices). If a run is constrained, raise the cap by creating or editing <code>%UserProfile%\.wslconfig</code> (a plain text file in your user folder), adding a <code>[wsl2]</code> section, then applying it with <code>wsl --shutdown</code> in PowerShell before reopening the app:</p>
+<pre><code>[wsl2]
+memory=48GB      # cap the VM at 48 GB (default is ~50% of host RAM)
+processors=16    # optional: limit WSL2 to 16 logical processors</code></pre>
+<p class="muted">See Microsoft's <a href="https://learn.microsoft.com/windows/wsl/wsl-config#configuration-setting-for-wslconfig" target="_blank" rel="noopener">Advanced settings configuration in WSL ↗</a> for every <code>.wslconfig</code> option. On Linux there is no cap to configure — the pipeline runs natively with your machine's full RAM.</p>
+
 <figure>
   <img src="assets/screenshot-linux.png" alt="BulkSeq Studio running natively on a Linux desktop.">
   <figcaption>The same application running natively on Linux. Every tab, the Figure Style editor, and the interactive PPI viewer work the same as on Windows.</figcaption>

@@ -1827,6 +1827,7 @@ class MainWindow(QMainWindow):
         self.output_table_pick = QComboBox()
         self.output_table_pick.addItems(
             ["results/counts/counts.txt", "results/deseq2/deseq2_results.csv",
+             "results/deseq2/upregulated_genes.csv", "results/deseq2/downregulated_genes.csv",
              "results/deseq2/normalized_counts.csv", "results/deseq2/unchanged_genes.csv",
              "results/enrichment/kegg_ora.csv", "results/enrichment/kegg_gsea.csv",
              "results/stats/wilcoxon_results.csv", "results/stats/set_overlap.csv",

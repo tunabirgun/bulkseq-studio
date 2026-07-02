@@ -74,7 +74,16 @@ def r_package_versions(extra=None):
 def run_version(command: list[str]) -> str:
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=15, check=False)
-        return (result.stdout or result.stderr).strip().splitlines()[0]
+        # Skip leading log banners (SortMeRNA prints "[process:...] === Options ... ==="
+        # before its version) and pick the first meaningful line that carries a version number.
+        lines = [ln.strip() for ln in (result.stdout or result.stderr).splitlines()
+                 if ln.strip() and not ln.strip().startswith("[")]
+        if not lines:
+            return "unknown"
+        for ln in lines:
+            if any(ch.isdigit() for ch in ln):
+                return ln
+        return lines[0]
     except Exception as exc:
         return f"unavailable ({exc.__class__.__name__})"
 
