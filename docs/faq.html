@@ -66,6 +66,9 @@
 <h4>Does it work on Linux without WSL?</h4>
 <p>Yes. On Linux the same GUI drives the same Snakemake pipeline natively in a local micromamba environment, with no WSL involved, and produces identical results. There is no WSL setup step and no memory cap below the host's RAM.</p>
 
+<h4>How do I update to a new version?</h4>
+<p>On Windows, run the newer installer: it detects the existing install and offers to update (remove the old version and install the new one) or to uninstall first. The portable ZIP has nothing to update — unzip the new one. On Linux, download the newer AppImage and delete the old one, or run <a href="https://github.com/AppImage/AppImageUpdate">AppImageUpdate</a> on the AppImage; the build carries zsync update information, so it fetches only the changed chunks from the latest release.</p>
+
 <h4>Which trimmer, rRNA tool, and DE engine should I use?</h4>
 <p>The defaults are chosen to work for a standard study: fastp for trimming, SortMeRNA if you turn on rRNA removal, and DESeq2 for differential expression. Change them only when you have a reason. Prefer Trim Galore or Trimmomatic if your lab standardizes on one; use RiboDetector when no rRNA reference is available for your organism; and run limma-voom or edgeR quasi-likelihood as a cross-check, especially on larger designs. All the alternatives produce the same tables and figures, so downstream steps do not change.</p>
 

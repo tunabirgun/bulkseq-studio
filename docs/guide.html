@@ -62,12 +62,13 @@
       <li><strong>Installer</strong> — <code>BulkSeqStudio-Setup-0.16.0.exe</code>. A per-user install that needs no administrator rights; afterwards you launch it from the Start Menu.</li>
       <li><strong>Portable</strong> — <code>BulkSeqStudio-Portable-0.16.0.zip</code>. Unzip it anywhere and double-click <code>BulkSeqStudio.exe</code>. Nothing is installed.</li>
     </ul>
+    <p class="muted">To update, run a newer installer: it detects the existing install and offers to update or uninstall first.</p>
   </div>
   <div class="card feature">
     <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>Linux</h4>
     <p>Download from the same Releases page and pick either:</p>
     <ul>
-      <li><strong>AppImage</strong> — a single self-contained file. Make it executable, then run it; nothing to extract or install.</li>
+      <li><strong>AppImage</strong> — a single self-contained file. Make it executable, then run it; nothing to extract or install. To update, download the newer file or run <a href="https://github.com/AppImage/AppImageUpdate">AppImageUpdate</a> on it (the build ships zsync update info).</li>
       <li><strong>Tarball</strong> — extract it and run the bundled launcher <code>BulkSeqStudio</code>.</li>
     </ul>
     <p class="muted">Both bundle the interface, so you do not need system Python. They are built on Ubuntu 24.04 and need glibc 2.39 or newer.</p>

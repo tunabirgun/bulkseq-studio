@@ -17,7 +17,7 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 - **GEO microarray (GSE).** Enter a GEO series accession; the app ingests the normalized intensities (GEOquery series matrix, or RMA from raw Affymetrix CEL), maps probes to gene symbols, and runs **limma** differential expression, then the same figures, enrichment, and genes-of-interest. RNA-seq series are redirected to the SRA box.
 - **Bring your own DESeq2 results.** Upload a differential-expression table to run enrichment, the volcano / MA / p-value figures, and the STRING PPI network directly, with no FASTQ, alignment, or counts. See [Bring your own DESeq2 results](#bring-your-own-deseq2-results).
 - **Three differential-expression engines.** DESeq2 is the default (apeglm shrinkage, VST, configurable `alpha` and `|log2FC|` thresholds, separate up- and down-regulated gene lists). Optional **limma-voom** and **edgeR quasi-likelihood** engines are provided as cross-checks, best suited to larger designs; all three emit the same result tables and figures, so everything downstream is identical. DESeq2 remains the default and its results are unchanged (validated log2FC correlation ≈ 0.997–1.000 and top-DEG Jaccard 0.94–0.97 against DESeq2 on *Fusarium graminearum*).
-- **Choice of trimmer, rRNA tool, and a contamination screen.** Adapter/quality trimming with **fastp** (default), **Trim Galore**, or **Trimmomatic**; optional ribosomal-RNA removal with **SortMeRNA** (reference-based, default) or **RiboDetector** (reference-free); and an optional **FastQ Screen** contamination report (percentage of reads matching a panel of reference genomes) that lands in the MultiQC report. The defaults (fastp, SortMeRNA) are unchanged, so existing results are unaffected.
+- **Choice of trimmer, rRNA tool, and a contamination screen.** Adapter/quality trimming with **fastp** (default), **Trim Galore**, or **Trimmomatic**; optional ribosomal-RNA removal with **SortMeRNA** (reference-based, default) or **RiboDetector** (reference-free); and an optional **FastQ Screen** contamination report (percentage of reads matching a panel of reference genomes) that lands in the MultiQC report. FastQ Screen runs against a config file you point it at (Advanced parameters → Contamination: FastQ Screen config); it does not auto-download a genome panel. The defaults (fastp, SortMeRNA) are unchanged, so existing results are unaffected.
 - **Single-end and paired-end input.** Both layouts run the full pipeline through every trimmer, aligner, and rRNA tool; the app detects the layout from the sample sheet and blocks a mixed-layout run with guidance.
 - **GSVA pathway activity.** Optional sample-level gene-set activity scores (GSVA) computed against your own custom gene sets, with a per-sample heatmap. Organism-safe: it uses only your gene sets, so it is valid for non-model organisms. Descriptive scores, not a significance test.
 - **Extended alignment QC (RSeQC).** An optional read genomic-context distribution (exon / intron / intergenic) and 5′→3′ gene-body coverage, added to the MultiQC report (genome-BAM routes only).
@@ -89,6 +89,8 @@ Download the latest build from the [**Releases**](https://github.com/tunabirgun/
 - **Installer:** `BulkSeqStudio-Setup-<version>.exe`. Per-user install (no administrator rights); launch from the Start Menu.
 - **Portable:** `BulkSeqStudio-Portable-<version>.zip`. Unzip anywhere and double-click `BulkSeq Studio\BulkSeqStudio.exe`. No installation.
 
+**Updating:** run a newer installer and it detects the existing install, then offers to update (remove the old version and install the new one) or to uninstall. The portable ZIP has nothing to update — just unzip the new one.
+
 (Or build them yourself with `scripts\build_release.ps1`.)
 
 ### First launch: checking the environment
@@ -143,6 +145,11 @@ On Linux, BulkSeq Studio runs **natively** — there is no WSL. The same PySide6
    chmod +x BulkSeqStudio-0.16.0-x86_64.AppImage
    ./BulkSeqStudio-0.16.0-x86_64.AppImage
    ```
+
+   To update later, either download the newer AppImage and delete the old one, or use
+   [AppImageUpdate](https://github.com/AppImage/AppImageUpdate) — the build carries zsync update
+   information and a companion `.AppImage.zsync`, so `AppImageUpdate BulkSeqStudio-<version>-x86_64.AppImage`
+   fetches only the changed chunks from the latest release.
 
    **Portable tarball:** extract and run the bundled launcher:
 

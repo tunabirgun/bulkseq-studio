@@ -57,27 +57,37 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [Code]
-{ Detect an existing BulkSeq Studio install (its Inno uninstall registry key) and
-  offer to update or uninstall it before continuing. SetupSetting("AppId") emits the
-  exact AppId so the key matches whatever this script's AppId resolves to. }
+// Detect an existing BulkSeq Studio install (its Inno uninstall registry key) and
+// offer to update or uninstall it before continuing. The subkey below is hardcoded to
+// the exact value Inno writes for this AppId (verified against the registry): a single
+// leading brace and two trailing braces. SetupSetting("AppId") would emit the raw
+// double-leading-brace form and never match, silently skipping the prompt.
+const
+  UNINST_KEY = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{B7E4B2A1-6F1C-4E1A-9C2A-BULKSEQSTUDIO}}_is1';
+
 function GetInstalledUninstaller(var UninstStr: String; var InstalledVer: String): Boolean;
-var
-  key: String;
 begin
-  key := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#SetupSetting("AppId")}_is1';
   InstalledVer := '';
-  Result := RegQueryStringValue(HKCU, key, 'UninstallString', UninstStr);
+  Result := RegQueryStringValue(HKCU, UNINST_KEY, 'UninstallString', UninstStr);
   if not Result then
-    Result := RegQueryStringValue(HKLM, key, 'UninstallString', UninstStr);
+    Result := RegQueryStringValue(HKLM, UNINST_KEY, 'UninstallString', UninstStr);
   if Result then
-    if not RegQueryStringValue(HKCU, key, 'DisplayVersion', InstalledVer) then
-      RegQueryStringValue(HKLM, key, 'DisplayVersion', InstalledVer);
+    if not RegQueryStringValue(HKCU, UNINST_KEY, 'DisplayVersion', InstalledVer) then
+      RegQueryStringValue(HKLM, UNINST_KEY, 'DisplayVersion', InstalledVer);
+end;
+
+function StillInstalled(): Boolean;
+var
+  s: String;
+begin
+  Result := RegQueryStringValue(HKCU, UNINST_KEY, 'UninstallString', s)
+         or RegQueryStringValue(HKLM, UNINST_KEY, 'UninstallString', s);
 end;
 
 function InitializeSetup(): Boolean;
 var
   uninst, ver, verText: String;
-  choice, rc: Integer;
+  choice, rc, waited: Integer;
 begin
   Result := True;
   if not GetInstalledUninstaller(uninst, ver) then
@@ -101,10 +111,21 @@ begin
     exit;
   end;
 
-  { Both Update (Yes) and Uninstall (No) remove the existing version first. }
+  { Both Update (Yes) and Uninstall (No) remove the existing version first. Inno's
+    uninstaller relaunches itself from a temp copy, so Exec returns before removal
+    completes; wait until the uninstall key is gone so a following install cannot race
+    the old uninstaller (up to ~30 s, then proceed regardless). }
   uninst := RemoveQuotes(uninst);
   if uninst <> '' then
+  begin
     Exec(uninst, '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART', '', SW_HIDE, ewWaitUntilTerminated, rc);
+    waited := 0;
+    while StillInstalled() and (waited < 30000) do
+    begin
+      Sleep(500);
+      waited := waited + 500;
+    end;
+  end;
 
   if choice = IDNO then
   begin

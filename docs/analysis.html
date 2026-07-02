@@ -72,7 +72,7 @@
 <p>Either tool runs on all three aligner routes and leaves the default (SortMeRNA) results unchanged.</p>
 
 <h3>Contamination screening (FastQ Screen)</h3>
-<p>An optional <strong>FastQ Screen</strong> pass maps a subset of each sample's reads against a panel of reference genomes and reports the fraction that matches each one, a quick check for cross-species contamination or unexpected sources. The result lands in the MultiQC report alongside the other QC modules.</p>
+<p>An optional <strong>FastQ Screen</strong> pass maps a subset of each sample's reads against a panel of reference genomes and reports the fraction that matches each one, a quick check for cross-species contamination or unexpected sources. The result lands in the MultiQC report alongside the other QC modules. Point it at a FastQ Screen config file (Advanced parameters &rarr; Contamination: FastQ Screen config) that lists the bowtie2 genome indexes to screen against; it does not download a genome panel. If the screen is enabled without a config, it is skipped and the sanity check notes it.</p>
 
 <h3>Alignment and quantification</h3>
 <p>Three aligners are available, all validated end to end. They feed a gene-level count matrix in the same format, so everything after counting (differential expression, enrichment, the network, every figure) runs identically whichever you pick. Both single-end and paired-end reads run through all three routes.</p>

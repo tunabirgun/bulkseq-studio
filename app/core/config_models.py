@@ -137,6 +137,10 @@ class ContaminationConfig(BaseModel):
     # FastQ Screen: number of reads subsampled per sample for the screen (faster than
     # screening every read; the default is FastQ Screen's own).
     subset: int = 100000
+    # Path to a user-provided FastQ Screen config (fastq_screen.conf) pointing at the bowtie2
+    # genome indexes to screen against. Required when contamination screening is enabled; the
+    # built-in --get_genomes auto-download is not used (broken upstream, multi-GB panel).
+    conf: str | None = None
 
 
 class SortmernaConfig(BaseModel):

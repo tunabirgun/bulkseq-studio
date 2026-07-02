@@ -23,6 +23,15 @@ def main() -> int:
         for section in ("project", "input", "reference", "workflow", "resources"):
             if section not in payload:
                 messages.append({"status": "FAIL", "message": f"Missing config section: {section}"})
+        # Contamination screening needs a user-provided FastQ Screen config; warn if it is
+        # enabled without one (the screen is skipped) or points at a missing file (it will fail).
+        wf = payload.get("workflow") or {}
+        if wf.get("contamination_screen"):
+            conf = ((payload.get("contamination") or {}).get("conf") or "").strip()
+            if not conf:
+                messages.append({"status": "WARNING", "message": "Contamination screening is enabled but no FastQ Screen config (contamination.conf) is set; the screen will be skipped. Set a fastq_screen.conf under Advanced parameters to run it."})
+            elif not Path(conf).exists():
+                messages.append({"status": "WARNING", "message": f"FastQ Screen config not found: {conf}; the contamination screen will fail until the path is fixed or the screen is disabled."})
     if not samples_path.exists():
         messages.append({"status": "FAIL", "message": f"Missing samples table: {samples_path}"})
     if not messages:

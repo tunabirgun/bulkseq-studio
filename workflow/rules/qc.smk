@@ -95,9 +95,11 @@ rule multiqc:
 
 
 # Contamination screening (FastQ Screen): optional QC that aligns a read subsample against a
-# panel of reference genomes and reports the % hitting each. The genome panel (pre-built
-# bowtie2 indexes + fastq_screen.conf) is fetched on demand into references/fastq_screen_db,
-# mirroring the SortMeRNA on-demand db pattern. It is a QC report, not a filter.
+# panel of reference genomes and reports the % hitting each. The screen runs against a
+# user-provided FastQ Screen config (contamination.conf) pointing at bowtie2 indexes the user
+# already has; the app gates CONTAM_SCREEN on that path existing. FastQ Screen's own
+# --get_genomes auto-download is not used (its Babraham source serves a broken redirect and the
+# panel is multi-GB). It is a QC report, not a filter.
 if CONTAM_SCREEN:
 
     _FS_GUARD = (
@@ -109,29 +111,17 @@ if CONTAM_SCREEN:
         "the bulkseq environment; contamination screening needs it. In the app open Setup and "
         "click Install / repair the environment, then re-run.' >&2; exit 1; }}; "
     )
-    _FS_CONF = "references/fastq_screen_db/FastQ_Screen_Genomes/fastq_screen.conf"
     _CONTAM = config.get("contamination", {})
-
-    rule fastq_screen_db:
-        output:
-            conf=_FS_CONF,
-        params:
-            outdir="references/fastq_screen_db",
-        log:
-            "logs/fastq_screen_db.log",
-        shell:
-            _FS_GUARD +
-            "mkdir -p {params.outdir} && "
-            "fastq_screen --get_genomes --outdir {params.outdir} > {log} 2>&1"
+    _FS_CONF = _CONTAM.get("conf") or ""
 
     rule fastq_screen:
         input:
             r1=lambda wc: aligner_read(wc.sample, 1),
-            conf=_FS_CONF,
         output:
             txt="results/qc/fastq_screen/{sample}_screen.txt",
         params:
             subset=_CONTAM.get("subset", 100000),
+            conf=_FS_CONF,
         threads:
             rule_threads("fastq_screen", 4)
         benchmark:
@@ -142,9 +132,12 @@ if CONTAM_SCREEN:
             # fastq_screen names outputs by the input basename; rename to {sample}_screen.* so the
             # MultiQC sample names are clean and the declared output is deterministic.
             _FS_GUARD +
+            "test -f {params.conf:q} || {{ echo 'FastQ Screen config not found: {params.conf}. "
+            "Set contamination.conf to a valid fastq_screen.conf (see fastq_screen --help), or turn "
+            "off contamination screening.' >&2; exit 1; }}; "
             "mkdir -p results/qc/fastq_screen && "
             "BASE=$(basename {input.r1:q}); BASE=${{BASE%.fastq.gz}}; BASE=${{BASE%.fq.gz}} && "
-            "fastq_screen --aligner bowtie2 --conf {input.conf:q} --subset {params.subset} "
+            "fastq_screen --aligner bowtie2 --conf {params.conf:q} --subset {params.subset} "
             "--threads {threads} --outdir results/qc/fastq_screen --force {input.r1:q} > {log} 2>&1 && "
             "mv results/qc/fastq_screen/${{BASE}}_screen.txt {output.txt:q} && "
             "(mv results/qc/fastq_screen/${{BASE}}_screen.html results/qc/fastq_screen/{wildcards.sample}_screen.html 2>/dev/null || true) && "

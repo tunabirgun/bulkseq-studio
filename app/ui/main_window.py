@@ -1016,8 +1016,9 @@ class MainWindow(QMainWindow):
         self.contam_screen.setToolTip(
             "Screen a read subsample against a panel of reference genomes (FastQ Screen) and report "
             "the percentage matching each — a contamination QC report, not a filter (no reads are "
-            "removed). Downloads a multi-GB genome panel on first use. Results appear in the MultiQC "
-            "report. Leave off unless you suspect cross-species or vector/rRNA contamination."
+            "removed). Requires a FastQ Screen config file (set it under Advanced parameters); the "
+            "screen is skipped if none is given. Results appear in the MultiQC report. Leave off "
+            "unless you suspect cross-species or vector/rRNA contamination."
         )
         self.enrichment = QCheckBox()
         self.enrichment.setChecked(True)
@@ -1106,7 +1107,7 @@ class MainWindow(QMainWindow):
         align_form.addRow(self._info_label("fastp poly-G (-g)", "Trim poly-G tails, an artefact of 2-colour chemistry (NextSeq/NovaSeq). Leave off for HiSeq/MiSeq."), self.trim_poly_g)
         align_form.addRow("rRNA filtering", self.rrna)
         align_form.addRow(self._info_label("rRNA tool", "SortMeRNA (default, reference-based, ~150 MB database) or RiboDetector (reference-free, no database). Used only when rRNA filtering is on."), self.rrna_tool)
-        align_form.addRow(self._info_label("Contamination screen", "Optional FastQ Screen report of the % of reads matching a panel of reference genomes — a QC report, not a filter. Downloads a multi-GB genome panel on first use; results appear in MultiQC."), self.contam_screen)
+        align_form.addRow(self._info_label("Contamination screen", "Optional FastQ Screen report of the % of reads matching a panel of reference genomes — a QC report, not a filter. Needs a FastQ Screen config (set it under Advanced parameters); skipped if none is given. Results appear in MultiQC."), self.contam_screen)
         layout.addWidget(align_group)
 
         de_group = QGroupBox("Differential expression")
@@ -1171,6 +1172,12 @@ class MainWindow(QMainWindow):
         adv_form.addRow(self._info_label("RiboDetector: chunk size", "Reads per batch (x1024): a memory/speed trade-off. Default 256."), self.rd_chunk)
         self.fs_subset = QSpinBox(); self.fs_subset.setRange(1000, 5000000); self.fs_subset.setSingleStep(10000); self.fs_subset.setValue(100000)
         adv_form.addRow(self._info_label("Contamination: reads subsampled", "How many reads FastQ Screen subsamples per sample. Default 100000."), self.fs_subset)
+        self.fs_conf = QLineEdit()
+        fs_conf_browse = QPushButton("Browse")
+        fs_conf_browse.clicked.connect(lambda: self._pick_reference_file(self.fs_conf, "FastQ Screen config (*.conf *.txt);;All files (*)"))
+        fs_conf_row = QHBoxLayout(); fs_conf_row.addWidget(self.fs_conf); fs_conf_row.addWidget(fs_conf_browse)
+        fs_conf_widget = QWidget(); fs_conf_widget.setLayout(fs_conf_row)
+        adv_form.addRow(self._info_label("Contamination: FastQ Screen config", "Path to a fastq_screen.conf listing the bowtie2 genome indexes to screen against (required to run the screen). The built-in genome auto-download is not used; point this at a panel you already have."), fs_conf_widget)
         self.star_twopass = QCheckBox()
         self.star_multimap = QSpinBox(); self.star_multimap.setRange(1, 200); self.star_multimap.setValue(10)
         self.star_mismatch = QDoubleSpinBox(); self.star_mismatch.setRange(0.0, 1.0); self.star_mismatch.setSingleStep(0.02); self.star_mismatch.setDecimals(2); self.star_mismatch.setValue(1.0)
@@ -2838,6 +2845,7 @@ class MainWindow(QMainWindow):
         self.rd_ensure.setCurrentIndex(_rde if _rde >= 0 else 0)
         self.rd_chunk.setValue(getattr(self.config.ribodetector, "chunk_size", 256))
         self.fs_subset.setValue(getattr(self.config.contamination, "subset", 100000))
+        self.fs_conf.setText(getattr(self.config.contamination, "conf", None) or "")
         self.star_twopass.setChecked(self.config.star.twopass_mode)
         self.star_multimap.setValue(self.config.star.multimap_nmax)
         self.star_mismatch.setValue(self.config.star.mismatch_nover_read_lmax)
@@ -3176,6 +3184,7 @@ class MainWindow(QMainWindow):
         self.config.ribodetector.ensure = self.rd_ensure.currentData()  # type: ignore[assignment]
         self.config.ribodetector.chunk_size = self.rd_chunk.value()
         self.config.contamination.subset = self.fs_subset.value()
+        self.config.contamination.conf = self.fs_conf.text().strip() or None
         self.config.star.twopass_mode = self.star_twopass.isChecked()
         self.config.star.multimap_nmax = self.star_multimap.value()
         self.config.star.mismatch_nover_read_lmax = self.star_mismatch.value()

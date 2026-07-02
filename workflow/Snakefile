@@ -160,9 +160,12 @@ if RRNA_TOOL not in _VALID_RRNA_TOOLS:
     )
 # Contamination screening (FastQ Screen): optional QC, off by default. Aligns a read subsample
 # against a panel of reference genomes and reports the % hitting each — a QC report, NOT a
-# filter (reads are not removed). fastq/sra route only; the genome panel is fetched on demand.
+# filter (reads are not removed). fastq/sra route only. Requires a user-provided FastQ Screen
+# config path (contamination.conf); without it the screen is skipped (the app warns), since the
+# built-in --get_genomes auto-download is broken upstream and pulls a multi-GB panel.
 CONTAM_SCREEN = (
     bool(WF.get("contamination_screen", False))
+    and bool((config.get("contamination") or {}).get("conf"))
     and not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)
 )
 RRNA_DB = "references/rrna_db.fasta"
