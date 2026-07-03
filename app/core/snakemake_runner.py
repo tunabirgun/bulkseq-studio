@@ -57,6 +57,10 @@ def build_snakemake_args(
         str(config.resources.total_threads),
         "--resources",
         f"mem_mb={config.resources.total_memory_gb * 1000}",
+        # Cap concurrent FASTQ downloads (each opens a few connections); more than a handful
+        # at once makes ENA refuse connections under load. The download_fastq rule consumes
+        # downloads=1, so at most 3 run in parallel.
+        "downloads=3",
         "--configfile",
         "config/config.yaml",
     ]
