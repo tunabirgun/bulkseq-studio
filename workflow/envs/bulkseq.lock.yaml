@@ -141,6 +141,7 @@ dependencies:
   - fastqc=0.12.1=hdfd78af_0
   - fftw=3.3.11=nompi_h3b011a4_100
   - filelock=3.29.4=pyhd8ed1ab_0
+  - font-ttf-dejavu=2.37=hd8ed1ab_1
   - font-ttf-dejavu-sans-mono=2.37=hab24e00_0
   - font-ttf-inconsolata=3.000=h77eed37_0
   - font-ttf-source-code-pro=2.038=h77eed37_0
@@ -602,7 +603,7 @@ dependencies:
   - rich-click=1.9.8=pyh8f84b5b_0
   - rpds-py=2026.5.1=py312h192e038_0
   - rseqc=5.0.4=pyhdfd78af_1
-  - salmon=2.2.1=hfa8f182_0
+  - salmon=1.10.3=haf24da9_3
   - samtools=1.22.1=h96c455f_0
   - secretstorage=3.5.0=py312h7900ff3_0
   - sed=4.10=h19d0853_0

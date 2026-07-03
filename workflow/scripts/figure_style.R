@@ -62,6 +62,26 @@ palette_spec <- function(name) {
   }
 }
 
+# ---- Font resolver ----------------------------------------------------------
+# Map a requested font family to one actually installed in the pipeline environment.
+# Windows font names (Times New Roman, Arial, Courier New, ...) are not present on a stock
+# Linux/WSL env, so without this a serif request silently renders as a sans default. An exact
+# match is used as-is; known serif/mono names map to an installed serif/mono; anything else is
+# left for systemfonts to substitute. Returns NULL for an empty request (device default).
+resolve_font <- function(fam) {
+  if (is.null(fam) || !nzchar(fam)) return(NULL)
+  installed <- tryCatch(unique(systemfonts::system_fonts()$family), error = function(e) character(0))
+  if (fam %in% installed) return(fam)
+  key <- tolower(trimws(fam))
+  serif <- c("times new roman", "times", "times roman", "georgia", "cambria", "garamond",
+             "book antiqua", "palatino", "palatino linotype", "minion pro", "serif")
+  mono <- c("courier new", "courier", "consolas", "monaco", "lucida console", "menlo", "monospace")
+  pick <- function(cands) { for (c in cands) if (c %in% installed) return(c); NULL }
+  if (key %in% serif) { t <- pick(c("Liberation Serif", "DejaVu Serif", "Noto Serif", "FreeSerif")); if (!is.null(t)) return(t) }
+  if (key %in% mono)  { t <- pick(c("DejaVu Sans Mono", "Liberation Mono", "Noto Mono", "FreeMono")); if (!is.null(t)) return(t) }
+  fam
+}
+
 # ---- getp factory -----------------------------------------------------------
 # Returns a getter over a style list. Empty-string config values fall back to
 # the default ONLY when the default is not itself a string, so string-defaulted

@@ -10,6 +10,10 @@ dependencies:
   - python=3.12
   - snakemake-minimal
   - aria2
+  # Fonts for the figure scripts: a serif/sans/mono set + fontconfig setup, so a configured
+  # font (e.g. a serif for "Times New Roman") renders instead of falling back to a sans default.
+  - fonts-conda-ecosystem
+  - font-ttf-dejavu
   - fastqc=0.12.1
   - multiqc=1.30
   - fastp=1.0.1
