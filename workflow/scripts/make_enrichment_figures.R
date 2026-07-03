@@ -44,6 +44,14 @@ style_theme <- make_style_theme(base_size = base_size, base_family = base_family
                                 label_bold = label_bold, title_bold = title_bold)
 save_gg <- make_save_gg(fig_w = fig_w, fig_h = fig_h, fig_dpi = fig_dpi)
 
+# gseaplot2 returns a multi-panel patchwork with enrichplot's own theme; propagate the
+# configured font family across all panels so the running-score plot matches the other
+# figures. Best-effort (patchwork's `&`); unchanged if it is unavailable or errors.
+theme_gsea <- function(p) {
+  if (is.null(base_family)) return(p)
+  tryCatch(p & theme(text = element_text(family = base_family)), error = function(e) p)
+}
+
 # Large enrichplot canvases (emap/cnet) can exceed ggsave's 50-inch guard, so the
 # enrichplot path uses a limitsize-tolerant save; the shared save_gg covers the rest.
 save_big <- function(p, png_path, svg_path, w = fig_w, h = fig_h) {
@@ -169,7 +177,7 @@ if (identical(backend, "gprofiler")) {
   # GSEA running-score for the top gene set, and a ridgeplot of the leading sets.
   # No embedded title (caption lives in text); running-score line from the palette.
   render(have_ep && nrows(gse) > 0,
-         gseaplot2(gse, geneSetID = 1, base_size = base_size, color = gsea_col),
+         theme_gsea(gseaplot2(gse, geneSetID = 1, base_size = base_size, color = gsea_col)),
          out[["gsea_png"]], out[["gsea_svg"]], no_gsea)
   # enrichplot::ridgeplot hits an "object 'selected'" bug on these gseaResults, so
   # build leading-edge fold-change ridges directly from core_enrichment + geneList.
@@ -187,6 +195,9 @@ if (identical(backend, "gprofiler")) {
         ggridges::geom_density_ridges_gradient(scale = 1.3, rel_min_height = 0.01,
                                                linewidth = 0.3, colour = "grey40") +
         scale_fill_gradientn(colours = pal_spec$div(255), name = "log2 FC") +
+        # Wrap long GO term labels; unwrapped they consume the panel width and squash
+        # every ridge into an invisible sliver (matches the ORA/GSEA dotplots).
+        scale_y_discrete(labels = scales::label_wrap(label_wrap)) +
         labs(x = "core-enrichment log2 fold change", y = NULL) +
         style_theme(theme_bw)
   }, error = function(e) { message("ridge build failed: ", conditionMessage(e)); NULL }) else NULL
@@ -218,7 +229,7 @@ render(have_ep && nrows(obj$ekegg_all) > 0,
        themed_dotplot(obj$ekegg_all, show_cat),
        out[["kegg_dotplot_png"]], out[["kegg_dotplot_svg"]], no_kegg)
 render(have_ep && nrows(obj$kegg_gse) > 0,
-       gseaplot2(obj$kegg_gse, geneSetID = 1, base_size = base_size, color = gsea_col),
+       theme_gsea(gseaplot2(obj$kegg_gse, geneSetID = 1, base_size = base_size, color = gsea_col)),
        out[["kegg_gsea_png"]], out[["kegg_gsea_svg"]], no_kegg)
 
 sink(type = "message")

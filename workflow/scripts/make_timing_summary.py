@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
+import platform
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -118,8 +120,32 @@ def main() -> int:
     if psutil is not None:
         detected = {
             "logical_threads": psutil.cpu_count(logical=True),
+            "physical_cores": psutil.cpu_count(logical=False),
             "total_ram_gb": round(psutil.virtual_memory().total / (1024**3), 1),
         }
+    # Machine specs the run executed on, for reproducibility. Best-effort; the pipeline
+    # runs inside WSL2 on Windows or natively on Linux, so this describes that environment.
+    detected.setdefault("logical_threads", os.cpu_count())
+    detected["os"] = platform.platform()
+    detected["hostname"] = platform.node()
+    if not detected.get("cpu_model"):
+        cpu_model = ""
+        try:
+            for line in Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="replace").splitlines():
+                if line.lower().startswith("model name"):
+                    cpu_model = line.split(":", 1)[1].strip()
+                    break
+        except Exception:
+            cpu_model = platform.processor()
+        detected["cpu_model"] = cpu_model or platform.processor()
+    if not detected.get("total_ram_gb"):
+        try:
+            for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+                if line.startswith("MemTotal"):
+                    detected["total_ram_gb"] = round(int(line.split()[1]) / (1024**2), 1)
+                    break
+        except Exception:
+            pass
 
     payload = {
         "project_name": config.get("project", {}).get("name", root.resolve().name),

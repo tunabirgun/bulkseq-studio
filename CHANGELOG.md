@@ -42,6 +42,14 @@
 - **A metadata symbol no longer breaks a fetch.** A non-ASCII character in fetched metadata (e.g. a Greek delta in a GEO genotype) could raise `UnicodeEncodeError` on a Windows cp1252 console and, in the frozen build, silently swallow the error dialog. Stdout/stderr are now reconfigured to UTF-8 at startup, the excepthook is guarded, and metadata files are read/written as UTF-8.
 - **Runtime timing phase mapping.** The per-phase runtime rollup now recognises the Salmon, Trim Galore / Trimmomatic, SortMeRNA / RiboDetector, and stats/network steps instead of bucketing them under "Other".
 - **SortMeRNA version string.** The software-versions report now records the SortMeRNA version rather than its startup banner line.
+- **Enrichment ridgeplot showed no ridges.** Long GO term labels (e.g. "maturation of SSU-rRNA from tricistronic rRNA transcript…") consumed the panel width and squashed every density ridge into an invisible sliver. The labels are now wrapped (the same wrap the dotplots use), so the fold-change distributions render fully.
+- **Figure style now applies to the heatmaps and GSEA plot.** The sample-correlation (Pearson/Spearman) and sample-distance heatmaps (both `pheatmap`) and the GSEA running-score plot did not pick up the configured **font family**, so they looked inconsistent with the ggplot figures. The font is now propagated to all of them. (Note: the font must be installed in the WSL2/Linux pipeline environment; a font that is absent there — e.g. "Times New Roman" on a stock WSL — falls back to a default for every figure alike.)
+- **Software & provenance versions cleaned.** Tool versions in the report showed full paths and banners (e.g. HISAT2 as `/home/.../hisat2-align-s version 2.2.2`); they are now reduced to the version number, and the Tools / R-Bioconductor tables gained a Name/Version header.
+- **Report shows the fold-change threshold.** The results report's design card and the run summary now list the `|log2FC|` threshold alongside the FDR alpha.
+
+### Changed
+
+- **Results report polish.** The up- and down-regulated gene tables now show the **top 50** per direction (was 15) and are **sortable** (click a column header). The runtime panel lists the **machine the run executed on** (CPU model, cores/threads, RAM, OS) for reproducibility. The redundant "self-contained…" subtitle line was removed from the header.
 
 ### Removed
 

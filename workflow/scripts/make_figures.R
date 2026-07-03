@@ -89,11 +89,23 @@ style_theme <- make_style_theme(base_size = base_size, base_family = base_family
                                 label_bold = label_bold, title_bold = title_bold)
 save_gg     <- make_save_gg(fig_w = fig_w, fig_h = fig_h, fig_dpi = fig_dpi)
 
+# Draw a grid gtable (pheatmap output) under the configured font. pheatmap's text grobs
+# carry no fontfamily of their own, so a viewport gpar(fontfamily=...) propagates to them
+# and makes these heatmaps match the ggplot figures' font (both png and svglite honour it).
+draw_grid <- function(gtable) {
+  grid::grid.newpage()
+  if (!is.null(base_family)) {
+    grid::pushViewport(grid::viewport(gp = grid::gpar(fontfamily = base_family)))
+    grid::grid.draw(gtable); grid::popViewport()
+  } else {
+    grid::grid.draw(gtable)
+  }
+}
 save_grid <- function(gtable, png_path, svg_path, w = fig_w, h = fig_h) {
   png(png_path, width = w, height = h, units = "in", res = fig_dpi)
-  grid::grid.newpage(); grid::grid.draw(gtable); dev.off()
+  draw_grid(gtable); dev.off()
   svglite(svg_path, width = w, height = h)
-  grid::grid.newpage(); grid::grid.draw(gtable); dev.off()
+  draw_grid(gtable); dev.off()
 }
 
 # Base-graphics figures (plotDispEsts, boxplot) to PNG + SVG.

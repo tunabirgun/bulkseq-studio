@@ -121,11 +121,13 @@ def _de_table(results_csv: Path, top: int = 25, empty_msg: str = "No differentia
     body = "".join(
         "<tr>" + "".join(f"<td>{fmt(c, r.get(c, ''))}</td>" for c in cols) + "</tr>"
         for r in rows)
-    return (f"<div class='tablewrap'><table class='data'><thead><tr>{head}</tr></thead>"
+    # `sortable`: click a header to sort (numeric columns sort numerically). See the
+    # embedded script in the page template.
+    return (f"<div class='tablewrap'><table class='data sortable'><thead><tr>{head}</tr></thead>"
             f"<tbody>{body}</tbody></table></div>")
 
 
-def _de_split(project: Path, top: int = 15) -> str:
+def _de_split(project: Path, top: int = 50) -> str:
     # Up- and down-regulated genes shown separately, from the canonical DEG sets
     # (run_deseq2.R: padj-significant, raw |log2FC| >= threshold), each ordered by
     # fold change. Empty when a direction has no genes or DE has not run.
@@ -318,10 +320,36 @@ def _timing_section(t: dict) -> str:
                       f"<code>benchmarks/*.tsv</code>. Steps run in parallel, so the phase and "
                       f"per-step times sum to more than the overall wall-clock.</p></details>")
 
-    if not (fact_html or bars_html or steps_html):
+    # Machine the run executed on — recorded for reproducibility.
+    machine = []
+    if det.get("cpu_model"):
+        cores = det.get("physical_cores")
+        threads = det.get("logical_threads")
+        cpu = str(det["cpu_model"])
+        if cores or threads:
+            cpu += f" ({cores or '?'} cores / {threads or '?'} threads)"
+        machine.append(("CPU", cpu))
+    if det.get("total_ram_gb") is not None:
+        machine.append(("Total RAM", f"{det['total_ram_gb']} GB"))
+    if det.get("os"):
+        machine.append(("OS", str(det["os"])))
+    if det.get("hostname"):
+        machine.append(("Host", str(det["hostname"])))
+    machine_html = ""
+    if machine:
+        rows = "".join(
+            f"<tr><td>{html.escape(k)}</td><td class='mono'>{html.escape(v)}</td></tr>"
+            for k, v in machine)
+        machine_html = (f"<h3>Machine</h3><div class='tablewrap'><table class='data'>"
+                        f"<tbody>{rows}</tbody></table></div>"
+                        f"<p class='muted small'>Specs of the machine (WSL2 / native Linux) "
+                        f"this run executed on, recorded for reproducibility.</p>")
+
+    if not (fact_html or bars_html or steps_html or machine_html):
         return ""
     return (f"<section id='runtime'><h2>Runtime</h2>"
             f"<div class='stats'>{fact_html}</div>"
+            f"{machine_html}"
             f"<h3>Time by phase</h3>{bars_html}{steps_html}</section>")
 
 
@@ -336,13 +364,14 @@ def _versions_table(run: dict) -> str:
             f"<tr><td>{html.escape(str(k))}</td><td class='mono'>{html.escape(str(v))}</td></tr>"
             for k, v in d.items())
 
+    vhead = "<thead><tr><th>Name</th><th>Version</th></tr></thead>"
     blocks = ""
     if sw:
         blocks += ("<div class='vcol'><h3>Tools</h3><div class='tablewrap'>"
-                   f"<table class='data'><tbody>{rows(sw)}</tbody></table></div></div>")
+                   f"<table class='data'>{vhead}<tbody>{rows(sw)}</tbody></table></div></div>")
     if rp:
         blocks += ("<div class='vcol'><h3>R / Bioconductor</h3><div class='tablewrap'>"
-                   f"<table class='data'><tbody>{rows(rp)}</tbody></table></div></div>")
+                   f"<table class='data'>{vhead}<tbody>{rows(rp)}</tbody></table></div></div>")
     lock = run.get("environment_lock_md5")
     commit = run.get("workflow_git_commit")
     prov = []
@@ -376,7 +405,13 @@ def _meta_cards(run: dict, project: Path) -> str:
 
     de_engine = wf.get("de_engine") or ("limma" if run.get("input", {}).get("type") == "microarray" else "DESeq2")
     alpha = de.get("alpha")
-    cards.append(("DE method", f"{de_engine}" + (f" · α={alpha}" if alpha is not None else "")))
+    lfc = de.get("lfc_threshold")
+    thresholds = ""
+    if alpha is not None:
+        thresholds += f" · α={alpha}"
+    if lfc is not None:
+        thresholds += f" · |log2FC|≥{lfc}"
+    cards.append(("DE method", f"{de_engine}{thresholds}"))
 
     aligner = wf.get("aligner")
     quant = wf.get("quantifier")
@@ -471,6 +506,9 @@ table.enr th.desc,table.enr td.desc{white-space:normal;min-width:190px;max-width
 table.data{border-collapse:collapse;width:100%;font-family:var(--sans);font-size:.83rem}
 table.data th,table.data td{padding:6px 10px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
 table.data thead th{background:var(--accent-tint);color:var(--accent-2);font-weight:600;position:sticky;top:0}
+table.sortable thead th{cursor:pointer;user-select:none}
+table.sortable thead th[data-sort=asc]::after{content:" \\2191"}
+table.sortable thead th[data-sort=desc]::after{content:" \\2193"}
 table.data tbody tr:last-child td{border-bottom:none}
 table.data td.num,table.data th.num{text-align:right;font-variant-numeric:tabular-nums}
 td.mono,.mono{font-family:var(--mono);font-size:.8rem;white-space:normal;overflow-wrap:anywhere}
@@ -562,8 +600,7 @@ def build(project: Path) -> str:
 <span class="wordmark">BulkSeq Studio</span>{ver_chip}<span class="spacer"></span>{rmeta}</div></header>
 <main>
 <div class="hero"><div class="kicker">Results report</div>
-<h1>{html.escape(name)}</h1>
-<p>Bulk RNA-seq / microarray analysis — self-contained (figures and data embedded; open in any browser).</p></div>
+<h1>{html.escape(name)}</h1></div>
 {meta_cards}
 <section id="figures"><h2>Figures</h2>
 <p class="muted small">Click any figure to open it full size and zoom — figures embed as vector SVG where practical, so they stay sharp at any magnification.</p>
@@ -592,6 +629,29 @@ function bsqClose(){{document.getElementById('bsq-lb').classList.remove('open');
 (function(){{var li=document.getElementById('bsq-lb-img');
 li.addEventListener('click',function(e){{this.classList.toggle('zoomed');e.stopPropagation();}});
 document.addEventListener('keydown',function(e){{if(e.key==='Escape')bsqClose();}});}})();
+// Sortable tables: click a header to sort; numeric columns sort numerically. Third
+// click restores the original order. Purely client-side, no dependencies.
+(function(){{
+  function cmp(a,b){{var x=parseFloat(a),y=parseFloat(b);
+    if(!isNaN(x)&&!isNaN(y))return x-y; return a.localeCompare(b);}}
+  document.querySelectorAll('table.sortable').forEach(function(tbl){{
+    var tb=tbl.tBodies[0]; if(!tb)return;
+    var orig=Array.prototype.slice.call(tb.rows);
+    tbl.querySelectorAll('thead th').forEach(function(th,ci){{
+      th.style.cursor='pointer'; th.title='Sort by '+(th.textContent||'').trim();
+      th.addEventListener('click',function(){{
+        var st=th.getAttribute('data-sort'); var next=st==='asc'?'desc':(st==='desc'?'none':'asc');
+        tbl.querySelectorAll('thead th').forEach(function(o){{o.removeAttribute('data-sort');}});
+        var rows=Array.prototype.slice.call(tb.rows);
+        if(next==='none'){{orig.forEach(function(r){{tb.appendChild(r);}});return;}}
+        rows.sort(function(r1,r2){{
+          var c=cmp((r1.cells[ci]||{{}}).textContent||'',(r2.cells[ci]||{{}}).textContent||'');
+          return next==='asc'?c:-c;}});
+        rows.forEach(function(r){{tb.appendChild(r);}});
+        th.setAttribute('data-sort',next);}});
+    }});
+  }});
+}})();
 </script>
 </body></html>"""
 

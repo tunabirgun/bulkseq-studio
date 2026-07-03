@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -82,7 +83,10 @@ def run_version(command: list[str]) -> str:
             return "unknown"
         for ln in lines:
             if any(ch.isdigit() for ch in ln):
-                return ln
+                # Extract just the version token, dropping tool names, paths and banners
+                # (e.g. "/home/.../hisat2-align-s version 2.2.2" -> "2.2.2").
+                m = re.search(r"v?(\d+(?:\.\d+)+[A-Za-z0-9.\-+]*)", ln)
+                return m.group(1) if m else ln
         return lines[0]
     except Exception as exc:
         return f"unavailable ({exc.__class__.__name__})"
@@ -237,7 +241,8 @@ def render_text(p: dict) -> str:
               f"Design formula: {de.get('design_formula')}",
               f"Reference level: {de.get('reference_level')}",
               f"Contrasts: {json.dumps(de.get('contrasts', []))}",
-              f"Alpha: {de.get('alpha')}  Method: {de_method}", ""]
+              f"Alpha (FDR): {de.get('alpha')}  |log2FC| threshold: {de.get('lfc_threshold')}  "
+              f"Method: {de_method}", ""]
     lines += ["Selected modules", "----------------", json.dumps(p["workflow"], indent=2), ""]
     lines += ["Customized / Non-standard Parameters", "------------------------------------"]
     if p["customized_parameters"]:

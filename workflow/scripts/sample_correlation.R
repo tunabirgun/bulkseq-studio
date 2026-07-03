@@ -29,6 +29,8 @@ fig_w <- as.numeric(getp("width_in", 6))
 fig_h <- as.numeric(getp("height_in", 5))
 fig_dpi <- as.integer(getp("dpi", 300))
 base_size <- as.numeric(getp("base_font_size", 12))
+font_family <- as.character(getp("font_family", ""))
+base_family <- if (nzchar(font_family)) font_family else NULL
 palette_name <- as.character(getp("palette", "Blue-Red"))
 number_fmt <- as.character(getp("heatmap_number_format", "%.2f"))
 number_fs <- as.integer(getp("heatmap_number_fontsize", 0))  # 0 = auto (0.6x base)
@@ -81,10 +83,19 @@ save_corr <- function(method, png_path, svg_path, csv_path) {
                    annotation_col = ann, annotation_colors = ann_colors,
                    fontsize = base_size, breaks = brks,
                    color = pal_spec$seq(255), main = NA, silent = TRUE)
-    png(png_path, width = fig_w, height = fig_h, units = "in", res = fig_dpi)
-    grid::grid.newpage(); grid::grid.draw(ph$gtable); dev.off()
-    svglite(svg_path, width = fig_w, height = fig_h)
-    grid::grid.newpage(); grid::grid.draw(ph$gtable); dev.off()
+    # Draw under the configured font so these heatmaps match the ggplot figures. pheatmap
+    # text grobs carry no fontfamily, so a viewport gpar propagates to them (png + svglite).
+    draw_ph <- function() {
+      grid::grid.newpage()
+      if (!is.null(base_family)) {
+        grid::pushViewport(grid::viewport(gp = grid::gpar(fontfamily = base_family)))
+        grid::grid.draw(ph$gtable); grid::popViewport()
+      } else {
+        grid::grid.draw(ph$gtable)
+      }
+    }
+    png(png_path, width = fig_w, height = fig_h, units = "in", res = fig_dpi); draw_ph(); dev.off()
+    svglite(svg_path, width = fig_w, height = fig_h); draw_ph(); dev.off()
     TRUE
   }, error = function(e) { message("sample_correlation (", method, ") failed: ", conditionMessage(e)); FALSE })
   if (!isTRUE(ok)) {
