@@ -1,0 +1,40 @@
+name: Deploy docs to GitHub Pages
+
+# Explicit Pages deploy of the /docs site. Replaces GitHub's auto-generated legacy
+# "pages-build-deployment" pipeline, which repeatedly wedged in the deployment queue.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a new push cancels an in-progress run so the queue can't pile up.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload docs artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - name: Deploy to Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
