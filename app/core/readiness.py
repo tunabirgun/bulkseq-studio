@@ -313,10 +313,26 @@ def _items_from_tool_paths(paths: dict[str, str]) -> list[ReadinessItem]:
 
 
 def readiness_summary(items: list[ReadinessItem]) -> str:
-    lines = []
+    # Plain, grouped view for end users: items sorted into Ready / Needs attention /
+    # Optional, no raw status tokens or nested "(required_for)" jargon. The dense
+    # per-item detail is kept only where it helps (things that are not ready).
+    ready, attention, optional = [], [], []
     for item in items:
-        lines.append(f"{item.status}: {item.name} - {item.detail} ({item.required_for})")
-    return "\n".join(lines)
+        if item.status == "PASS":
+            ready.append(f"  ready    {item.name}")
+        elif item.status == "WARNING":
+            optional.append(f"  optional {item.name} - {item.detail}")
+        else:
+            attention.append(f"  missing  {item.name} - {item.detail}")
+
+    blocks: list[str] = []
+    if attention:
+        blocks.append("Needs attention\n" + "\n".join(attention))
+    if optional:
+        blocks.append("Optional\n" + "\n".join(optional))
+    if ready:
+        blocks.append("Ready\n" + "\n".join(ready))
+    return "\n\n".join(blocks)
 
 
 def _native_readiness_actions(by_name: dict[str, ReadinessItem]) -> list[str]:

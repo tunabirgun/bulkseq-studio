@@ -1,0 +1,49 @@
+# Trimmed + sanitized excerpt of the real first-run setup log (2026-07-08).
+# Usernames/paths redacted for the public repo. Full raw log kept off-repo by the maintainer.
+# Line numbers refer to the original raw log.
+
+----- run headers (note the rapid restarts / concurrent + repeated attempts) -----
+BulkSeq Studio WSL bioinformatics setup
+Started: 2026-07-08 11:24:08
+Repository: /mnt/c/Users/<user>/AppData/Local/Programs/BulkSeq Studio/_internal
+Profile: core
+Environment file: /mnt/c/Users/<user>/AppData/Local/Programs/BulkSeq Studio/_internal/workflow/envs/bulkseq_core.yaml
+Log file: /mnt/c/Users/<user>/AppData/Local/Programs/BulkSeq Studio/_internal/scripts/logs/wsl_bioenv_install.log
+Started: 2026-07-08 11:24:39
+Repository: /mnt/c/Users/<user>/AppData/Local/Programs/BulkSeq Studio/_internal
+Profile: core
+Environment file: /mnt/c/Users/<user>/AppData/Local/Programs/BulkSeq Studio/_internal/workflow/envs/bulkseq_core.yaml
+Log file: /mnt/c/Users/<user>/AppData/Local/Programs/BulkSeq Studio/_internal/scripts/logs/wsl_bioenv_install.log
+Started: 2026-07-08 11:31:12
+Repository: /mnt/c/Users/<user>/AppData/Local/Programs/BulkSeq Studio/_internal
+Profile: full
+Environment file: /mnt/c/Users/<user>/AppData/Local/Programs/BulkSeq Studio/_internal/workflow/envs/bulkseq_full.yaml
+Started: 2026-07-08 11:45:03
+Repository: /mnt/c/Users/<user>/AppData/Local/Programs/BulkSeq Studio/_internal
+Profile: full
+Environment file: /mnt/c/Users/<user>/AppData/Local/Programs/BulkSeq Studio/_internal/workflow/envs/bulkseq_full.yaml
+Log file: /mnt/c/Users/<user>/AppData/Local/Programs/BulkSeq Studio/_internal/scripts/logs/wsl_bioenv_install.log
+Started: 2026-07-08 11:46:19
+Repository: /mnt/c/Users/<user>/AppData/Local/Programs/BulkSeq Studio/_internal
+Profile: full
+Environment file: /mnt/c/Users/<user>/AppData/Local/Programs/BulkSeq Studio/_internal/workflow/envs/bulkseq_full.yaml
+Log file: /mnt/c/Users/<user>/AppData/Local/Programs/BulkSeq Studio/_internal/scripts/logs/wsl_bioenv_install.log
+
+----- L445-449: concurrent-run lock collision (self-recovered, NOT fatal) -----
+Transaction starting
+Resolving Environment                                                                     ✔ Done (6.0 sec)
+error    libmamba Could not set lock (Resource temporarily unavailable)
+warning  libmamba Cannot lock '/home/<user>/micromamba/pkgs'
+    Waiting for other mamba process to finish
+
+----- L88510-88513: FATAL recurring empty-JSON shard parse error (full profile) -----
+Fetching and Parsing Packages' Shards                                                           ⧖ Starting
+Fetching and Parsing Packages' Shards                                                     ✔ Done (0.1 sec)
+critical libmamba [json.exception.parse_error.101] parse error at line 1, column 1: attempting to parse an empty input; check that your input string or stream contains the expected JSON
+BulkSeq Studio WSL bioinformatics setup
+
+----- L88538-88541: same parse error again on the next retry (stuck state) -----
+Using Cached Shard Index for bioconda/noarch                                                        ✔ Done
+Fetching and Parsing Packages' Shards                                                           ⧖ Starting
+Fetching and Parsing Packages' Shards                                                     ✔ Done (0.1 sec)
+critical libmamba [json.exception.parse_error.101] parse error at line 1, column 1: attempting to parse an empty input; check that your input string or stream contains the expected JSON

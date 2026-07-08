@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.17.2 — 2026-07-08
+
+### Fixed
+
+- **First-run environment setup recovers from a corrupted package cache.** On a fresh machine the Check Environment install could die repeatedly with `parse error ... attempting to parse an empty input` and never finish. This happens when a micromamba shard-cache JSON is left empty or truncated by an interrupted or concurrent download; every later run then re-reads the same empty file and fails at the same point. The setup script now detects a failed environment step, clears only the index/shard cache (leaving downloaded packages in place so the retry is fast), and runs the step once more — turning a permanently stuck install into a self-healing one.
+- **Only one environment setup runs at a time.** Two setups resolving at once could both write the shared shard cache without holding micromamba's transaction lock and leave the truncated JSON above. The setup script now takes a single atomic lock for the whole run (portable across WSL, native Linux, and macOS), so a second invocation waits for the first instead of racing it; a stale lock from a dead process is reclaimed automatically. On Windows the GUI also reuses an already-open Check Environment window instead of opening a second one, closing the path where a first-run auto-open plus a manual click started two installs.
+
+### Changed
+
+- **Plainer environment-check details.** The details/log panel of the Check Environment dialog now groups items into Needs attention / Optional / Ready with plain labels, instead of a dense list of raw `REVIEW_REQUIRED:` status tokens with nested parentheses.
+
 ## 0.17.1 — 2026-07-08
 
 ### Added

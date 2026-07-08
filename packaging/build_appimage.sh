@@ -66,6 +66,11 @@ OUT="$OUTDIR/BulkSeqStudio-${VERSION}-x86_64.AppImage"
 UPDATE_INFO="${UPDATE_INFO:-gh-releases-zsync|tunabirgun|bulkseq-studio|latest|BulkSeqStudio-*-x86_64.AppImage.zsync}"
 ARCH=x86_64 "$TOOL" --appimage-extract-and-run --no-appstream -u "$UPDATE_INFO" "$APPDIR" "$OUT"
 chmod +x "$OUT"
+# appimagetool writes the companion .zsync into the CWD, not next to $OUT; move it
+# beside the AppImage so both are in $OUTDIR ready to publish.
+if [ ! -f "$OUT.zsync" ] && [ -f "$(basename "$OUT").zsync" ]; then
+    mv -f "$(basename "$OUT").zsync" "$OUT.zsync"
+fi
 echo "APPIMAGE=$OUT"
 ls -lh "$OUT"
 [ -f "$OUT.zsync" ] && { echo "ZSYNC=$OUT.zsync"; ls -lh "$OUT.zsync"; } || echo "WARNING: no .zsync produced"

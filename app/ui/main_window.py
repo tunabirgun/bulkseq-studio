@@ -2858,6 +2858,17 @@ class MainWindow(QMainWindow):
             self.workdir.setText(str(path))
 
     def show_readiness_dialog(self) -> None:
+        # Reuse an open dialog rather than spawning a second one. Two dialogs each
+        # carry their own install guard, so a first-run auto-open plus a manual
+        # "Check Environment" click could start two concurrent setups.
+        try:
+            existing = self.readiness_dialog
+            if existing is not None and existing.isVisible():
+                existing.raise_()
+                existing.activateWindow()
+                return
+        except RuntimeError:
+            pass  # prior dialog's C++ object was already deleted
         self.readiness_dialog = ReadinessDialog(self)
         self.readiness_dialog.show()
 

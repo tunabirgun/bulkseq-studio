@@ -25,6 +25,46 @@ echo "Profile: $PROFILE"
 echo "Environment file: $ENV_FILE"
 echo "Log file: $LOG_FILE"
 
+# ---------------------------------------------------------------------------
+# Serialize concurrent setup invocations. Two setups resolving at the same time
+# both write the shared shard cache without holding micromamba's transaction
+# lock (that lock only guards the link phase), and an interrupted fetch leaves a
+# truncated/empty JSON shard that breaks every later run with parse_error.101.
+# A single atomic mkdir lock makes a second invocation wait for the first.
+# mkdir is used rather than flock so the lock is portable to macOS (no flock).
+# ---------------------------------------------------------------------------
+mkdir -p "$MAMBA_ROOT"
+LOCK_DIR="$MAMBA_ROOT/.bulkseq_setup.lock"
+release_lock() { rm -rf "$LOCK_DIR" 2>/dev/null || true; }
+acquire_lock() {
+  local waited=0 announced=0
+  while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+    # Stale-lock recovery: take over if the recorded owner process is gone.
+    if [ -f "$LOCK_DIR/pid" ]; then
+      local owner
+      owner="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+      if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+        echo "Removing stale setup lock from dead process $owner."
+        rm -rf "$LOCK_DIR" 2>/dev/null || true
+        continue
+      fi
+    fi
+    if [ "$announced" -eq 0 ]; then
+      echo "Another BulkSeq setup is already running; waiting for it to finish…"
+      announced=1
+    fi
+    sleep 3
+    waited=$((waited + 3))
+    if [ "$waited" -ge 1800 ]; then
+      echo "Timed out after 30 min waiting for the other setup to finish. Exiting."
+      exit 4
+    fi
+  done
+  echo $$ > "$LOCK_DIR/pid"
+  trap release_lock EXIT
+}
+acquire_lock
+
 mkdir -p "$HOME/.local/bin"
 
 # Extract bin/micromamba from the .tar.bz2 at $1 into $2, using only the python3
@@ -117,12 +157,33 @@ export MAMBA_ROOT_PREFIX="$MAMBA_ROOT"
 
 echo ""
 echo "Stage 2/3: Creating/updating the BulkSeq micromamba environment"
-if "$MICROMAMBA" env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
-  echo "Updating existing micromamba environment: $ENV_NAME"
-  "$MICROMAMBA" env update --yes -n "$ENV_NAME" -f "$ENV_FILE"
-else
-  echo "Creating micromamba environment: $ENV_NAME"
-  "$MICROMAMBA" create --yes -n "$ENV_NAME" -f "$ENV_FILE"
+
+# Create the env if absent, otherwise update it in place from the profile yaml.
+run_env_step() {
+  if "$MICROMAMBA" env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
+    echo "Updating existing micromamba environment: $ENV_NAME"
+    "$MICROMAMBA" env update --yes -n "$ENV_NAME" -f "$ENV_FILE"
+  else
+    echo "Creating micromamba environment: $ENV_NAME"
+    "$MICROMAMBA" create --yes -n "$ENV_NAME" -f "$ENV_FILE"
+  fi
+}
+
+# Drop only the index/shard cache (not downloaded package tarballs) to recover
+# from a truncated JSON shard left by an interrupted or concurrent fetch — the
+# state that makes every run die with "parse error ... empty input".
+clean_index_cache() {
+  echo "Cleaning the micromamba index cache to recover from a corrupted shard…"
+  "$MICROMAMBA" clean --index-cache --yes 2>/dev/null || true
+  rm -rf "$MAMBA_ROOT/pkgs/cache" 2>/dev/null || true
+}
+
+# First failure is expected to be the corrupt cache; clean it and retry once.
+# The retry runs under set -e, so a second failure aborts with a non-zero exit.
+if ! run_env_step; then
+  echo "Environment step failed; cleaning the index cache and retrying once."
+  clean_index_cache
+  run_env_step
 fi
 
 echo ""
