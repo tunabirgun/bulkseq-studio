@@ -140,7 +140,7 @@ processors=16    # optional: limit WSL2 to 16 logical processors</code></pre>
   </li>
   <li>
     <h4>Choose an input</h4>
-    <p>On the <strong>Input Data</strong> tab, pick how your data comes in. The simplest is to paste SRR / SRP / PRJ accessions — or an RNA-seq <strong>GSE</strong> series, which is resolved to its SRA runs — and click <em>Fetch metadata & build samples</em>; the ENA fetch reads the layout, FASTQ URLs, and read counts and builds the sample sheet for you. You can also select local FASTQ files, or skip alignment entirely with <em>Use a Count Matrix</em>, <em>Upload DESeq2 Results</em>, or a GEO microarray series (GSE).</p>
+    <p>On the <strong>Input Data</strong> tab, pick how your data comes in. The simplest is to paste SRR / SRP / PRJ accessions — or an RNA-seq <strong>GSE</strong> series, which is resolved to its SRA runs — and click <em>Fetch metadata & build samples</em>; the ENA fetch reads the layout, FASTQ URLs, and read counts and builds the sample sheet for you. You can also select local FASTQ files, or skip alignment entirely with <em>Use a Count Matrix</em>, <em>Upload DESeq2 Results</em>, a GEO microarray series (GSE), or <em>Upload a local microarray matrix</em> (your own already-normalized array table).</p>
   </li>
   <li>
     <h4>Confirm the metadata and contrast</h4>
@@ -212,7 +212,7 @@ processors=16    # optional: limit WSL2 to 16 logical processors</code></pre>
 
 <div class="note warn"><span class="t">One layout per run</span> Single-end and paired-end reads both run the full alignment route, but a single run must use one layout. A mixed-layout sample sheet is rejected with guidance so the two are not counted together by accident.</div>
 
-<div class="note warn"><span class="t">Match your gene IDs</span> For modes that skip alignment (count matrix, DESeq2 results), the IDs in your table must match the keytype of the organism you select on the Reference tab, or enrichment, KEGG, and STRING will not map. Pick the preset for your organism so the gene-ID namespace lines up.</div></section>
+<div class="note warn"><span class="t">Match your gene IDs</span> For modes that skip alignment (count matrix, local microarray matrix, DESeq2 results), the IDs in your table must match the keytype of the organism you select on the Reference tab, or enrichment, KEGG, and STRING will not map. Pick the preset for your organism so the gene-ID namespace lines up. (A fetched GEO microarray series maps its probes to gene symbols for you, so this applies to the uploaded tables.)</div></section>
     <div class="footer" style="max-width:70ch;margin:0 auto;">
       <p>Free and open-source under the MIT License · <a href="https://github.com/tunabirgun" target="_blank" rel="noopener">tunabirgun</a></p>
     </div>

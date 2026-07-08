@@ -81,6 +81,9 @@
 <h4>Can I run single-end reads?</h4>
 <p>Yes. Single-end and paired-end input both run the full alignment route through every trimmer, aligner, and rRNA tool; the app detects the layout from the sample sheet. A single run must use one layout — a mixed-layout sample sheet is rejected with guidance so the two are not counted together.</p>
 
+<h4>I already have processed data. Can I skip the download and alignment?</h4>
+<p>Yes. Three buttons on the Input Data tab take pre-computed input straight into the analysis. <strong>Use a Count Matrix</strong> ingests a gene &times; sample count table and skips download, QC, and alignment, running DESeq2 &rarr; figures &rarr; enrichment. <strong>Upload DESeq2 Results</strong> starts from an existing results table and skips straight to enrichment and the STRING PPI network (the count-dependent figures such as PCA and sample heatmaps are skipped). <strong>Upload a local microarray matrix</strong> (new in 0.17.1) takes your own gene &times; sample expression matrix — first column gene ids or symbols, one column per sample, TSV or CSV, already-normalized log2 intensities — and runs the same limma &rarr; figures &rarr; enrichment &rarr; report path as a fetched GEO series, with no accession and no download. On identical data it reproduces the GEO-route result exactly.</p>
+
 <h4>How much disk space and memory do I need?</h4>
 <p>About 10 GB of free disk for the toolchain and reference indices, and 16 GB or more of RAM is recommended. STAR alignment is the memory-intensive step; for very large genomes use the HISAT2 or Salmon aligner, which need far less.</p>
 

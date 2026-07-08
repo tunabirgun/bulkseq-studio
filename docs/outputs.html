@@ -94,7 +94,7 @@
 <h3>Run provenance</h3>
 <p>When a run finishes, the Run Monitor lets you save two records of how it was produced:</p>
 <ul>
-  <li><strong>Tools & references</strong> — the tool and R/Bioconductor package versions, the reference genome and annotation with source URLs and MD5 (or, for a microarray run, the GEO platform GPL id and series accession), and the enrichment database codes.</li>
+  <li><strong>Tools & references</strong> — the tool and R/Bioconductor package versions, the reference genome and annotation with source URLs and MD5 (or, for a GEO-fetched microarray run, the GEO platform GPL id and series accession; for a locally uploaded matrix, its input source instead), and the enrichment database codes.</li>
   <li><strong>Study design</strong> — the samples, conditions, layout, design formula, and contrasts.</li>
 </ul>
 <div class="note"><span class="t">Reproducible</span> Each run also records a default-vs-used parameter diff, an environment lock hash, the reference accession/MD5, and R <code>sessionInfo</code>, so a run can be reproduced later.</div>

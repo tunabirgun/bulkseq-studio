@@ -22,7 +22,7 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 - **GSVA pathway activity.** Optional sample-level gene-set activity scores (GSVA) computed against your own custom gene sets, with a per-sample heatmap. Organism-safe: it uses only your gene sets, so it is valid for non-model organisms. Descriptive scores, not a significance test.
 - **Extended alignment QC (RSeQC).** An optional read genomic-context distribution (exon / intron / intergenic) and 5′→3′ gene-body coverage, added to the MultiQC report (genome-BAM routes only).
 - **Advanced parameters, exposed.** A collapsible Advanced parameters panel on the Workflow tab surfaces the important knobs of every tool (fastp, Trimmomatic, RiboDetector, FastQ Screen, STAR, featureCounts, DESeq2), with the validated defaults pre-filled so a run reproduces the standard behaviour unless you change them.
-- **Self-contained HTML report + design helper.** One shareable HTML results report embeds the figures, top genes, enrichment, and provenance in a single file (no external assets). A **Design helper** composes the DESeq2 design formula from your metadata columns without typing R: tick the nuisance variables you want to adjust for (batch, sequencing run, donor, sex, and so on) and it builds an additive formula such as `~ batch + condition`, putting the effect of interest last. Accounting for these known covariates removes their variation from the comparison, so a batch or donor difference is not mistaken for the treatment effect. See [The design helper: adjusting for batch and covariates](#the-design-helper-adjusting-for-batch-and-covariates).
+- **Self-contained HTML report + design helper.** One shareable HTML results report serves both a non-specialist and a bioinformatician from a single self-contained file (no external assets): each section opens with a plain-language finding — what was compared, how many genes changed and in which direction, the strongest genes — with the statistics glossed inline and collected in an end glossary, above the full tables and figures with their exact numbers; figures are grouped and lettered (Quality / Differential expression / Function) with a plain caption and a technical caption each. A **Design helper** composes the DESeq2 design formula from your metadata columns without typing R: tick the nuisance variables you want to adjust for (batch, sequencing run, donor, sex, and so on) and it builds an additive formula such as `~ batch + condition`, putting the effect of interest last. Accounting for these known covariates removes their variation from the comparison, so a batch or donor difference is not mistaken for the treatment effect. See [The design helper: adjusting for batch and covariates](#the-design-helper-adjusting-for-batch-and-covariates).
 - **Mitochondrial and chloroplast gene handling.** Organellar transcripts can dominate library size and skew normalization. On the Workflow tab you choose to keep them, discard them before differential expression, or analyse them separately (the main DE runs on nuclear genes only; a separate organellar count subset and a per-sample organellar-fraction table are written). Organellar contigs are detected from the reference (mitochondrion and chloroplast/plastid), so it works for plants and animals without a gene list.
 - **Directional functional enrichment.** GO over-representation and GSEA (clusterProfiler) run separately on the up- and down-regulated sets. Selecting an organism preset auto-configures its enrichment databases and STRING taxon, so KEGG pathway ORA and GSEA run for any organism with a KEGG code (fungi, bacteria, yeast, for example *Fusarium graminearum*, code `fgr`), and GO and Reactome are available without a Bioconductor OrgDb through g:Profiler (`gprofiler2`). Organisms with an installed OrgDb (human, mouse, fly) use clusterProfiler and additionally get disease-ontology terms, so an organism is not skipped for lacking an OrgDb. Enrichment figures (GO and KEGG dotplots, GSEA running-score, ridgeplot, gene-concept and term-similarity networks) use enrichplot / ggplot2. You can also supply your own gene sets — a GMT and/or an id→term annotation table, with an optional background list for the ORA universe — for a custom over-representation + GSEA run alongside GO/KEGG (the gene IDs must match the run's identifier format; a mismatch is flagged).
 - **Interactive protein-interaction network.** A dedicated PPI Network tab embeds the STRING network in an interactive [cytoscape.js](https://js.cytoscape.org/) view: hover a protein for its symbol, mean expression, log2 fold-change, adjusted p-value, degree, and module; drag, zoom, and re-layout (fcose/cose/circle and others); recolour by fold-change or module; resize by degree, expression, or significance; filter by confidence; and export PNG or SVG (white or transparent background). The network also exports to Cytoscape (GraphML, SIF, cytoscape.js JSON) for external editing.
@@ -142,8 +142,8 @@ On Linux, BulkSeq Studio runs **natively** — there is no WSL. The same PySide6
    extraction or install:
 
    ```bash
-   chmod +x BulkSeqStudio-0.16.0-x86_64.AppImage
-   ./BulkSeqStudio-0.16.0-x86_64.AppImage
+   chmod +x BulkSeqStudio-<version>-x86_64.AppImage
+   ./BulkSeqStudio-<version>-x86_64.AppImage
    ```
 
    To update later, either download the newer AppImage and delete the old one, or use
@@ -154,7 +154,7 @@ On Linux, BulkSeq Studio runs **natively** — there is no WSL. The same PySide6
    **Portable tarball:** extract and run the bundled launcher:
 
    ```bash
-   tar xzf BulkSeqStudio-linux-0.16.0.tar.gz
+   tar xzf BulkSeqStudio-linux-<version>.tar.gz
    "BulkSeq Studio/BulkSeqStudio"
    ```
 
