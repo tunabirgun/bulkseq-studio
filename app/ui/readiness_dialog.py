@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -137,17 +138,18 @@ class WslBioenvInstallThread(QThread):
     line = Signal(str)
     finished_with_code = Signal(int)
 
-    def __init__(self, profile: str = "core", native: bool = False) -> None:
+    def __init__(self, profile: str = "core", native: bool = False, rebuild: bool = False) -> None:
         super().__init__()
         self.profile = profile
         self.native = native
+        self.rebuild = rebuild
         self.process = None
 
     def run(self) -> None:
         if self.native:
-            self.process = launch_native_bioenv_install(profile=self.profile)
+            self.process = launch_native_bioenv_install(profile=self.profile, rebuild=self.rebuild)
         else:
-            self.process = launch_wsl_bioenv_install(profile=self.profile)
+            self.process = launch_wsl_bioenv_install(profile=self.profile, rebuild=self.rebuild)
         assert self.process.stdout is not None
         for line in self.process.stdout:
             self.line.emit(line.rstrip())
@@ -433,6 +435,16 @@ class ReadinessDialog(QDialog):
         )
         self.repair_button.clicked.connect(self.repair_environment)
         footer.addWidget(self.repair_button)
+        self.rebuild_button = QPushButton("Rebuild from scratch")
+        self.rebuild_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.rebuild_button.setStyleSheet(_secondary_button_style())
+        self.rebuild_button.setToolTip(
+            "Delete the bulkseq environment and recreate it cleanly. Use this if a run fails "
+            "inside R/DESeq2 or the microarray GEO ingest after an app update — an in-place "
+            "update can leave the R/Bioconductor packages inconsistent. Re-downloads the tools."
+        )
+        self.rebuild_button.clicked.connect(self.rebuild_environment)
+        footer.addWidget(self.rebuild_button)
         footer.addStretch(1)
         self.close_button = QPushButton("Continue")
         self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -704,6 +716,7 @@ class ReadinessDialog(QDialog):
         self._installing = True
         self.card_python.set_action_enabled(False)
         self.repair_button.setEnabled(False)
+        self.rebuild_button.setEnabled(False)
         self._log(f"Installing Python dependencies from {requirements}…\n")
         self.install_thread = PipInstallThread(requirements)
         self.install_thread.line.connect(self.text.append)
@@ -713,6 +726,7 @@ class ReadinessDialog(QDialog):
     def _install_finished(self, code: int) -> None:
         self._installing = False
         self.repair_button.setEnabled(True)
+        self.rebuild_button.setEnabled(True)
         self._log(f"Python dependency installer finished with exit code {code}.\n")
         self.refresh()
 
@@ -734,21 +748,40 @@ class ReadinessDialog(QDialog):
         # lives in WSL; on Linux it is native, so run the setup script directly there.
         self._install_wsl_bioenv("full")
 
-    def _install_wsl_bioenv(self, profile: str) -> None:
+    def rebuild_environment(self) -> None:
+        # Clean rebuild: delete the env and recreate it from scratch. Fixes an
+        # inconsistent R/Bioconductor stack left by in-place updates across versions
+        # (the class of failure where the microarray GEO ingest or DESeq2 dies on load).
+        reply = QMessageBox.question(
+            self, APP_NAME,
+            "Rebuild the bioinformatics environment from scratch?\n\n"
+            "This deletes the existing 'bulkseq' environment and recreates it cleanly, then "
+            "re-downloads and reinstalls every tool and the R/DESeq2 stack. Use it if a run "
+            "fails inside R (DESeq2 or the microarray GEO ingest) after an app update — an "
+            "in-place update can leave the R packages inconsistent. It can take a while.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._install_wsl_bioenv("full", rebuild=True)
+
+    def _install_wsl_bioenv(self, profile: str, rebuild: bool = False) -> None:
         if self._installing:
             return
         self._installing = True
         for card in (self.card_wsl, self.card_core, self.card_r):
             card.set_action_enabled(False)
         self.repair_button.setEnabled(False)
+        self.rebuild_button.setEnabled(False)
         self.stop_install_button.setVisible(True)
         self.stop_install_button.setEnabled(True)
         where = "your WSL user account" if self._is_windows else "the local micromamba environment"
+        action = "Rebuilding (delete + recreate)" if rebuild else "Installing"
         self._log(
-            f"Installing bioinformatics environment profile: {profile}. This can take a long "
+            f"{action} the bioinformatics environment (profile: {profile}). This can take a long "
             f"time and installs into {where}; it does not need a sudo password.\n"
         )
-        self.wsl_install_thread = WslBioenvInstallThread(profile, native=not self._is_windows)
+        self.wsl_install_thread = WslBioenvInstallThread(profile, native=not self._is_windows, rebuild=rebuild)
         self.wsl_install_thread.line.connect(self.text.append)
         self.wsl_install_thread.finished_with_code.connect(self._wsl_bioenv_finished)
         self.wsl_install_thread.start()
@@ -765,6 +798,7 @@ class ReadinessDialog(QDialog):
         self.stop_install_button.setEnabled(False)
         self.stop_install_button.setVisible(False)
         self.repair_button.setEnabled(True)
+        self.rebuild_button.setEnabled(True)
         self.refresh()
 
     def stop_wsl_install(self) -> None:

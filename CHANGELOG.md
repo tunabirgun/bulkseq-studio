@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.3 — 2026-07-08
+
+### Added
+
+- **Per-figure-group style overrides.** The figure style controls gain an override table where each figure group — Core figures (PCA, volcano, MA, heatmaps), Sample-correlation heatmaps, Enrichment plots, and the PPI network — can set its own palette, font, point size, base font size, and size (width/height), independently of the global settings. Every cell defaults to *inherit*, so figures stay uniform unless you deliberately change one group. (This generalizes the per-figure palette added in 0.18.1.)
+- **Rebuild the environment from scratch.** The Check Environment dialog gains a "Rebuild from scratch" button that deletes the `bulkseq` environment and recreates it cleanly (re-downloading the tools and the R/DESeq2 stack). Updating an environment in place across versions can leave the R/Bioconductor packages inconsistent — R base moves but packages built against the old R do not — which makes the first R step (for example the microarray GEO ingest) fail on load while every earlier step still runs. A clean rebuild restores a self-consistent stack. The setup script honors `BULKSEQ_REBUILD=1` for the same effect on the command line.
+
 ## 0.18.2 — 2026-07-08
 
 ### Fixed

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 APP_NAME = "BulkSeq Studio"
-APP_VERSION = "0.18.2"
+APP_VERSION = "0.18.3"
 WORKFLOW_VERSION = "0.18.2"
 
 # Below this STAR uniquely-mapped %, the Run Monitor warns and offers to stop the

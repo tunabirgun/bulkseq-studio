@@ -134,13 +134,22 @@ italic_labels <- function(x, italic = TRUE) {
   parse(text = paste0('italic("', gsub('"', '', as.character(x)), '")'))
 }
 
-# ---- Per-figure-group palette override --------------------------------------
-# Return the override palette for figure group `key` when the user set one in
-# style$palette_overrides, else the global palette. Figures stay uniform by
-# default (no override); the override is opt-in per group.
-palette_for <- function(style, key, global_palette) {
-  ov <- tryCatch(style[["palette_overrides"]][[key]], error = function(e) NULL)
-  if (is.null(ov) || !nzchar(as.character(ov))) global_palette else as.character(ov)
+# ---- Per-figure-group style override ----------------------------------------
+# Return a getp() bound to figure group `key`: any non-empty key in
+# style$figure_overrides[[key]] (palette, font_family, point_size, base_font_size,
+# width_in, height_in) overrides the global value for that group; absent keys
+# inherit the global setting. Figures stay uniform by default (no override).
+getp_for <- function(style, key) {
+  if (is.null(style) || !is.list(style)) style <- list()
+  ov <- tryCatch(style[["figure_overrides"]][[key]], error = function(e) NULL)
+  merged <- style
+  if (is.list(ov)) {
+    for (k in names(ov)) {
+      v <- ov[[k]]
+      if (!is.null(v) && nzchar(as.character(v))) merged[[k]] <- v
+    }
+  }
+  make_getp(merged)
 }
 
 # ---- Shared theme factory ---------------------------------------------------

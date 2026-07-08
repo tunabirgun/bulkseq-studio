@@ -158,8 +158,20 @@ export MAMBA_ROOT_PREFIX="$MAMBA_ROOT"
 echo ""
 echo "Stage 2/3: Creating/updating the BulkSeq micromamba environment"
 
-# Create the env if absent, otherwise update it in place from the profile yaml.
+# Clean rebuild: an in-place `env update` across versions can leave the R/Bioconductor
+# stack ABI-inconsistent (R base moves but packages built against the old R do not),
+# which makes the first R step crash on library load. When BULKSEQ_REBUILD=1, remove the
+# existing environment and create it fresh so the whole stack is internally consistent.
+REBUILD="${BULKSEQ_REBUILD:-0}"
+
+# Create the env if absent, otherwise update it in place from the profile yaml. On a
+# rebuild, remove any existing env first so the create path always runs.
 run_env_step() {
+  if [ "$REBUILD" = "1" ] && "$MICROMAMBA" env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
+    echo "Rebuild requested: removing existing environment '$ENV_NAME' for a clean install…"
+    "$MICROMAMBA" env remove --yes -n "$ENV_NAME" || rm -rf "$MAMBA_ROOT/envs/$ENV_NAME"
+    REBUILD=0  # only remove once, even if the create is retried after a cache clean
+  fi
   if "$MICROMAMBA" env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
     echo "Updating existing micromamba environment: $ENV_NAME"
     "$MICROMAMBA" env update --yes -n "$ENV_NAME" -f "$ENV_FILE"

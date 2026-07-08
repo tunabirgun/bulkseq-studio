@@ -295,10 +295,12 @@ class FigureConfig(BaseModel):
     ppi_layout: str = "fr"  # force-directed (Fruchterman-Reingold) default
     ppi_node_max_size: float = 11.0
     size_overrides: dict[str, tuple[float, float]] = Field(default_factory=dict)
-    # Per-figure-group palette override: group key -> palette name. Absent/empty means the
-    # group uses the global `palette` (the default, keeping figures uniform); set a group to
-    # apply a different palette only to it. Groups: core, correlation, enrichment, network.
-    palette_overrides: dict[str, str] = Field(default_factory=dict)
+    # Per-figure-group style override: group key -> a partial style dict. Any key present
+    # (palette, font_family, point_size, base_font_size, width_in, height_in) overrides the
+    # global value for that group only; absent keys inherit the global setting, so figures
+    # stay uniform by default. Groups: core, correlation, enrichment, network. Values are
+    # stored as strings and coerced R-side, so the map serializes cleanly to YAML.
+    figure_overrides: dict[str, dict[str, str]] = Field(default_factory=dict)
     rasterize_points: bool = False        # OPTIONAL ggrastr (gated, default off)
 
     @field_validator("point_size", "width_in", "height_in",

@@ -51,18 +51,20 @@ if (is.null(style) || !is.list(style)) {
 }
 if (is.null(style) || !is.list(style)) style <- list()
 getp <- make_getp(style)
+# Per-group override (palette / font / point size / base font / scaling) for the core figures.
+gp <- getp_for(style, "core")
 
-palette_name <- palette_for(style, "core", as.character(getp("palette", "Blue-Red")))
-point_size   <- as.numeric(getp("point_size", 2.5))
-base_size    <- as.numeric(getp("base_font_size", 12))
-font_family  <- as.character(getp("font_family", ""))
+palette_name <- as.character(gp("palette", "Blue-Red"))
+point_size   <- as.numeric(gp("point_size", 2.5))
+base_size    <- as.numeric(gp("base_font_size", 12))
+font_family  <- as.character(gp("font_family", ""))
 label_bold   <- isTRUE(as.logical(getp("label_bold", FALSE)))
 title_bold   <- isTRUE(as.logical(getp("title_bold", FALSE)))
 volcano_top  <- as.integer(getp("volcano_top_n", 15))
 heatmap_top  <- as.integer(getp("heatmap_top_n", 30))
 pca_ntop     <- as.integer(getp("pca_ntop", 500))
-fig_w        <- as.numeric(getp("width_in", 6))
-fig_h        <- as.numeric(getp("height_in", 5))
+fig_w        <- as.numeric(gp("width_in", 6))
+fig_h        <- as.numeric(gp("height_in", 5))
 fig_dpi      <- as.integer(getp("dpi", 300))
 
 # New figure-style fields (W2). All read NULL-safe so older configs still run.

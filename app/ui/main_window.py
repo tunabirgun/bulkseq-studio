@@ -2592,6 +2592,80 @@ class MainWindow(QMainWindow):
         row.addStretch(1)
         return holder
 
+    # Per-figure-group override columns (key -> header label).
+    OVERRIDE_COLS = [
+        ("palette", "Palette"), ("font_family", "Font"), ("point_size", "Point"),
+        ("base_font_size", "Base font"), ("width_in", "Width"), ("height_in", "Height"),
+    ]
+
+    def _make_override_widget(self, key: str, families: list[str]):
+        # Each widget has an explicit "inherit" state (blank data / special value 0) so an
+        # untouched cell falls back to the global setting.
+        if key == "palette":
+            cb = QComboBox(); cb.addItem("(inherit)", "")
+            for p in self.PALETTE_NAMES:
+                cb.addItem(p, p)
+            return cb
+        if key == "font_family":
+            cb = QComboBox(); cb.setEditable(True); cb.addItem("(inherit)")
+            cb.addItems(families)
+            return cb
+        if key == "base_font_size":
+            s = QSpinBox(); s.setRange(0, 48); s.setSpecialValueText("inherit"); s.setValue(0)
+            return s
+        # point_size / width_in / height_in — float, 0 = inherit
+        s = QDoubleSpinBox(); s.setDecimals(1); s.setSingleStep(0.5); s.setSpecialValueText("inherit")
+        s.setRange(0.0, 12.0 if key == "point_size" else 60.0); s.setValue(0.0)
+        return s
+
+    def _build_figure_override_table(self) -> QWidget:
+        from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableWidget
+        families = QFontDatabase.families()
+        t = QTableWidget(len(self.PALETTE_GROUPS), 1 + len(self.OVERRIDE_COLS))
+        t.setHorizontalHeaderLabels(["Figure group"] + [lbl for _, lbl in self.OVERRIDE_COLS])
+        t.verticalHeader().setVisible(False)
+        t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        t.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.fig_override_widgets = {}
+        for r, (gkey, glabel) in enumerate(self.PALETTE_GROUPS):
+            item = QTableWidgetItem(glabel.split(" (")[0])
+            item.setToolTip(glabel)
+            t.setItem(r, 0, item)
+            self.fig_override_widgets[gkey] = {}
+            for c, (okey, _lbl) in enumerate(self.OVERRIDE_COLS, start=1):
+                w = self._make_override_widget(okey, families)
+                t.setCellWidget(r, c, w)
+                self.fig_override_widgets[gkey][okey] = w
+        t.resizeColumnsToContents()
+        t.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        t.setMinimumHeight(len(self.PALETTE_GROUPS) * 36 + 32)
+        return t
+
+    @staticmethod
+    def _override_value(key: str, w) -> str:
+        # Widget -> config string ("" means inherit).
+        if key == "palette":
+            return w.currentData() or ""
+        if key == "font_family":
+            txt = w.currentText().strip()
+            return "" if txt in ("", "(inherit)") else txt
+        v = w.value()
+        if v == 0:
+            return ""
+        return str(int(v)) if key == "base_font_size" else str(v)
+
+    @staticmethod
+    def _set_override_widget(key: str, w, val: str) -> None:
+        if key == "palette":
+            idx = w.findData(val or ""); w.setCurrentIndex(idx if idx >= 0 else 0)
+        elif key == "font_family":
+            w.setCurrentText(val if val else "(inherit)")
+        else:
+            try:
+                w.setValue(float(val) if val else 0)
+            except (TypeError, ValueError):
+                w.setValue(0)
+
     def _build_figure_style_group(self) -> QWidget:
         # Style controls for the DESeq2 figures; written to config.figures_style
         # and consumed by workflow/scripts/make_figures.R. No group title — the
@@ -2605,21 +2679,15 @@ class MainWindow(QMainWindow):
         self.PALETTE_NAMES = ["Blue-Red", "Viridis", "Magma", "Plasma", "Cividis",
                               "Spectral", "Red-Yellow-Blue", "Greyscale"]
         self.fig_palette.addItems(self.PALETTE_NAMES)
-        # Per-figure-group palette override. Each group defaults to "Global" (the main
-        # palette above), so figures stay uniform unless the user deliberately differs one.
+        # Per-figure-group style override table. Each cell defaults to "inherit" (blank / 0),
+        # so figures stay uniform with the global settings unless a group is deliberately
+        # changed. Built by _build_figure_override_table(); stored in self.fig_override_widgets.
         self.PALETTE_GROUPS = [
             ("core", "Core figures (PCA, volcano, MA, heatmaps)"),
             ("correlation", "Sample-correlation heatmaps"),
             ("enrichment", "Enrichment plots"),
             ("network", "PPI network"),
         ]
-        self.fig_palette_overrides = {}
-        for key, _label in self.PALETTE_GROUPS:
-            cb = QComboBox()
-            cb.addItem("Global (use main palette)", "")
-            for p in self.PALETTE_NAMES:
-                cb.addItem(p, p)
-            self.fig_palette_overrides[key] = cb
         self.fig_point_size = QDoubleSpinBox()
         self.fig_point_size.setRange(0.1, 12.0)
         self.fig_point_size.setSingleStep(0.1)
@@ -2707,15 +2775,16 @@ class MainWindow(QMainWindow):
         save_style = QPushButton("Save figure style")
         save_style.clicked.connect(self._save_figure_style)
         form.addRow(self._info_label("Palette", "Colour scheme for all figures. Blue-Red is diverging; Viridis is colour-blind friendly; Greyscale prints well in mono."), self.fig_palette)
-        _pal_hdr = QLabel("Per-figure palette (optional)")
-        _pal_hdr.setStyleSheet("font-weight: 600; margin-top: 4px;")
-        form.addRow(_pal_hdr)
-        for _key, _label in self.PALETTE_GROUPS:
-            form.addRow(self._info_label(
-                _label,
-                "Palette for just this figure group. 'Global' uses the main palette above so "
-                "all figures match; pick a specific palette to apply it to this group only."),
-                self.fig_palette_overrides[_key])
+        _ov_hdr = QLabel("Per-figure-group overrides (optional)")
+        _ov_hdr.setStyleSheet("font-weight: 600; margin-top: 4px;")
+        form.addRow(_ov_hdr)
+        _ov_note = QLabel("Each cell defaults to inherit (the global settings above). Set a cell "
+                          "to give one figure group its own palette, font, point size, base font, "
+                          "or size. Width/height 0 = inherit.")
+        _ov_note.setWordWrap(True)
+        _ov_note.setStyleSheet("color: #6B7785; font-size: 9pt;")
+        form.addRow(_ov_note)
+        form.addRow(self._build_figure_override_table())
         form.addRow(self._info_label("Point size", "Dot size in PCA/volcano scatter plots (ggplot2 size units)."), self.fig_point_size)
         form.addRow(self._info_label("Base font size", "Base text size for all figures (ggplot2 theme base_size, points)."), self.fig_base_font)
         form.addRow(self._info_label("Font family", "Font for figure text. Leave as default unless the font is also available in the WSL R environment."), self.fig_font_family)
@@ -2814,12 +2883,15 @@ class MainWindow(QMainWindow):
             return False
         style = self.config.figures_style
         style.palette = self.fig_palette.currentText()  # type: ignore[assignment]
-        # Only store groups the user actually overrode (non-"Global"), so the config
-        # stays clean and every unset group inherits the main palette.
-        style.palette_overrides = {
-            key: cb.currentData()
-            for key, cb in self.fig_palette_overrides.items() if cb.currentData()
-        }
+        # Store only the cells the user actually set (non-inherit), so the config stays
+        # clean and every unset key inherits the global setting.
+        overrides: dict[str, dict[str, str]] = {}
+        for gkey, widgets in self.fig_override_widgets.items():
+            g = {okey: v for okey, w in widgets.items()
+                 if (v := self._override_value(okey, w))}
+            if g:
+                overrides[gkey] = g
+        style.figure_overrides = overrides
         style.point_size = self.fig_point_size.value()
         style.base_font_size = self.fig_base_font.value()
         font = self.fig_font_family.currentText().strip()
@@ -3259,10 +3331,11 @@ class MainWindow(QMainWindow):
         self.ram.setValue(self.config.resources.total_memory_gb)
         fig = self.config.figures_style
         self.fig_palette.setCurrentText(fig.palette)
-        overrides = getattr(fig, "palette_overrides", {}) or {}
-        for key, cb in self.fig_palette_overrides.items():
-            idx = cb.findData(overrides.get(key, ""))
-            cb.setCurrentIndex(idx if idx >= 0 else 0)
+        overrides = getattr(fig, "figure_overrides", {}) or {}
+        for gkey, widgets in self.fig_override_widgets.items():
+            g = overrides.get(gkey, {}) or {}
+            for okey, w in widgets.items():
+                self._set_override_widget(okey, w, g.get(okey, ""))
         self.fig_point_size.setValue(fig.point_size)
         self.fig_base_font.setValue(fig.base_font_size)
         self.fig_font_family.setCurrentText(fig.font_family or self.FONT_DEFAULT_LABEL)

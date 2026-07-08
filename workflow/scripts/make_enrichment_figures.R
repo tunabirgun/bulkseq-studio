@@ -22,16 +22,17 @@ out <- snakemake@output
 style <- tryCatch(snakemake@params[["style"]], error = function(e) NULL)
 if (!is.list(style)) style <- list()
 getp <- make_getp(style)
-fig_w <- as.numeric(getp("width_in", 7))
-fig_h <- as.numeric(getp("height_in", 6))
+gp <- getp_for(style, "enrichment")  # per-group palette/font/point/base-font/scaling override
+fig_w <- as.numeric(gp("width_in", 7))
+fig_h <- as.numeric(gp("height_in", 6))
 fig_dpi <- as.integer(getp("dpi", 300))
-base_size <- as.numeric(getp("base_font_size", 12))
-font_family <- as.character(getp("font_family", ""))
+base_size <- as.numeric(gp("base_font_size", 12))
+font_family <- as.character(gp("font_family", ""))
 label_bold <- isTRUE(as.logical(getp("label_bold", FALSE)))
 title_bold <- isTRUE(as.logical(getp("title_bold", FALSE)))
 
 # Enrichment-specific config (NULL-safe; defaults reproduce prior behaviour).
-palette_name <- palette_for(style, "enrichment", as.character(getp("palette", "Blue-Red")))
+palette_name <- as.character(gp("palette", "Blue-Red"))
 show_cat <- as.integer(getp("enrich_show_category", 15))
 cnet_cat <- as.integer(getp("enrich_cnet_category", 5))
 emap_cat <- as.integer(getp("enrich_emap_category", 15))
