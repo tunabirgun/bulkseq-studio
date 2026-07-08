@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/site.css?v=6">
+<link rel="stylesheet" href="assets/site.css?v=7">
 <script>
 (function(){
   try{var t=localStorage.getItem('bsq-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}
@@ -29,7 +29,7 @@
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.17.0</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.17.1</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
     <nav>
@@ -62,6 +62,9 @@
 
 <h4>The first-run environment setup is slow. Is that normal?</h4>
 <p>Yes, and it is one-time. The core bioinformatics environment downloads over several minutes, and the R / DESeq2 stack is the largest, slowest install. You can keep creating projects, editing metadata, and generating configs while it installs; only starting a pipeline run needs the tools in place.</p>
+
+<h4>Do I have to remember to check the environment before my first run?</h4>
+<p>No. On the first launch after install the app opens the Check Environment dialog automatically, once, so a missing tool such as the R/DESeq2 stack is flagged up front rather than mid-run; you can reopen it any time from <strong>Check Environment</strong> on the Project tab.</p>
 
 <h4>Does it work on Linux without WSL?</h4>
 <p>Yes. On Linux the same GUI drives the same Snakemake pipeline natively in a local micromamba environment, with no WSL involved, and produces identical results. There is no WSL setup step and no memory cap below the host's RAM.</p>
@@ -103,7 +106,7 @@
 <p>If you use BulkSeq Studio or its benchmark archive in your work, please cite the software and the reproduction archive deposited on Zenodo. The archive (DOI <a href="https://doi.org/10.5281/zenodo.20955660">10.5281/zenodo.20955660</a>) holds the benchmark scripts, the pinned scoring environment, the per-benchmark result tables and figures, and a step-by-step reproduction guide for the validation suite.</p>
 
 <pre><code>Birgün, Tuna (2026). BulkSeq Studio: benchmark apparatus and
-  reproduction archive. Version 0.17.0. Zenodo.
+  reproduction archive. Version 0.17.1. Zenodo.
   https://doi.org/10.5281/zenodo.20955660</code></pre>
 
 <div class="note"><span class="t">BibTeX</span> The repository ships a <code>CITATION.cff</code> file. GitHub renders a ready-to-copy citation from it, and most reference managers can import the same file directly.</div>
@@ -112,7 +115,7 @@
   author  = {Birg{\"u}n, Tuna},
   title   = {BulkSeq Studio: benchmark apparatus and
              reproduction archive},
-  version = {0.17.0},
+  version = {0.17.1},
   year    = {2026},
   doi     = {10.5281/zenodo.20955660},
   url     = {https://doi.org/10.5281/zenodo.20955660},
