@@ -40,7 +40,11 @@ class MicroarrayConfig(BaseModel):
     # GOI stay backend-agnostic. No genome alignment or reference is involved.
     gse_accession: str | None = None
     platform: str | None = None  # GEO platform id (GPL...)
-    source: Literal["geo_series_matrix", "affy_cel"] = "geo_series_matrix"
+    # geo_series_matrix / affy_cel download from GEO; local_matrix ingests a user-supplied
+    # gene x sample expression matrix (any platform, already processed) — no GEO/network.
+    source: Literal["geo_series_matrix", "affy_cel", "local_matrix"] = "geo_series_matrix"
+    # Path to a local gene x sample expression matrix (used when source == "local_matrix").
+    expression_matrix: str | None = None
     # auto: trust the submitter matrix (skip re-normalizing); rma: affy::rma on CEL.
     normalization: Literal["auto", "rma", "none"] = "auto"
     # auto: detect whether values are already log2 (GEO2R quantile heuristic).

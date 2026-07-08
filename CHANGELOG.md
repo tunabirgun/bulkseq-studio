@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.17.1 — 2026-07-08
+
+### Added
+
+- **Upload a local microarray matrix — no GEO accession needed.** Microarray mode gains an "Upload a local microarray matrix" button next to the GEO fetch: point it at your own gene × sample expression matrix (first column gene ids or symbols, one column per sample; TSV or CSV, already-normalized log2 intensities) and it runs the same limma → figures → enrichment → report path as a fetched GEO series, with no download. It is the microarray counterpart of "Use a Count Matrix" and handles processed array data from any platform. On identical data it reproduces the GEO-route result exactly (validated on the Arabidopsis hub2-3 set: 154 differentially expressed genes either way).
+- **First-run environment check.** On the first launch after install, BulkSeq Studio now opens the Check Environment dialog automatically (once), so a missing tool — for example the R/DESeq2 stack behind an "exit 127" — is caught up front rather than partway through a run. The Check Environment button reopens it anytime.
+
 ## 0.17.0 — 2026-07-08
 
 ### Added

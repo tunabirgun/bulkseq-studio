@@ -39,7 +39,19 @@ write_check <- function(path, name, status, messages) {
 
 # ---- 1. Obtain a probe-level expression matrix + feature annotation ----------
 fdata <- NULL
-if (identical(source_kind, "affy_cel")) {
+if (identical(source_kind, "local_matrix")) {
+  # User-supplied gene x sample expression matrix (any platform, already processed): read it
+  # directly with no GEO download. Rows are treated as gene-level (identity probe->gene below).
+  matrix_path <- snakemake@params[["matrix"]]
+  sep <- if (grepl("\\.csv$", matrix_path, ignore.case = TRUE)) "," else "\t"
+  raw <- read.delim(matrix_path, sep = sep, header = TRUE, check.names = FALSE,
+                    stringsAsFactors = FALSE, comment.char = "#")
+  if (ncol(raw) < 2) stop("Microarray expression matrix needs a gene-id column plus at least one sample column.")
+  exprs_mat <- suppressWarnings(data.matrix(raw[, -1, drop = FALSE]))
+  rownames(exprs_mat) <- as.character(raw[[1]])
+  norm_method <- "User-supplied expression matrix (local)"
+  already_log2 <- FALSE
+} else if (identical(source_kind, "affy_cel")) {
   suppressMessages(library(affy))
   supp <- getGEOSuppFiles(gse, makeDirectory = TRUE, baseDir = workdir)
   tarball <- rownames(supp)[grepl("_RAW\\.tar$", rownames(supp))][1]
@@ -126,7 +138,9 @@ sym_col <- find_symbol_col(fdata)
 
 probe_ids <- rownames(exprs_mat)
 symbols <- rep(NA_character_, length(probe_ids))
-if (!is.null(fdata) && !is.null(sym_col) && !is.null(id_col)) {
+if (identical(source_kind, "local_matrix")) {
+  symbols <- probe_ids   # rows are already gene-level; map each id to itself
+} else if (!is.null(fdata) && !is.null(sym_col) && !is.null(id_col)) {
   key <- as.character(fdata[[id_col]])
   raw <- as.character(fdata[[sym_col]])
   if (identical(sym_col, "gene_assignment")) {

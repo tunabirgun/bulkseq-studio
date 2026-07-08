@@ -190,6 +190,23 @@ class MainWindow(QMainWindow):
         # Prefer the WSL-native filesystem by default (resolved in the background so
         # startup stays instant); the user can still pick a Windows folder.
         self._autodetect_wsl_workdir()
+        # On the very first launch, open the environment check up front so a missing tool
+        # is caught before a run (deferred so the window paints first).
+        QTimer.singleShot(600, self._maybe_prompt_first_run_readiness)
+
+    def _maybe_prompt_first_run_readiness(self) -> None:
+        # First launch after install: auto-open the environment check so a missing tool
+        # (e.g. the R/DESeq2 stack) surfaces up front rather than as an exit-127 surprise
+        # mid-run. Shown once; the 'Check Environment' button reopens it anytime.
+        if os.environ.get("BULKSEQ_SKIP_READINESS_DIALOG") == "1" or os.environ.get("BULKSEQ_SELFTEST") == "1":
+            return
+        settings = QSettings()
+        if settings.value("env_check_prompted", False, type=bool):
+            return
+        settings.setValue("env_check_prompted", True)
+        self.statusBar().showMessage(
+            "First run: opening the environment check so any missing tool is caught before a run.", 9000)
+        self.show_readiness_dialog()
 
     def _install_shortcuts(self) -> None:
         # Keyboard shortcuts for the highest-frequency actions (no menu bar).
@@ -412,9 +429,17 @@ class MainWindow(QMainWindow):
                            "intensities (GEOquery/affy), runs limma differential expression, then the "
                            "same figures and enrichment. RNA-seq GSEs are redirected to the SRA box.")
         geo_btn.clicked.connect(self._fetch_geo_series)
+        micro_upload_btn = QPushButton("Upload a local microarray matrix")
+        micro_upload_btn.setToolTip(
+            "Load your own microarray data without a GEO accession: a gene x sample expression "
+            "matrix (first column gene ids or symbols, one column per sample; already-normalized "
+            "log2 intensities). Runs limma differential expression, figures, and enrichment just "
+            "like a fetched GEO series — no download.")
+        micro_upload_btn.clicked.connect(self._import_microarray_matrix)
         geo_row.addWidget(QLabel("Microarray?"))
         geo_row.addWidget(self.gse_box)
         geo_row.addWidget(geo_btn)
+        geo_row.addWidget(micro_upload_btn)
         geo_row.addStretch(1)
         layout.addLayout(geo_row)
         # Microarray processing options (consumed by ingest_geo.R for a loaded GEO series).
@@ -730,6 +755,68 @@ class MainWindow(QMainWindow):
             + org_note
         )
         self.statusBar().showMessage(f"Count matrix imported: {len(sample_ids)} samples. Assign conditions on the Metadata tab.", 8000)
+
+    def _import_microarray_matrix(self) -> None:
+        # Manual microarray input: a local gene x sample expression matrix (any platform,
+        # already normalized log2 intensities), ingested through the limma path with no GEO
+        # download — the counterpart of "Use a Count Matrix" for the microarray backend.
+        if not self._require_project() or self.config is None:
+            return
+        assert self.project_root is not None
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select a microarray expression matrix", "", "Expression matrix (*.tsv *.txt *.csv)")
+        if not path:
+            return
+        src = Path(path)
+        sep = "," if src.suffix.lower() == ".csv" else "\t"
+        self.statusBar().showMessage("Importing microarray expression matrix...")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            try:
+                df = pd.read_csv(src, sep=sep, comment="#", dtype=str)
+            except Exception as exc:
+                QMessageBox.warning(self, APP_NAME, f"Could not read the matrix: {exc}")
+                return
+            if df.shape[1] < 2:
+                QMessageBox.warning(self, APP_NAME, "The matrix needs a gene-id column plus at least one sample column.")
+                return
+            sample_ids = [str(c) for c in df.columns[1:]]
+            dest = self.project_root / "config" / "microarray_expression.tsv"
+            df.to_csv(dest, sep="\t", index=False)
+            samples = dataframe_from_rows([
+                {"sample_id": sid, "condition": "unknown", "layout": "n/a", "fastq_1": ""}
+                for sid in sample_ids
+            ])
+            save_metadata(samples, self.project_root / "config" / "samples.tsv")
+            self.metadata_table.load_dataframe(samples)
+            self.config.input.type = "microarray"
+            self.config.input.count_matrix = None
+            self.config.input.deseq2_results = None
+            self.config.microarray.source = "local_matrix"
+            self.config.microarray.expression_matrix = "config/microarray_expression.tsv"
+            self.config.microarray.gse_accession = None
+            self.config.microarray.platform = None
+            # Row ids are gene symbols/ids; enrichment keys on SYMBOL as with GEO probe mapping.
+            self.config.enrichment.keytype = "SYMBOL"
+            self.manager.save_config(self.project_root, self.config)
+        finally:
+            QApplication.restoreOverrideCursor()
+        if hasattr(self, "gse_box"):
+            self.gse_box.clear()
+        self._apply_input_mode_ui()
+        organism = self.config.reference.organism_name
+        has_org = bool(self.config.enrichment.kegg_organism or self.config.enrichment.orgdb)
+        org_note = (
+            f"\n\nEnrichment/PPI organism: {organism}." if has_org else
+            "\n\nFor GO/KEGG enrichment and the STRING PPI network, open the Reference "
+            "Manager tab and select your organism.")
+        self.input_preview.setPlainText(
+            f"Microarray (local matrix): {len(sample_ids)} samples — {', '.join(sample_ids)}\n\n"
+            "Ingested as a gene x sample expression matrix (limma). Next: assign each sample a "
+            "condition on the Metadata tab, set the contrast on Workflow Settings, then Start Run."
+            + org_note
+        )
+        self.statusBar().showMessage(f"Microarray matrix imported: {len(sample_ids)} samples. Assign conditions on the Metadata tab.", 8000)
 
     def _fetch_sra_metadata(self) -> None:
         if not self._require_project():

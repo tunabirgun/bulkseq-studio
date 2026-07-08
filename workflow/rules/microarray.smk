@@ -10,6 +10,10 @@ if MICROARRAY_MODE:
     rule ingest_geo:
         input:
             samples=config["input"]["samples"],
+            # A user-supplied local expression matrix (source == local_matrix) is a real input
+            # so Snakemake tracks it; GEO/affy sources download inside the R script instead.
+            **({"matrix": _MICRO["expression_matrix"]}
+               if _MICRO.get("source") == "local_matrix" and _MICRO.get("expression_matrix") else {}),
         output:
             expression="results/microarray/normalized_expression.tsv",
             probe_map="results/microarray/probe_gene_map.tsv",
@@ -20,6 +24,7 @@ if MICROARRAY_MODE:
             gse=_MICRO.get("gse_accession", "") or "",
             platform=_MICRO.get("platform", "") or "",
             source=_MICRO.get("source", "geo_series_matrix"),
+            matrix=_MICRO.get("expression_matrix", "") or "",
             normalization=_MICRO.get("normalization", "auto"),
             log2_transform=_MICRO.get("log2_transform", "auto"),
         benchmark:
