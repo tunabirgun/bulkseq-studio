@@ -69,3 +69,29 @@ if _GOI:
             "logs/genes_of_interest.log",
         script:
             "../scripts/make_goi.R"
+
+
+# Enrichment-term heatmap: reuses make_goi.R on the gene list of a chosen enrichment term
+# (written by the app to config/enrichment_term.txt), producing a focused heatmap without
+# re-running the pipeline. Always defined (never in `rule all`); reached only via
+# --allowed-rules from the app's "term" mode. All six make_goi.R outputs are provided so the
+# script never KeyErrors; outputs land in results/figures/ so the existing gallery shows them.
+rule enrichment_term_heatmap:
+    input:
+        rds="results/deseq2/deseq2_objects.rds",
+        genes="config/enrichment_term.txt",
+    output:
+        heatmap_png="results/figures/term_heatmap.png",
+        heatmap_svg="results/figures/term_heatmap.svg",
+        expr_png="results/figures/term_expression.png",
+        expr_svg="results/figures/term_expression.svg",
+        csv="results/enrichment/terms/term_normalized_counts.csv",
+        report="results/enrichment/terms/term_report.txt",
+    params:
+        style=config.get("figures_style", {}),
+    benchmark:
+        "benchmarks/enrichment_term_heatmap.tsv"
+    log:
+        "logs/enrichment_term_heatmap.log",
+    script:
+        "../scripts/make_goi.R"

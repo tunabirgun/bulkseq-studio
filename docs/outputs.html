@@ -29,7 +29,7 @@
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.18.3</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.19.0</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
     <nav>
@@ -90,6 +90,9 @@
 
 <h3>Genes of interest</h3>
 <p>Supply a gene list and the app generates a focused z-scored heatmap, a per-condition expression panel, and a counts table from the existing run, plus a STRING network for those genes when PPI seeding is set to the list. No re-analysis is needed.</p>
+
+<h3>Enrichment term genes</h3>
+<p>The <strong>Enrichment Terms</strong> tab turns any enriched GO term or KEGG pathway into concrete genes. Pick a term and its member genes appear in a sortable table with their full DESeq2 statistics (fold change, adjusted p, base mean) — instantly, from the finished run. A second button builds a focused z-scored heatmap and per-condition expression panel for just those genes, with no re-alignment or re-analysis. Terms are resolved across routes (GO symbols and KEGG NCBI gene ids); a g:Profiler run records no per-term gene lists, and a DESeq2-results upload has no expression matrix, so in those cases the table is offered without the heatmap.</p>
 
 <h3>Run provenance</h3>
 <p>When a run finishes, the Run Monitor lets you save two records of how it was produced:</p>

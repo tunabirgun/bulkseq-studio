@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.19.0 — 2026-07-08
+
+### Added
+
+- **Extract an enrichment term's genes.** A new "Enrichment Terms" tab (Outputs) lists the terms from a finished run's GO/KEGG enrichment. Pick one and its member genes are pulled into a sortable table with their full DESeq2 statistics (fold change, adjusted p, base mean) — instantly, from the existing results. A second button builds a focused, z-scored heatmap (and per-condition expression panel) for just those genes, reusing the genes-of-interest machinery with no re-alignment or re-analysis. It resolves the term's genes across routes — GO symbols and KEGG NCBI gene ids (via a new `id_map.csv` bridge) — and gracefully handles the cases it can't: a g:Profiler run (which records no per-term gene lists) or a DESeq2-results upload with no expression matrix (the table still works).
+- **Self-calibrating runtime estimate.** The runtime estimate now learns your machine's real speed. After each compute-heavy local run it records the predicted-versus-actual time and stores a per-machine correction factor (by host and core count); future estimates apply it and narrow their range as the app gains data, with a plain confidence note ("Uncalibrated…", "Rough — based on N past runs", "Calibrated to this machine"). Network-bound SRA/GEO downloads and the fast alignment-free modes are excluded, so download variance and workload shape never distort the learned hardware speed.
+
+### Fixed
+
+- **A DESeq2-results upload no longer shows an inflated runtime estimate.** It was mis-modeled as a full alignment run; it is now correctly treated as an alignment-free, near-instant path.
+
 ## 0.18.3 — 2026-07-08
 
 ### Added

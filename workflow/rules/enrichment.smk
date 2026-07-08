@@ -33,6 +33,7 @@ rule enrichment:
         kegg="results/enrichment/kegg_ora.csv",
         kegg_gsea="results/enrichment/kegg_gsea.csv",
         objects="results/enrichment/enrichment_objects.rds",
+        id_map="results/enrichment/id_map.csv",
         check="checks/10_enrichment_qc.json",
     params:
         # `or` (not dict default) so an explicit null override from the config

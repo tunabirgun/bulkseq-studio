@@ -31,12 +31,23 @@ INDEX_MINUTES = {
 }
 
 
+def _confidence_note(n: int) -> str:
+    if n <= 0:
+        return ("Uncalibrated — a first-run estimate can be off by 2-3x. Accuracy improves "
+                "after each run on this machine.")
+    if n < 3:
+        return f"Rough — based on {n} past run{'s' if n != 1 else ''} on this machine."
+    return f"Calibrated to this machine ({n} past runs)."
+
+
 def estimate_runtime(
     config: AppConfig,
     metadata: pd.DataFrame | None = None,
     *,
     threads: int | None = None,
     memory_gb: int | None = None,
+    calibration_factor: float = 1.0,
+    calibration_runs: int = 0,
 ) -> dict[str, object]:
     # Phase model calibrated against a real fungal 6-sample paired-end run (4 cores):
     # download 15 min, alignment 18 min, QC 12 min cumulative. Coefficients are
@@ -48,7 +59,9 @@ def estimate_runtime(
     # locally detected/allocated cores and RAM); they default to the config.
     sample_count = len(metadata) if metadata is not None else 0
     gbase = _total_gbase(metadata)
-    count_matrix = config.input.type == "count_matrix"
+    # A DESeq2-results upload skips alignment/QC/download entirely (like a count matrix),
+    # so it must not fall through to the alignment branch and report an inflated estimate.
+    count_matrix = config.input.type in ("count_matrix", "deseq2_results")
     microarray = config.input.type == "microarray"
     ref_cat = config.reference.genome_size_category
     ref_factor = REFERENCE_FACTORS.get(ref_cat, 1.0)
@@ -58,20 +71,21 @@ def estimate_runtime(
     io_par = min(threads, 4) ** 0.5           # download/IO scale weakly
 
     overhead = 2.0
+    download = 0.0        # network-bound; kept OUT of the calibrated compute term
     download_gib = 0.0
     bottlenecks: list[str] = []
 
     if microarray:
         # GEO download/ingest + probe collapse + limma -> figures -> enrichment.
-        minutes = overhead + 3.0 + sample_count * 0.3
-        minutes += 1.0 if config.workflow.enrichment else 0.0
-        minutes += 0.4 if config.workflow.figures else 0.0
+        compute = 3.0 + sample_count * 0.3
+        compute += 1.0 if config.workflow.enrichment else 0.0
+        compute += 0.4 if config.workflow.figures else 0.0
     elif count_matrix:
-        # Alignment, QC, and download are all skipped; only DESeq2 -> figures ->
-        # enrichment run, which is fast.
-        minutes = overhead + sample_count * 0.2
-        minutes += 1.0 if config.workflow.enrichment else 0.0
-        minutes += 0.4 if config.workflow.figures else 0.0
+        # count_matrix / deseq2_results: alignment, QC and download are all skipped; only
+        # DESeq2 -> figures -> enrichment run, which is fast.
+        compute = sample_count * 0.2
+        compute += 1.0 if config.workflow.enrichment else 0.0
+        compute += 0.4 if config.workflow.figures else 0.0
     else:
         is_sra = config.input.type == "sra"
         # Download is a weak per-gbase anchor only: real ENA download time is network-bound and
@@ -86,13 +100,11 @@ def estimate_runtime(
         # Per-gbase alignment minutes, recalibrated against real benchmark runs (STAR fit from
         # 3 runs at 4/12 threads; HISAT2/Salmon scaled proportionally, preserving speed order).
         per_gbase = {"Salmon": 0.8, "HISAT2": 1.3}.get(config.workflow.aligner, 1.65)
-        # Under-provisioned RAM makes STAR on a large genome swap, slowing alignment.
-        # The penalty is 1.0 (no effect) unless RAM is genuinely tight for that case,
-        # so adequately resourced runs are unchanged.
-        low_ram_star = (
-            memory_gb < 16 and config.workflow.aligner == "STAR" and ref_factor >= 1.4
-        )
-        mem_factor = 1.5 if low_ram_star else 1.0
+        # Graded RAM penalty: below the aligner's genome-scaled need, alignment slows toward a
+        # 2x cap as memory gets tighter (STAR on a mammalian genome wants ~30 GB; Salmon/HISAT2
+        # far less). At or above the need there is no penalty, so well-resourced runs are unchanged.
+        need = {"STAR": 30, "HISAT2": 8, "Salmon": 8}.get(config.workflow.aligner, 8) * (ref_factor / 1.8)
+        mem_factor = 1.0 if memory_gb >= need else min(2.0, 1.0 + 0.6 * (need - memory_gb) / max(need, 1e-6))
         align = (gbase * per_gbase * ref_factor * mem_factor) / compute_par
         index = 0.0
         if config.workflow.aligner == "STAR" and not config.reference.star_index:
@@ -106,12 +118,11 @@ def estimate_runtime(
         quant = (gbase * 0.1) / compute_par
         downstream = 0.5 + (1.0 if config.workflow.enrichment else 0.0) + (0.3 if config.workflow.figures else 0.0)
 
-        minutes = overhead + download + index + align + qc + trim + rrna + quant + downstream
-        # Floor only when the data volume is unknown (no base_count and no local
-        # FASTQ), so the estimate is not unrealistically tiny. When gbase is known
-        # the model is trusted, so cores/RAM changes are reflected in the estimate.
+        compute = index + align + qc + trim + rrna + quant + downstream
+        # Floor only when the data volume is unknown (no base_count and no local FASTQ), so the
+        # estimate is not unrealistically tiny. Overhead is added separately below.
         if gbase <= 0:
-            minutes = max(minutes, 8.0 + sample_count * 1.5)
+            compute = max(compute, 6.0 + sample_count * 1.5)
 
         if index >= 20:
             bottlenecks.append(f"{ref_cat} STAR index build (~{index:.0f} min)")
@@ -119,27 +130,42 @@ def estimate_runtime(
             bottlenecks.append("SRA/ENA download (network-bound)")
         if gbase >= 40:
             bottlenecks.append("large sequencing volume")
-        if low_ram_star:
-            bottlenecks.append("limited RAM for STAR on a large genome")
+        if mem_factor > 1.15:
+            bottlenecks.append("limited RAM for the aligner on this genome")
 
-    # Range calibrated against real runs: low 0.8 keeps the low bound at/above the physical
-    # critical-path floor (0.75 fell below it); high 2.5 covers ordinary compute + network jitter.
-    # The pathological download tail is not chased here — it is called out in download_note.
-    low = max(4.0, minutes * 0.8)
-    high = max(low + 5.0, minutes * 2.5)
+    # Apply the learned per-machine speed correction to the COMPUTE term only (not overhead
+    # or the network-bound download). raw_compute (pre-factor) is what calibration compares the
+    # actual wall time against, so the factor converges instead of compounding across runs.
+    raw_compute = compute
+    compute *= max(calibration_factor, 0.05)
+    minutes = overhead + download + compute
+
+    # Range widens when uncalibrated and narrows as the machine's speed is learned.
+    lo_m, hi_m = ((0.8, 2.5) if calibration_runs == 0
+                  else (0.7, 1.8) if calibration_runs < 3
+                  else (0.85, 1.4))
+    low = max(4.0, minutes * lo_m)
+    high = max(low + 5.0, minutes * hi_m)
 
     return {
         "low_seconds": int(low * 60),
         "high_seconds": int(high * 60),
         "range": f"{_fmt(low)}-{_fmt(high)}",
+        "confidence_note": _confidence_note(calibration_runs),
+        "calibrated": calibration_runs >= 1,
+        "calibration_runs": calibration_runs,
         "sample_count": sample_count,
         "sequencing_gbase": round(gbase, 2),
         "reference_group": ref_cat,
-        "aligner": ("n/a (microarray/limma)" if microarray
+        "aligner": ("n/a (results upload)" if config.input.type == "deseq2_results"
+                    else "n/a (microarray/limma)" if microarray
                     else "n/a (count matrix)" if count_matrix
                     else config.workflow.aligner),
         "threads": threads,
         "memory_gb": memory_gb,
+        "compute_minutes": round(compute, 2),
+        "raw_compute_minutes": round(raw_compute, 2),
+        "download_minutes": round(download, 2),
         "download_size": _download_label(config, download_gib),
         "download_note": (
             "SRA/ENA download time is network-dependent and can range from minutes to hours "
@@ -148,6 +174,7 @@ def estimate_runtime(
         ),
         "bottlenecks": bottlenecks or (
             ["microarray mode: GEO download + limma, no alignment"] if microarray
+            else ["results-upload mode: enrichment/figures only"] if config.input.type == "deseq2_results"
             else ["count-matrix mode: alignment skipped"] if count_matrix
             else ["none obvious from current configuration"]
         ),

@@ -50,6 +50,20 @@ strip_version <- function(id) {
 
 # Always create the output files first so the rule succeeds even on failure.
 for (k in c("go", "go_up", "go_down", "gsea", "kegg", "kegg_gsea")) writeLines("", out[[k]])
+# id bridge (gene_id, base_id, symbol, entrez) so the app can resolve an enrichment term's
+# genes (entrez on the KEGG-OrgDb / GSEA routes) back to symbols/ids without re-deriving them.
+# Written with a header up front; the OrgDb branch fills it in, other branches leave entrez blank.
+write.csv(data.frame(gene_id = character(0), base_id = character(0),
+                     symbol = character(0), entrez = character(0)),
+          out[["id_map"]], row.names = FALSE)
+write_id_map <- function(res) {
+  tryCatch(write.csv(data.frame(
+      gene_id = res$gene_id,
+      base_id = if (!is.null(res$base_id)) res$base_id else res$gene_id,
+      symbol  = if (!is.null(res$symbol)) res$symbol else NA_character_,
+      entrez  = if (!is.null(res$ENTREZID)) res$ENTREZID else ""),
+    out[["id_map"]], row.names = FALSE), error = function(e) NULL)
+}
 # Persist an (empty) objects RDS up front so the enrichment_figures rule always
 # has an input, even when enrichment is skipped or fails. Overwritten on success.
 saveRDS(list(), out[["objects"]])
@@ -158,6 +172,7 @@ if (orgdb_ok) {
     res <- res[!is.na(res$ENTREZID), ]
     res <- res[!duplicated(res$ENTREZID), ]
     universe <- unique(res$ENTREZID)
+    write_id_map(res)  # entrez<->symbol/gene_id bridge for term-gene extraction
 
     # Map a gene_id list (from the deseq2 up/down CSVs) to ENTREZ via res.
     to_entrez <- function(path) {
@@ -257,6 +272,7 @@ if (orgdb_ok) {
     res <- read.csv(results_file, stringsAsFactors = FALSE)
     res <- res[!is.na(res$padj) & !is.na(res$log2FoldChange), ]
     res$base_id <- strip_version(res$gene_id)
+    write_id_map(res)  # no entrez on this route; symbol/gene_id still bridge term extraction
     gene_list <- res$log2FoldChange
     names(gene_list) <- res$base_id
     gene_list <- sort(gene_list[!duplicated(names(gene_list))], decreasing = TRUE)
@@ -354,6 +370,7 @@ if (orgdb_ok) {
     res <- read.csv(results_file, stringsAsFactors = FALSE)
     res <- res[!is.na(res$padj) & !is.na(res$log2FoldChange), ]
     res$base_id <- strip_version(res$gene_id)
+    write_id_map(res)  # no entrez on this route; symbol/gene_id still bridge term extraction
     gene_list <- res$log2FoldChange
     names(gene_list) <- res$base_id
     gene_list <- sort(gene_list[!duplicated(names(gene_list))], decreasing = TRUE)

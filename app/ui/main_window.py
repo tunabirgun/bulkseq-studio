@@ -57,6 +57,7 @@ from app.core.reference_manager import catalog_entry_for_organism, load_referenc
 from app.core.resources import detect_system, recommend_profile
 from app.core.sra_metadata import fetch_ena_metadata, metadata_to_samples
 from app.core.geo_metadata import fetch_geo_series
+from app.core.runtime_calibration import calibration_factor, record_run
 from app.core.runtime_estimator import estimate_runtime
 from app.core.sanity_checks import write_check
 from app.core.snakemake_runner import (
@@ -1950,13 +1951,20 @@ class MainWindow(QMainWindow):
             self.progress.setStyleSheet("")
             self._set_run_status("Completed", "#2E7D32")
             self.phase_label.setText("Finished")
+            # An enrichment-term heatmap writes the fixed term_heatmap.*; copy it to a
+            # per-term name (before the gallery re-scan) so each extracted term persists.
+            if was_mode == "term" and self.project_root is not None:
+                self._copy_term_heatmap()
             # A completed run / "Regenerate figures" writes new PNGs into
             # results/figures; re-scan so the Outputs figure picker shows them
             # without the user having to click "Refresh figures" first. A PPI-only
             # rebuild or a dry-run/unlock writes no such figures, so skip those.
             if (self.project_root is not None and hasattr(self, "figure_pick")
-                    and was_mode in ("run", "resume", "recover", "figures", "goi")):
+                    and was_mode in ("run", "resume", "recover", "figures", "goi", "term")):
                 self._refresh_gallery()
+            # After a full run, new enrichment terms exist — refresh the term picker.
+            if was_mode in ("run", "resume", "recover") and hasattr(self, "term_pick"):
+                self._populate_term_picker()
             if was_mode in ("run", "resume", "recover"):
                 self.statusBar().showMessage(
                     "Run complete. View figures and tables on the Outputs tab, and the "
@@ -1967,6 +1975,20 @@ class MainWindow(QMainWindow):
                 self._load_ppi_network()
             # A completed run writes the provenance files; enable their export buttons.
             self._refresh_export_buttons()
+            # Hook 2 (runtime calibration): a fresh full run just finished — record predicted
+            # vs actual wall time so future estimates converge to this machine. Local runs only
+            # (the stash marks SRA), so network jitter is never learned as hardware speed.
+            ae = getattr(self, "_active_estimate", None)
+            if (was_mode == "run" and ae and ae.get("calibratable")
+                    and self._run_start_wall and self._run_finish_wall):
+                try:
+                    wall_min = (datetime.fromisoformat(self._run_finish_wall)
+                                - datetime.fromisoformat(self._run_start_wall)).total_seconds() / 60.0
+                    record_run(ae["cores"], ae["predicted_raw"], wall_min,
+                               ae["gbase"], ae["aligner"])
+                except Exception:
+                    pass
+            self._active_estimate = None
         else:
             # Failure: do not imply success. Red bar, red status, keep partial %.
             self.progress.setStyleSheet("QProgressBar::chunk { background-color: #C0392B; }")
@@ -2158,6 +2180,7 @@ class MainWindow(QMainWindow):
         control_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         control_panel.addTab(self._scrollable(self._build_figure_style_group()), "Figure Style")
         control_panel.addTab(self._scrollable(self._build_goi_group()), "Genes of Interest")
+        control_panel.addTab(self._scrollable(self._build_enrichment_terms_group()), "Enrichment Terms")
 
         results_splitter = QSplitter(Qt.Orientation.Horizontal)
         results_splitter.setChildrenCollapsible(False)
@@ -2537,6 +2560,254 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, APP_NAME, "Genes of interest cleared.")
         else:
             QMessageBox.information(self, APP_NAME, f"Saved {n} gene(s). Re-run, or click 'Regenerate figures', to produce the genes-of-interest heatmap and expression plots.")
+
+    # ---- Enrichment-term gene extraction --------------------------------------
+    # The enrichment CSVs each carry a per-term gene list ("/"-separated) in a geneID or
+    # core_enrichment column. These methods let the user pick a term, pull its genes' DESeq2
+    # stats into a table (instant, pandas-only), and build a focused heatmap by reusing the
+    # genes-of-interest R script via the "term" run mode — all from the finished run.
+    _TERM_SOURCES = [
+        ("results/enrichment/go_ora_up.csv", "GO up-regulated"),
+        ("results/enrichment/go_ora_down.csv", "GO down-regulated"),
+        ("results/enrichment/go_ora_all.csv", "GO combined"),
+        ("results/enrichment/gsea.csv", "GO GSEA"),
+        ("results/enrichment/kegg_ora.csv", "KEGG ORA"),
+        ("results/enrichment/kegg_gsea.csv", "KEGG GSEA"),
+    ]
+
+    def _build_enrichment_terms_group(self) -> QWidget:
+        group = QWidget()
+        v = QVBoxLayout(group)
+        help_label = QLabel(
+            "Pick an enrichment term to pull its member genes into a DESeq2 table and a focused "
+            "heatmap — from the finished run, no re-analysis. Requires a completed run whose "
+            "enrichment used the clusterProfiler backend (g:Profiler runs record no gene lists).")
+        help_label.setWordWrap(True)
+        v.addWidget(help_label)
+        self.term_pick = QComboBox()
+        self.term_pick.currentIndexChanged.connect(self._on_term_selected)
+        v.addWidget(self.term_pick)
+        row = QHBoxLayout()
+        refresh = QPushButton("Refresh terms")
+        refresh.clicked.connect(self._populate_term_picker)
+        self.term_table_btn = QPushButton("Extract genes → table")
+        self.term_table_btn.setToolTip("Write this term's genes with their DESeq2 stats to a CSV "
+                                       "and show it in the table — instant, from existing results.")
+        self.term_table_btn.clicked.connect(lambda: self._extract_term_genes(heatmap=False))
+        self.term_heatmap_btn = QPushButton("Build heatmap + expression")
+        self.term_heatmap_btn.setToolTip("Reuses the finished DESeq2 results — no re-alignment "
+                                         "or re-analysis. Adds a focused heatmap for the term's genes.")
+        self.term_heatmap_btn.clicked.connect(lambda: self._extract_term_genes(heatmap=True))
+        row.addWidget(refresh)
+        row.addWidget(self.term_table_btn)
+        row.addWidget(self.term_heatmap_btn)
+        v.addLayout(row)
+        self.term_status = QLabel("")
+        self.term_status.setWordWrap(True)
+        self.term_status.setStyleSheet("color:#6B7785;font-size:9pt;")
+        v.addWidget(self.term_status)
+        v.addStretch(1)
+        self._populate_term_picker()
+        return group
+
+    @staticmethod
+    def _term_gene_column(df) -> str | None:
+        # The gene-list column is geneID (ORA) or core_enrichment (GSEA); gProfiler CSVs have neither.
+        for col in ("geneID", "core_enrichment"):
+            if col in df.columns:
+                return col
+        return None
+
+    def _populate_term_picker(self) -> None:
+        if not hasattr(self, "term_pick"):
+            return
+        self.term_pick.blockSignals(True)
+        self.term_pick.clear()
+        added = 0
+        if self.project_root is not None:
+            for rel, label in self._TERM_SOURCES:
+                path = self.project_root / rel
+                if not path.exists() or path.stat().st_size == 0:
+                    continue
+                try:
+                    df = pd.read_csv(path, dtype=str).fillna("")
+                except Exception:
+                    continue
+                gene_col = self._term_gene_column(df)
+                if gene_col is None or df.empty:
+                    continue
+                # Header row (disabled) then each term.
+                self.term_pick.addItem(f"──  {label}  ──")
+                self.term_pick.model().item(self.term_pick.count() - 1).setEnabled(False)
+                count_col = "Count" if "Count" in df.columns else ("setSize" if "setSize" in df.columns else None)
+                for i in range(len(df)):
+                    desc = df.iloc[i].get("Description", "") or df.iloc[i].get("ID", f"term {i}")
+                    padj = df.iloc[i].get("p.adjust", "")
+                    cnt = df.iloc[i].get(count_col, "") if count_col else ""
+                    bits = []
+                    if cnt:
+                        bits.append(f"n={cnt}")
+                    if padj:
+                        try:
+                            bits.append(f"padj={float(padj):.1e}")
+                        except (ValueError, TypeError):
+                            pass
+                    disp = f"{desc}" + (f"  ({', '.join(bits)})" if bits else "")
+                    self.term_pick.addItem(disp, {"csv": rel, "row": i, "gene_col": gene_col, "desc": str(desc)})
+                    added += 1
+        # Land on the first real term, not the disabled group header at index 0, so the action
+        # buttons are enabled immediately.
+        for i in range(self.term_pick.count()):
+            if isinstance(self.term_pick.itemData(i), dict):
+                self.term_pick.setCurrentIndex(i)
+                break
+        self.term_pick.blockSignals(False)
+        if added == 0:
+            self.term_status.setText(
+                "No extractable enrichment terms found. Run the pipeline (with the clusterProfiler "
+                "enrichment backend) first; g:Profiler runs do not record per-term gene lists.")
+        else:
+            self.term_status.setText(f"{added} term(s) available.")
+        self._on_term_selected()
+
+    def _on_term_selected(self, _idx: int = 0) -> None:
+        if not hasattr(self, "term_table_btn"):
+            return
+        data = self.term_pick.currentData()
+        has_term = isinstance(data, dict)
+        self.term_table_btn.setEnabled(has_term)
+        # Heatmap needs an expression matrix; a DESeq2-results upload has none.
+        has_counts = (self.project_root is not None
+                      and (self.project_root / "results" / "deseq2" / "normalized_counts.csv").exists())
+        self.term_heatmap_btn.setEnabled(has_term and has_counts)
+        self.term_heatmap_btn.setToolTip(
+            "Reuses the finished DESeq2 results — no re-analysis."
+            if has_counts else
+            "No expression matrix in a DESeq2-results upload; the gene table is still available.")
+
+    def _resolve_term_genes(self, tokens: list[str]):
+        # Match a term's raw tokens (symbols on GO routes, entrez on KEGG-OrgDb/GSEA, locus tags on
+        # KEGG-only) to rows of deseq2_results.csv. Route-agnostic: try symbol, then gene_id/base_id,
+        # then entrez via id_map. Returns (subset_df, n_unmatched).
+        assert self.project_root is not None
+        res = pd.read_csv(self.project_root / "results" / "deseq2" / "deseq2_results.csv", dtype=str).fillna("")
+        res["_base"] = res["gene_id"].str.replace(r"\.\d+$", "", regex=True)
+        by_symbol = {s: i for i, s in enumerate(res.get("symbol", pd.Series([], dtype=str))) if s}
+        by_id = {v: i for i, v in enumerate(res["gene_id"])}
+        by_base = {v: i for i, v in enumerate(res["_base"])}
+        entrez_to_row: dict[str, int] = {}
+        id_map_path = self.project_root / "results" / "enrichment" / "id_map.csv"
+        if id_map_path.exists() and id_map_path.stat().st_size > 0:
+            try:
+                idm = pd.read_csv(id_map_path, dtype=str).fillna("")
+                sym_or_id = {}
+                for _, r in idm.iterrows():
+                    key = (r.get("symbol") or "").strip() or (r.get("gene_id") or "").strip()
+                    ent = (r.get("entrez") or "").strip()
+                    if ent and key:
+                        sym_or_id[ent] = key
+                for ent, key in sym_or_id.items():
+                    ri = by_symbol.get(key, by_id.get(key, by_base.get(key)))
+                    if ri is not None:
+                        entrez_to_row[ent] = ri
+            except Exception:
+                pass
+        rows: list[int] = []
+        unmatched = 0
+        for tok in tokens:
+            tok = tok.strip()
+            if not tok:
+                continue
+            ri = by_symbol.get(tok)
+            if ri is None:
+                ri = by_id.get(tok, by_base.get(tok.split(".")[0]))
+            if ri is None:
+                ri = entrez_to_row.get(tok)
+            if ri is None:
+                unmatched += 1
+            else:
+                rows.append(ri)
+        sub = res.iloc[sorted(set(rows))].drop(columns=["_base"], errors="ignore")
+        return sub, unmatched
+
+    @staticmethod
+    def _term_slug(desc: str) -> str:
+        slug = re.sub(r"[^A-Za-z0-9]+", "_", desc).strip("_").lower()
+        return (slug or "term")[:60]
+
+    def _extract_term_genes(self, heatmap: bool) -> None:
+        if not self._require_project() or self.config is None:
+            return
+        assert self.project_root is not None
+        data = self.term_pick.currentData()
+        if not isinstance(data, dict):
+            return
+        res_csv = self.project_root / "results" / "deseq2" / "deseq2_results.csv"
+        if not res_csv.exists():
+            QMessageBox.warning(self, APP_NAME, "No DESeq2 results found yet. Run the pipeline first.")
+            return
+        try:
+            df = pd.read_csv(self.project_root / data["csv"], dtype=str).fillna("")
+            tokens = str(df.iloc[data["row"]][data["gene_col"]]).split("/")
+        except Exception as exc:
+            QMessageBox.warning(self, APP_NAME, f"Could not read the term's genes: {exc}")
+            return
+        sub, unmatched = self._resolve_term_genes(tokens)
+        if sub.empty:
+            QMessageBox.information(
+                self, APP_NAME,
+                "None of this term's genes matched the DESeq2 results table. "
+                "(This can happen if the enrichment and DESeq2 identifier spaces differ.)")
+            return
+        if "padj" in sub.columns:
+            sub = sub.assign(_p=pd.to_numeric(sub["padj"], errors="coerce")).sort_values("_p").drop(columns="_p")
+        slug = self._term_slug(data["desc"])
+        terms_dir = self.project_root / "results" / "enrichment" / "terms"
+        terms_dir.mkdir(parents=True, exist_ok=True)
+        rel = f"results/enrichment/terms/{slug}_genes.csv"
+        sub.to_csv(self.project_root / rel, index=False)
+        note = f" ({unmatched} of the term's genes were not in the results table.)" if unmatched else ""
+        self.term_status.setText(f"Wrote {len(sub)} genes for '{data['desc']}' → {rel}.{note}")
+        self._register_output_table(rel)
+        if not heatmap:
+            return
+        # Heatmap: write the matched genes (symbols preferred, else gene_id) and reuse make_goi.R.
+        genes = [(r.get("symbol") or "").strip() or (r.get("gene_id") or "").strip()
+                 for _, r in sub.iterrows()]
+        genes = [g for g in genes if g]
+        (self.project_root / "config").mkdir(parents=True, exist_ok=True)
+        (self.project_root / "config" / "enrichment_term.txt").write_text("\n".join(genes) + "\n", encoding="utf-8")
+        if not (self.project_root / "results" / "deseq2" / "deseq2_objects.rds").exists():
+            QMessageBox.warning(self, APP_NAME, "The DESeq2 objects file is missing; re-run the pipeline first.")
+            return
+        self._apply_figure_style()      # term heatmap honors the current figure style
+        self._term_slug_pending = slug  # for the per-term copy after the run completes
+        self._start_snakemake("term")
+
+    def _register_output_table(self, rel_path: str) -> None:
+        idx = self.output_table_pick.findText(rel_path)
+        if idx < 0:
+            self.output_table_pick.addItem(rel_path)
+            idx = self.output_table_pick.count() - 1
+        self.output_table_pick.setCurrentIndex(idx)
+        self._load_output_table()
+
+    def _copy_term_heatmap(self) -> None:
+        # The "term" rule always writes the fixed term_heatmap.*; copy to a per-term name so
+        # every extracted term stays visible in the gallery (the fixed file is overwritten each time).
+        slug = getattr(self, "_term_slug_pending", None)
+        if not slug or self.project_root is None:
+            return
+        figs = self.project_root / "results" / "figures"
+        for kind in ("heatmap", "expression"):
+            for ext in ("png", "svg"):
+                src = figs / f"term_{kind}.{ext}"
+                if src.exists():
+                    try:
+                        shutil.copyfile(src, figs / f"term_{slug}_{kind}.{ext}")
+                    except Exception:
+                        pass
+        self._term_slug_pending = None
 
     def _regenerate_ppi(self) -> None:
         # Rebuild the STRING PPI network from the existing DESeq2 results with the
@@ -3198,6 +3469,8 @@ class MainWindow(QMainWindow):
             self._refresh_conditions()
         self._refresh_gallery()
         self._refresh_export_buttons()
+        if hasattr(self, "term_pick"):
+            self._populate_term_picker()
         self._remember_recent_project(root)
         self.project_status.setPlainText(f"Open project: {root}")
 
@@ -3766,7 +4039,11 @@ class MainWindow(QMainWindow):
                 rec = recommend_profile(system, profile)
                 threads = int(rec["total_threads"])
                 mem = int(rec["total_memory_gb"])
-            estimate = estimate_runtime(cfg, df, threads=threads, memory_gb=mem)
+            # Calibration keys on config.resources.total_threads (the same integer the run
+            # and Hook-2 use), so read and write always hit the same QSettings key.
+            cf, n = calibration_factor(int(cfg.resources.total_threads))
+            estimate = estimate_runtime(cfg, df, threads=threads, memory_gb=mem,
+                                        calibration_factor=cf, calibration_runs=n)
             return system, threads, mem, estimate
 
         self._estimate_worker = BackgroundWorker(work)
@@ -3984,7 +4261,7 @@ class MainWindow(QMainWindow):
         self._saw_star_align = False
         self._stop_in_progress = False
         self._set_running_ui(True)
-        if mode in ("run", "resume", "recover", "figures", "goi", "ppi"):
+        if mode in ("run", "resume", "recover", "figures", "goi", "ppi", "term"):
             # Sub-runs launched from the Outputs / PPI tabs report progress here, so
             # bring the Run Monitor forward — otherwise the click looks like a no-op.
             if hasattr(self, "run_monitor_page"):
@@ -3993,7 +4270,8 @@ class MainWindow(QMainWindow):
             self.progress.setStyleSheet("")
             status = {"figures": "Regenerating figures...",
                       "goi": "Generating genes-of-interest outputs...",
-                      "ppi": "Rebuilding PPI network..."}.get(mode, "Running...")
+                      "ppi": "Rebuilding PPI network...",
+                      "term": "Building enrichment-term heatmap..."}.get(mode, "Running...")
             self._set_run_status(status, "#2C6FB6")
             self.phase_label.setText("Current step: starting...")
             self._run_start = time.monotonic()
@@ -4002,6 +4280,31 @@ class MainWindow(QMainWindow):
             if mode in ("run", "resume", "recover"):
                 self._run_start_wall = datetime.now().isoformat(timespec="seconds")
                 self._run_finish_wall = None
+            # Hook 1 (runtime calibration): stash the prediction for a fresh FULL run only, so
+            # _on_run_finished can compare it against the actual wall time. resume/recover run
+            # partial DAGs (wall undercounts), so they are excluded.
+            self._active_estimate = None
+            if mode == "run" and self.config is not None:
+                try:
+                    cores = int(self.config.resources.total_threads)
+                    cf, n = calibration_factor(cores)
+                    est = estimate_runtime(self.config, self.metadata_table.to_dataframe(),
+                                           threads=self.config.resources.total_threads,
+                                           memory_gb=self.config.resources.total_memory_gb,
+                                           calibration_factor=cf, calibration_runs=n)
+                    # Only learn hardware speed from a compute-heavy LOCAL alignment run:
+                    # fastq/mixed with no network read download and a consistent (alignment-
+                    # shaped) workload. sra/microarray carry network download variance, and
+                    # count_matrix/deseq2_results are a different (tiny) shape — neither should
+                    # feed the shared per-machine factor.
+                    calibratable = self.config.input.type in ("fastq", "mixed")
+                    self._active_estimate = {
+                        "predicted_raw": est["raw_compute_minutes"],
+                        "gbase": est["sequencing_gbase"], "aligner": est["aligner"],
+                        "calibratable": calibratable, "cores": cores,
+                    }
+                except Exception:
+                    self._active_estimate = None
             self.elapsed_timer.start(1000)
         else:
             self.phase_label.setText("")  # clear a stale phase from the previous run
@@ -4030,7 +4333,10 @@ class MainWindow(QMainWindow):
         use_wsl = getattr(self, "use_wsl", None) is not None and self.use_wsl.isChecked()
 
         def work():
-            estimate = estimate_runtime(cfg, df) if cfg else None
+            estimate = None
+            if cfg:
+                cf, n = calibration_factor(int(cfg.resources.total_threads))
+                estimate = estimate_runtime(cfg, df, calibration_factor=cf, calibration_runs=n)
             write_timing_summary(root, estimate, run_started=started, run_finished=finished)
             write_run_summary(root, data_path("default_config.yaml"), use_wsl=use_wsl)
             return True
@@ -4097,6 +4403,12 @@ class MainWindow(QMainWindow):
                       "results/networks/enrichment_emap_nodes.csv",
                       "results/networks/enrichment_genemap_nodes.csv",
                       "results/networks/string_ppi_nodes.csv", "results/networks/ppi_hub_genes.csv"]
+        # Keep any extracted per-term gene tables reachable across a picker rebuild.
+        if self.project_root is not None:
+            terms_dir = self.project_root / "results" / "enrichment" / "terms"
+            if terms_dir.exists():
+                items += [f"results/enrichment/terms/{p.name}"
+                          for p in sorted(terms_dir.glob("*_genes.csv"))]
         current = self.output_table_pick.currentText()
         self.output_table_pick.blockSignals(True)
         self.output_table_pick.clear()

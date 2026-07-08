@@ -128,6 +128,18 @@ def build_snakemake_args(
         for offset, target in enumerate(ppi_outputs):
             args.insert(1 + offset, target)
         args += ["--forcerun", "network_string", "--allowed-rules", "network_string"]
+    elif mode == "term":
+        # Build ONLY the enrichment-term heatmap from an existing DESeq2 object, on the gene
+        # list the app wrote to config/enrichment_term.txt. No re-align / re-DESeq2 / other rules.
+        term_outputs = [
+            "results/figures/term_heatmap.png",
+            "results/figures/term_expression.png",
+            "results/enrichment/terms/term_normalized_counts.csv",
+            "results/enrichment/terms/term_report.txt",
+        ]
+        for offset, target in enumerate(term_outputs):
+            args.insert(1 + offset, target)
+        args += ["--forcerun", "enrichment_term_heatmap", "--allowed-rules", "enrichment_term_heatmap"]
     return args
 
 
