@@ -134,6 +134,15 @@ italic_labels <- function(x, italic = TRUE) {
   parse(text = paste0('italic("', gsub('"', '', as.character(x)), '")'))
 }
 
+# ---- Per-figure-group palette override --------------------------------------
+# Return the override palette for figure group `key` when the user set one in
+# style$palette_overrides, else the global palette. Figures stay uniform by
+# default (no override); the override is opt-in per group.
+palette_for <- function(style, key, global_palette) {
+  ov <- tryCatch(style[["palette_overrides"]][[key]], error = function(e) NULL)
+  if (is.null(ov) || !nzchar(as.character(ov))) global_palette else as.character(ov)
+}
+
 # ---- Shared theme factory ---------------------------------------------------
 # theme_bw base for every ggplot figure; minor grid off, faint major grid.
 # base_family NULL when no font configured (ggplot/ggrepel accept family = NULL).

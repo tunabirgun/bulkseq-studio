@@ -2586,8 +2586,24 @@ class MainWindow(QMainWindow):
         # control panel without a horizontal scrollbar.
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
         self.fig_palette = QComboBox()
-        self.fig_palette.addItems(["Blue-Red", "Viridis", "Magma", "Plasma", "Cividis",
-                                   "Spectral", "Red-Yellow-Blue", "Greyscale"])
+        self.PALETTE_NAMES = ["Blue-Red", "Viridis", "Magma", "Plasma", "Cividis",
+                              "Spectral", "Red-Yellow-Blue", "Greyscale"]
+        self.fig_palette.addItems(self.PALETTE_NAMES)
+        # Per-figure-group palette override. Each group defaults to "Global" (the main
+        # palette above), so figures stay uniform unless the user deliberately differs one.
+        self.PALETTE_GROUPS = [
+            ("core", "Core figures (PCA, volcano, MA, heatmaps)"),
+            ("correlation", "Sample-correlation heatmaps"),
+            ("enrichment", "Enrichment plots"),
+            ("network", "PPI network"),
+        ]
+        self.fig_palette_overrides = {}
+        for key, _label in self.PALETTE_GROUPS:
+            cb = QComboBox()
+            cb.addItem("Global (use main palette)", "")
+            for p in self.PALETTE_NAMES:
+                cb.addItem(p, p)
+            self.fig_palette_overrides[key] = cb
         self.fig_point_size = QDoubleSpinBox()
         self.fig_point_size.setRange(0.1, 12.0)
         self.fig_point_size.setSingleStep(0.1)
@@ -2675,6 +2691,15 @@ class MainWindow(QMainWindow):
         save_style = QPushButton("Save figure style")
         save_style.clicked.connect(self._save_figure_style)
         form.addRow(self._info_label("Palette", "Colour scheme for all figures. Blue-Red is diverging; Viridis is colour-blind friendly; Greyscale prints well in mono."), self.fig_palette)
+        _pal_hdr = QLabel("Per-figure palette (optional)")
+        _pal_hdr.setStyleSheet("font-weight: 600; margin-top: 4px;")
+        form.addRow(_pal_hdr)
+        for _key, _label in self.PALETTE_GROUPS:
+            form.addRow(self._info_label(
+                _label,
+                "Palette for just this figure group. 'Global' uses the main palette above so "
+                "all figures match; pick a specific palette to apply it to this group only."),
+                self.fig_palette_overrides[_key])
         form.addRow(self._info_label("Point size", "Dot size in PCA/volcano scatter plots (ggplot2 size units)."), self.fig_point_size)
         form.addRow(self._info_label("Base font size", "Base text size for all figures (ggplot2 theme base_size, points)."), self.fig_base_font)
         form.addRow(self._info_label("Font family", "Font for figure text. Leave as default unless the font is also available in the WSL R environment."), self.fig_font_family)
@@ -2773,6 +2798,12 @@ class MainWindow(QMainWindow):
             return False
         style = self.config.figures_style
         style.palette = self.fig_palette.currentText()  # type: ignore[assignment]
+        # Only store groups the user actually overrode (non-"Global"), so the config
+        # stays clean and every unset group inherits the main palette.
+        style.palette_overrides = {
+            key: cb.currentData()
+            for key, cb in self.fig_palette_overrides.items() if cb.currentData()
+        }
         style.point_size = self.fig_point_size.value()
         style.base_font_size = self.fig_base_font.value()
         font = self.fig_font_family.currentText().strip()
@@ -3212,6 +3243,10 @@ class MainWindow(QMainWindow):
         self.ram.setValue(self.config.resources.total_memory_gb)
         fig = self.config.figures_style
         self.fig_palette.setCurrentText(fig.palette)
+        overrides = getattr(fig, "palette_overrides", {}) or {}
+        for key, cb in self.fig_palette_overrides.items():
+            idx = cb.findData(overrides.get(key, ""))
+            cb.setCurrentIndex(idx if idx >= 0 else 0)
         self.fig_point_size.setValue(fig.point_size)
         self.fig_base_font.setValue(fig.base_font_size)
         self.fig_font_family.setCurrentText(fig.font_family or self.FONT_DEFAULT_LABEL)

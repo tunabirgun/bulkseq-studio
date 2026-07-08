@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.18.1 — 2026-07-08
+
+### Added
+
+- **Per-figure palette.** The figure style controls gain an optional per-group palette: Core figures (PCA, volcano, MA, heatmaps), Sample-correlation heatmaps, Enrichment plots, and the PPI network can each use a different palette, or "Global" (the default) to follow the main palette. Figures stay uniform unless you deliberately differ one.
+
+### Fixed
+
+- **Enrichment dot plots now honor the palette.** The GO/KEGG/disease-ontology dot plots mapped significance to the fill aesthetic, but only a colour scale was applied, so they silently kept enrichplot's default red-blue instead of the configured palette. Both aesthetics are now set, so the dot plots match the rest of the enrichment figures (and the per-figure palette above).
+
 ## 0.18.0 — 2026-07-08
 
 ### Added

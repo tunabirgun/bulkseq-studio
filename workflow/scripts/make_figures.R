@@ -52,7 +52,7 @@ if (is.null(style) || !is.list(style)) {
 if (is.null(style) || !is.list(style)) style <- list()
 getp <- make_getp(style)
 
-palette_name <- as.character(getp("palette", "Blue-Red"))
+palette_name <- palette_for(style, "core", as.character(getp("palette", "Blue-Red")))
 point_size   <- as.numeric(getp("point_size", 2.5))
 base_size    <- as.numeric(getp("base_font_size", 12))
 font_family  <- as.character(getp("font_family", ""))

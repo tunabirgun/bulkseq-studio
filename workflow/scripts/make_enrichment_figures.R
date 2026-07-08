@@ -31,7 +31,7 @@ label_bold <- isTRUE(as.logical(getp("label_bold", FALSE)))
 title_bold <- isTRUE(as.logical(getp("title_bold", FALSE)))
 
 # Enrichment-specific config (NULL-safe; defaults reproduce prior behaviour).
-palette_name <- as.character(getp("palette", "Blue-Red"))
+palette_name <- palette_for(style, "enrichment", as.character(getp("palette", "Blue-Red")))
 show_cat <- as.integer(getp("enrich_show_category", 15))
 cnet_cat <- as.integer(getp("enrich_cnet_category", 5))
 emap_cat <- as.integer(getp("enrich_emap_category", 15))
@@ -69,12 +69,15 @@ nrows <- function(x) if (is.null(x)) 0 else tryCatch(nrow(as.data.frame(x)), err
 # overlap dotplots), long terms wrapped, no embedded title. Description (pathway
 # NAME) labels are kept by enrichplot -- never raw GO/KEGG ids.
 themed_dotplot <- function(x, n) {
-  dotplot(x, showCategory = n,
-          label_format = function(lbl) scales::label_wrap(label_wrap)(lbl)) +
-    scale_color_gradientn(colours = pal_spec$seq(255), name = "p.adjust",
-                          transform = "reverse") +
-    labs(title = NULL) +
-    style_theme(theme_bw)
+  p <- dotplot(x, showCategory = n,
+               label_format = function(lbl) scales::label_wrap(label_wrap)(lbl))
+  # enrichplot's dotplot maps p.adjust to `fill` in current versions (older ones used
+  # `colour`), so set BOTH: a colour-only scale silently did nothing and the dotplots kept
+  # enrichplot's default red-blue instead of the project palette. Reversed = significant darkest.
+  suppressWarnings(
+    p + scale_color_gradientn(colours = pal_spec$seq(255), name = "p.adjust", transform = "reverse") +
+        scale_fill_gradientn(colours = pal_spec$seq(255), name = "p.adjust", transform = "reverse")
+  ) + labs(title = NULL) + style_theme(theme_bw)
 }
 
 # Render `expr` to PNG+SVG; placeholder when `ok` is FALSE or the plot errors.

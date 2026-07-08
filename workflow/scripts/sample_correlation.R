@@ -31,7 +31,7 @@ fig_dpi <- as.integer(getp("dpi", 300))
 base_size <- as.numeric(getp("base_font_size", 12))
 font_family <- as.character(getp("font_family", ""))
 base_family <- resolve_font(font_family)
-palette_name <- as.character(getp("palette", "Blue-Red"))
+palette_name <- palette_for(style, "correlation", as.character(getp("palette", "Blue-Red")))
 number_fmt <- as.character(getp("heatmap_number_format", "%.2f"))
 number_fs <- as.integer(getp("heatmap_number_fontsize", 0))  # 0 = auto (0.6x base)
 # Per-sample axis labels; default TRUE (unchanged). Off declutters a many-sample run.
