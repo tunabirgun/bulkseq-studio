@@ -34,7 +34,14 @@ base_family <- resolve_font(font_family)
 palette_name <- as.character(getp("palette", "Blue-Red"))
 number_fmt <- as.character(getp("heatmap_number_format", "%.2f"))
 number_fs <- as.integer(getp("heatmap_number_fontsize", 0))  # 0 = auto (0.6x base)
+# Per-sample axis labels; default TRUE (unchanged). Off declutters a many-sample run.
+sample_labels <- isTRUE(as.logical(getp("sample_labels", TRUE)))
 pal_spec <- palette_spec(palette_name)
+# n x n correlation matrix grows on both axes with sample count; size the canvas so
+# a many-sample run stays legible instead of crushing into the fixed 6x5 default.
+corr_dim <- heatmap_dim(ncol(m), ncol(m), cell_h = 14, cell_w = 14,
+                        row_label_chars = max(nchar(colnames(m))),
+                        show_col_labels = sample_labels, min_w = fig_w, min_h = fig_h)
 
 # Annotate columns by the contrast factor (falls back to the first colData column).
 group_var <- "condition"
@@ -80,6 +87,7 @@ save_corr <- function(method, png_path, svg_path, csv_path) {
                    cluster_rows = cluster, cluster_cols = cluster,
                    display_numbers = show_num, number_format = number_fmt,
                    fontsize_number = num_fs, angle_col = 45,
+                   show_rownames = sample_labels, show_colnames = sample_labels,
                    annotation_col = ann, annotation_colors = ann_colors,
                    fontsize = base_size, breaks = brks,
                    color = pal_spec$seq(255), main = NA, silent = TRUE)
@@ -94,8 +102,8 @@ save_corr <- function(method, png_path, svg_path, csv_path) {
         grid::grid.draw(ph$gtable)
       }
     }
-    png(png_path, width = fig_w, height = fig_h, units = "in", res = fig_dpi); draw_ph(); dev.off()
-    svglite(svg_path, width = fig_w, height = fig_h); draw_ph(); dev.off()
+    png(png_path, width = corr_dim[1], height = corr_dim[2], units = "in", res = fig_dpi); draw_ph(); dev.off()
+    svglite(svg_path, width = corr_dim[1], height = corr_dim[2]); draw_ph(); dev.off()
     TRUE
   }, error = function(e) { message("sample_correlation (", method, ") failed: ", conditionMessage(e)); FALSE })
   if (!isTRUE(ok)) {

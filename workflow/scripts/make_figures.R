@@ -69,6 +69,11 @@ fig_dpi      <- as.integer(getp("dpi", 300))
 scatter_alpha_fg <- as.numeric(getp("scatter_alpha_fg", 0.8))
 scatter_alpha_bg <- as.numeric(getp("scatter_alpha_bg", 0.25))
 pca_fixed_aspect <- isTRUE(as.logical(getp("pca_fixed_aspect", FALSE)))
+# Per-sample text labels on PCA + sample-distance heatmap. Default TRUE (unchanged);
+# off declutters a many-sample run (common on microarray series).
+sample_labels    <- isTRUE(as.logical(getp("sample_labels", TRUE)))
+# Italicise gene-symbol labels (volcano + DEG heatmap rows). Default TRUE (HGNC convention).
+gene_symbol_italic <- isTRUE(as.logical(getp("gene_symbol_italic", TRUE)))
 heatmap_zlim     <- as.numeric(getp("heatmap_zlim", 2.5))
 heatmap_cell_h   <- as.numeric(getp("heatmap_cell_height", 12))
 heatmap_fs_row   <- as.integer(getp("heatmap_fontsize_row", 0))  # 0 = auto (base - 4)
@@ -153,10 +158,14 @@ pca_disc <- pal_spec$discrete
 n_grp_pca <- length(unique(pca$group))
 if (n_grp_pca > length(pca_disc)) pca_disc <- grDevices::colorRampPalette(pca_disc)(n_grp_pca)
 p_pca <- ggplot(pca, aes(PC1, PC2, colour = group)) +
-  geom_point(size = point_size, alpha = 0.9) +
-  geom_text_repel(aes(label = name), family = base_family, size = 3, seed = 1,
-                  min.segment.length = 0, box.padding = 0.5, point.padding = 0.3,
-                  max.overlaps = Inf, segment.colour = "grey55", show.legend = FALSE) +
+  geom_point(size = point_size, alpha = 0.9)
+if (sample_labels) {
+  p_pca <- p_pca +
+    geom_text_repel(aes(label = name), family = base_family, size = 3, seed = 1,
+                    min.segment.length = 0, box.padding = 0.5, point.padding = 0.3,
+                    max.overlaps = Inf, segment.colour = "grey55", show.legend = FALSE)
+}
+p_pca <- p_pca +
   scale_colour_manual(values = pca_disc, name = group_var) +
   scale_x_continuous(expand = expansion(mult = 0.08)) +
   scale_y_continuous(expand = expansion(mult = 0.08)) +
@@ -184,8 +193,13 @@ ph <- pheatmap(mat, clustering_distance_rows = sampleDists,
                annotation_col = dist_ann,
                annotation_colors = setNames(list(ann_cols), group_var),
                annotation_names_col = FALSE, angle_col = 45,
+               show_rownames = sample_labels, show_colnames = sample_labels,
                fontsize = base_size, silent = TRUE)
-dist_dim <- fig_dim("sample_distance")
+# n x n sample matrix: both axes grow with sample count, so size from ncol on both.
+dist_dim <- if (!is.null(size_overrides[["sample_distance"]])) fig_dim("sample_distance")
+  else heatmap_dim(ncol(vsd), ncol(vsd), cell_h = 14, cell_w = 14,
+                   row_label_chars = max(nchar(colnames(vsd))),
+                   show_col_labels = sample_labels, min_w = fig_w, min_h = fig_h)
 save_grid(ph$gtable, out[["dist_png"]], out[["dist_svg"]], w = dist_dim[1], h = dist_dim[2])
 } else {
   save_placeholder("PCA needs the counts / VST matrix (unavailable for a DESeq2-results upload).", out[["pca_png"]], out[["pca_svg"]])
@@ -295,6 +309,7 @@ if (any(vol$capped)) {
 p_vol <- p_vol +
   geom_text_repel(data = lab, aes(label = label, colour = direction),
                   family = base_family, size = 3, seed = 42,
+                  fontface = if (gene_symbol_italic) "italic" else "plain",
                   max.overlaps = volcano_top + 5, box.padding = 0.5,
                   point.padding = 0.3, min.segment.length = 0,
                   segment.size = 0.3, segment.colour = "grey55",
@@ -331,6 +346,7 @@ hm_levels <- unique(as.character(ann[[group_var]]))
 hm_ann_cols <- setNames(pal_spec$discrete[seq_along(hm_levels)], hm_levels)
 fs_row <- if (heatmap_fs_row > 0) heatmap_fs_row else max(4, base_size - 4)
 ph2 <- pheatmap(hm, scale = "none", annotation_col = ann, show_rownames = TRUE,
+                labels_row = italic_labels(rownames(hm), gene_symbol_italic),
                 clustering_method = "ward.D2",
                 color = pal_spec$div(255), breaks = hm_breaks,
                 legend_breaks = c(-zlim, 0, zlim),
@@ -338,12 +354,13 @@ ph2 <- pheatmap(hm, scale = "none", annotation_col = ann, show_rownames = TRUE,
                 annotation_colors = setNames(list(hm_ann_cols), group_var),
                 annotation_names_col = FALSE, cellheight = heatmap_cell_h,
                 border_color = NA, fontsize = base_size, fontsize_row = fs_row, silent = TRUE)
-# Drive height from the row count so labels never collide and the canvas scales
-# with heatmap_top_n; honour an explicit size override when set.
-hm_h <- (n_top * heatmap_cell_h) / 72 + 2
+# Size the canvas from BOTH matrix axes (rows -> height, samples -> width) so a
+# many-sample run no longer crushes columns; honour an explicit size override when set.
 hm_dim <- if (!is.null(size_overrides[["top_deg_heatmap"]])) {
   fig_dim("top_deg_heatmap")
-} else c(fig_w, max(hm_h, fig_h))
+} else heatmap_dim(n_top, ncol(hm), cell_h = heatmap_cell_h,
+                   row_label_chars = max(nchar(rownames(hm))), min_w = fig_w, min_h = fig_h,
+                   max_h = Inf)  # cellheight is pinned, so let height grow with rows (no clip)
 save_grid(ph2$gtable, out[["heatmap_png"]], out[["heatmap_svg"]], w = hm_dim[1], h = hm_dim[2])
 } else save_placeholder("Top-DEG heatmap needs the counts / VST matrix (unavailable for a DESeq2-results upload).", out[["heatmap_png"]], out[["heatmap_svg"]])
 
@@ -378,6 +395,7 @@ make_dir_heatmap <- function(direction, png_path, svg_path) {
   hm_ann_cols <- setNames(pal_spec$discrete[seq_along(hm_levels)], hm_levels)
   fs_row <- if (heatmap_fs_row > 0) heatmap_fs_row else max(4, base_size - 4)
   ph <- pheatmap(hm, scale = "none", annotation_col = ann, show_rownames = TRUE,
+                 labels_row = italic_labels(rownames(hm), gene_symbol_italic),
                  clustering_method = "ward.D2",
                  color = pal_spec$div(255), breaks = hm_breaks,
                  legend_breaks = c(-heatmap_zlim, 0, heatmap_zlim),
@@ -385,8 +403,10 @@ make_dir_heatmap <- function(direction, png_path, svg_path) {
                  annotation_colors = setNames(list(hm_ann_cols), group_var),
                  annotation_names_col = FALSE, cellheight = heatmap_cell_h,
                  border_color = NA, fontsize = base_size, fontsize_row = fs_row, silent = TRUE)
-  hm_h <- (n_top * heatmap_cell_h) / 72 + 2
-  save_grid(ph$gtable, png_path, svg_path, w = fig_w, h = max(hm_h, fig_h))
+  hm_dim <- heatmap_dim(n_top, ncol(hm), cell_h = heatmap_cell_h,
+                        row_label_chars = max(nchar(rownames(hm))), min_w = fig_w, min_h = fig_h,
+                        max_h = Inf)  # cellheight pinned -> height grows with rows (no clip)
+  save_grid(ph$gtable, png_path, svg_path, w = hm_dim[1], h = hm_dim[2])
 }
 make_dir_heatmap("Up", out[["up_heatmap_png"]], out[["up_heatmap_svg"]])
 make_dir_heatmap("Down", out[["down_heatmap_png"]], out[["down_heatmap_svg"]])

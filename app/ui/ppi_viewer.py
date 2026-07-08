@@ -118,6 +118,12 @@ class PpiViewer(QWidget):
     def set_labels(self, on: bool) -> None:
         self._run("setLabels", bool(on))
 
+    def set_gene_italic(self, on: bool) -> None:
+        self._run("setGeneItalic", bool(on))
+
+    def set_focus_labels(self, on: bool) -> None:
+        self._run("setFocusLabels", bool(on))
+
     def set_confidence(self, floor: float) -> None:
         self._run("setConfidence", float(floor))
 

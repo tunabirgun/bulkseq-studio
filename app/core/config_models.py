@@ -260,6 +260,7 @@ class FigureConfig(BaseModel):
     font_family: str = ""
     label_bold: bool = False
     title_bold: bool = False
+    gene_symbol_italic: bool = True  # gene symbols italic (HGNC convention) on figure labels + report DE tables
     volcano_top_n: int = 15
     heatmap_top_n: int = 30
     pca_ntop: int = 500
@@ -280,6 +281,7 @@ class FigureConfig(BaseModel):
     scatter_alpha_fg: float = 0.8
     scatter_alpha_bg: float = 0.25
     pca_fixed_aspect: bool = False  # opt-in; coord_fixed squeezes PC1-dominant PCA
+    sample_labels: bool = True  # per-sample text on PCA + sample-distance/correlation heatmaps; off declutters many-sample (microarray) runs
     heatmap_zlim: float = 2.5             # symmetric z cap (top-DEG)
     heatmap_cell_height: float = 12.0     # pt/row, pins heatmap aspect
     heatmap_fontsize_row: int = 0         # 0 = auto (base-4)

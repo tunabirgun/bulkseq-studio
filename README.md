@@ -61,7 +61,7 @@ The Workflow Settings tab gathers every pipeline choice in one place — aligner
 
 ![The Workflow Settings tab: aligner, trimmer, rRNA tool, DE engine, design, and output options](docs/screenshot-workflow-settings.png)
 
-The interactive PPI Network tab. Hover a protein to read its fold-change, adjusted p-value, mean expression, and degree; recolour and resize the nodes, filter by confidence, export PNG/SVG, or save the Cytoscape files:
+The interactive PPI Network tab. Hover a protein to read its fold-change, adjusted p-value, mean expression, and degree; recolour and resize the nodes, filter the view by confidence, and click a protein to focus on it and its interactors (hiding the rest of the network's labels). Gene symbols show in italic. Rebuild the network at a chosen STRING confidence with the score control next to the Rebuild button, then export PNG/SVG or save the Cytoscape files:
 
 ![Interactive PPI network: hub proteins sized by degree on a force-directed layout, with a hover tooltip](docs/screenshot-ppi-interactive.png)
 
@@ -184,7 +184,7 @@ The full GUI — every tab, the Figure Style editor, and the interactive cytosca
 5. **Workflow Settings:** choose the trimmer, aligner, rRNA tool, and differential-expression engine; set the design and contrast (a Design helper can build the formula from your metadata), `alpha`, `|log2FC|` threshold, and how to handle organellar genes; optionally enable the contamination screen, GSVA, or extended QC. An Advanced parameters panel exposes each tool's important settings.
 6. **Sanity Checks:** resolve any flagged issues before running.
 7. **Run Monitor:** start the pipeline and watch progress. When it finishes, export the tools & references and study design files for the run.
-8. **Outputs:** browse the count matrix and DESeq2 table (including the separate up- and down-regulated gene lists), view and zoom figures (toggle *Vector (SVG)* for a crisp preview at any zoom), restyle and regenerate them, and define genes of interest.
+8. **Outputs:** browse the count matrix and DESeq2 table (including the separate up- and down-regulated gene lists) — click a column header to sort, with numeric columns sorted numerically — view and zoom figures (toggle *Vector (SVG)* for a crisp preview at any zoom), restyle and regenerate them, and define genes of interest. Figure style options include a color palette that applies to every figure (enrichment plots included), italic gene symbols, and a toggle to hide per-sample labels on crowded many-sample runs; heatmaps size themselves to the study so a large dataset stays legible.
 
 When a run finishes, the Run Monitor enables **Export Tools & References** and **Export Study Design**, which save the provenance recorded for that run (tool and package versions, the reference and its source, the enrichment databases, the sample sheet, and the design):
 

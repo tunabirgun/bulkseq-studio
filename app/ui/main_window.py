@@ -113,6 +113,22 @@ class BackgroundWorker(QThread):
         self.done.emit(result)
 
 
+class _SortableItem(QTableWidgetItem):
+    """Table cell that sorts numerically when both cells are numbers, else as text.
+
+    The Outputs preview loads every cell as a string (dtype=str), so a plain
+    QTableWidgetItem would sort a numeric column lexicographically ("10" < "2",
+    "-3" < "-30"). This overrides `<` to compare as floats when possible, so
+    log2FoldChange / padj / baseMean columns sort in true numeric order.
+    """
+
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        try:
+            return float(self.text()) < float(other.text())
+        except (ValueError, TypeError):
+            return self.text().casefold() < other.text().casefold()
+
+
 class MainWindow(QMainWindow):
     FONT_DEFAULT_LABEL = "(ggplot default)"
 
@@ -2072,6 +2088,10 @@ class MainWindow(QMainWindow):
         table_layout.addWidget(QLabel("Table preview (first 200 rows)"))
         self.output_table = QTableWidget()
         self.output_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        # Click a header to sort the loaded preview (numeric columns sort numerically
+        # via _SortableItem). Toggled off during (re)population in _load_output_table.
+        self.output_table.setSortingEnabled(True)
+        self.output_table.horizontalHeader().setSortIndicatorShown(True)
         self.output_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         table_layout.addWidget(self.output_table)
 
@@ -2197,6 +2217,15 @@ class MainWindow(QMainWindow):
         self.ppi_labels_cb = QCheckBox("Labels")
         self.ppi_labels_cb.setChecked(True)
         self.ppi_labels_cb.toggled.connect(lambda on: self.ppi_viewer.set_labels(on))
+        self.ppi_italic_cb = QCheckBox("Italic")
+        self.ppi_italic_cb.setChecked(True)
+        self.ppi_italic_cb.setToolTip("Show gene symbols in italic (HGNC convention).")
+        self.ppi_italic_cb.toggled.connect(lambda on: self.ppi_viewer.set_gene_italic(on))
+        self.ppi_focus_cb = QCheckBox("Focus labels on click")
+        self.ppi_focus_cb.setChecked(True)
+        self.ppi_focus_cb.setToolTip("When you click a protein, show only its own and its "
+                                     "interactors' labels; hide the rest of the network's names.")
+        self.ppi_focus_cb.toggled.connect(lambda on: self.ppi_viewer.set_focus_labels(on))
         row1.addWidget(load_btn)
         row1.addWidget(QLabel("Layout:"))
         row1.addWidget(self.ppi_layout_pick)
@@ -2205,24 +2234,52 @@ class MainWindow(QMainWindow):
         row1.addWidget(QLabel("Size:"))
         row1.addWidget(self.ppi_size_pick)
         row1.addWidget(self.ppi_labels_cb)
+        row1.addWidget(self.ppi_italic_cb)
+        row1.addWidget(self.ppi_focus_cb)
         row1.addStretch(1)
         layout.addLayout(row1)
 
+        # Row 2 — VIEW filter: a client-side slider that only hides edges in the
+        # already-loaded graph (it cannot show edges below the build threshold).
         row2 = QHBoxLayout()
-        row2.addWidget(QLabel("Confidence ≥"))
+        view_lbl = QLabel("View filter — hide edges below:")
+        row2.addWidget(view_lbl)
         self.ppi_conf = QSlider(Qt.Orientation.Horizontal)
         self.ppi_conf.setRange(0, 100)
         self.ppi_conf.setValue(0)
         self.ppi_conf.setMaximumWidth(180)
-        self.ppi_conf.setToolTip("Hide interactions below this STRING confidence (combined score). "
-                                 "The minimum is the build threshold; lowering it further requires "
-                                 "rebuilding from STRING with a lower score threshold.")
+        self.ppi_conf.setToolTip("View-only filter: hides interactions below this confidence in the "
+                                 "network shown right now. It does NOT re-contact STRING and cannot go "
+                                 "below the build threshold — to show weaker edges, lower the rebuild "
+                                 "score on the right and click Rebuild.")
         self.ppi_conf.valueChanged.connect(self._ppi_confidence_changed)
         self.ppi_conf_lbl = QLabel("0.00")
+        row2.addWidget(self.ppi_conf)
+        row2.addWidget(self.ppi_conf_lbl)
+        row2.addStretch(1)
+        # REBUILD: an on-panel score spinbox drives the rebuild, so changing it here and
+        # clicking Rebuild actually re-contacts STRING at that confidence (the old button
+        # silently used the far-away Figure-Style spinbox, so it looked like a no-op).
+        row2.addWidget(QLabel("Rebuild at score ≥"))
+        self.ppi_rebuild_score = QSpinBox()
+        self.ppi_rebuild_score.setRange(0, 1000)
+        self.ppi_rebuild_score.setSingleStep(50)
+        self.ppi_rebuild_score.setValue(400)
+        self.ppi_rebuild_score.setToolTip("STRING combined-score cutoff to rebuild at (0-1000; 400 = "
+                                          "medium, 700 = high confidence). Lower it to pull in weaker "
+                                          "interactions, then click Rebuild.")
+        self.ppi_rebuild_score.valueChanged.connect(self._sync_score_to_figstyle)
+        row2.addWidget(self.ppi_rebuild_score)
         rebuild_btn = QPushButton("Rebuild from STRING…")
-        rebuild_btn.setToolTip("Re-run the STRING network with the current score threshold "
-                               "(Outputs → Figure Style). Re-contacts string-db.org.")
+        rebuild_btn.setToolTip("Re-contact string-db.org and rebuild the network at the 'Rebuild at "
+                               "score' shown to the left. This replaces the current network.")
         rebuild_btn.clicked.connect(self._regenerate_ppi)
+        row2.addWidget(rebuild_btn)
+        layout.addLayout(row2)
+
+        # Row 3 — EXPORT: save the current network as an image or Cytoscape files.
+        row3 = QHBoxLayout()
+        row3.addWidget(QLabel("Export:"))
         self.ppi_export_bg = QComboBox()
         self.ppi_export_bg.addItems(["White", "Transparent"])
         self.ppi_export_bg.setToolTip("Background of the exported PNG/SVG (labels stay dark either way).")
@@ -2241,16 +2298,13 @@ class MainWindow(QMainWindow):
         self.ppi_export_png = export_png
         self.ppi_export_svg = export_svg
         self.ppi_save_cyto = save_cyto
-        row2.addWidget(self.ppi_conf)
-        row2.addWidget(self.ppi_conf_lbl)
-        row2.addStretch(1)
-        row2.addWidget(rebuild_btn)
-        row2.addWidget(QLabel("Export bg:"))
-        row2.addWidget(self.ppi_export_bg)
-        row2.addWidget(export_png)
-        row2.addWidget(export_svg)
-        row2.addWidget(save_cyto)
-        layout.addLayout(row2)
+        row3.addWidget(QLabel("background"))
+        row3.addWidget(self.ppi_export_bg)
+        row3.addWidget(export_png)
+        row3.addWidget(export_svg)
+        row3.addWidget(save_cyto)
+        row3.addStretch(1)
+        layout.addLayout(row3)
 
         self.ppi_status = QLabel("No network loaded — click “Load / refresh network”.")
         self.ppi_status.setWordWrap(True)
@@ -2482,10 +2536,25 @@ class MainWindow(QMainWindow):
                 "(Run Monitor) to produce them; afterwards this rebuilds the STRING PPI "
                 "network from those results without re-analyzing.")
             return
-        self.config.ppi.score_threshold = int(self.ppi_score.value())
+        # Both score spinboxes are kept in lockstep (see _sync_score_*), so either reads
+        # the same value; use the on-panel one and rebuild at it.
+        score = int(self.ppi_rebuild_score.value())
+        self.config.ppi.score_threshold = score
         self.config.ppi.hub_label_count = int(self.ppi_hub_labels.value())
         self.manager.save_config(self.project_root, self.config)
         self._start_snakemake("ppi")
+
+    def _sync_score_to_rebuild(self, value: int) -> None:
+        if hasattr(self, "ppi_rebuild_score") and self.ppi_rebuild_score.value() != value:
+            self.ppi_rebuild_score.blockSignals(True)
+            self.ppi_rebuild_score.setValue(value)
+            self.ppi_rebuild_score.blockSignals(False)
+
+    def _sync_score_to_figstyle(self, value: int) -> None:
+        if hasattr(self, "ppi_score") and self.ppi_score.value() != value:
+            self.ppi_score.blockSignals(True)
+            self.ppi_score.setValue(value)
+            self.ppi_score.blockSignals(False)
 
     def _info_label(self, text: str, help_text: str) -> QWidget:
         # A form-row label with a small info button that explains a complex
@@ -2536,6 +2605,12 @@ class MainWindow(QMainWindow):
         self.fig_font_family.addItems(QFontDatabase.families())
         self.fig_label_bold = QCheckBox("Bold axis tick labels")
         self.fig_title_bold = QCheckBox("Bold axis titles")
+        self.fig_gene_italic = QCheckBox("Italicize gene symbols")
+        self.fig_gene_italic.setChecked(True)
+        self.fig_gene_italic.setToolTip(
+            "Render gene symbols in italic (the HGNC convention) on the volcano labels, "
+            "the DEG and genes-of-interest heatmap rows, and the report tables."
+        )
         self.fig_volcano_top = QSpinBox()
         self.fig_volcano_top.setRange(0, 200)
         self.fig_volcano_top.setValue(15)
@@ -2579,6 +2654,12 @@ class MainWindow(QMainWindow):
         self.fig_volcano_alpha.setValue(0.55)
         self.fig_pca_fixed_aspect = QCheckBox("Fix PCA aspect ratio")
         self.fig_pca_fixed_aspect.setChecked(False)
+        self.fig_sample_labels = QCheckBox("Show per-sample labels on PCA and sample heatmaps")
+        self.fig_sample_labels.setChecked(True)
+        self.fig_sample_labels.setToolTip(
+            "Sample-id text on the PCA, sample-distance, and sample-correlation figures. "
+            "Turn off to declutter a run with many samples (common on microarray series)."
+        )
         self.fig_heatmap_zlim = QDoubleSpinBox()
         self.fig_heatmap_zlim.setRange(0.1, 10.0)
         self.fig_heatmap_zlim.setSingleStep(0.5)
@@ -2599,6 +2680,7 @@ class MainWindow(QMainWindow):
         form.addRow(self._info_label("Font family", "Font for figure text. Leave as default unless the font is also available in the WSL R environment."), self.fig_font_family)
         form.addRow(self.fig_label_bold)
         form.addRow(self.fig_title_bold)
+        form.addRow(self.fig_gene_italic)
         form.addRow(self._info_label("Volcano top-N labels", "How many of the most significant genes to label on the volcano plot. 0 = none."), self.fig_volcano_top)
         form.addRow(self._info_label("Heatmap top-N genes", "Number of top genes (by adjusted p) shown in the top-DEG heatmap."), self.fig_heatmap_top)
         form.addRow(self._info_label("PCA n-top genes", "Number of most-variable genes used to compute the PCA. Protocol default 500."), self.fig_pca_ntop)
@@ -2609,6 +2691,7 @@ class MainWindow(QMainWindow):
         form.addRow(self._info_label("Volcano y cap", "Upper limit for the volcano -log10(adjusted p) axis. 'auto' (0) caps at the 99.5th percentile so a few hyper-significant genes do not squash the rest."), self.fig_volcano_ycap)
         form.addRow(self._info_label("Volcano point alpha", "Opacity of the significant points in the volcano plot (0-1). Lower values reveal density in the dense core."), self.fig_volcano_alpha)
         form.addRow(self.fig_pca_fixed_aspect)
+        form.addRow(self.fig_sample_labels)
         form.addRow(self._info_label("Heatmap z limit", "Symmetric cap on the row z-scores in the top-DEG heatmap; values beyond +/- this map to the extreme colours."), self.fig_heatmap_zlim)
         form.addRow(self._info_label("Enrichment categories shown", "Number of terms shown in the enrichment dot/ridge/KEGG plots."), self.fig_enrich_show)
         form.addRow(self._info_label("PPI layout", "Graph layout algorithm for the PPI network figure (graphlayouts). 'fr' (Fruchterman-Reingold) is force-directed and the default; 'stress' is a compact alternative."), self.fig_ppi_layout)
@@ -2617,6 +2700,9 @@ class MainWindow(QMainWindow):
         self.ppi_score = QSpinBox()
         self.ppi_score.setRange(0, 1000)
         self.ppi_score.setValue(400)
+        # Keep this Figure-Style threshold and the PPI-tab "Rebuild at score" spinbox in
+        # lockstep, so either Regenerate button rebuilds at the value the user just set.
+        self.ppi_score.valueChanged.connect(self._sync_score_to_rebuild)
         self.ppi_hub_labels = QSpinBox()
         self.ppi_hub_labels.setRange(0, 100)
         self.ppi_hub_labels.setValue(15)
@@ -2692,6 +2778,7 @@ class MainWindow(QMainWindow):
         font = self.fig_font_family.currentText().strip()
         style.font_family = "" if font == self.FONT_DEFAULT_LABEL else font
         style.label_bold = self.fig_label_bold.isChecked()
+        style.gene_symbol_italic = self.fig_gene_italic.isChecked()
         style.title_bold = self.fig_title_bold.isChecked()
         style.volcano_top_n = self.fig_volcano_top.value()
         style.heatmap_top_n = self.fig_heatmap_top.value()
@@ -2706,6 +2793,7 @@ class MainWindow(QMainWindow):
         style.volcano_y_cap = self.fig_volcano_ycap.value()
         style.volcano_point_alpha = self.fig_volcano_alpha.value()
         style.pca_fixed_aspect = self.fig_pca_fixed_aspect.isChecked()
+        style.sample_labels = self.fig_sample_labels.isChecked()
         style.heatmap_zlim = self.fig_heatmap_zlim.value()
         style.enrich_show_category = self.fig_enrich_show.value()
         style.ppi_layout = self.fig_ppi_layout.currentText().strip() or "fr"
@@ -2754,12 +2842,16 @@ class MainWindow(QMainWindow):
             self.output_table.setRowCount(1)
             self.output_table.setItem(0, 0, QTableWidgetItem(f"Could not read {path.name}: {exc}"))
             return
+        # Disable sorting while filling, or Qt re-sorts on every insert and scrambles
+        # cell placement; re-enable afterwards so header clicks sort the loaded rows.
+        self.output_table.setSortingEnabled(False)
         self.output_table.setColumnCount(len(df.columns))
         self.output_table.setHorizontalHeaderLabels([str(c) for c in df.columns])
         self.output_table.setRowCount(len(df))
         for r in range(len(df)):
             for c in range(len(df.columns)):
-                self.output_table.setItem(r, c, QTableWidgetItem(str(df.iat[r, c])))
+                self.output_table.setItem(r, c, _SortableItem(str(df.iat[r, c])))
+        self.output_table.setSortingEnabled(True)
 
     def _refresh_gallery(self) -> None:
         prev = self.figure_pick.currentText()
@@ -3124,6 +3216,7 @@ class MainWindow(QMainWindow):
         self.fig_base_font.setValue(fig.base_font_size)
         self.fig_font_family.setCurrentText(fig.font_family or self.FONT_DEFAULT_LABEL)
         self.fig_label_bold.setChecked(fig.label_bold)
+        self.fig_gene_italic.setChecked(fig.gene_symbol_italic)
         self.fig_title_bold.setChecked(fig.title_bold)
         self.fig_volcano_top.setValue(fig.volcano_top_n)
         self.fig_heatmap_top.setValue(fig.heatmap_top_n)
@@ -3145,11 +3238,14 @@ class MainWindow(QMainWindow):
         self.fig_volcano_ycap.setValue(fig.volcano_y_cap)
         self.fig_volcano_alpha.setValue(fig.volcano_point_alpha)
         self.fig_pca_fixed_aspect.setChecked(fig.pca_fixed_aspect)
+        self.fig_sample_labels.setChecked(fig.sample_labels)
         self.fig_heatmap_zlim.setValue(fig.heatmap_zlim)
         self.fig_enrich_show.setValue(fig.enrich_show_category)
         self.fig_ppi_layout.setCurrentText(fig.ppi_layout or "fr")
         self.ppi_score.setValue(self.config.ppi.score_threshold)
         self.ppi_hub_labels.setValue(self.config.ppi.hub_label_count)
+        if hasattr(self, "ppi_rebuild_score"):
+            self.ppi_rebuild_score.setValue(self.config.ppi.score_threshold)
         goi_path = self.config.gene_sets.custom_gene_list
         if goi_path and self.project_root is not None and (self.project_root / goi_path).exists():
             self.goi_box.setPlainText((self.project_root / goi_path).read_text(encoding="utf-8").strip())

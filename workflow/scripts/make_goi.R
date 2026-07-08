@@ -33,6 +33,13 @@ if (is.null(style) || !is.list(style)) style <- tryCatch(snakemake@config[["figu
 if (!is.list(style)) style <- list()
 base_size <- tryCatch(as.numeric(style[["base_font_size"]]), error = function(e) 12)
 if (length(base_size) != 1 || is.na(base_size)) base_size <- 12
+# Italicise gene-symbol row labels (default TRUE). pheatmap has no per-row fontface,
+# so pass a plotmath expression vector to labels_row; quotes keep special chars literal.
+gene_symbol_italic <- { gsi <- style[["gene_symbol_italic"]]; if (is.null(gsi)) TRUE else isTRUE(as.logical(gsi)) }
+italic_labels <- function(x, italic = TRUE) {
+  if (!isTRUE(italic)) return(x)
+  parse(text = paste0('italic("', gsub('"', '', as.character(x)), '")'))
+}
 
 group_var <- "condition"
 de_cfg <- tryCatch(snakemake@config[["deseq2"]], error = function(e) NULL)
@@ -116,14 +123,19 @@ rownames(mat) <- lab_for(rownames(vsd)[present])
 if (length(present) > 1) mat <- t(scale(t(mat)))
 ann <- as.data.frame(colData(dds)[, group_var, drop = FALSE])
 ph <- pheatmap(mat, scale = "none", annotation_col = ann, show_rownames = TRUE,
+               labels_row = italic_labels(rownames(mat), gene_symbol_italic),
                cluster_rows = length(present) > 1,
                clustering_method = "ward.D2", fontsize = base_size, fontsize_row = 8,
                color = colorRampPalette(c("#2C7BB6", "white", "#C0392B"))(255),
                border_color = NA, silent = TRUE)
-hh <- max(4, 0.25 * length(present) + 2)
-png(out[["heatmap_png"]], width = 7, height = hh, units = "in", res = 300)
+# Size from BOTH axes: height from gene count, width from sample count (a many-sample
+# GOI heatmap otherwise crushed its columns). Mirrors figure_style.R::heatmap_dim.
+gutter <- min(2.6, 0.6 + 0.070 * max(nchar(rownames(mat)), 1))
+ww <- min(max(gutter + ncol(mat) * 10 / 72 + 1.7, 7), 44)
+hh <- min(max(length(present) * 12 / 72 + 3.1, 4), 44)
+png(out[["heatmap_png"]], width = ww, height = hh, units = "in", res = 300)
 grid::grid.newpage(); grid::grid.draw(ph$gtable); dev.off()
-svglite(out[["heatmap_svg"]], width = 7, height = hh)
+svglite(out[["heatmap_svg"]], width = ww, height = hh)
 grid::grid.newpage(); grid::grid.draw(ph$gtable); dev.off()
 
 # ---- Per-gene expression comparison across conditions -----------------------

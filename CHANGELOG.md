@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.18.0 — 2026-07-08
+
+### Added
+
+- **Sortable Outputs table.** The table viewer on the Outputs tab is now click-to-sort by any column, and numeric columns (log2 fold change, adjusted p, base mean) sort in true numeric order rather than as text. The preview still shows the first 200 rows.
+- **Gene symbols in italic (default on).** Gene symbols now render in italic — the HGNC convention — on the volcano labels, the DEG and genes-of-interest heatmap rows, the STRING PPI network, and the results-report differential-expression tables. A "Italicize gene symbols" toggle in the figure style controls turns it off.
+- **Declutter per-sample labels.** A "Show per-sample labels on PCA and sample heatmaps" toggle hides the per-sample text on the PCA, sample-distance, and sample-correlation figures — useful when a run (a microarray series in particular) has too many samples to label legibly.
+- **PPI network: italic labels and click-to-focus.** The interactive PPI network gains two toggles: italic gene labels, and "Focus labels on click" — clicking a protein now shows only its own and its interactors' labels and hides the rest of the network's names, so a dense network stays readable.
+
+### Fixed
+
+- **The color palette now applies to every enrichment figure.** The gene-concept network (cnetplot) and term-similarity map (emapplot) used enrichplot's built-in gradients and ignored the configured palette; they now follow the project palette like the dot/ridge/GSEA plots.
+- **Figures scale with the data instead of crowding.** Heatmaps pinned their width regardless of sample count, so a many-sample run crushed columns into unreadable slivers and overprinted the sample labels. The top-DEG, up/down, genes-of-interest, sample-distance, and sample-correlation heatmaps now size their canvas from both the row and the sample count (with a legibility floor and a cap), so a large study stays readable.
+- **PPI rebuild now honors the confidence you set.** "Rebuild from STRING…" read a score control on a different tab, so changing the confidence next to the button and clicking Rebuild produced the same network. The rebuild score now sits next to the button and drives the rebuild, and the STRING interactions are filtered explicitly by the combined-score threshold.
+- **Clearer PPI controls.** The PPI panel is reorganized into a view-filter row, a rebuild row (with the score next to the button), and an export row, so it is obvious which control does what.
+
 ## 0.17.2 — 2026-07-08
 
 ### Fixed

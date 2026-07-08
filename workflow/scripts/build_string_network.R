@@ -38,6 +38,7 @@ fig_w <- as.numeric(getp("width_in", 7)); fig_h <- as.numeric(getp("height_in", 
 base_size <- as.numeric(getp("base_font_size", 12))
 font_family <- as.character(getp("font_family", ""))
 label_bold <- isTRUE(as.logical(getp("label_bold", FALSE)))
+gene_symbol_italic <- isTRUE(as.logical(getp("gene_symbol_italic", TRUE)))
 palette_name <- as.character(getp("palette", "Blue-Red"))
 node_max_size <- as.numeric(getp("ppi_node_max_size", 11))
 ppi_layout <- as.character(getp("ppi_layout", "fr"))
@@ -121,6 +122,11 @@ ok <- tryCatch({
   if (is.null(mapped) || nrow(mapped) < 2) stop("fewer than 2 genes mapped to STRING")
   inter <- sdb$get_interactions(unique(mapped$STRING_id))
   if (is.null(inter) || nrow(inter) < 1) stop("no interactions returned")
+  # STRINGdb$new(score_threshold=) does NOT reliably filter get_interactions() output, so a
+  # rebuild at a different confidence returned the same edges ("rebuild does nothing"). Filter
+  # explicitly on the combined score (STRING's 0-1000 scale) so the threshold actually applies.
+  inter <- inter[!is.na(inter$combined_score) & inter$combined_score >= score_thr, , drop = FALSE]
+  if (nrow(inter) < 1) stop(sprintf("no interactions at combined_score >= %d", score_thr))
 
   id2sym <- tapply(mapped$gene_id, mapped$STRING_id, function(x) x[1])
   edf <- data.frame(from = id2sym[inter$from], to = id2sym[inter$to],
@@ -175,7 +181,9 @@ ok <- tryCatch({
   lfc <- V(g)$log2FC
   fin <- lfc[is.finite(lfc)]
   bidirectional <- length(fin) > 0 && any(fin > 0) && any(fin < 0)
-  lab_face <- if (label_bold) "bold" else "plain"
+  lab_face <- if (label_bold && gene_symbol_italic) "bold.italic"
+              else if (gene_symbol_italic) "italic"
+              else if (label_bold) "bold" else "plain"
   lab_size <- base_size / .pt * 0.75  # points -> mm, near the prior 3.1 at base 12
   set.seed(42)
   fig_ok <- tryCatch({
@@ -215,8 +223,9 @@ ok <- tryCatch({
     cols <- ifelse(is.na(V(g)$log2FC), "grey70", ifelse(V(g)$log2FC > 0, "#C0392B", "#2C7BB6"))
     mx <- max(V(g)$degree); vsize <- if (mx > 0) 3 + 7 * (V(g)$degree / mx) else 5
     lay <- igraph::layout_with_fr(g)
+    vfont <- if (gene_symbol_italic && label_bold) 4 else if (gene_symbol_italic) 3 else if (label_bold) 2 else 1
     draw <- function() igraph::plot.igraph(g, layout = lay, vertex.color = cols, vertex.size = vsize,
-                        vertex.label = vlab, vertex.label.cex = 0.75, vertex.label.font = 2,
+                        vertex.label = vlab, vertex.label.cex = 0.75, vertex.label.font = vfont,
                         vertex.frame.color = NA, edge.color = "grey88", vertex.label.color = "black")
     png(out[["png"]], width = fig_w, height = fig_h, units = "in", res = fig_dpi); draw(); dev.off()
     svglite(out[["svg"]], width = fig_w, height = fig_h); draw(); dev.off()

@@ -11,6 +11,9 @@ const state = {
   colorBy: "log2FoldChange",  // log2FoldChange | module
   sizeBy: "degree",           // degree | meanExpr | neglog10padj
   labels: true,
+  geneItalic: true,           // gene symbols in italic (HGNC convention)
+  focusLabels: true,          // on node click, show only the clicked node + neighbours' labels
+  selectionActive: false,     // a node is currently selected (drives focusLabels)
   layout: "fcose",            // current layout name (kept in sync with the Qt combo)
   floor: 0,                   // confidence (edge weight) floor
   theme: { bg: "#ffffff", text: "#1a1a1a", edge: "#c7c7c7", muted: "#8a8a8a" },
@@ -69,14 +72,19 @@ function computeRanges(nodes) {
 // Labels are display-only auto-hidden above 220 nodes; this does NOT mutate the
 // user's labels preference, so a later small graph shows them again.
 function labelText(e) {
-  return (state.labels && cy && cy.nodes().length <= 220) ? e.data("symbol") : "";
+  if (!(state.labels && cy && cy.nodes().length <= 220)) return "";
+  // When a node is selected and focus mode is on, hide labels of the faded
+  // (non-interacting) background so only the clicked node + its neighbours are named.
+  if (state.selectionActive && state.focusLabels && e.hasClass("faded")) return "";
+  return e.data("symbol");
 }
+function labelStyle() { return state.geneItalic ? "italic" : "normal"; }
 function styleArrayFor(theme) {
   return [
     { selector: "node", style: {
         "background-color": nodeColor, "width": nodeSize, "height": nodeSize,
         "border-width": 1, "border-color": "rgba(0,0,0,0.45)",
-        "label": labelText,
+        "label": labelText, "font-style": labelStyle,
         "font-size": 9, "color": theme.text, "text-valign": "center",
         "text-halign": "center", "text-outline-width": 2,
         "text-outline-color": theme.bg, "min-zoomed-font-size": 7 } },
@@ -164,8 +172,17 @@ function bindInteractions() {
   cy.on("tap", "node", function (evt) {
     const n = evt.target, nb = n.closedNeighborhood();
     cy.elements().addClass("faded"); nb.removeClass("faded"); n.addClass("hl");
+    // Re-evaluate labels so focus mode can hide the background node names.
+    state.selectionActive = true;
+    if (state.focusLabels) cy.style(styleArray());
   });
-  cy.on("tap", function (evt) { if (evt.target === cy) { cy.elements().removeClass("faded"); cy.nodes().removeClass("hl"); } });
+  cy.on("tap", function (evt) {
+    if (evt.target === cy) {
+      cy.elements().removeClass("faded"); cy.nodes().removeClass("hl");
+      state.selectionActive = false;
+      if (state.focusLabels) cy.style(styleArray());
+    }
+  });
 }
 
 window.PPI = {
@@ -196,6 +213,8 @@ window.PPI = {
   setColorBy: function (f) { state.colorBy = f; if (cy) cy.style(styleArray()); },
   setSizeBy: function (f) { state.sizeBy = f; if (cy) cy.style(styleArray()); },
   setLabels: function (on) { state.labels = !!on; if (cy) cy.style(styleArray()); },
+  setGeneItalic: function (on) { state.geneItalic = !!on; if (cy) cy.style(styleArray()); },
+  setFocusLabels: function (on) { state.focusLabels = !!on; if (cy) cy.style(styleArray()); },
   setConfidence: function (floor) {
     state.floor = floor; if (!cy) return;
     cy.edges().forEach(function (e) { e.style("display", (e.data("weight") || 0) >= floor ? "element" : "none"); });

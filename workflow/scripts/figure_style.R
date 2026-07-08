@@ -94,6 +94,46 @@ make_getp <- function(style) {
   }
 }
 
+# ---- Heatmap canvas auto-sizing (scale with matrix size) --------------------
+# Heatmaps previously pinned width at fig_w regardless of sample count, so a
+# many-sample run (e.g. a microarray series) crushed columns into unreadable
+# slivers; height only grew with rows. This sizes BOTH axes from the matrix:
+# width from ncol (+ a row-label gutter that grows with the longest gene symbol
+# + legend), height from nrow (+ dendrogram/annotation/angled-label budget),
+# clamped to [min_in, max_in]. Returns c(w_in, h_in). Small runs land near the
+# old 6-7 in and reproduce prior output; scaling only engages as the matrix grows.
+heatmap_dim <- function(nrow, ncol, cell_h = 12, cell_w = 10,
+                        row_label_chars = 8, show_col_labels = TRUE,
+                        legend_in = 1.7, min_w = 6, min_h = 5,
+                        max_w = 44, max_h = 44) {
+  left       <- min(2.6, 0.6 + 0.070 * max(row_label_chars, 1))  # gene-symbol gutter
+  bottom_col <- if (isTRUE(show_col_labels)) 1.1 else 0.3         # angled sample labels
+  w <- left + (ncol * cell_w) / 72 + legend_in
+  h <- (nrow * cell_h) / 72 + 2.0 + bottom_col                   # +2 = dendro + annot track
+  # Width is capped (the crowding fix). Height must NOT be capped below the body when the
+  # caller pins pheatmap's cellheight (fixed pt/row) -- a cap would clip the bottom rows -- so
+  # those callers pass max_h = Inf. n x n heatmaps that don't pin cellheight cap height safely.
+  c(min(max(w, min_w), max_w), min(max(h, min_h), max_h))
+}
+
+# Effective per-cell width so ncol columns fit inside a width budget (used to keep
+# the body inside max_in before the font floor kicks in).
+heatmap_cell_w_fit <- function(ncol, want_cell_w = 10, budget_in = 44,
+                               left_in = 2.6, legend_in = 1.7) {
+  usable <- max(budget_in - left_in - legend_in, 1) * 72
+  min(want_cell_w, usable / max(ncol, 1))
+}
+
+# ---- Gene-symbol italic row labels (pheatmap) -------------------------------
+# pheatmap has no per-row fontface, so italicise gene-symbol row names via a
+# plotmath expression vector for `labels_row`. Quotes inside italic("...") keep
+# special characters (e.g. HLA-DRB1, MT-CO1) literal. Returns the plain vector
+# when italic is off, so callers can pass the result straight to labels_row.
+italic_labels <- function(x, italic = TRUE) {
+  if (!isTRUE(italic)) return(x)
+  parse(text = paste0('italic("', gsub('"', '', as.character(x)), '")'))
+}
+
 # ---- Shared theme factory ---------------------------------------------------
 # theme_bw base for every ggplot figure; minor grid off, faint major grid.
 # base_family NULL when no font configured (ggplot/ggrepel accept family = NULL).

@@ -140,6 +140,21 @@ gp_dotplot <- function(df, src, n) {
 # Running-score line colour (shared by GO + KEGG GSEA, both backends).
 gsea_col <- if (nzchar(gsea_line_color)) gsea_line_color else pal_spec$discrete[2]
 
+# enrichplot's cnetplot/emapplot ignore the project palette -- they use enrichplot's
+# own gradients (viridis-ish), so those two network figures did not match the dotplot/
+# ridge/GSEA palette. Append the palette scale for whichever continuous aesthetic each
+# uses: colour for cnet fold change / emap p.adjust, and fill for newer enrichplot that
+# maps nodes with fill. Appending a scale for an unused aesthetic is a harmless no-op and
+# replacing the built-in one is intended, so warnings are suppressed; best-effort tryCatch
+# keeps the figure rendering even if a future enrichplot changes its aesthetics.
+paletteize <- function(p, colours, reverse = FALSE, name = ggplot2::waiver()) {
+  tr <- if (reverse) "reverse" else "identity"
+  tryCatch(suppressWarnings(
+    p + scale_color_gradientn(colours = colours, name = name, transform = tr) +
+        scale_fill_gradientn(colours = colours, name = name, transform = tr)
+  ), error = function(e) p)
+}
+
 # GO-derived figures fork on the backend: g:Profiler has no S4 object, so the GO
 # dotplot is built manually from gost $result and the S4-only GO figures (GSEA,
 # ridgeplot, cnet, emap, DO) degrade to placeholders. The clusterProfiler/OrgDb
@@ -206,12 +221,17 @@ if (identical(backend, "gprofiler")) {
 
   # Gene-concept network (fold-change coloured when possible) and term-similarity map.
   set.seed(42)
+  # cnet gene nodes are coloured by fold change (diverging ramp, not reversed).
   render(have_ep && nrows(ego_all) > 0,
-         tryCatch(cnetplot(ego_all, showCategory = cnet_cat, node_label = "category", foldChange = geneList),
-                  error = function(e) cnetplot(ego_all, showCategory = cnet_cat, node_label = "category")),
+         paletteize(
+           tryCatch(cnetplot(ego_all, showCategory = cnet_cat, node_label = "category", foldChange = geneList),
+                    error = function(e) cnetplot(ego_all, showCategory = cnet_cat, node_label = "category")),
+           pal_spec$div(255)),
          out[["cnet_png"]], out[["cnet_svg"]], no_go)
+  # emap term nodes are coloured by p.adjust (sequential ramp, reversed so significant is darkest).
   render(have_ep && nrows(ego_all) > 1,
-         emapplot(pairwise_termsim(ego_all), showCategory = emap_cat),
+         paletteize(emapplot(pairwise_termsim(ego_all), showCategory = emap_cat),
+                    pal_spec$seq(255), reverse = TRUE),
          out[["emap_png"]], out[["emap_svg"]], no_go)
 
   # Disease-ontology ORA dotplot (human/mouse only; placeholder otherwise).

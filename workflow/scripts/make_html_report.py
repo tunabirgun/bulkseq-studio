@@ -187,6 +187,10 @@ def _de_table(results_csv: Path, top: int = 25, empty_msg: str = "No differentia
                 return f"{float(val):.3g}"
             except (ValueError, TypeError):
                 return html.escape(val or "")
+        # Gene symbols italic (HGNC convention), matching the report's prose (_fmt_genes).
+        # <i> wraps the escaped text only, so the sort JS still reads the plain symbol.
+        if col == "symbol" and (val or "").strip():
+            return f"<i>{html.escape(val)}</i>"
         return html.escape(val or "")
 
     head = "".join(f"<th>{html.escape(c)}</th>" for c in cols)
