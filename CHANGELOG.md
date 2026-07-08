@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.2 — 2026-07-08
+
+### Fixed
+
+- **A failed run is no longer reported as "Completed".** On Windows the pipeline runs through `micromamba run`, which returns a success code even when Snakemake failed, so a run that errored could still show green. The app now also watches Snakemake's output for a definitive failure ("Error in rule", "WorkflowError", a job that exited because a step failed, or a missing-output error) and marks the run failed regardless of the masked exit code, pointing you at the error line and the rule's log.
+- **Microarray GEO ingest fails loudly with the reason.** When the GEO ingest step could not produce its outputs it previously ended with an empty log and the confusing "job completed successfully, but some output files are missing". It now prints its progress and, on any failure, the actual cause (empty accession, a GEO download that returned nothing, a record with no expression matrix, or an unwritten output) to the run log, and records a FAILED check — so the problem is visible instead of silent.
+
 ## 0.18.1 — 2026-07-08
 
 ### Added

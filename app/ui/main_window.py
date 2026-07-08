@@ -1805,6 +1805,13 @@ class MainWindow(QMainWindow):
 
     def _on_run_line(self, line: str) -> None:
         self.log_text.append(line)
+        # Snakemake prints these on any rule/workflow failure. We watch for them because
+        # the WSL launcher runs through `micromamba run`, which returns exit 0 even when
+        # snakemake failed — so the process exit code alone would report a failed run as
+        # "Completed". A definitive error line marks the run failed regardless of the code.
+        if re.search(r"Error in rule\s|WorkflowError|Exiting because a job execution failed"
+                     r"|MissingOutputException", line):
+            self._run_error_detected = True
         match = re.search(r"(\d+)\s+of\s+(\d+)\s+steps", line)
         if match:
             done, total = int(match.group(1)), int(match.group(2))
@@ -1935,7 +1942,10 @@ class MainWindow(QMainWindow):
             self.phase_label.setText("")
             self.log_text.append("Run stopped.")
             return
-        if code == 0:
+        # Treat a snakemake-reported failure as failure even when the exit code is 0
+        # (the WSL `micromamba run` launcher masks non-zero codes to 0).
+        failed_in_output = getattr(self, "_run_error_detected", False)
+        if code == 0 and not failed_in_output:
             self.progress.setValue(100)
             self.progress.setStyleSheet("")
             self._set_run_status("Completed", "#2E7D32")
@@ -1958,10 +1968,16 @@ class MainWindow(QMainWindow):
             # A completed run writes the provenance files; enable their export buttons.
             self._refresh_export_buttons()
         else:
-            # Non-zero: do not imply success. Red bar, red status, keep partial %.
+            # Failure: do not imply success. Red bar, red status, keep partial %.
             self.progress.setStyleSheet("QProgressBar::chunk { background-color: #C0392B; }")
-            self._set_run_status(f"Failed (exit code {code})", "#C0392B")
+            status = "Failed — a rule reported an error (see the log)" if failed_in_output and code == 0 \
+                else f"Failed (exit code {code})"
+            self._set_run_status(status, "#C0392B")
             self.phase_label.setText("")
+            if failed_in_output:
+                self.log_text.append(
+                    "A step failed. Scroll up for the 'Error in rule' line and its reason; the "
+                    "full detail is in the rule's log under logs/ in the project folder.")
         self.log_text.append(f"Process finished with exit code {code}")
 
     def _stop_run(self, _checked: bool = False, announce: bool = True) -> None:
@@ -3889,6 +3905,7 @@ class MainWindow(QMainWindow):
         self.runner_thread.finished_with_code.connect(self._on_run_finished)
         self._run_mode = mode
         self._recovery_offered = False
+        self._run_error_detected = False
         self._mapping_checked = set()
         self._mapping_halt_decided = False
         self._saw_star_align = False

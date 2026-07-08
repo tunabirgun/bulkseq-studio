@@ -37,6 +37,28 @@ write_check <- function(path, name, status, messages) {
                      name, status, msg_json), path)
 }
 
+# Progress markers go to stdout (NOT the message sink), so Snakemake's console shows how
+# far the ingest got even when the sinked log is empty. `step()` timestamps each stage.
+step <- function(msg) cat(sprintf("[ingest_geo] %s\n", msg))
+
+# On ANY uncaught error: restore stderr from the log sink and re-emit the reason there, so
+# Snakemake reports the actual cause inline instead of the cryptic "job completed
+# successfully, but some output files are missing". Also write FAILED check files (so the
+# sanity aggregation records it) and exit non-zero so the run stops with a clear message.
+options(error = function() {
+  err <- geterrmessage()
+  try(sink(type = "message"), silent = TRUE)
+  cat(sprintf("[ingest_geo] FAILED: %s\n", err))
+  for (p in c(out_norm_check, out_map_check)) {
+    try(write_check(p, if (identical(p, out_norm_check)) "11_normalization_qc" else "12_probe_mapping_qc",
+                    "FAIL", list(list(status = "FAIL", message = paste("GEO ingest failed:", err)))),
+        silent = TRUE)
+  }
+  quit(save = "no", status = 1)
+})
+
+step(sprintf("starting: gse=%s source=%s platform=%s", gse, source_kind, platform))
+
 # ---- 1. Obtain a probe-level expression matrix + feature annotation ----------
 fdata <- NULL
 if (identical(source_kind, "local_matrix")) {
@@ -75,7 +97,13 @@ if (identical(source_kind, "local_matrix")) {
   gpl <- tryCatch(getGEO(platform, destdir = workdir), error = function(e) NULL)
   if (!is.null(gpl)) fdata <- Table(gpl)
 } else {
+  if (!nzchar(gse)) stop("no GEO accession set (microarray.gse_accession is empty).")
+  step(sprintf("downloading GEO series matrix for %s (this can take a minute)...", gse))
   gseList <- getGEO(gse, GSEMatrix = TRUE, AnnotGPL = TRUE, destdir = workdir)
+  # getGEO can return an empty list on a network/parse problem without erroring; catch it
+  # here so the run fails with a clear reason instead of producing nothing.
+  if (is.null(gseList) || length(gseList) == 0)
+    stop(sprintf("getGEO returned no series for %s (network, wrong accession, or GEO parse failure).", gse))
   pick <- 1
   if (length(gseList) > 1 && nzchar(platform)) {
     hit <- which(vapply(gseList, function(es) identical(annotation(es), platform), logical(1)))
@@ -86,7 +114,12 @@ if (identical(source_kind, "local_matrix")) {
   fdata <- fData(eset)
   norm_method <- "GEO series matrix (submitter-normalized)"
   already_log2 <- FALSE
+  step(sprintf("downloaded: %d probes x %d samples", nrow(exprs_mat), ncol(exprs_mat)))
 }
+# A GEO series with no expression values (empty exprs, or a supplementary-only record)
+# would otherwise slip through and write empty outputs; fail loudly instead.
+if (is.null(exprs_mat) || nrow(exprs_mat) < 1 || ncol(exprs_mat) < 1)
+  stop("the GEO record has no usable expression matrix (0 probes or 0 samples).")
 
 # ---- 2. log2 transform decision (GEO2R quantile heuristic) -------------------
 applied_log2 <- FALSE
@@ -212,6 +245,19 @@ info <- sprintf(paste0('{\n  "gse": "%s",\n  "platform": "%s",\n  "source": "%s"
                 if (applied_log2 || already_log2) "true" else "false",
                 n_probes, nrow(gene_mat), ncol(gene_mat), map_rate)
 writeLines(info, out_info)
+
+# Confirm every declared output was actually written (catches a silent partial write:
+# the exact "job finished but outputs are missing" symptom). Clear the error handler
+# first so a failure here reports plainly rather than re-entering it.
+options(error = NULL)
+declared <- c(out_expr, out_map, out_info, out_norm_check, out_map_check)
+absent <- declared[!file.exists(declared)]
+if (length(absent)) {
+  sink(type = "message")
+  stop(sprintf("ingest finished but these outputs were not written: %s",
+               paste(basename(absent), collapse = ", ")))
+}
+step(sprintf("done: %d genes x %d samples written.", nrow(gene_mat), ncol(gene_mat)))
 
 sink(type = "message")
 close(log_con)
