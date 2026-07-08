@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/site.css?v=5">
+<link rel="stylesheet" href="assets/site.css?v=6">
 <script>
 (function(){
   try{var t=localStorage.getItem('bsq-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}
@@ -29,7 +29,7 @@
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.16.0</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.17.0</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
     <nav>
@@ -90,6 +90,9 @@
 <h4>A console window flashed on screen during a run. Should I close it?</h4>
 <p>No. On Windows a WSL/terminal window may briefly appear because the app launches Snakemake inside WSL2. Closing it kills the running pipeline. Use the <strong>Stop</strong> button in the app to cancel a run instead.</p>
 
+<h4>Does my computer's language or region change how numbers are read?</h4>
+<p>No. Regardless of the operating-system locale — including comma-decimal languages such as Turkish or German — the app always uses a dot as the decimal separator in every numeric field, and exports <code>LC_NUMERIC=C</code> to the pipeline so R and the command-line tools read and write dots too. A numeric setting such as <code>alpha</code> or <code>|log2FC|</code> therefore behaves identically on any machine. A comma hand-edited into a config is normalized back to a dot when the project is loaded, with a short notice.</p>
+
 <div class="note warn"><span class="t">If a run pauses and asks to stop or continue</span> That is the low-mapping safeguard: a sample aligned poorly (uniquely-mapped rate below the threshold), usually a wrong reference or contamination. Check your reference and sample sheet before choosing to continue.</div></section>
 
     <section id="cite"><p class="kicker">Cite & reuse</p>
@@ -100,7 +103,7 @@
 <p>If you use BulkSeq Studio or its benchmark archive in your work, please cite the software and the reproduction archive deposited on Zenodo. The archive (DOI <a href="https://doi.org/10.5281/zenodo.20955660">10.5281/zenodo.20955660</a>) holds the benchmark scripts, the pinned scoring environment, the per-benchmark result tables and figures, and a step-by-step reproduction guide for the validation suite.</p>
 
 <pre><code>Birgün, Tuna (2026). BulkSeq Studio: benchmark apparatus and
-  reproduction archive. Version 0.16.0. Zenodo.
+  reproduction archive. Version 0.17.0. Zenodo.
   https://doi.org/10.5281/zenodo.20955660</code></pre>
 
 <div class="note"><span class="t">BibTeX</span> The repository ships a <code>CITATION.cff</code> file. GitHub renders a ready-to-copy citation from it, and most reference managers can import the same file directly.</div>
@@ -109,7 +112,7 @@
   author  = {Birg{\"u}n, Tuna},
   title   = {BulkSeq Studio: benchmark apparatus and
              reproduction archive},
-  version = {0.16.0},
+  version = {0.17.0},
   year    = {2026},
   doi     = {10.5281/zenodo.20955660},
   url     = {https://doi.org/10.5281/zenodo.20955660},

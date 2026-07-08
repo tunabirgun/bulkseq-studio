@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/site.css?v=5">
+<link rel="stylesheet" href="assets/site.css?v=6">
 <script>
 (function(){
   try{var t=localStorage.getItem('bsq-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}
@@ -29,7 +29,7 @@
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.16.0</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.17.0</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
     <nav>
@@ -58,6 +58,8 @@
   <img src="assets/screenshot-workflow-settings.png" alt="The Workflow Settings tab gathering every pipeline choice: aligner and quantifier, trimmer, rRNA tool and contamination screen, differential-expression engine, the design formula with the Design helper, significance thresholds, organellar handling, GSVA and RSeQC toggles, and a custom-gene-set panel">
   <figcaption>The Workflow Settings tab is the single place all pipeline choices live: the aligner and quantifier, the trimmer, the rRNA tool and contamination screen, the differential-expression engine, the design formula and its Design helper, the significance thresholds, organellar-gene handling, the optional GSVA and RSeQC outputs, and the custom gene-set panel.</figcaption>
 </figure>
+
+<div class="note"><span class="t">Mode-aware settings</span> The controls track the input mode. For a microarray, count-matrix, or uploaded DESeq2-results run, the settings that do not apply — the aligner and quantifier, read trimming, rRNA filtering, the contamination screen, RSeQC, and organellar-gene handling, plus GSVA for the results-upload mode — are greyed out. This is a display change only: those steps were already skipped in these modes, so no run behaves differently; the tab just stops implying an aligner or trimmer is used for intensity data.</div>
 
 <h3>Quality control and trimming</h3>
 <p>Every FASTQ or SRA run starts with FastQC on the raw reads, then adapter and quality trimming, then FastQC again on the trimmed reads. The per-sample reports are collected into a single MultiQC summary you can open from the Run Monitor.</p>
@@ -89,7 +91,7 @@
 <p>An optional <strong>RSeQC</strong> pass adds two extra views to the MultiQC report: the genomic-context read distribution (how reads split across exon, intron, and intergenic regions) and the 5′→3′ gene-body coverage. Because it works from the alignment, RSeQC runs only on the genome-BAM routes (STAR and HISAT2), not on Salmon, which produces no BAM files.</p>
 
 <h3>Differential expression</h3>
-<p>The differential-expression engine follows the input mode. RNA-seq and count-matrix runs use <strong>DESeq2</strong> by default (with apeglm shrinkage and VST); GEO microarray runs use <strong>limma</strong> and produce a DESeq2-shaped results table, so the figures and downstream steps are the same. You configure the design formula and the contrast (numerator, denominator, reference level), the significance threshold <code>alpha</code>, and the absolute log2 fold-change cutoff, which together split the genes into up- and down-regulated lists. A TOST equivalence test is also run to flag genes that are statistically unchanged, the complement of the significance call.</p>
+<p>The differential-expression engine follows the input mode. RNA-seq and count-matrix runs use <strong>DESeq2</strong> by default (with apeglm shrinkage and VST); GEO microarray runs use <strong>limma</strong> and produce a DESeq2-shaped results table, so the figures and downstream steps are the same. A microarray run takes its intensities from the submitter-normalized GEO series matrix by default, or optionally re-normalizes raw Affymetrix CEL files with RMA, with a log2-transform choice (auto-detect, force, or off); the GEO platform (GPL) is recorded in the outputs. You configure the design formula and the contrast (numerator, denominator, reference level), the significance threshold <code>alpha</code>, and the absolute log2 fold-change cutoff, which together split the genes into up- and down-regulated lists. A TOST equivalence test is also run to flag genes that are statistically unchanged, the complement of the significance call.</p>
 <p>Two alternative engines are available for RNA-seq counts as a cross-check, best suited to larger designs: <strong>limma-voom</strong> and <strong>edgeR quasi-likelihood</strong>. All three engines emit the same result tables and figures, so everything downstream is identical whichever you run. DESeq2 remains the default and its result is unchanged. On <em>Fusarium graminearum</em> (spore vs mycelium) the alternatives track DESeq2 closely: limma-voom reaches a log2 fold-change Spearman correlation of 0.997 and a top-DEG Jaccard index of 0.94, edgeR quasi-likelihood reaches 1.000 and 0.97, and the shared differentially expressed genes agree on direction 100% of the time (benchmark B14).</p>
 
 <h3>The design helper: adjusting for batch and covariates</h3>
@@ -119,6 +121,7 @@
 <p>A collapsible <strong>Advanced parameters</strong> panel on the Workflow Settings tab surfaces the important knobs of each tool (fastp, Trimmomatic, RiboDetector, FastQ Screen, STAR, featureCounts, DESeq2, and the rest), with the validated defaults pre-filled. Leave it collapsed for a standard run; open it only when you need to change a specific parameter. Because the defaults reproduce the standard behaviour, a run is unchanged unless you edit a value.</p>
 
 <h3>Non-model organisms</h3>
+<p>The reference catalog ships 46 organism presets: human and mouse, model animals (rat, chicken, pig, cattle), crops (including grape, cotton, <em>Medicago truncatula</em>, and tobacco), fungal and plant pathogens (<em>Zymoseptoria tritici</em>, <em>Ustilago maydis</em>, <em>Sclerotinia sclerotiorum</em>, <em>Aspergillus niger</em>), bacteria (<em>Pseudomonas aeruginosa</em>, <em>Mycobacterium tuberculosis</em>, <em>Staphylococcus aureus</em>), and the malaria parasite <em>Plasmodium falciparum</em>. Each preset's genome and annotation URLs were checked to resolve, and its KEGG code, STRING taxon, and Bioconductor OrgDb (where one exists) verified, before inclusion.</p>
 <p>Crops and fungi that have no Bioconductor OrgDb are not left without downstream analysis. As long as the organism has a KEGG code and a STRING taxon, KEGG enrichment and the STRING network still run, and g:Profiler supplies GO where it is available. This is how rice, the other crop presets, and <em>Fusarium graminearum</em> reach full enrichment and network outputs.</p></section>
     <div class="footer" style="max-width:70ch;margin:0 auto;">
       <p>Free and open-source under the MIT License · <a href="https://github.com/tunabirgun" target="_blank" rel="noopener">tunabirgun</a></p>

@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/site.css?v=5">
+<link rel="stylesheet" href="assets/site.css?v=6">
 <script>
 (function(){
   try{var t=localStorage.getItem('bsq-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}
@@ -29,7 +29,7 @@
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.16.0</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.17.0</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
     <nav>
@@ -161,7 +161,10 @@
 <p>Under that constraint the pipeline recovered the canonical glucocorticoid-response programme: the most strongly up-regulated genes were the expected dexamethasone targets <em>FKBP5</em> (adjusted p ~5 × 10⁻²⁴), <em>ZBTB16</em>, <em>KLF15</em>, and <em>SPARCL1</em>, while the pro-inflammatory adhesion molecule <em>VCAM1</em> was down-regulated, consistent with the known anti-inflammatory action of glucocorticoids. The enrichment step returned GO and KEGG terms and the STRING network built to 117 nodes, so the human path delivers the same enrichment and network outputs as the non-human organisms and confirms the human GRCh38 / Salmon / <code>org.Hs.eg.db</code> route end to end.</p>
 <figure class="bench"><img src="assets/b15_human_airway_volcano.png" alt="Volcano plot of the human airway dexamethasone contrast with canonical glucocorticoid-response genes labelled: FKBP5, ZBTB16, KLF15, SPARCL1 up and VCAM1 down"><figcaption>B15: volcano of the human airway dexamethasone contrast; the canonical glucocorticoid-response signature is recovered (FKBP5, ZBTB16, KLF15, SPARCL1 up; VCAM1 down).</figcaption></figure>
 
-<div class="note"><span class="t">Default pipeline unchanged</span> The 0.13-0.16 features are additive, so B1-B10 carry over without re-running. The core scripts (DESeq2, enrichment, limma, salmon/tximport, count ingest, strandedness inference) are unchanged, the environment lock changed by addition only (no package removed or downgraded), and the F. graminearum baseline of 2723 up / 2478 down reproduces exactly.</div></section>
+<div class="note"><span class="t">Default pipeline unchanged</span> The 0.13-0.16 features are additive, so B1-B10 carry over without re-running. The core scripts (DESeq2, enrichment, limma, salmon/tximport, count ingest, strandedness inference) are unchanged, the environment lock changed by addition only (no package removed or downgraded), and the F. graminearum baseline of 2723 up / 2478 down reproduces exactly.</div>
+
+<h3>Bundled microarray example datasets (0.17.0)</h3>
+<p>Separate from the archived validation suite above, the app now ships two one-click microarray example datasets that exercise the limma and Affymetrix CEL &rarr; RMA route on non-model organisms, alongside the existing bundled RNA-seq examples (Drosophila pasilla, yeast <em>ume6</em>, rice CY1000): an <em>Arabidopsis thaliana</em> <em>hub2-3</em> mutant versus Col-0 set on the Affymetrix ATH1 array (GSE30735, platform GPL198), and a <em>Saccharomyces cerevisiae</em> <em>cbc2</em> deletion versus wild-type set on the Yeast Genome S98 (YG-S98) array (GSE6705, platform GPL90). Each is a six-sample perturbation-versus-control contrast that GEOquery ingests and limma tests, giving a fast end-to-end check of the microarray path on a plant and a fungus. These are demonstration datasets bundled with the app, not part of the B1–B15 Zenodo validation snapshot.</p></section>
     <div class="footer" style="max-width:70ch;margin:0 auto;">
       <p>Free and open-source under the MIT License · <a href="https://github.com/tunabirgun" target="_blank" rel="noopener">tunabirgun</a></p>
     </div>

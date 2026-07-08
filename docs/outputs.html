@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/site.css?v=5">
+<link rel="stylesheet" href="assets/site.css?v=6">
 <script>
 (function(){
   try{var t=localStorage.getItem('bsq-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}
@@ -29,7 +29,7 @@
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.16.0</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.17.0</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
     <nav>
@@ -78,8 +78,8 @@
 <h3>Quality report</h3>
 <p>The <strong>MultiQC report</strong> gathers FastQC, trimming, alignment, and (when enabled) FastQ Screen contamination and RSeQC read-distribution / gene-body-coverage statistics for every sample into one HTML page. Open it from the <em>Open MultiQC Report</em> button on the Run Monitor.</p>
 
-<h3>Self-contained HTML report</h3>
-<p>Every run also writes a single-file <strong><code>results_report.html</code></strong> that inlines the key figures, the top genes, the enrichment results, and the run's provenance into one document with no external assets. Because everything is embedded, you can email it, drop it in a shared folder, or archive it and it still renders on its own — a quick way to hand the result to a collaborator without shipping the whole project folder.</p>
+<h3>Self-contained HTML report (Read-Along)</h3>
+<p>Every run also writes a single-file <strong><code>results_report.html</code></strong>, built as a dual-track <em>Read-Along</em> report that serves a non-specialist and a bioinformatician from the same document. Each section opens with a plain-language key finding — what was compared, how many genes changed and in which direction, and the strongest genes — with the statistics glossed inline and collected in an end glossary, above the full sortable tables with their exact numbers. The overview is a compact row of headline stat chips plus the run cards; the figures are grouped and lettered (Quality, Differential expression, Function), each with a plain caption and a technical caption, and the click-to-open, zoomable figure gallery is preserved. Everything is embedded with no external assets, so you can email it, drop it in a shared folder, or archive it and it still renders on its own — a way to hand the result to a collaborator without shipping the whole project folder.</p>
 
 <h3>Enrichment tables and networks</h3>
 <ul>
@@ -94,7 +94,7 @@
 <h3>Run provenance</h3>
 <p>When a run finishes, the Run Monitor lets you save two records of how it was produced:</p>
 <ul>
-  <li><strong>Tools & references</strong> — the tool and R/Bioconductor package versions, the reference genome and annotation with source URLs and MD5, and the enrichment database codes.</li>
+  <li><strong>Tools & references</strong> — the tool and R/Bioconductor package versions, the reference genome and annotation with source URLs and MD5 (or, for a microarray run, the GEO platform GPL id and series accession), and the enrichment database codes.</li>
   <li><strong>Study design</strong> — the samples, conditions, layout, design formula, and contrasts.</li>
 </ul>
 <div class="note"><span class="t">Reproducible</span> Each run also records a default-vs-used parameter diff, an environment lock hash, the reference accession/MD5, and R <code>sessionInfo</code>, so a run can be reproduced later.</div>
