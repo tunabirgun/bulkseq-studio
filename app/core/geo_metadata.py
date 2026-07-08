@@ -239,7 +239,10 @@ def fetch_geo_series(gse: str, timeout: int = 120) -> dict[str, object]:
     for i in range(len(rows)):
         rows[i]["condition"] = conditions[i]
 
-    samples = pd.DataFrame(rows)
+    # Heterogeneous GEO submissions give samples different characteristic keys, so some
+    # cells are missing; without this they serialize/display as the literal string "nan"
+    # and become a spurious factor level if that column is used as a contrast/covariate.
+    samples = pd.DataFrame(rows).fillna("")
     return {
         "samples": samples,
         "platform": platform,

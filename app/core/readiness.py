@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import importlib.util
 import shutil
 import subprocess
@@ -79,7 +80,9 @@ WSL_TOOLS = {
 # R analysis packages that must be present for the differential-expression, enrichment, and
 # optional-engine routes. Probed as one item so the R stack's completeness (not just "Rscript
 # exists") is verified — including the 0.16.0 additions edgeR, limma-voom (limma) and GSVA.
-R_ANALYSIS_PACKAGES = ("DESeq2", "edgeR", "limma", "GSVA", "clusterProfiler", "apeglm", "ashr")
+# GEOquery + affy cover the microarray/limma route, so a core-only env that lacks the
+# microarray R stack is flagged instead of passing silently (an error-127 trap).
+R_ANALYSIS_PACKAGES = ("DESeq2", "edgeR", "limma", "GSVA", "clusterProfiler", "apeglm", "ashr", "GEOquery", "affy")
 
 
 @dataclass(frozen=True)
@@ -135,7 +138,7 @@ def check_wsl_bulkseq_environment(distro: str | None = None, env_name: str = WSL
     env_prefix_command = _wsl_env_prefix_command(env_name)
     probe = _run_wsl(distro, env_prefix_command)
     if probe.returncode != 0:
-        log_paths = _tool_paths_from_install_log()
+        log_paths = _tool_paths_from_install_log(env_name)
         if _core_tools_present(log_paths):
             items.append(ReadinessItem(f"WSL env:{env_name}", "PASS", "micromamba environment found in setup log", "Linux bioinformatics tools"))
             items.extend(_items_from_tool_paths(log_paths))
@@ -181,7 +184,13 @@ def install_python_packages(requirements_path: Path) -> subprocess.Popen[str]:
 
 
 def _run_wsl(distro: str | None, command: str) -> subprocess.CompletedProcess[str]:
-    cmd = ["wsl"] + (["-d", distro] if distro else []) + ["--", "bash", "-lc", command]
+    # Pass the command base64-encoded and decode it inside WSL. A bare complex command
+    # (loops, arrays, nested $()/quoting) does NOT survive subprocess -> wsl.exe command-line
+    # reconstruction and silently mangles — the base64 payload is pure [A-Za-z0-9+/=], so it
+    # round-trips intact and the real command runs exactly as written.
+    b64 = base64.b64encode(command.encode("utf-8")).decode("ascii")
+    inner = f"echo {b64} | base64 -d | bash"
+    cmd = ["wsl"] + (["-d", distro] if distro else []) + ["--", "bash", "-lc", inner]
     try:
         return subprocess.run(
             cmd,
@@ -195,17 +204,16 @@ def _run_wsl(distro: str | None, command: str) -> subprocess.CompletedProcess[st
 
 
 def _wsl_env_prefix_command(env_name: str) -> str:
+    # An if-elif chain, NOT a bash array or `for` loop: neither survives the
+    # `wsl -- bash -lc "<string>"` subprocess round-trip (wsl.exe reconstructs the command line
+    # and mangles the loop/array, so an existing env probed as "not found"). The three candidates
+    # cover every install path the app's setup creates ($HOME/micromamba/envs is the default).
+    e = env_name
     return (
-        f"env_name={env_name!r}; "
-        "candidates=(\"$HOME/micromamba/envs/$env_name\" \"/root/micromamba/envs/$env_name\" \"$HOME/.local/share/mamba/envs/$env_name\"); "
-        "for candidate in \"${candidates[@]}\"; do "
-        "  if [ -d \"$candidate\" ]; then echo \"$candidate\"; exit 0; fi; "
-        "done; "
-        "if [ -x ~/.local/bin/micromamba ]; then "
-        "  prefix=$(~/.local/bin/micromamba env list 2>/dev/null | awk -v env=\"$env_name\" '$1 == env {print $NF; exit}'); "
-        "  if [ -n \"$prefix\" ] && [ -d \"$prefix\" ]; then echo \"$prefix\"; exit 0; fi; "
-        "fi; "
-        "exit 1"
+        f'if [ -d "$HOME/micromamba/envs/{e}" ]; then echo "$HOME/micromamba/envs/{e}"; '
+        f'elif [ -d "/root/micromamba/envs/{e}" ]; then echo "/root/micromamba/envs/{e}"; '
+        f'elif [ -d "$HOME/.local/share/mamba/envs/{e}" ]; then echo "$HOME/.local/share/mamba/envs/{e}"; '
+        'else exit 1; fi'
     )
 
 
@@ -265,7 +273,7 @@ def _short_output(result: subprocess.CompletedProcess[str]) -> str:
     return text.splitlines()[-1][:240]
 
 
-def _tool_paths_from_install_log() -> dict[str, str]:
+def _tool_paths_from_install_log(env_name: str = WSL_ENV_NAME) -> dict[str, str]:
     log_path = app_root() / "scripts" / "logs" / "wsl_bioenv_install.log"
     if not log_path.exists():
         return {}
@@ -282,7 +290,10 @@ def _tool_paths_from_install_log() -> dict[str, str]:
         if stripped.startswith("Open a new WSL shell"):
             break
         parts = stripped.split()
-        if len(parts) >= 2 and parts[1].startswith("/"):
+        # Only trust a recorded path if it is for THIS env. A stale log from a differently
+        # named env (e.g. a *_verify build env) must not stand in for the real one and mark
+        # a missing/broken environment as PASS — the exact false-positive behind an error-127.
+        if len(parts) >= 2 and parts[1].startswith("/") and f"/envs/{env_name}/" in parts[1]:
             paths[parts[0]] = parts[1]
     return paths
 

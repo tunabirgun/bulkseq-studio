@@ -73,6 +73,12 @@ if (!(numerator %in% lv) || !(denominator %in% lv)) {
 # ---- Design: group-means + optional additive covariates from the formula ----
 form_vars <- tryCatch(all.vars(as.formula(design_formula)), error = function(e) character(0))
 covariates <- setdiff(form_vars, con_factor)
+# A design covariate absent from the sample sheet (typo/renamed column) would otherwise be
+# dropped silently, running an UNadjusted (confounded) model. Fail loudly instead.
+missing_cov <- setdiff(covariates, colnames(coldata))
+if (length(missing_cov)) {
+  stop(sprintf("Design covariate(s) not found in the sample sheet: %s", paste(missing_cov, collapse = ", ")))
+}
 covariates <- covariates[covariates %in% colnames(coldata)]
 level_names <- make.names(lv)
 if (length(covariates)) {

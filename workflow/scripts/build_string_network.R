@@ -133,7 +133,10 @@ ok <- tryCatch({
   comm <- igraph::cluster_louvain(g, weights = igraph::E(g)$weight)
   V(g)$module <- igraph::membership(comm)
   V(g)$degree <- igraph::degree(g)
-  V(g)$betweenness <- igraph::betweenness(g)
+  # STRING edge weights are combined_score/1000 (a similarity); betweenness treats the weight
+  # as a distance, so invert it — else high-confidence edges count as the longest paths and
+  # centrality routes around the true hubs.
+  V(g)$betweenness <- igraph::betweenness(g, weights = 1 / igraph::E(g)$weight)
   resdf <- read.csv(snakemake@input[["results"]], stringsAsFactors = FALSE, check.names = FALSE)
   # Case-insensitive join keyed on whichever id seeded the network (symbol, else
   # gene_id), so nodes are not all-NA log2FC for locus-tag genomes. STRING may also

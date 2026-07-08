@@ -58,9 +58,13 @@ if (length(genes_path) < 1 || !nzchar(genes_path[[1]]) || !file.exists(genes_pat
 goi <- readLines(genes_path[[1]], warn = FALSE)
 goi <- trimws(goi)
 goi <- goi[nzchar(goi) & !startsWith(goi, "#")]
-goi <- sub("\\..*$", "", goi)
-rn <- sub("\\..*$", "", rownames(vsd))
+# Match full ids first (no collision); fall back to Ensembl-version-stripped only for ENS*
+# ids, so distinct dotted non-Ensembl ids (locus tags etc.) are never collapsed to a sibling.
+strip_ver <- function(x) { e <- grepl("^ENS", x); x[e] <- sub("\\.\\d+$", "", x[e]); x }
+rn <- rownames(vsd)                 # this run's actual gene IDs (used in the mismatch hint below)
 idx <- match(goi, rn)
+un <- is.na(idx)
+if (any(un)) idx[un] <- match(strip_ver(goi[un]), strip_ver(rn))
 # Second pass: match any still-unmatched entries against gene symbols (case-
 # insensitive), so a user can paste either Ensembl ids or symbols.
 if (!is.null(symbol_map)) {

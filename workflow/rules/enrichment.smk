@@ -178,7 +178,11 @@ if GSVA_ON:
 
     rule gsva:
         input:
-            normalized="results/deseq2/normalized_counts.csv",
+            # The log-scale homoscedastic matrix (VST for DESeq2, logCPM for voom/edgeR, log2
+            # intensity for microarray) — NOT the linear DESeq2 normalized counts. GSVA's
+            # kcdf="Gaussian" assumes continuous log-scale input, so linear counts gave an
+            # invalid per-gene expression statistic on the default DESeq2 route.
+            normalized="results/export/normalized_expression_matrix.csv",
             gmt=config.get("gene_sets", {}).get("custom_gene_sets"),
             samples=config["input"]["samples"],
         output:

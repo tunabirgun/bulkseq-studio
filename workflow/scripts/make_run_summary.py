@@ -327,8 +327,12 @@ def render_study_design(p: dict, samples_tsv: str) -> str:
     lines = ["Study Design", "============", "",
              f"Project: {p['project'].get('name')}",
              f"Run date: {p['run_date']}",
-             f"Input type: {input_type}    Differential expression: {de_method}", "",
-             "Design", "------",
+             f"Input type: {input_type}    Differential expression: {de_method}", ""]
+    if is_micro:
+        ma = p.get("microarray", {})
+        lines += [f"GEO series: {ma.get('gse_accession')}    Platform: {ma.get('platform')}"
+                  f"    Source: {ma.get('source')}", ""]
+    lines += ["Design", "------",
              f"Design formula: {de.get('design_formula')}",
              f"Reference level: {de.get('reference_level')}",
              f"Contrasts: {json.dumps(de.get('contrasts', []))}",

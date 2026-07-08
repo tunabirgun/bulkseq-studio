@@ -99,7 +99,9 @@ def main():
 
     # gene -> contig: prefer the Chr column; fall back to the GTF when Chr is unusable.
     chr_vals = [r.split("\t")[chr_idx] if len(r.split("\t")) > chr_idx else "NA" for r in rows]
-    chr_usable = any(v not in ("", "NA") for v in chr_vals)
+    # STAR --quantMode GeneCounts writes "." for the chromosome, which is unusable; treat it
+    # like NA so the GTF fallback runs (else organellar filtering silently no-ops on that route).
+    chr_usable = any(v not in ("", "NA", ".") for v in chr_vals)
     gtf_map = {}
     if not chr_usable:
         gtf_map = gene_contig_from_gtf(a.gtf, gene_ids)

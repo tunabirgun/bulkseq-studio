@@ -39,8 +39,12 @@ strip_version <- function(id) {
   # on the bare NCBI GeneID (osa:4326813), so strip the LOC prefix. Shape-gated to
   # LOC + digits only, so MSU/TIGR locus tags (LOC_Os01g01010, underscore) and any
   # other id pass through unchanged.
-  l <- grepl("^LOC[0-9]+$", id)
-  id[l] <- sub("^LOC", "", id[l])
+  # SYMBOL-keyed runs (microarray) can carry legitimate gene symbols like "LOC101927877";
+  # only strip the LOC prefix on NCBI-GeneID / KEGG key routes, never for SYMBOL.
+  if (!identical(keytype, "SYMBOL")) {
+    l <- grepl("^LOC[0-9]+$", id)
+    id[l] <- sub("^LOC", "", id[l])
+  }
   id
 }
 

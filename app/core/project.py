@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import shutil
 from datetime import datetime
@@ -11,6 +12,49 @@ import yaml
 from app.constants import APP_VERSION, PROJECT_DIRS, SAFE_ID_PATTERN, WORKFLOW_VERSION
 from app.core.config_models import AppConfig, default_config
 from app.core.paths import data_path, is_wsl_unc_path, workflow_root
+
+
+_DECIMAL_COMMA_RE = re.compile(r"^-?\d+,\d+$")
+
+
+def normalize_decimal_commas(data: Any) -> tuple[Any, list[str]]:
+    """Recursively rewrite comma-decimal string values (e.g. "0,05") to dot floats.
+
+    A hand-edited config on a comma-decimal locale can carry "alpha: 0,05", which YAML reads
+    as the string "0,05" and pydantic then rejects. This keeps the decimal point a dot
+    everywhere and returns the dotted paths that were fixed so the caller can warn.
+    """
+    fixed: list[str] = []
+
+    def walk(node: Any, path: str) -> Any:
+        if isinstance(node, dict):
+            return {k: walk(v, f"{path}.{k}" if path else str(k)) for k, v in node.items()}
+        if isinstance(node, list):
+            return [walk(v, f"{path}[{i}]") for i, v in enumerate(node)]
+        if isinstance(node, str) and _DECIMAL_COMMA_RE.match(node.strip()):
+            fixed.append(path or "value")
+            return node.strip().replace(",", ".")
+        return node
+
+    return walk(data, ""), fixed
+
+
+def decimal_comma_warnings(project_root: Path) -> list[str]:
+    """Human-readable warnings for any comma-decimal numbers in the project's config."""
+    cfg = project_root / "config" / "config.yaml"
+    try:
+        _, fixed = normalize_decimal_commas(yaml.safe_load(cfg.read_text(encoding="utf-8")) or {})
+    except (OSError, yaml.YAMLError):
+        return []
+    if not fixed:
+        return []
+    return [
+        "Some numeric settings used a comma as the decimal separator (e.g. 0,05): "
+        + ", ".join(fixed[:8])
+        + (", …" if len(fixed) > 8 else "")
+        + ". BulkSeq Studio uses a dot everywhere (0.05), so they were read as dots — "
+        "save the project to normalize the file."
+    ]
 
 
 def validate_working_directory(path: Path, min_free_gb: float = 5.0, use_wsl: bool = False) -> list[dict[str, str]]:
@@ -91,7 +135,8 @@ class ProjectManager:
 
     def load_config(self, project_root: Path) -> AppConfig:
         with (project_root / "config" / "config.yaml").open("r", encoding="utf-8") as handle:
-            return AppConfig.model_validate(yaml.safe_load(handle))
+            data, _ = normalize_decimal_commas(yaml.safe_load(handle))
+        return AppConfig.model_validate(data)
 
     def copy_workflow_metadata(self, project_root: Path) -> None:
         source = workflow_root()
@@ -100,8 +145,39 @@ class ProjectManager:
             shutil.copytree(source, target, dirs_exist_ok=True)
         self._write_yaml(
             project_root / "workflow" / "workflow_metadata.yaml",
-            {"workflow_version": WORKFLOW_VERSION, "copied_at": datetime.now().isoformat(timespec="seconds")},
+            {"workflow_version": WORKFLOW_VERSION,
+             "workflow_digest": self._bundled_workflow_digest(),
+             "copied_at": datetime.now().isoformat(timespec="seconds")},
         )
+
+    @staticmethod
+    def _bundled_workflow_digest() -> str:
+        # Content hash of the bundled workflow/ so a project re-syncs when the scripts change
+        # even without a version bump (this project ships frequent same-version in-place
+        # revisions). Excludes the metadata file itself, which carries the digest.
+        source = workflow_root()
+        if not source.exists():
+            return ""
+        h = hashlib.sha256()
+        for path in sorted(p for p in source.rglob("*") if p.is_file()):
+            if path.name == "workflow_metadata.yaml":
+                continue
+            h.update(path.relative_to(source).as_posix().encode("utf-8"))
+            h.update(b"\0")
+            h.update(path.read_bytes())
+            h.update(b"\0")
+        return h.hexdigest()
+
+    def workflow_digest_of(self, project_root: Path) -> str | None:
+        meta = project_root / "workflow" / "workflow_metadata.yaml"
+        if not meta.exists():
+            return None
+        try:
+            data = yaml.safe_load(meta.read_text(encoding="utf-8")) or {}
+        except Exception:
+            return None
+        recorded = data.get("workflow_digest")
+        return str(recorded) if recorded else None
 
     @staticmethod
     def _version_tuple(version: str) -> tuple[int, ...]:
@@ -131,7 +207,12 @@ class ProjectManager:
         # workflow when the project's recorded version is missing or older than this
         # build's; return the version synced to, or None when already current.
         recorded = self.workflow_version_of(project_root)
-        if recorded is not None and self._version_tuple(recorded) >= self._version_tuple(WORKFLOW_VERSION):
+        version_current = recorded is not None and self._version_tuple(recorded) >= self._version_tuple(WORKFLOW_VERSION)
+        # Also re-sync when the bundled workflow content changed under the SAME version — this
+        # project ships frequent in-place same-version revisions, and a version-only check would
+        # leave those projects on a stale (buggy) workflow copy.
+        digest_current = self.workflow_digest_of(project_root) == self._bundled_workflow_digest()
+        if version_current and digest_current:
             return None
         self.copy_workflow_metadata(project_root)
         return WORKFLOW_VERSION

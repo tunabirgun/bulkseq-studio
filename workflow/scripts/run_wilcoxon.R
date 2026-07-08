@@ -66,7 +66,10 @@ ties <- 0
 pvals <- withCallingHandlers(
   apply(m, 1, function(x) {
     a <- x[i_num]; b <- x[i_den]
-    if (length(unique(c(a, b))) < 2) return(NA_real_)
+    # Drop NA/Inf per group; a gene with an entirely-missing group (common on the
+    # microarray intensity matrix) must return NA, not crash the whole rule.
+    a <- a[is.finite(a)]; b <- b[is.finite(b)]
+    if (length(a) < 1 || length(b) < 1 || length(unique(c(a, b))) < 2) return(NA_real_)
     wilcox.test(a, b)$p.value
   }),
   warning = function(w) {

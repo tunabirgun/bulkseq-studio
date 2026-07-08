@@ -729,3 +729,399 @@ references:
     notes: Bacterial expression; set strandedness/feature settings as appropriate.
     recommended_aligner_settings: small genome.
     genome_size_category: bacterial
+  - organism_name: Rattus norvegicus
+    scientific_name: Rattus norvegicus
+    strain: mRatBN7.2
+    taxon_id: 10116
+    source: Ensembl
+    assembly_accession: GCA_015227675.2
+    orgdb: org.Rn.eg.db
+    enrichment_keytype: ENSEMBL
+    kegg_organism: rno
+    string_taxon: 10116
+    gprofiler_organism: rnorvegicus
+    assembly_name: mRatBN7.2
+    annotation_source: Ensembl
+    genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/rattus_norvegicus/dna/Rattus_norvegicus.mRatBN7.2.dna.toplevel.fa.gz
+    annotation_gtf_url: https://ftp.ensembl.org/pub/release-111/gtf/rattus_norvegicus/Rattus_norvegicus.mRatBN7.2.111.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: "111"
+    date: "2024-01"
+    notes: No Ensembl primary_assembly for mRatBN7.2; uses toplevel (verified 206). STAR index needs ~25-30 GB RAM.
+    recommended_aligner_settings: STAR defaults; ample RAM.
+    genome_size_category: mammalian
+  - organism_name: Gallus gallus
+    scientific_name: Gallus gallus
+    strain: GRCg7b
+    taxon_id: 9031
+    source: Ensembl
+    assembly_accession: GCA_016699485.1
+    orgdb: org.Gg.eg.db
+    enrichment_keytype: ENSEMBL
+    kegg_organism: gga
+    string_taxon: 9031
+    gprofiler_organism: ggallus
+    assembly_name: bGalGal1.mat.broiler.GRCg7b
+    annotation_source: Ensembl
+    genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/gallus_gallus/dna/Gallus_gallus.bGalGal1.mat.broiler.GRCg7b.dna.toplevel.fa.gz
+    annotation_gtf_url: https://ftp.ensembl.org/pub/release-111/gtf/gallus_gallus/Gallus_gallus.bGalGal1.mat.broiler.GRCg7b.111.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: "111"
+    date: "2024-01"
+    notes: Uses toplevel (no combined primary_assembly is published for chicken in release-111; only per-chromosome files). Vertebrate genome (~1.05 Gb); ample RAM for the STAR index.
+    recommended_aligner_settings: STAR defaults; ample RAM.
+    genome_size_category: mammalian
+  - organism_name: Sus scrofa
+    scientific_name: Sus scrofa
+    strain: Sscrofa11.1
+    taxon_id: 9823
+    source: Ensembl
+    assembly_accession: GCA_000003025.6
+    orgdb: org.Ss.eg.db
+    enrichment_keytype: ENSEMBL
+    kegg_organism: ssc
+    string_taxon: 9823
+    gprofiler_organism: sscrofa
+    assembly_name: Sscrofa11.1
+    annotation_source: Ensembl
+    genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/sus_scrofa/dna/Sus_scrofa.Sscrofa11.1.dna.toplevel.fa.gz
+    annotation_gtf_url: https://ftp.ensembl.org/pub/release-111/gtf/sus_scrofa/Sus_scrofa.Sscrofa11.1.111.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: "111"
+    date: "2024-01"
+    notes: Ensembl release-111 ships no combined primary_assembly file for pig (only per-chromosome splits), so dna.toplevel is used; Sscrofa11.1 has no alt/patch haplotypes so RAM bloat is minimal. STAR index needs ~30 GB RAM.
+    recommended_aligner_settings: STAR defaults; ample RAM.
+    genome_size_category: mammalian
+  - organism_name: Bos taurus
+    scientific_name: Bos taurus
+    strain: ARS-UCD1.3
+    taxon_id: 9913
+    source: Ensembl
+    assembly_accession: GCA_002263795.3
+    orgdb: org.Bt.eg.db
+    enrichment_keytype: ENSEMBL
+    kegg_organism: bta
+    string_taxon: 9913
+    gprofiler_organism: btaurus
+    assembly_name: ARS-UCD1.3
+    annotation_source: Ensembl
+    genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/bos_taurus/dna/Bos_taurus.ARS-UCD1.3.dna.toplevel.fa.gz
+    annotation_gtf_url: https://ftp.ensembl.org/pub/release-111/gtf/bos_taurus/Bos_taurus.ARS-UCD1.3.111.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: "111"
+    date: "2024-01"
+    notes: Ensembl release-111 ships only dna.toplevel for this species (no combined primary_assembly), so the toplevel FASTA is used. Genome ~2.7 Gb; STAR index needs ~30 GB RAM.
+    recommended_aligner_settings: STAR defaults; ample RAM (~30 GB). Salmon/HISAT2 for lower memory.
+    genome_size_category: mammalian
+  - organism_name: Vitis vinifera
+    scientific_name: Vitis vinifera
+    strain: PN40024
+    taxon_id: 29760
+    source: NCBI RefSeq
+    assembly_accession: GCF_030704535.1
+    orgdb: null
+    enrichment_keytype: ncbi-geneid
+    kegg_organism: vvi
+    string_taxon: 29760
+    gprofiler_organism: vvinifera
+    assembly_name: ASM3070453v1
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/030/704/535/GCF_030704535.1_ASM3070453v1/GCF_030704535.1_ASM3070453v1_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/030/704/535/GCF_030704535.1_ASM3070453v1/GCF_030704535.1_ASM3070453v1_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq ASM3070453v1
+    date: "2023-09"
+    notes: >
+      Grape, reference cultivar PN40024 (Pinot Noir 40024), complete PacBio-HiFi assembly
+      ASM3070453v1 (~495 Mb; STAR peak ~10-12 GB, within the 40 GB WSL2 cap). This T2T-grade
+      PN40024 assembly supersedes the older 12X (GCF_000003745.3). NCBI RefSeq chosen so the
+      gene_id is LOC<GeneID>; run_enrichment.R strips the LOC prefix to the bare NCBI GeneID
+      that KEGG vvi is keyed by (vvi:<GeneID>). No Bioconductor OrgDb, so GO comes from
+      g:Profiler (vvinifera, PN40024.v4) and KEGG ORA+GSEA via vvi. STRING taxon 29760.
+      count_matrix input must use NCBI GeneIDs (bare or LOC-prefixed).
+    recommended_aligner_settings: STAR; genomeSAindexNbases auto-computes to ~13 for this ~495 Mb genome; sjdbOverhang = readLength-1.
+    genome_size_category: plant
+  - organism_name: Gossypium hirsutum
+    scientific_name: Gossypium hirsutum
+    strain: TM-1
+    taxon_id: 3635
+    source: NCBI RefSeq
+    assembly_accession: GCF_007990345.1
+    orgdb: null
+    enrichment_keytype: ncbi-geneid
+    kegg_organism: ghi
+    string_taxon: 3635
+    gprofiler_organism: null
+    assembly_name: Gossypium_hirsutum_v2.1
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/007/990/345/GCF_007990345.1_Gossypium_hirsutum_v2.1/GCF_007990345.1_Gossypium_hirsutum_v2.1_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/007/990/345/GCF_007990345.1_Gossypium_hirsutum_v2.1/GCF_007990345.1_Gossypium_hirsutum_v2.1_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq Gossypium_hirsutum_v2.1
+    date: null
+    notes: >
+      Upland cotton (allotetraploid AtDt, ~2.3 Gb over 26 chromosomes; RefSeq reference,
+      cultivar TM-1 / isolate 1008001.06, HudsonAlpha/JGI). NCBI RefSeq gene_id is
+      LOC<GeneID>; run_enrichment.R strips the LOC prefix to the bare NCBI GeneID that
+      KEGG ghi is keyed on (ghi:<GeneID>). No Bioconductor OrgDb and no g:Profiler support
+      (only G. raimondii is in g:Profiler), so enrichment is KEGG-only (ORA+GSEA via ghi);
+      no GO route. count_matrix input must use NCBI GeneIDs (bare or LOC-prefixed). STRING
+      taxon 3635. Large genome: prefer Salmon or HISAT2 for memory efficiency; STAR index
+      needs high RAM (~40+ GB).
+    recommended_aligner_settings: Large ~2.3 Gb genome; prefer Salmon (selective alignment) or HISAT2 for memory efficiency; STAR needs ~40+ GB RAM (genomeSAindexNbases auto-computes; sjdbOverhang = readLength-1).
+    genome_size_category: plant
+  - organism_name: Medicago truncatula
+    scientific_name: Medicago truncatula
+    strain: Jemalong A17
+    taxon_id: 3880
+    source: NCBI RefSeq
+    assembly_accession: GCF_003473485.1
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: mtr
+    string_taxon: 3880
+    gprofiler_organism: mtruncatula
+    assembly_name: MtrunA17r5.0-ANR
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/003/473/485/GCF_003473485.1_MtrunA17r5.0-ANR/GCF_003473485.1_MtrunA17r5.0-ANR_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/003/473/485/GCF_003473485.1_MtrunA17r5.0-ANR/GCF_003473485.1_MtrunA17r5.0-ANR_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq MtrunA17r5.0-ANR
+    date: null
+    notes: >
+      Barrel medic (model legume), Jemalong A17, MtrunA17r5.0-ANR (~430 Mb). gene_id = LOC<GeneID>
+      (KEGG mtr key after the LOC strip -- mtr is linked to ncbi-geneid; g:Profiler mtruncatula;
+      STRING taxon 3880). No Bioconductor OrgDb, so GO comes from g:Profiler and KEGG ORA+GSEA run
+      via mtr. count_matrix input must use NCBI GeneIDs (bare or LOC-prefixed). STAR peaks ~8-10 GB,
+      comfortably within the 40 GB WSL2 cap.
+    recommended_aligner_settings: STAR defaults; genomeSAindexNbases auto-reduces for this ~430 Mb genome; sjdbOverhang = readLength-1.
+    genome_size_category: plant
+  - organism_name: Nicotiana tabacum
+    scientific_name: Nicotiana tabacum
+    strain: TN90
+    taxon_id: 4097
+    source: NCBI RefSeq
+    assembly_accession: GCF_000715135.1
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: nta
+    string_taxon: 4097
+    gprofiler_organism: null
+    assembly_name: Ntab-TN90
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/715/135/GCF_000715135.1_Ntab-TN90/GCF_000715135.1_Ntab-TN90_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/715/135/GCF_000715135.1_Ntab-TN90/GCF_000715135.1_Ntab-TN90_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq Ntab-TN90
+    date: null
+    notes: >
+      Common tobacco, allotetraploid cultivar TN90, Ntab-TN90 (~3.64 Gb, scaffold-level). gene_id
+      = LOC<GeneID> (e.g. LOC107758905); run_enrichment.R strips the LOC prefix to the bare NCBI
+      GeneID that KEGG nta is keyed by (nta:107758905, confirmed against rest.kegg.jp/list/nta).
+      No Bioconductor OrgDb, and g:Profiler has no N. tabacum entry (only N. attenuata), so GO
+      enrichment is unavailable; KEGG nta ORA+GSEA is the sole enrichment route. STRING taxon 4097
+      (listed as periphery -> reduced PPI coverage). A full STAR index for the 3.64 Gb genome
+      exceeds the ~40 GB WSL2 cap; use the Salmon aligner (transcriptome-based) or count-matrix
+      mode. count_matrix input must use NCBI GeneIDs (bare or LOC-prefixed).
+    recommended_aligner_settings: NOT STAR at 40 GB; use the Salmon aligner (transcriptome-based) or count-matrix mode; sjdbOverhang = readLength-1.
+    genome_size_category: plant
+  - organism_name: Zymoseptoria tritici IPO323
+    scientific_name: Zymoseptoria tritici
+    strain: IPO323
+    taxon_id: 1047171
+    source: NCBI RefSeq
+    assembly_accession: GCF_000219625.1
+    orgdb: null
+    enrichment_keytype: ncbi-geneid
+    kegg_organism: ztr
+    string_taxon: 336722
+    gprofiler_organism: ztritici
+    assembly_name: MYCGR v2.0
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/219/625/GCF_000219625.1_MYCGR_v2.0/GCF_000219625.1_MYCGR_v2.0_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/219/625/GCF_000219625.1_MYCGR_v2.0/GCF_000219625.1_MYCGR_v2.0_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq MYCGR v2.0
+    date: null
+    notes: Wheat septoria leaf blotch pathogen. Small fungal genome (~39.7 Mb, 21 chromosomes); STAR small-genome SA index applied automatically. KEGG ztr uses ncbi-geneid linkage for enrichment (no Bioconductor OrgDb).
+    recommended_aligner_settings: fungal genome; STAR or HISAT2.
+    genome_size_category: fungal
+  - organism_name: Ustilago maydis
+    scientific_name: Ustilago maydis
+    strain: "521"
+    taxon_id: 237631
+    source: NCBI RefSeq
+    assembly_accession: GCF_000328475.2
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: uma
+    string_taxon: 237631
+    gprofiler_organism: umaydis
+    assembly_name: Umaydis521_2.0
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/328/475/GCF_000328475.2_Umaydis521_2.0/GCF_000328475.2_Umaydis521_2.0_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/328/475/GCF_000328475.2_Umaydis521_2.0/GCF_000328475.2_Umaydis521_2.0_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq Umaydis521_2.0
+    date: null
+    notes: Corn smut basidiomycete model (~19.7 Mb); STAR small-genome SA index applied automatically. Assembly/STRING/g:Profiler key on strain taxon 237631 (Ustilago maydis 521); the species taxon is 5270. KEGG lists uma under the reclassification synonym Mycosarcoma maydis.
+    recommended_aligner_settings: fungal genome; STAR or HISAT2.
+    genome_size_category: fungal
+  - organism_name: Sclerotinia sclerotiorum
+    scientific_name: Sclerotinia sclerotiorum
+    strain: 1980 UF-70
+    taxon_id: 5180
+    source: NCBI RefSeq
+    assembly_accession: GCF_000146945.2
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: ssl
+    string_taxon: 665079
+    gprofiler_organism: null
+    assembly_name: ASM14694v2
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/146/945/GCF_000146945.2_ASM14694v2/GCF_000146945.2_ASM14694v2_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/146/945/GCF_000146945.2_ASM14694v2/GCF_000146945.2_ASM14694v2_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq ASM14694v2
+    date: null
+    notes: White mold plant-pathogenic fungus (~38 Mb genome). Reference strain 1980 UF-70. STAR small-genome SA index applied automatically.
+    recommended_aligner_settings: fungal genome; STAR or HISAT2.
+    genome_size_category: fungal
+  - organism_name: Aspergillus niger
+    scientific_name: Aspergillus niger
+    strain: CBS 513.88
+    taxon_id: 5061
+    source: NCBI RefSeq
+    assembly_accession: GCF_000002855.4
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: ang
+    string_taxon: 380704
+    gprofiler_organism: aniger
+    assembly_name: ASM285v2
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/002/855/GCF_000002855.4_ASM285v2/GCF_000002855.4_ASM285v2_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/002/855/GCF_000002855.4_ASM285v2/GCF_000002855.4_ASM285v2_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq ASM285v2
+    date: null
+    notes: Filamentous fungus (~34 Mb, CBS 513.88); STAR small-genome SA index applied automatically. KEGG 'ang' is CBS 513.88 and matches this RefSeq assembly. STRING has no CBS 513.88; it uses the ATCC 1015 proteome (taxon 380704), so PPI mapping of CBS 513.88 An##g##### locus tags is approximate.
+    recommended_aligner_settings: fungal genome; STAR or HISAT2.
+    genome_size_category: fungal
+  - organism_name: Pseudomonas aeruginosa PAO1
+    scientific_name: Pseudomonas aeruginosa
+    strain: PAO1
+    taxon_id: 208964
+    source: NCBI RefSeq
+    assembly_accession: GCF_000006765.1
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: pae
+    string_taxon: 208964
+    gprofiler_organism: null
+    assembly_name: ASM676v1
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/006/765/GCF_000006765.1_ASM676v1/GCF_000006765.1_ASM676v1_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/006/765/GCF_000006765.1_ASM676v1/GCF_000006765.1_ASM676v1_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq ASM676v1
+    date: null
+    notes: Bacterial model (single ~6.3 Mb chromosome). Set strandedness per library; expect operon-dense annotation. STAR/HISAT2 small-index settings applied automatically.
+    recommended_aligner_settings: small genome; STAR/HISAT2 with small-index settings.
+    genome_size_category: bacterial
+  - organism_name: Mycobacterium tuberculosis H37Rv
+    scientific_name: Mycobacterium tuberculosis
+    strain: H37Rv
+    taxon_id: 83332
+    source: NCBI RefSeq
+    assembly_accession: GCF_000195955.2
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: mtu
+    string_taxon: 83332
+    gprofiler_organism: null
+    assembly_name: ASM19595v2
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/195/955/GCF_000195955.2_ASM19595v2/GCF_000195955.2_ASM19595v2_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/195/955/GCF_000195955.2_ASM19595v2/GCF_000195955.2_ASM19595v2_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq ASM19595v2
+    date: null
+    notes: Bacterial expression; single ~4.4 Mb circular chromosome, no plasmid. Set strandedness/feature settings as appropriate; expect operon-dense annotation. KEGG code mtu; STRING taxon 83332.
+    recommended_aligner_settings: small genome; STAR/HISAT2 with small-index settings.
+    genome_size_category: bacterial
+  - organism_name: Staphylococcus aureus NCTC 8325
+    scientific_name: Staphylococcus aureus
+    strain: NCTC 8325
+    taxon_id: 93061
+    source: NCBI RefSeq
+    assembly_accession: GCF_000013425.1
+    orgdb: null
+    enrichment_keytype: kegg
+    kegg_organism: sao
+    string_taxon: 93061
+    gprofiler_organism: null
+    assembly_name: ASM1342v1
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/013/425/GCF_000013425.1_ASM1342v1/GCF_000013425.1_ASM1342v1_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/013/425/GCF_000013425.1_ASM1342v1/GCF_000013425.1_ASM1342v1_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq ASM1342v1
+    date: null
+    notes: Bacterial expression; set strandedness/feature settings as appropriate. NCTC 8325 is the reference strain behind KEGG sao and STRING taxon 93061 (SAOUHSC_ locus tags).
+    recommended_aligner_settings: small genome; STAR/HISAT2 with small-index settings.
+    genome_size_category: bacterial
+  - organism_name: Plasmodium falciparum 3D7
+    scientific_name: Plasmodium falciparum
+    strain: 3D7
+    taxon_id: 5833
+    source: NCBI RefSeq
+    assembly_accession: GCF_000002765.6
+    orgdb: null
+    enrichment_keytype: ncbi-geneid
+    kegg_organism: pfa
+    string_taxon: 36329
+    gprofiler_organism: pfalciparum
+    assembly_name: GCA_000002765
+    annotation_source: NCBI RefSeq
+    genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/002/765/GCF_000002765.6_GCA_000002765/GCF_000002765.6_GCA_000002765_genomic.fna.gz
+    annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/002/765/GCF_000002765.6_GCA_000002765/GCF_000002765.6_GCA_000002765_genomic.gtf.gz
+    annotation_gff3_url: null
+    transcriptome_fasta_url: null
+    protein_fasta_url: null
+    release: RefSeq GCA_000002765
+    date: null
+    notes: Malaria parasite. Small (~23 Mb), highly AT-rich (~80%) genome; STAR small-genome SA index is applied automatically. KEGG pfa links ncbi-geneid for enrichment; no Bioconductor OrgDb.
+    recommended_aligner_settings: Small AT-rich genome; STAR with small-genome SA index, or HISAT2.
+    genome_size_category: protist

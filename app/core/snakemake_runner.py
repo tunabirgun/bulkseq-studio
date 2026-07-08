@@ -148,6 +148,9 @@ def _wrap_wsl(args: list[str], wsl_root: str, run_tag: str | None) -> str:
         f"cd {shlex.quote(wsl_root)} && "
         f'export MAMBA_ROOT_PREFIX="{WSL_MAMBA_ROOT}" && '
         f'export PATH="{WSL_MAMBA_ROOT}/envs/{WSL_ENV_NAME}/bin:${{PATH}}" && '
+        # Force a dot decimal separator for every tool (R especially) so a comma-decimal
+        # host locale can't make the pipeline write "0,05" into CSVs that Python then misparses.
+        'export LC_NUMERIC=C && '
         f'"{WSL_MICROMAMBA}" run -n {WSL_ENV_NAME} {shlex.join(args)}'
     )
 
@@ -258,6 +261,9 @@ class SnakemakeRunner:
             text=True,
             bufsize=1,
             creationflags=creationflags,
+            # Dot decimal separator for the native (Linux) run too, so a comma-decimal host
+            # locale cannot leak "0,05" into tool output. (WSL runs set this inside _wrap_wsl.)
+            env={**os.environ, "LC_NUMERIC": "C"},
         )
         return self.process
 

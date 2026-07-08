@@ -57,7 +57,7 @@ From data to results in one window: bring in a study on the Input tab, configure
 
 ![BulkSeq Studio in dark mode: the Input, Workflow Settings, Outputs (volcano plot) and PPI Network tabs](docs/screenshot-overview-dark.png)
 
-The Workflow Settings tab gathers every pipeline choice in one place — aligner and quantifier, trimmer, rRNA tool and contamination screen, the differential-expression engine, the design formula (with the Design helper), significance thresholds, organellar-gene handling, the optional GSVA and RSeQC outputs, and a custom-gene-set panel:
+The Workflow Settings tab gathers every pipeline choice in one place — aligner and quantifier, trimmer, rRNA tool and contamination screen, the differential-expression engine, the design formula (with the Design helper), significance thresholds, organellar-gene handling, the optional GSVA and RSeQC outputs, and a custom-gene-set panel. When the input is a GEO microarray series, a count matrix, or an uploaded DESeq2 table, the settings the run does not use — the aligner, trimming, rRNA filtering, and so on — are greyed out, so the tab reflects only what actually applies to that input:
 
 ![The Workflow Settings tab: aligner, trimmer, rRNA tool, DE engine, design, and output options](docs/screenshot-workflow-settings.png)
 

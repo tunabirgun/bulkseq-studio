@@ -100,7 +100,6 @@ class WorkflowConfig(BaseModel):
     # canonical artifacts. Microarray uses limma-trend and deseq2-results uploads
     # bypass DE, regardless of this value.
     de_engine: Literal["DESeq2", "limma-voom", "edgeR"] = "DESeq2"
-    custom_gene_list_analysis: bool = True
     # Mitochondrial + chloroplast/plastid genes: keep them, discard them before DE, or
     # separate them into their own count subset (and run the main DE on nuclear genes only).
     organellar_genes: Literal["keep", "discard", "separate"] = "keep"
@@ -161,7 +160,6 @@ class FeatureCountsConfig(BaseModel):
     feature_type: str = "exon"
     attribute_type: str = "gene_id"
     strandedness: int = 0
-    count_read_pairs: bool = True
 
     @field_validator("strandedness")
     @classmethod

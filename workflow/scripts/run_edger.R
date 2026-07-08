@@ -98,6 +98,12 @@ if (!(numerator %in% lv) || !(denominator %in% lv)) {
 # ---- Design: group-means + optional additive covariates from the formula ----
 form_vars <- tryCatch(all.vars(as.formula(design_formula)), error = function(e) character(0))
 covariates <- setdiff(form_vars, con_factor)
+# A design covariate absent from the sample sheet (typo/renamed column) would otherwise be
+# dropped silently, running an UNadjusted (confounded) model. Fail loudly instead.
+missing_cov <- setdiff(covariates, colnames(coldata))
+if (length(missing_cov)) {
+  stop(sprintf("Design covariate(s) not found in the sample sheet: %s", paste(missing_cov, collapse = ", ")))
+}
 covariates <- covariates[covariates %in% colnames(coldata)]
 level_names <- make.names(lv)
 if (length(covariates)) {
@@ -138,7 +144,9 @@ res <- data.frame(
   baseMean = tt$logCPM,
   log2FoldChange = tt$logFC,
   lfcSE = NA_real_,
-  stat = tt$F,
+  # Signed statistic (the QLF F is unsigned; for a 1-df contrast F = t^2). Downstream the
+  # `stat` column must carry direction for the preranked GSEA (.rnk) export to be meaningful.
+  stat = sign(tt$logFC) * sqrt(pmax(tt$F, 0)),
   pvalue = tt$PValue,
   padj = tt$FDR,
   row.names = rownames(tt),

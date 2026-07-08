@@ -32,38 +32,51 @@ def create_benchmark_project(benchmark_id: str, working_directory: Path, project
     samples = _samples_dataframe(benchmark)
     save_metadata(samples, root / "config" / "samples.auto_generated.tsv")
     save_metadata(samples, root / "config" / "samples.tsv")
-    accessions = [str(row["original_accession"]) for row in benchmark["samples"]]
-    (root / "config" / "sra_accessions.txt").write_text("\n".join(accessions) + "\n", encoding="utf-8")
+    is_micro = _is_microarray_benchmark(benchmark)
+    if not is_micro:
+        accessions = [str(row["original_accession"]) for row in benchmark["samples"]]
+        (root / "config" / "sra_accessions.txt").write_text("\n".join(accessions) + "\n", encoding="utf-8")
     (root / "config" / "benchmark_manifest.yaml").write_text(yaml.safe_dump(benchmark, sort_keys=False), encoding="utf-8")
 
     cfg = manager.load_config(root)
-    cfg.input.type = "sra"
-    layouts = {str(sample.get("layout", "paired")) for sample in benchmark["samples"]}
-    cfg.input.layout = layouts.pop() if len(layouts) == 1 else "mixed"  # type: ignore[assignment]
-    cfg.reference.mode = "preset"
     cfg.reference.organism_name = str(benchmark["organism_name"])
-    cfg.reference.genome_size_category = str(benchmark.get("genome_size_category", "custom"))
-    # Seed the per-organism enrichment/PPI ids from the catalog so benchmark
-    # projects match GUI presets (SRA mode, so keytype follows the catalog).
+    # Seed the per-organism enrichment/PPI ids from the catalog so benchmark projects
+    # match the GUI presets.
     entry = catalog_entry_for_organism(cfg.reference.organism_name)
     if entry is not None:
         cfg.enrichment.orgdb = entry.get("orgdb") or None
-        cfg.enrichment.keytype = entry.get("enrichment_keytype") or None
         cfg.enrichment.kegg_organism = entry.get("kegg_organism") or None
         cfg.enrichment.gprofiler_organism = entry.get("gprofiler_organism") or None
         cfg.ppi.taxon = entry.get("string_taxon")
-    ref = benchmark.get("reference", {})
-    if ref:
-        cfg.reference.source = ref.get("source")
-        cfg.reference.release = str(ref.get("release")) if ref.get("release") else None
-        cfg.reference.strain = ref.get("assembly")
-        cfg.reference.annotation_format = ref.get("annotation_format", "gtf")
-        cfg.reference.genome_fasta = "references/genome.fa"
-        cfg.reference.annotation_file = "references/annotation.gtf"
-        cfg.reference.genome_fasta_url = ref.get("genome_fasta_url")
-        cfg.reference.annotation_gtf_url = ref.get("annotation_gtf_url")
-    cfg.workflow.aligner = "STAR"
-    cfg.workflow.quantifier = "featureCounts"
+    if is_micro:
+        # Microarray: GEO intensities -> limma; no alignment or genome reference. Probes map
+        # to gene symbols, so enrichment uses SYMBOL (mirrors the GUI's GEO-fetch path).
+        micro = benchmark.get("microarray", {})
+        cfg.input.type = "microarray"
+        cfg.microarray.gse_accession = micro.get("gse_accession")
+        cfg.microarray.platform = micro.get("platform")
+        cfg.microarray.source = micro.get("source", "geo_series_matrix")
+        cfg.enrichment.keytype = "SYMBOL"
+    else:
+        cfg.input.type = "sra"
+        layouts = {str(sample.get("layout", "paired")) for sample in benchmark["samples"]}
+        cfg.input.layout = layouts.pop() if len(layouts) == 1 else "mixed"  # type: ignore[assignment]
+        cfg.reference.mode = "preset"
+        cfg.reference.genome_size_category = str(benchmark.get("genome_size_category", "custom"))
+        if entry is not None:
+            cfg.enrichment.keytype = entry.get("enrichment_keytype") or None
+        ref = benchmark.get("reference", {})
+        if ref:
+            cfg.reference.source = ref.get("source")
+            cfg.reference.release = str(ref.get("release")) if ref.get("release") else None
+            cfg.reference.strain = ref.get("assembly")
+            cfg.reference.annotation_format = ref.get("annotation_format", "gtf")
+            cfg.reference.genome_fasta = "references/genome.fa"
+            cfg.reference.annotation_file = "references/annotation.gtf"
+            cfg.reference.genome_fasta_url = ref.get("genome_fasta_url")
+            cfg.reference.annotation_gtf_url = ref.get("annotation_gtf_url")
+        cfg.workflow.aligner = "STAR"
+        cfg.workflow.quantifier = "featureCounts"
     # Differential-expression contrast from the benchmark entry (not hardcoded), so
     # each benchmark sets its own factor/levels. reference_level defaults to the
     # denominator (the control) when not given.
@@ -84,7 +97,28 @@ def create_benchmark_project(benchmark_id: str, working_directory: Path, project
     return root
 
 
+def _is_microarray_benchmark(benchmark: dict[str, Any]) -> bool:
+    return str(benchmark.get("type", "sra")).lower() == "microarray"
+
+
 def _samples_dataframe(benchmark: dict[str, Any]) -> pd.DataFrame:
+    if _is_microarray_benchmark(benchmark):
+        platform = str(benchmark.get("microarray", {}).get("platform", ""))
+        rows: list[dict[str, object]] = []
+        for sample in benchmark["samples"]:
+            gsm = str(sample["sample_id"])
+            rows.append({
+                "sample_id": gsm,
+                "gsm_accession": gsm,
+                "condition": sample["condition"],
+                "layout": "n/a",
+                "fastq_1": "",
+                "platform": platform,
+                "organism": benchmark["organism_name"],
+                "replicate": sample.get("replicate", ""),
+                "batch": sample.get("batch", benchmark.get("id", "")),
+            })
+        return pd.DataFrame(rows)
     rows: list[dict[str, object]] = []
     for sample in benchmark["samples"]:
         accession = str(sample["original_accession"])

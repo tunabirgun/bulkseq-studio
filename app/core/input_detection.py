@@ -4,6 +4,14 @@ import re
 from pathlib import Path
 
 
+# Illumina lane token (e.g. _L001). It can land in the pair prefix (sample_L001_R1) or the
+# suffix (sample_R1_L001); in the latter case two lanes share a prefix and would otherwise
+# collapse into duplicate sample_ids that break the run. We fold the lane into the sample_id
+# so lanes stay distinct, labelled samples (concatenate them per library first if you want
+# them merged into one).
+_LANE_RE = re.compile(r"_(L\d{3})(?=[_.]|$)", re.IGNORECASE)
+
+
 PAIR_PATTERNS = [
     re.compile(r"(?P<prefix>.+?)(?:_R)(?P<read>[12])(?P<suffix>(?:[_\.].*)?\.(?:fastq|fq)(?:\.gz)?)$", re.IGNORECASE),
     re.compile(r"(?P<prefix>.+?)(?:_)(?P<read>[12])(?P<suffix>\.(?:fastq|fq)(?:\.gz)?)$", re.IGNORECASE),
@@ -36,7 +44,11 @@ def detect_fastq_inputs(paths: list[str | Path]) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     replicate_by_sample: dict[str, int] = {}
     for (prefix, _suffix), reads in sorted(grouped.items()):
-        sample_id = sanitize_sample_id(prefix)
+        # Fold a lane token from the suffix (sample_R1_L001) into the sample_id so two lanes
+        # of one sample do not collide into a duplicate sample_id that breaks the run.
+        _lane = _LANE_RE.search(_suffix)
+        base = f"{prefix}_{_lane.group(1)}" if (_lane and not _LANE_RE.search(prefix)) else prefix
+        sample_id = sanitize_sample_id(base)
         replicate_by_sample[sample_id] = replicate_by_sample.get(sample_id, 0) + 1
         if "1" in reads and "2" in reads:
             rows.append(_row(sample_id, "paired", reads["1"], reads["2"], prefix, replicate_by_sample[sample_id]))

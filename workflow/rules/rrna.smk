@@ -15,7 +15,10 @@ if RRNA_FILTER and RRNA_TOOL == "ribodetector":
         "and click Install / repair the environment (full profile), then re-run.' >&2; exit 1; }}; "
     )
     _RD = config.get("ribodetector", {})
-    _RD_LEN = ("LEN=$(zcat {input.r1:q} | head -n 400 | "
+    # `set +o pipefail` INSIDE the $() subshell only: `head` closes the pipe early, so under
+    # Snakemake's default pipefail `zcat` dies with SIGPIPE and the whole && chain aborts before
+    # ribodetector ever runs. Scoping it to the subshell leaves the rest of the rule strict.
+    _RD_LEN = ("LEN=$(set +o pipefail; zcat {input.r1:q} | head -n 400 | "
                "awk 'NR%4==2{{s+=length($0);n++}} END{{if(n>0) print int(s/n); else print 100}}') && ")
 
     if SINGLE_END:

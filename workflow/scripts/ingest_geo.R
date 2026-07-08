@@ -51,7 +51,12 @@ if (identical(source_kind, "affy_cel")) {
   ab <- affy::ReadAffy(filenames = cels)
   eset <- affy::rma(ab)              # RMA output is already background-corrected + log2
   exprs_mat <- exprs(eset)
-  colnames(exprs_mat) <- sub("\\.CEL(\\.gz)?$", "", basename(colnames(exprs_mat)), ignore.case = TRUE)
+  # GEO _RAW.tar CEL files are named "GSM..._descriptor.CEL"; reduce each column to the bare
+  # GSM accession so it matches samples.tsv sample_id (else the reconciliation step below
+  # aborts the run). Fall back to the suffix-stripped basename when there is no GSM prefix.
+  cel_base <- sub("\\.CEL(\\.gz)?$", "", basename(colnames(exprs_mat)), ignore.case = TRUE)
+  colnames(exprs_mat) <- ifelse(grepl("^GSM[0-9]+", cel_base),
+                                sub("^(GSM[0-9]+).*", "\\1", cel_base), cel_base)
   norm_method <- "RMA (affy)"
   already_log2 <- TRUE
   # Annotation comes from the platform record (CEL exprs has no fData).

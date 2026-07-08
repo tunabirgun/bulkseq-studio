@@ -51,7 +51,7 @@ from app.core.benchmark_datasets import create_benchmark_project, load_benchmark
 from app.core.config_models import AppConfig
 from app.core.input_detection import detect_fastq_inputs
 from app.core.metadata import dataframe_from_rows, load_metadata, save_metadata, validate_metadata
-from app.core.project import ProjectManager, validate_working_directory
+from app.core.project import ProjectManager, decimal_comma_warnings, validate_working_directory
 from app.core.provenance import write_run_summary
 from app.core.reference_manager import catalog_entry_for_organism, load_reference_catalog, md5sum, validate_reference
 from app.core.resources import detect_system, recommend_profile
@@ -417,6 +417,31 @@ class MainWindow(QMainWindow):
         geo_row.addWidget(geo_btn)
         geo_row.addStretch(1)
         layout.addLayout(geo_row)
+        # Microarray processing options (consumed by ingest_geo.R for a loaded GEO series).
+        # Shown only in microarray mode (toggled in _apply_input_mode_ui).
+        self.micro_source = QComboBox()
+        self.micro_source.addItem("GEO series matrix — submitter-normalized (recommended)", "geo_series_matrix")
+        self.micro_source.addItem("Affymetrix raw CEL → RMA (re-normalize)", "affy_cel")
+        self.micro_source.setToolTip(
+            "How the microarray intensities are obtained. 'GEO series matrix' (recommended) uses the "
+            "submitter's normalized table, correct for the large majority of GEO datasets. 'Affymetrix "
+            "raw CEL → RMA' downloads the raw CEL archive and re-normalizes with affy::rma — Affymetrix "
+            "arrays only, a larger download, and it needs the full R environment.")
+        self.micro_log2 = QComboBox()
+        self.micro_log2.addItem("Auto-detect log2 (recommended)", "auto")
+        self.micro_log2.addItem("Force log2 transform", "yes")
+        self.micro_log2.addItem("No log2 (already log-scaled)", "no")
+        self.micro_log2.setToolTip(
+            "Whether to log2-transform the intensities. Auto-detect uses the GEO2R quantile heuristic "
+            "(correct for most series); RMA output is always already log2.")
+        self.micro_source.currentIndexChanged.connect(self._on_micro_option_changed)
+        self.micro_log2.currentIndexChanged.connect(self._on_micro_option_changed)
+        self.micro_group = QGroupBox("Microarray processing (applies to the loaded GEO series)")
+        micro_form = QFormLayout(self.micro_group)
+        micro_form.addRow("Source", self.micro_source)
+        micro_form.addRow("log2 transform", self.micro_log2)
+        self.micro_group.setVisible(False)
+        layout.addWidget(self.micro_group)
         self.tabs.addTab(self._scrollable(page), "Input Data")
 
     def _fetch_geo_series(self) -> None:
@@ -463,7 +488,8 @@ class MainWindow(QMainWindow):
         self.config.input.deseq2_results = None
         self.config.microarray.gse_accession = gse
         self.config.microarray.platform = platform or None
-        self.config.microarray.source = "geo_series_matrix"
+        self.config.microarray.source = self.micro_source.currentData()
+        self.config.microarray.log2_transform = self.micro_log2.currentData()
         if organism:
             self.config.reference.organism_name = organism
             # Pull the organism's enrichment/PPI ids from the catalog when the GEO
@@ -522,6 +548,41 @@ class MainWindow(QMainWindow):
         self._refresh_output_table_pick()
         self._update_enrichment_warning()
         self._update_organism_label()
+        if getattr(self, "micro_group", None) is not None:
+            self.micro_group.setVisible(mode == "microarray")
+        self._apply_workflow_mode_gating(mode)
+
+    def _on_micro_option_changed(self) -> None:
+        # Persist the microarray source / log2 choice as the user picks it (Input Data tab).
+        if self.config is None or self.project_root is None:
+            return
+        self.config.microarray.source = self.micro_source.currentData()
+        self.config.microarray.log2_transform = self.micro_log2.currentData()
+        self.manager.save_config(self.project_root, self.config)
+
+    def _apply_workflow_mode_gating(self, mode: str) -> None:
+        # Grey out the Workflow Settings controls the engine ignores in this input mode, so the
+        # UI matches what actually runs. Purely cosmetic: every gated field is already dropped
+        # from the Snakemake DAG for the mode (aligner/trim/rRNA/contam/quantifier/rseqc/
+        # organellar in microarray/count-matrix/deseq2-results; de_engine in microarray and
+        # deseq2-results; gsva needs a per-sample matrix, absent in deseq2-results).
+        alignment_active = mode in ("fastq", "sra", "mixed")
+        if getattr(self, "align_group", None) is not None:
+            self.align_group.setEnabled(alignment_active)
+            if alignment_active:
+                # A blanket re-enable would clobber the parent/child cascades; restore them.
+                self.trimmer.setEnabled(self.trim.isChecked())
+                self.rrna_tool.setEnabled(self.rrna.isChecked())
+                self._on_aligner_changed(self.aligner.currentText())
+        if getattr(self, "de_engine", None) is not None:
+            # microarray forces limma-trend; deseq2-results bypasses the DE step entirely.
+            self.de_engine.setEnabled(mode not in ("microarray", "deseq2_results"))
+        if getattr(self, "organellar", None) is not None:
+            self.organellar.setEnabled(alignment_active)  # needs a genome + GTF
+        if getattr(self, "rseqc", None) is not None:
+            self.rseqc.setEnabled(alignment_active)  # needs a genome BAM
+        if getattr(self, "gsva", None) is not None:
+            self.gsva.setEnabled(mode != "deseq2_results")  # needs the normalized matrix
 
     def _import_deseq2_results(self) -> None:
         if not self._require_project() or self.config is None:
@@ -1113,6 +1174,7 @@ class MainWindow(QMainWindow):
         align_form.addRow("rRNA filtering", self.rrna)
         align_form.addRow(self._info_label("rRNA tool", "SortMeRNA (default, reference-based, ~150 MB database) or RiboDetector (reference-free, no database). Used only when rRNA filtering is on."), self.rrna_tool)
         align_form.addRow(self._info_label("Contamination screen", "Optional FastQ Screen report of the % of reads matching a panel of reference genomes — a QC report, not a filter. Needs a FastQ Screen config (set it under Advanced parameters); skipped if none is given. Results appear in MultiQC."), self.contam_screen)
+        self.align_group = align_group
         layout.addWidget(align_group)
 
         de_group = QGroupBox("Differential expression")
@@ -1146,6 +1208,7 @@ class MainWindow(QMainWindow):
             "analyse them separately (the main DE runs on nuclear genes only; a separate organellar "
             "count subset and a per-sample organellar-fraction table are written). Applies to "
             "STAR/HISAT2/Salmon runs (needs a reference genome)."), self.organellar)
+        self.de_group = de_group
         layout.addWidget(de_group)
 
         # ---- Advanced tool parameters (collapsible). Defaults reproduce the validated
@@ -1212,6 +1275,7 @@ class MainWindow(QMainWindow):
         out_form.addRow("Figures", self.figures)
         out_form.addRow(self._info_label("GSVA pathway activity", "Sample-level gene-set activity scores from your custom gene sets (organism-safe). Needs a custom GMT under Custom gene sets."), self.gsva)
         out_form.addRow(self._info_label("Extended QC (RSeQC)", "Read-distribution + gene-body-coverage QC added to the MultiQC report. Genome-BAM routes only (not Salmon)."), self.rseqc)
+        self.out_group = out_group
         layout.addWidget(out_group)
 
         cs_group = QGroupBox("Custom gene sets (enrichment, optional)")
@@ -2770,7 +2834,7 @@ class MainWindow(QMainWindow):
         self.project_status.setPlainText(
             f"Created benchmark project: {root}\n"
             f"Dataset: {benchmark['name']} ({benchmark['organism_name']})\n"
-            f"Accessions: {', '.join(sample['original_accession'] for sample in benchmark['samples'])}\n"
+            f"Accessions: {', '.join(str(sample.get('original_accession') or sample.get('sample_id', '')) for sample in benchmark['samples'])}\n"
             + self._format_workdir_messages(messages)
         )
 
@@ -2807,6 +2871,11 @@ class MainWindow(QMainWindow):
             return
         self.project_root = root
         self.config = config
+        # Smoothly flag a comma decimal separator (from a comma-locale hand-edit): the values
+        # were read as dots, but tell the user so they can re-save to normalize the file.
+        _dec_warnings = decimal_comma_warnings(root)
+        if _dec_warnings:
+            QMessageBox.information(self, APP_NAME, "\n\n".join(_dec_warnings))
         # Drop the previous project's transient state (log, status, figures,
         # network) before showing the new one.
         self._clear_transient_ui()
@@ -2894,6 +2963,15 @@ class MainWindow(QMainWindow):
         self.de_engine.setCurrentIndex(_eng_idx if _eng_idx >= 0 else 0)
         _org_idx = self.organellar.findData(getattr(wf, "organellar_genes", "keep"))
         self.organellar.setCurrentIndex(_org_idx if _org_idx >= 0 else 0)
+        # Microarray source / log2 (Input Data tab). Block signals so loading does not
+        # trigger a redundant config save via _on_micro_option_changed.
+        _mc = self.config.microarray
+        for _combo, _val in ((self.micro_source, getattr(_mc, "source", "geo_series_matrix")),
+                             (self.micro_log2, getattr(_mc, "log2_transform", "auto"))):
+            _combo.blockSignals(True)
+            _mi = _combo.findData(_val)
+            _combo.setCurrentIndex(_mi if _mi >= 0 else 0)
+            _combo.blockSignals(False)
         self.fastp_q.setValue(self.config.fastp.qualified_quality_phred)
         self.fastp_len.setValue(self.config.fastp.length_required)
         self.trim_poly_g.setChecked(self.config.fastp.trim_poly_g)
@@ -3035,6 +3113,12 @@ class MainWindow(QMainWindow):
             return
         rows = detect_fastq_inputs(files)
         df = dataframe_from_rows(rows)
+        # Under WSL the run reads samples.tsv inside Linux, so a Windows-drive FASTQ path
+        # (C:\...) is unresolvable — translate the file columns to /mnt/<drive>/... first.
+        if getattr(self, "use_wsl", None) is not None and self.use_wsl.isChecked():
+            for _col in ("fastq_1", "fastq_2"):
+                if _col in df.columns:
+                    df[_col] = df[_col].map(lambda p: windows_to_wsl_path(p) if p else p)
         assert self.project_root is not None
         save_metadata(df, self.project_root / "config" / "samples.auto_generated.tsv")
         save_metadata(df, self.project_root / "config" / "samples.tsv")

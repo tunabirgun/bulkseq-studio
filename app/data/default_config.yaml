@@ -58,7 +58,6 @@ workflow:
   # Differential-expression engine (count-based routes): DESeq2 | limma-voom.
   # DESeq2 is the default; limma-voom is an opt-in cross-check.
   de_engine: DESeq2
-  custom_gene_list_analysis: true
   # Mitochondrial + chloroplast genes: keep | discard | separate (default keep).
   organellar_genes: keep
 fastp:
@@ -95,7 +94,6 @@ featurecounts:
   # featureCounts -s1/-s2 probe) and Salmon uses -l A, so this value is overwritten
   # and kept only as a fallback default.
   strandedness: 0
-  count_read_pairs: true
 deseq2:
   design_formula: "~ condition"
   reference_level:

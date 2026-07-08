@@ -253,3 +253,75 @@ benchmarks:
         base_count: 10236981900
         fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805007/DRR805007_1.fastq.gz
         fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805007/DRR805007_2.fastq.gz
+  - id: arabidopsis_hub2_microarray
+    type: microarray
+    name: Arabidopsis hub2-3 mutant vs Col-0 (ATH1 microarray)
+    organism_name: Arabidopsis thaliana
+    reference_preset: Arabidopsis thaliana
+    genome_size_category: plant
+    microarray:
+      gse_accession: GSE30735
+      platform: GPL198
+      source: geo_series_matrix
+    contrast:
+      name: hub2_3_vs_wild_type
+      factor: condition
+      numerator: hub2_3
+      denominator: wild_type
+      reference_level: wild_type
+    source_study: GSE30735 (BioProject PRJNA144135)
+    study_title: Transcriptome of the Arabidopsis hub2-3 (histone H2B monoubiquitination) mutant vs Col-0
+    description: >
+      Six-sample Affymetrix ATH1 microarray benchmark for the microarray (limma) route:
+      three Col-0 wild-type and three hub2-3 loss-of-function mutant 12-day-old whole
+      seedlings. HUB2 is a RING E3 ligase that monoubiquitinates histone H2B, so the hub2-3
+      knockout gives a clean single-gene-perturbation differential signature on a non-model
+      plant. No FASTQ or alignment: GEOquery ingests the submitter-normalized intensities and
+      limma runs the differential test, mirroring the pasilla perturb-vs-control design.
+    notes:
+      - Microarray benchmark (no alignment or genome reference); GEOquery downloads the GSE30735 series matrix and GPL198 annotation. Probes map to gene symbols, so enrichment keys on SYMBOL.
+      - Arabidopsis enrichment runs GO via clusterProfiler with org.At.tair.db (SYMBOL bitr), plus KEGG ath and g:Profiler athaliana as the organism-appropriate routes.
+      - Small download and 6 samples make this a fast end-to-end check of the microarray route on a non-model organism.
+    samples:
+      - {sample_id: GSM762823, condition: wild_type}
+      - {sample_id: GSM762824, condition: wild_type}
+      - {sample_id: GSM762825, condition: wild_type}
+      - {sample_id: GSM762826, condition: hub2_3}
+      - {sample_id: GSM762827, condition: hub2_3}
+      - {sample_id: GSM762828, condition: hub2_3}
+  - id: yeast_cbc2_microarray
+    type: microarray
+    name: Yeast cbc2-delta vs wild-type (YG-S98 microarray)
+    organism_name: Saccharomyces cerevisiae
+    reference_preset: Saccharomyces cerevisiae
+    genome_size_category: yeast
+    microarray:
+      gse_accession: GSE6705
+      platform: GPL90
+      source: geo_series_matrix
+    contrast:
+      name: cbc2_vs_wild_type
+      factor: condition
+      numerator: cbc2
+      denominator: wild_type
+      reference_level: wild_type
+    source_study: GSE6705 (BioProject PRJNA99021)
+    study_title: Transcripts regulated by the nuclear cap-binding complex subunit Cbc2 in Saccharomyces cerevisiae
+    description: >
+      Six-sample Affymetrix Yeast Genome S98 (YG-S98) microarray benchmark for the microarray
+      (limma) route: three isogenic wild-type (Y255) and three cbc2-delta deletion (Y2685)
+      strains. Cbc2 is the small subunit of the nuclear cap-binding complex; the deletion gives
+      a clean, high-signal knockout contrast on a second, fungal non-model organism. GEOquery
+      ingests the submitter-normalized intensities and limma runs the differential test; no
+      alignment or reference.
+    notes:
+      - Microarray benchmark (no alignment or genome reference); GEOquery downloads the GSE6705 series matrix and GPL90 annotation. Probes map to gene symbols, so enrichment keys on SYMBOL.
+      - Yeast enrichment runs GO via clusterProfiler with org.Sc.sgd.db (SYMBOL bitr), plus KEGG sce and g:Profiler scerevisiae.
+      - A different non-model organism than the Arabidopsis microarray benchmark, exercising the microarray route on a fungal genome.
+    samples:
+      - {sample_id: GSM154157, condition: wild_type}
+      - {sample_id: GSM154623, condition: wild_type}
+      - {sample_id: GSM154627, condition: wild_type}
+      - {sample_id: GSM154628, condition: cbc2}
+      - {sample_id: GSM154629, condition: cbc2}
+      - {sample_id: GSM154631, condition: cbc2}

@@ -147,12 +147,17 @@ lfc_thr <- if (is.list(de_cfg)) num_cfg("lfc_threshold", 1) else 1
 if (has_counts) {
 pca <- plotPCA(vsd, intgroup = group_var, ntop = pca_ntop, returnData = TRUE)
 pv <- round(100 * attr(pca, "percentVar"))
+# Expand the discrete palette when the factor has more levels than the palette has
+# colours, else scale_colour_manual aborts ("Insufficient values in manual scale").
+pca_disc <- pal_spec$discrete
+n_grp_pca <- length(unique(pca$group))
+if (n_grp_pca > length(pca_disc)) pca_disc <- grDevices::colorRampPalette(pca_disc)(n_grp_pca)
 p_pca <- ggplot(pca, aes(PC1, PC2, colour = group)) +
   geom_point(size = point_size, alpha = 0.9) +
   geom_text_repel(aes(label = name), family = base_family, size = 3, seed = 1,
                   min.segment.length = 0, box.padding = 0.5, point.padding = 0.3,
                   max.overlaps = Inf, segment.colour = "grey55", show.legend = FALSE) +
-  scale_colour_manual(values = pal_spec$discrete, name = group_var) +
+  scale_colour_manual(values = pca_disc, name = group_var) +
   scale_x_continuous(expand = expansion(mult = 0.08)) +
   scale_y_continuous(expand = expansion(mult = 0.08)) +
   labs(x = paste0("PC1 (", pv[1], "%)"), y = paste0("PC2 (", pv[2], "%)")) +

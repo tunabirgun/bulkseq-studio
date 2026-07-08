@@ -627,20 +627,32 @@ class ReadinessDialog(QDialog):
 
     def _update_r_card(self, items: list[ReadinessItem]) -> None:
         if not self._is_windows:
-            if self._status_of(items, "Rscript") == "PASS":
+            r_ok = self._status_of(items, "Rscript") == "PASS"
+            pkgs_ok = self._status_of(items, "R packages") == "PASS"
+            if r_ok and pkgs_ok:
                 self.card_r.update_state(
                     STATE_READY,
-                    "Rscript is on PATH; DESeq2, enrichment and figures can run.",
+                    "Rscript and the R analysis packages are installed; DESeq2, enrichment and figures can run.",
                 )
-            else:
+            elif not r_ok:
                 self.card_r.update_state(
                     STATE_ACTION,
                     "Rscript is not on PATH. Install the R/DESeq2 stack into the environment so "
                     "DESeq2, enrichment and figures can run.",
                 )
+            else:
+                self.card_r.update_state(
+                    STATE_ACTION,
+                    "Rscript is on PATH but some required R packages are missing; install/repair the "
+                    "R/DESeq2 stack so DESeq2, enrichment and figures can run.",
+                )
             return
         core_ready = has_wsl_core_environment(items)
-        rscript_ok = self._status_of(items, "WSL Rscript") == "PASS"
+        # Both the binary AND the analysis packages must be present — a bare Rscript with missing
+        # Bioconductor packages would still fail DESeq2/enrichment (and is exactly how an error-127
+        # or a mid-run R failure slips past a green-looking card).
+        rscript_ok = (self._status_of(items, "WSL Rscript") == "PASS"
+                      and self._status_of(items, "WSL R packages") == "PASS")
         if rscript_ok:
             self.card_r.update_state(
                 STATE_READY,

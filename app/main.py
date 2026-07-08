@@ -7,7 +7,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QRect, QSettings, Qt, QUrl
+from PySide6.QtCore import QLocale, QRect, QSettings, Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMessageBox, QSplashScreen
 
@@ -198,6 +198,11 @@ def main() -> int:
     os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --no-sandbox --in-process-gpu")
     os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
     app = QApplication(sys.argv)
+    # Force a dot decimal separator app-wide, independent of the OS/BIOS language. On a
+    # comma-decimal locale (Turkish, German, ...) Qt spin boxes would otherwise show/accept
+    # "0,05", which corrupts numeric config values (alpha, |log2FC|) once written to YAML/R.
+    # Set before any widget is built so every QDoubleSpinBox/validator uses a dot.
+    QLocale.setDefault(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates))
     _install_excepthook()  # log + surface unhandled errors instead of crashing
     # One shared QSettings identity backs theme, window geometry, and splitter state.
     app.setOrganizationName("BulkSeq")
