@@ -81,8 +81,13 @@ WSL_TOOLS = {
 # optional-engine routes. Probed as one item so the R stack's completeness (not just "Rscript
 # exists") is verified — including the 0.16.0 additions edgeR, limma-voom (limma) and GSVA.
 # GEOquery + affy cover the microarray/limma route, so a core-only env that lacks the
-# microarray R stack is flagged instead of passing silently (an error-127 trap).
-R_ANALYSIS_PACKAGES = ("DESeq2", "edgeR", "limma", "GSVA", "clusterProfiler", "apeglm", "ashr", "GEOquery", "affy")
+# microarray R stack is flagged instead of passing silently (an error-127 trap). GO.db, DOSE,
+# enrichplot and fgsea are the clusterProfiler enrichment cluster (GO.db is a transitive dep a
+# solve can drop, which broke enrichment ~30 min into a run), and STRINGdb backs the PPI network
+# — probing them here catches a broken enrichment/PPI env from Check Environment, before a run.
+# Presence-checked (installed.packages), not load-tested, to stay under the 20s WSL probe timeout.
+R_ANALYSIS_PACKAGES = ("DESeq2", "edgeR", "limma", "GSVA", "clusterProfiler", "GO.db", "DOSE",
+                       "enrichplot", "fgsea", "STRINGdb", "apeglm", "ashr", "GEOquery", "affy")
 
 
 @dataclass(frozen=True)
@@ -246,7 +251,7 @@ def _wsl_r_packages_probe_command(env_name: str, packages: tuple[str, ...]) -> s
 
 def _r_packages_item(name: str, out: str, ok: bool) -> ReadinessItem:
     if ok and out == "OK":
-        return ReadinessItem(name, "PASS", "DESeq2, edgeR, limma, GSVA, clusterProfiler, apeglm, ashr installed",
+        return ReadinessItem(name, "PASS", "R analysis stack installed (DE engines, enrichment incl. GO.db, PPI, microarray)",
                              "DESeq2 / engines / enrichment / GSVA")
     return ReadinessItem(name, "REVIEW_REQUIRED", out or "R analysis packages not verified",
                          "DESeq2 / engines / enrichment / GSVA")

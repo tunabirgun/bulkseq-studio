@@ -5,9 +5,17 @@ ENV_NAME="${1:-bulkseq}"
 PROFILE="${2:-core}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ "$PROFILE" = "full" ]; then
-  ENV_FILE="$REPO_DIR/workflow/envs/bulkseq_full.yaml"
+  # Install the full R/Bioconductor + CLI stack from the pinned LOCK, not the floating
+  # bulkseq_full.yaml. A fresh solve of the float spec can silently drop a transitive
+  # dependency (e.g. GO.db) and leave clusterProfiler unable to load; the lock pins every
+  # package and build so the env reproduces exactly. bulkseq_full.yaml stays as a fallback
+  # for what the lock cannot satisfy: a build garbage-collected from the channels, or a host
+  # that is not linux-64 (the lock is a linux-64 snapshot).
+  ENV_FILE="$REPO_DIR/workflow/envs/bulkseq.lock.yaml"
+  FALLBACK_ENV_FILE="$REPO_DIR/workflow/envs/bulkseq_full.yaml"
 else
   ENV_FILE="$REPO_DIR/workflow/envs/bulkseq_core.yaml"
+  FALLBACK_ENV_FILE=""
 fi
 LOG_DIR="$REPO_DIR/scripts/logs"
 LOG_FILE="$LOG_DIR/wsl_bioenv_install.log"
@@ -158,26 +166,29 @@ export MAMBA_ROOT_PREFIX="$MAMBA_ROOT"
 echo ""
 echo "Stage 2/3: Creating/updating the BulkSeq micromamba environment"
 
-# Clean rebuild: an in-place `env update` across versions can leave the R/Bioconductor
-# stack ABI-inconsistent (R base moves but packages built against the old R do not),
-# which makes the first R step crash on library load. When BULKSEQ_REBUILD=1, remove the
-# existing environment and create it fresh so the whole stack is internally consistent.
+# The full profile installs from the pinned lock so the R/Bioconductor stack reproduces
+# exactly (a re-solve of the float spec can drop a transitive dep like GO.db). An in-place
+# `env update` can still leave a package installed-but-unloadable (a build GC, an r-base ABI
+# drift); Stage 2b below verifies the stack actually loads and does one clean rebuild if not.
+# BULKSEQ_REBUILD=1 forces the clean rebuild up front.
 REBUILD="${BULKSEQ_REBUILD:-0}"
 
-# Create the env if absent, otherwise update it in place from the profile yaml. On a
-# rebuild, remove any existing env first so the create path always runs.
-run_env_step() {
-  if [ "$REBUILD" = "1" ] && "$MICROMAMBA" env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
-    echo "Rebuild requested: removing existing environment '$ENV_NAME' for a clean install…"
-    "$MICROMAMBA" env remove --yes -n "$ENV_NAME" || rm -rf "$MAMBA_ROOT/envs/$ENV_NAME"
-    REBUILD=0  # only remove once, even if the create is retried after a cache clean
-  fi
-  if "$MICROMAMBA" env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
-    echo "Updating existing micromamba environment: $ENV_NAME"
-    "$MICROMAMBA" env update --yes -n "$ENV_NAME" -f "$ENV_FILE"
+env_exists() { "$MICROMAMBA" env list | awk '{print $1}' | grep -qx "$ENV_NAME"; }
+
+remove_env() {
+  echo "Removing existing environment '$ENV_NAME' for a clean install…"
+  "$MICROMAMBA" env remove --yes -n "$ENV_NAME" || rm -rf "$MAMBA_ROOT/envs/$ENV_NAME"
+}
+
+# Create the env from $1 if absent, otherwise update it in place. Returns micromamba's exit code.
+create_or_update() {
+  local env_file="$1"
+  if env_exists; then
+    echo "Updating environment '$ENV_NAME' from $(basename "$env_file")"
+    "$MICROMAMBA" env update --yes -n "$ENV_NAME" -f "$env_file"
   else
-    echo "Creating micromamba environment: $ENV_NAME"
-    "$MICROMAMBA" create --yes -n "$ENV_NAME" -f "$ENV_FILE"
+    echo "Creating environment '$ENV_NAME' from $(basename "$env_file")"
+    "$MICROMAMBA" create --yes -n "$ENV_NAME" -f "$env_file"
   fi
 }
 
@@ -190,12 +201,57 @@ clean_index_cache() {
   rm -rf "$MAMBA_ROOT/pkgs/cache" 2>/dev/null || true
 }
 
-# First failure is expected to be the corrupt cache; clean it and retry once.
-# The retry runs under set -e, so a second failure aborts with a non-zero exit.
-if ! run_env_step; then
+# One create/update from $1, with a single cache-clean retry (the first failure is usually a
+# truncated shard). Returns non-zero only if both attempts fail.
+attempt_install() {
+  local env_file="$1"
+  if create_or_update "$env_file"; then return 0; fi
   echo "Environment step failed; cleaning the index cache and retrying once."
   clean_index_cache
-  run_env_step
+  create_or_update "$env_file"
+}
+
+# Full profile only: does the R/Bioconductor stack actually LOAD? Reads a stdout marker,
+# NOT the exit code — `micromamba run` can mask a non-zero status. A dropped GO.db or an
+# r-base ABI drift leaves these installed-but-unloadable, which is what kills enrichment
+# mid-run. Core/empty profile -> trivially "loads".
+R_STACK_PROBE='q<-c("DESeq2","limma","clusterProfiler","GO.db","DOSE","enrichplot","fgsea","STRINGdb"); ok<-function(p) isTRUE(tryCatch(suppressWarnings(suppressMessages(requireNamespace(p,quietly=TRUE))),error=function(e)FALSE)); bad<-q[!vapply(q,ok,logical(1))]; cat(if(length(bad)) paste0("R_STACK_BAD:",paste(bad,collapse=",")) else "R_STACK_OK")'
+r_stack_loads() {
+  [ "$PROFILE" = "full" ] || return 0
+  local out
+  out="$("$MICROMAMBA" run -n "$ENV_NAME" Rscript --vanilla -e "$R_STACK_PROBE" 2>/dev/null || true)"
+  echo "$out" | grep -q "R_STACK_OK"
+}
+
+# Stage 2a: install/repair from the lock (or core.yaml). Fall back to the floating spec only
+# for what the lock cannot satisfy (a GC'd build or a non-linux-64 host).
+if [ "$REBUILD" = "1" ] && env_exists; then
+  remove_env
+fi
+if attempt_install "$ENV_FILE"; then
+  :
+elif [ -n "$FALLBACK_ENV_FILE" ] && [ "$FALLBACK_ENV_FILE" != "$ENV_FILE" ]; then
+  echo "Locked install failed (a pinned build may be unavailable, or this host is not linux-64);"
+  echo "falling back to the floating spec $(basename "$FALLBACK_ENV_FILE")."
+  attempt_install "$FALLBACK_ENV_FILE" || { echo "Environment setup failed." >&2; exit 1; }
+else
+  echo "Environment setup failed." >&2
+  exit 1
+fi
+
+# Stage 2b (full profile): confirm the R stack loads. An in-place update can leave a package
+# installed-but-unloadable that `env update` will not repair; escalate to ONE clean rebuild
+# from the lock, which reproduces a self-consistent stack. No-op for a healthy or core env.
+if ! r_stack_loads; then
+  echo "The R/Bioconductor stack did not load after the update; doing a clean rebuild from the lock…"
+  remove_env
+  attempt_install "$ENV_FILE" || { echo "Clean rebuild failed." >&2; exit 1; }
+  if ! r_stack_loads; then
+    echo "ERROR: the R/Bioconductor stack still does not load after a clean rebuild." >&2
+    echo "See the messages above for the failing packages; the environment may need manual attention." >&2
+    exit 1
+  fi
+  echo "Clean rebuild succeeded; the R/Bioconductor stack now loads."
 fi
 
 echo ""

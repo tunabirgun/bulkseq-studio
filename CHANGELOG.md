@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.2 — 2026-07-09
+
+### Fixed
+
+- **The environment install/repair no longer drops packages, and it now verifies itself.** The `bulkseq` environment is created from the pinned lockfile (`bulkseq.lock.yaml`) instead of re-solving the floating spec — a re-solve is what silently dropped a transitive dependency like `GO.db` and left clusterProfiler unable to load. After installing, the setup load-tests the R/Bioconductor stack (DESeq2, limma, clusterProfiler, GO.db, DOSE, enrichplot, fgsea, STRINGdb) and, if anything fails to load, does one clean rebuild from the lock — so setup can no longer report success while leaving a broken enrichment stack behind. The floating spec is kept only as a fallback for a build removed from the channels or a non-linux host.
+- **Check Environment now catches a broken enrichment/PPI stack before a run starts.** The environment check probes GO.db, DOSE, enrichplot, fgsea and STRINGdb (the clusterProfiler enrichment cluster and the STRING PPI package) in addition to DESeq2/limma, so a missing or dropped package is flagged from the Check Environment button rather than only when a run reaches the enrichment step ~30 minutes in.
+
 ## 0.19.1 — 2026-07-09
 
 ### Fixed
