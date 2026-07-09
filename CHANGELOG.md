@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.19.3 — 2026-07-09
+
+### Fixed
+
+- **Check Environment now detects a broken R stack, not just a missing one.** The environment check load-tests the R/Bioconductor packages (it actually loads each) instead of only checking they are present, so a stack that is installed but will not load — a dropped GO.db, or an R update that left the packages incompatible — now shows the R card as needing attention instead of a false "ready". The load-test runs off the UI thread with a generous timeout, so a slow first check never freezes the window.
+- **The environment check re-opens after an app update, and keeps nudging a broken environment.** The first-run environment prompt is now tied to the app version and clears itself whenever the R stack is found broken, so updating the app re-surfaces a carried-over broken environment instead of silently keeping it. Previously the prompt fired once ever, so an environment that broke between versions was never re-checked — the direct cause of "the same error again" after an update.
+- **A run that fails because the R environment can't load now offers a one-click fix.** When a run stops with an R load error (a dropped GO.db or an incompatible package), the app recognizes it as an environment problem — not a data or design error — and offers to open the environment check to rebuild from the pinned lockfile. Generic setup, contrast and download errors are excluded, so the offer only appears when a rebuild is the right fix.
+- **A load-broken R stack is routed to a clean rebuild, and the microarray check load-tests GEOquery.** The environment guidance now sends a stack that will not load to a clean rebuild from the lock (an in-place install cannot repair an ABI-inconsistent stack), and the microarray run check now also load-tests GEOquery so a microarray run whose environment is missing it fails fast with a clear message instead of dying raw during GEO ingest.
+- **Removed conflicting duplicate pins from the environment lockfile.** numpy, pandas and python-dateutil were pinned in both the conda and pip layers, letting pip silently overwrite the conda build; the redundant pip pins are gone. New tests keep the lockfile a superset of the environment spec, forbid conda/pip double-pins, and keep the GO.db enrichment cluster present in every environment guard so these gaps cannot silently return.
+
 ## 0.19.2 — 2026-07-09
 
 ### Fixed

@@ -118,6 +118,46 @@ def test_approve_review_resets_on_project_switch() -> None:
     window.close()
 
 
+def test_env_broken_run_offers_rebuild() -> None:
+    # An R-load failure in the run output flags the environment broken and, at run end, offers a
+    # one-click rebuild; a generic setup/design error must NOT (it is not an environment problem,
+    # so offering "rebuild the environment" would mislead).
+    _app()
+    window = MainWindow()
+    window._env_broken_detected = False
+
+    # A bad-contrast / generic setup error is not an environment problem.
+    window._on_run_line("PROJECT SETUP ERROR: The design uses 'control' for 'condition', but the "
+                        "sample sheet has no such value.")
+    assert window._env_broken_detected is False
+
+    # The R load-test failure message (and a raw R load error) do flag it.
+    window._on_run_line("PROJECT SETUP ERROR: These required R/Bioconductor packages will not load "
+                        "in the bulkseq env: clusterProfiler,GO.db,DOSE,enrichplot.")
+    assert window._env_broken_detected is True
+    window._env_broken_detected = False
+    window._on_run_line("Error: package or namespace load failed: there is no package called 'GO.db'")
+    assert window._env_broken_detected is True
+
+    # At run end, a failure carrying the env-broken flag routes to the rebuild offer.
+    called = {"n": 0}
+    window._offer_env_rebuild = lambda: called.__setitem__("n", called["n"] + 1)  # type: ignore[method-assign]
+    window._stop_in_progress = False
+    window._run_mode = None
+    window._on_run_finished(1)
+    QApplication.processEvents()
+    assert called["n"] == 1
+
+    # A failure WITHOUT the env-broken flag must not offer a rebuild.
+    window._env_broken_detected = False
+    window._stop_in_progress = False
+    window._run_mode = None
+    window._on_run_finished(1)
+    QApplication.processEvents()
+    assert called["n"] == 1
+    window.close()
+
+
 def test_enrichment_without_organism_flags_review() -> None:
     # Enrichment enabled with no organism id (the count-matrix trap) must surface
     # as REVIEW_REQUIRED so the run gate forces the user to acknowledge it.

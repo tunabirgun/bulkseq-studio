@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QSettings, QThread, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -529,6 +529,11 @@ class ReadinessDialog(QDialog):
         # Keep the full machine-readable summary available in the log area.
         if self._details_visible:
             self.text.setPlainText(self._compose_details(items))
+        # A broken R/Bioconductor stack clears the version-scoped first-run prompt stamp so the
+        # next app launch re-opens this check — a broken env should keep being nudged until it is
+        # repaired, not silenced after one dismissal.
+        if any(it.name in ("WSL R packages", "R packages") and it.status != "PASS" for it in items):
+            QSettings().remove("env_check_prompted_version")
 
     def _ready_count(self) -> int:
         ready = 0

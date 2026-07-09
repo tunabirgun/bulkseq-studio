@@ -67,14 +67,23 @@ _CORE_R_PACKAGES = [
 ]
 
 
-def check_r_packages() -> list[dict[str, str]]:
+def check_r_packages(config: dict | None = None) -> list[dict[str, str]]:
     """Fail fast if the bulkseq R environment cannot load the packages the pipeline needs."""
     rscript = shutil.which("Rscript")
     if not rscript:
         return [{"status": "FAIL", "message": (
             "Rscript is not on PATH, so the R/Bioconductor environment (bulkseq) is not active. "
             "Activate it, or recreate it from workflow/envs/bulkseq.lock.yaml, then re-run.")}]
-    pkgs = ", ".join(f'"{p}"' for p in _CORE_R_PACKAGES)
+    packages = list(_CORE_R_PACKAGES)
+    # A microarray run loads GEOquery (and affy for the raw-CEL source) in ingest_geo.R; add them
+    # on that route so a missing microarray package fails fast here with a clear message instead
+    # of dying raw inside ingest_geo.R with "no package called 'GEOquery'".
+    cfg = config or {}
+    if (cfg.get("input") or {}).get("type") == "microarray":
+        packages.append("GEOquery")
+        if ((cfg.get("microarray") or {}).get("source")) == "affy_cel":
+            packages.append("affy")
+    pkgs = ", ".join(f'"{p}"' for p in packages)
     r_code = (
         f"pkgs <- c({pkgs}); "
         "ok <- function(p) tryCatch(suppressWarnings(suppressMessages("
@@ -128,7 +137,7 @@ def main() -> int:
     if not samples_path.exists():
         messages.append({"status": "FAIL", "message": f"Missing samples table: {samples_path}"})
     messages.extend(check_design(payload, samples_path))
-    messages.extend(check_r_packages())
+    messages.extend(check_r_packages(payload))
     if not messages:
         messages.append({"status": "PASS", "message": "Project setup files are present."})
     write_payload(Path(args.out), "00_project_setup", messages)

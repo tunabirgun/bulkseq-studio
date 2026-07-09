@@ -46,7 +46,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QDesktopServices, QFontDatabase, QKeySequence, QPixmap, QShortcut
 from PySide6.QtCore import Qt, QUrl
 
-from app.constants import APP_NAME, MIN_UNIQUE_MAPPED_WARN_PCT
+from app.constants import APP_NAME, APP_VERSION, MIN_UNIQUE_MAPPED_WARN_PCT
 from app.core.benchmark_datasets import create_benchmark_project, load_benchmark_catalog
 from app.core.config_models import AppConfig
 from app.core.input_detection import detect_fastq_inputs
@@ -218,11 +218,16 @@ class MainWindow(QMainWindow):
         if os.environ.get("BULKSEQ_SKIP_READINESS_DIALOG") == "1" or os.environ.get("BULKSEQ_SELFTEST") == "1":
             return
         settings = QSettings()
-        if settings.value("env_check_prompted", False, type=bool):
+        # Version-scoped, not a permanent boolean: re-open the environment check after an app
+        # update so a carried-over broken env (e.g. one whose R stack stopped loading between
+        # versions) is re-surfaced instead of silently persisting and failing the next run.
+        # The environment check clears this stamp when it finds the R stack broken, so a broken
+        # env keeps being re-nudged until it is repaired.
+        if settings.value("env_check_prompted_version", "", type=str) == APP_VERSION:
             return
-        settings.setValue("env_check_prompted", True)
+        settings.setValue("env_check_prompted_version", APP_VERSION)
         self.statusBar().showMessage(
-            "First run: opening the environment check so any missing tool is caught before a run.", 9000)
+            "Opening the environment check so any missing or broken tool is caught before a run.", 9000)
         self.show_readiness_dialog()
 
     def _install_shortcuts(self) -> None:
@@ -1813,6 +1818,16 @@ class MainWindow(QMainWindow):
         if re.search(r"Error in rule\s|WorkflowError|Exiting because a job execution failed"
                      r"|MissingOutputException", line):
             self._run_error_detected = True
+        # An R environment that cannot load its Bioconductor stack (a dropped GO.db or an
+        # r-base drift) fails with one of these signatures: our validate_project load-test
+        # ("will not load in the bulkseq env"), or a raw R load error inside enrichment/ingest.
+        # This class is repairable by rebuilding the env from the lock, so flag it separately
+        # from a bad-contrast / missing-input setup error (which is NOT an env problem) to offer
+        # a one-click rebuild at the end.
+        if not getattr(self, "_env_broken_detected", False) and re.search(
+                r"will not load in the bulkseq env|there is no package called"
+                r"|unable to load shared object", line):
+            self._env_broken_detected = True
         match = re.search(r"(\d+)\s+of\s+(\d+)\s+steps", line)
         if match:
             done, total = int(match.group(1)), int(match.group(2))
@@ -2000,7 +2015,28 @@ class MainWindow(QMainWindow):
                 self.log_text.append(
                     "A step failed. Scroll up for the 'Error in rule' line and its reason; the "
                     "full detail is in the rule's log under logs/ in the project folder.")
+            # If the failure was the R environment failing to load its packages (not a data or
+            # design problem), offer a one-click path to rebuild it from the pinned lock.
+            if getattr(self, "_env_broken_detected", False):
+                QTimer.singleShot(0, self._offer_env_rebuild)
         self.log_text.append(f"Process finished with exit code {code}")
+
+    def _offer_env_rebuild(self) -> None:
+        # The run failed because the R/Bioconductor stack in the bulkseq env would not load (a
+        # dropped GO.db or an r-base drift). An in-place install cannot repair an ABI-inconsistent
+        # stack, so send the user to the environment check, where Rebuild recreates it cleanly
+        # from the pinned lock. The readiness R card now load-tests the stack, so it shows red.
+        reply = QMessageBox.question(
+            self, APP_NAME,
+            "This run stopped because the R/Bioconductor environment could not load its packages "
+            "(usually a dropped GO.db, or an R update that left the packages incompatible). This "
+            "is not a problem with your data or settings — the environment needs a clean rebuild "
+            "from the pinned lockfile.\n\nOpen the environment check to rebuild it now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.show_readiness_dialog()
 
     def _stop_run(self, _checked: bool = False, announce: bool = True) -> None:
         if self.runner is None or self._stop_in_progress:
@@ -4256,6 +4292,7 @@ class MainWindow(QMainWindow):
         self._run_mode = mode
         self._recovery_offered = False
         self._run_error_detected = False
+        self._env_broken_detected = False
         self._mapping_checked = set()
         self._mapping_halt_decided = False
         self._saw_star_align = False

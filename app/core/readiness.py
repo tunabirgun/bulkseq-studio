@@ -61,6 +61,12 @@ BIOINFORMATICS_TOOLS = {
     **OPTIONAL_ROUTE_TOOLS,
 }
 
+# The R-package probe LOAD-tests the whole Bioconductor stack (requireNamespace loads each
+# namespace + its compiled code), which is slow cold — measured ~9s warm, so allow generous
+# headroom on a cold/slow machine. It runs on a background thread (ReadinessCheckThread), so a
+# long wait never blocks the UI. A short timeout here would false-fail a healthy-but-cold env.
+R_PROBE_TIMEOUT_SEC = 120
+
 WSL_ENV_NAME = "bulkseq"
 WSL_TOOLS = {
     "snakemake": "Snakemake workflow engine",
@@ -165,7 +171,7 @@ def check_wsl_bulkseq_environment(distro: str | None = None, env_name: str = WSL
             items.append(ReadinessItem(f"WSL {command}", "PASS", f"{log_paths[command]} (from setup log)", purpose))
         else:
             items.append(ReadinessItem(f"WSL {command}", "REVIEW_REQUIRED", _short_output(result) or "not found in WSL bulkseq environment", purpose))
-    rp = _run_wsl(distro, _wsl_r_packages_probe_command(env_name, R_ANALYSIS_PACKAGES))
+    rp = _run_wsl(distro, _wsl_r_packages_probe_command(env_name, R_ANALYSIS_PACKAGES), timeout=R_PROBE_TIMEOUT_SEC)
     items.append(_r_packages_item("WSL R packages", _short_output(rp), rp.returncode == 0))
     return items
 
@@ -188,7 +194,7 @@ def install_python_packages(requirements_path: Path) -> subprocess.Popen[str]:
     )
 
 
-def _run_wsl(distro: str | None, command: str) -> subprocess.CompletedProcess[str]:
+def _run_wsl(distro: str | None, command: str, timeout: int = 20) -> subprocess.CompletedProcess[str]:
     # Pass the command base64-encoded and decode it inside WSL. A bare complex command
     # (loops, arrays, nested $()/quoting) does NOT survive subprocess -> wsl.exe command-line
     # reconstruction and silently mangles — the base64 payload is pure [A-Za-z0-9+/=], so it
@@ -201,7 +207,7 @@ def _run_wsl(distro: str | None, command: str) -> subprocess.CompletedProcess[st
             cmd,
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=timeout,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -233,11 +239,19 @@ def _wsl_tool_probe_command(env_name: str, tool: str) -> str:
 
 
 def _r_packages_check_code(packages: tuple[str, ...]) -> str:
-    # One-liner R that prints OK or "missing: pkg,pkg" — checks the analysis-stack packages.
+    # One-liner R that prints OK or "cannot load: pkg,pkg". LOAD-tests each package
+    # (requireNamespace actually loads the namespace + its compiled code), not just checks
+    # presence — a package can be installed yet fail to load when a transitive dependency like
+    # GO.db was dropped, or an r-base bump left it ABI-incompatible. A presence check
+    # (installed.packages) would call that "OK" and hide the exact break this probe exists to
+    # catch. This is why the caller gives it R_PROBE_TIMEOUT_SEC: a cold full-stack load is slow.
     pkg_vec = ", ".join(f'"{p}"' for p in packages)
     return (
-        f'p<-c({pkg_vec}); m<-setdiff(p, rownames(installed.packages())); '
-        'cat(if (length(m)==0) "OK" else paste("missing:", paste(m, collapse=",")))'
+        f'p<-c({pkg_vec}); '
+        'ld<-function(x) isTRUE(tryCatch(suppressWarnings(suppressMessages('
+        'requireNamespace(x, quietly=TRUE))), error=function(e) FALSE)); '
+        'm<-p[!vapply(p, ld, logical(1))]; '
+        'cat(if (length(m)==0) "OK" else paste("cannot load:", paste(m, collapse=",")))'
     )
 
 
@@ -263,7 +277,7 @@ def _native_r_packages_item() -> ReadinessItem:
                              "DESeq2 / engines / enrichment / GSVA")
     try:
         rp = subprocess.run(["Rscript", "-e", _r_packages_check_code(R_ANALYSIS_PACKAGES)],
-                            capture_output=True, text=True, timeout=60, check=False)
+                            capture_output=True, text=True, timeout=R_PROBE_TIMEOUT_SEC, check=False)
         text = (rp.stdout or rp.stderr or "").strip()
         out = text.splitlines()[-1][:240] if text else ""
         return _r_packages_item("R packages", out, rp.returncode == 0)
@@ -378,6 +392,13 @@ def next_readiness_actions(items: list[ReadinessItem]) -> list[str]:
         actions.append("Salmon and HISAT2 aligner routes need additional tools not found in the env. Click Install/Repair Core WSL Env to install: " + ", ".join(missing_alt) + ".")
     if by_name.get("WSL Rscript", ReadinessItem("WSL Rscript", "REVIEW_REQUIRED", "", "")).status != "PASS":
         actions.append("After core tools pass, click Install Full R/DESeq2 Stack to enable DESeq2/enrichment/figure execution.")
+    # Rscript exists but the Bioconductor packages will not load (a dropped GO.db or an r-base
+    # drift): an in-place install cannot repair an ABI-inconsistent stack, so route to a clean
+    # rebuild from the pinned lock instead of "Install Full Stack".
+    elif by_name.get("WSL R packages", ReadinessItem("WSL R packages", "PASS", "", "")).status != "PASS":
+        actions.append("Rscript is installed but the R/Bioconductor packages will not load (usually a dropped "
+                       "GO.db or an r-base drift). An in-place install will not repair this — click Rebuild "
+                       "from scratch to recreate the environment from the pinned lock.")
     if not actions:
         actions.append("Setup is ready for WSL-based Snakemake runs.")
     return actions
