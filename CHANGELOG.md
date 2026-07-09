@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.1 — 2026-07-09
+
+### Fixed
+
+- **Enrichment no longer dies ~30 minutes into a run when `GO.db` is missing.** `GO.db` (the GO term database, a hard dependency of clusterProfiler / DOSE / enrichplot) could be dropped from a solve of the `bulkseq` environment, leaving clusterProfiler unable to load and the run failing at the enrichment / DE-vs-gene-set overlap step with `there is no package called 'GO.db'`. It is now pinned explicitly in the environment spec so a solve can never omit it.
+- **The project environment check now load-tests the core R/Bioconductor stack.** Before a run starts, the setup check loads (not just looks for) DESeq2, limma, clusterProfiler, GO.db, DOSE, enrichplot, fgsea, and the figure/network packages. A missing package, or one left binary-incompatible by an `r-base` drift off the pinned 4.5.2 (which alone breaks compiled Bioconductor packages), now fails immediately with a clear message and a recovery command instead of wasting minutes of alignment and counting first.
+
 ## 0.19.0 — 2026-07-08
 
 ### Added

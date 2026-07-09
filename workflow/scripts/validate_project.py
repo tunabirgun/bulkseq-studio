@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -55,6 +57,48 @@ def check_design(config: dict, samples_path: Path) -> list[dict[str, str]]:
     return msgs
 
 
+# R / Bioconductor packages a standard run loads regardless of organism or DE engine. Load-
+# testing (not just presence) also catches a package left binary-incompatible by an r-base
+# drift (the env pins r-base=4.5.2 for that reason). Fail fast here with a clear message
+# instead of dying minutes later in enrichment/figures/networks.
+_CORE_R_PACKAGES = [
+    "DESeq2", "limma", "clusterProfiler", "GO.db", "DOSE", "enrichplot", "fgsea",
+    "AnnotationDbi", "ggplot2", "ggrepel", "pheatmap", "igraph", "STRINGdb",
+]
+
+
+def check_r_packages() -> list[dict[str, str]]:
+    """Fail fast if the bulkseq R environment cannot load the packages the pipeline needs."""
+    rscript = shutil.which("Rscript")
+    if not rscript:
+        return [{"status": "FAIL", "message": (
+            "Rscript is not on PATH, so the R/Bioconductor environment (bulkseq) is not active. "
+            "Activate it, or recreate it from workflow/envs/bulkseq.lock.yaml, then re-run.")}]
+    pkgs = ", ".join(f'"{p}"' for p in _CORE_R_PACKAGES)
+    r_code = (
+        f"pkgs <- c({pkgs}); "
+        "ok <- function(p) tryCatch(suppressWarnings(suppressMessages("
+        "requireNamespace(p, quietly = TRUE))), error = function(e) FALSE); "
+        "bad <- pkgs[!vapply(pkgs, ok, logical(1))]; "
+        "if (length(bad)) { cat(paste(bad, collapse = ',')); quit(status = 1) }"
+    )
+    try:
+        proc = subprocess.run([rscript, "--vanilla", "-e", r_code],
+                              capture_output=True, text=True, timeout=600)
+    except Exception as exc:
+        return [{"status": "FAIL", "message": f"Could not run the R environment check: {exc}"}]
+    if proc.returncode != 0:
+        bad = (proc.stdout or "").strip() or (proc.stderr or "").strip() or "one or more packages"
+        return [{"status": "FAIL", "message": (
+            f"These required R/Bioconductor packages will not load in the bulkseq env: {bad}. "
+            "This is usually a missing package (e.g. GO.db) or an env drift that bumped r-base and "
+            "left compiled packages binary-incompatible. Recreate the env from "
+            "workflow/envs/bulkseq.lock.yaml, or install the missing one "
+            "(e.g. micromamba install -n bulkseq -c bioconda -c conda-forge bioconductor-go.db), "
+            "then re-run.")}]
+    return []
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -84,6 +128,7 @@ def main() -> int:
     if not samples_path.exists():
         messages.append({"status": "FAIL", "message": f"Missing samples table: {samples_path}"})
     messages.extend(check_design(payload, samples_path))
+    messages.extend(check_r_packages())
     if not messages:
         messages.append({"status": "PASS", "message": "Project setup files are present."})
     write_payload(Path(args.out), "00_project_setup", messages)

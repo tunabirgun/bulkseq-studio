@@ -1,6 +1,6 @@
 [project]
 name = "bulkseq-studio"
-version = "0.16.0"
+version = "0.19.1"
 description = "Cross-platform (Windows + Linux) GUI project manager for reproducible bulk RNA-seq Snakemake workflows"
 readme = "README.md"
 license = { text = "MIT" }

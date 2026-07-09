@@ -52,6 +52,9 @@ dependencies:
   - r-ashr
   - bioconductor-tximport
   - bioconductor-clusterprofiler>=4.14
+  # GO.db is a hard dependency of clusterProfiler / DOSE / enrichplot (the GO term database).
+  # Pin it explicitly so a solve that drops it can't leave the env unable to load clusterProfiler.
+  - bioconductor-go.db
   - bioconductor-enrichplot
   - bioconductor-fgsea
   # GSVA sample-level gene-set activity (optional, organism-safe on user gene sets).
