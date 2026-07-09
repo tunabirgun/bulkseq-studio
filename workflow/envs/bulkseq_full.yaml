@@ -40,10 +40,13 @@ dependencies:
   - ucsc-genepredtobed
   - pandas
   - pyyaml
-  # R / Bioconductor. r-base is pinned to the known-good 4.5.2: an env update that bumps
-  # r-base (e.g. to 4.5.3) leaves the compiled R packages binary-incompatible and they fail
-  # to load, so it must not float. The clusterprofiler floor blocks conda-forge's ancient
-  # 3.x relic from ever being selected over the recent bioconda build.
+  # R / Bioconductor. r-base is pinned to 4.5.2: bumping it to 4.5.3 (what many conda-forge r45
+  # packages are now built under) would force salmon off the protocol-pinned 1.10.3 onto the
+  # salmon 2.x Rust rewrite (icu/libdeflate/libzlib conflicts), changing quantification and
+  # invalidating the benchmarks — so it stays 4.5.2. The harmless "built under R version 4.5.3"
+  # load warning from the 4.5.3-built packages is muffled in the R scripts instead. The
+  # clusterprofiler floor blocks conda-forge's ancient 3.x relic from ever being selected over
+  # the recent bioconda build.
   - r-base=4.5.2
   - bioconductor-deseq2
   - bioconductor-apeglm

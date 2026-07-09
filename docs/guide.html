@@ -29,7 +29,7 @@
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.19.3</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.19.4</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
     <nav>
@@ -59,8 +59,8 @@
     <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>Windows</h4>
     <p>Two downloads on the <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">Releases</a> page, pick either:</p>
     <ul>
-      <li><strong>Installer</strong> — <code>BulkSeqStudio-Setup-0.19.3.exe</code>. A per-user install that needs no administrator rights; afterwards you launch it from the Start Menu.</li>
-      <li><strong>Portable</strong> — <code>BulkSeqStudio-Portable-0.19.3.zip</code>. Unzip it anywhere and double-click <code>BulkSeqStudio.exe</code>. Nothing is installed.</li>
+      <li><strong>Installer</strong> — <code>BulkSeqStudio-Setup-0.19.4.exe</code>. A per-user install that needs no administrator rights; afterwards you launch it from the Start Menu.</li>
+      <li><strong>Portable</strong> — <code>BulkSeqStudio-Portable-0.19.4.zip</code>. Unzip it anywhere and double-click <code>BulkSeqStudio.exe</code>. Nothing is installed.</li>
     </ul>
     <p class="muted">To update, run a newer installer: it detects the existing install and offers to update or uninstall first.</p>
   </div>
@@ -163,6 +163,9 @@ processors=16    # optional: limit WSL2 to 16 logical processors</code></pre>
     <p>When the run finishes, the <strong>Outputs</strong> tab lets you browse the count matrix and DESeq2 table and view the figures (PCA, volcano, MA, heatmaps); toggle <em>Vector (SVG)</em> for a crisp preview at any zoom. Open the <strong>PPI Network</strong> tab to explore the STRING protein network interactively, and click <strong>Open MultiQC Report</strong> on the Run Monitor for the read-quality summary. A self-contained <code>results_report.html</code> gathers the figures, top genes, enrichment, and provenance into one shareable file; it opens with a plain-language key-findings summary and a glossary for non-specialists, above the full sortable tables and zoomable figures for closer reading. Export the tools & references and study design files to capture the run's provenance.</p>
   </li>
 </ol>
+
+<h3>Try it now: a one-click example run</h3>
+<p>The fastest way to see a full analysis end to end is a bundled benchmark — no data to find and no reference to configure. On the <strong>Project</strong> tab, click <strong>Create Benchmark Project</strong> and choose <em>Pasilla paired-end subset</em>, a four-sample <em>Drosophila</em> knockdown study. The app scaffolds a ready-to-run project with the samples, the treated-versus-untreated contrast, and the Ensembl reference already filled in. Go straight to <strong>Run Monitor</strong> and click <strong>Start Run</strong>; in a few minutes the <strong>Outputs</strong> tab shows the count matrix, the DESeq2 table (about 467 differentially expressed genes, with the <em>pasilla</em> gene itself strongly down-regulated), and the figures, and <code>results_report.html</code> opens as one shareable summary. Two more one-click datasets — a yeast and a rice example — sit in the same menu. Once a benchmark run makes sense, repeat the six steps above with your own study.</p>
 
 <div class="note"><span class="t">Tip</span> Not sure the configuration is right? Use <strong>Dry Run</strong> before <strong>Start Run</strong>. A dry run validates the configuration and reports exactly which steps would execute, without downloading or computing anything.</div></section>
 

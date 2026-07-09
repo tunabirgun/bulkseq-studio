@@ -118,6 +118,64 @@ def test_approve_review_resets_on_project_switch() -> None:
     window.close()
 
 
+def test_reopen_project_and_recent_projects(monkeypatch) -> None:
+    # Reopening an existing project must restore full GUI state (config, samples table, widgets),
+    # remember it in Recent projects, and set the "Open project" start folder to where it lives
+    # (not the app's install/AppData dir). Covers the bug where Open project defaulted to AppData.
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QMessageBox
+    # Modal dialogs block forever under the offscreen/headless platform; make them no-ops so the
+    # "reject a non-project folder" path (which pops a warning) can be exercised without hanging.
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok))
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok))
+    app = _app()
+    # Isolate QSettings to a throwaway scope so the test doesn't touch the real recent list.
+    prev = (app.organizationName(), app.applicationName())
+    app.setOrganizationName("BulkSeqTest")
+    app.setApplicationName("reopen_" + uuid4().hex)
+    try:
+        QSettings().clear()
+        window = MainWindow()
+        workdir = Path("manual_test_gui") / uuid4().hex
+        window.workdir.setText(str(workdir))
+        window.project_name.setText("reopen_me")
+        window._create_benchmark_project("pasilla_paired_subset")
+        root = window.project_root
+        assert root is not None
+
+        # Simulate a fresh open of the existing project (as "Open project" -> _load_project does).
+        window.project_root = None
+        window._load_project(root)
+        assert window.project_root == root
+        assert window.config is not None
+        assert window.metadata_table.rowCount() == 4                       # samples reloaded
+        assert window.design.text() == window.config.deseq2.design_formula  # widgets reflect config
+
+        # The reopen wired the picker start folder (the bug fix) and the recent list.
+        assert str(QSettings().value("last_project_dir", "")) == str(root.parent)
+        window._refresh_recent_projects()
+        recent_texts = [window.recent_pick.itemText(i) for i in range(window.recent_pick.count())]
+        assert any(Path(t) == root for t in recent_texts), f"{root} not in recent {recent_texts}"
+
+        # The Recent-projects "Open recent" path reloads it with full state.
+        window.recent_pick.setCurrentText(str(root))
+        window.project_root = None
+        window._open_recent_project()
+        assert window.project_root == root
+        assert window.metadata_table.rowCount() == 4
+
+        # Opening a non-project folder is rejected without corrupting the current project.
+        notproj = workdir.resolve() / "not_a_project"
+        notproj.mkdir(parents=True, exist_ok=True)
+        window._load_project(notproj)
+        assert window.project_root == root  # unchanged
+        window.close()
+    finally:
+        QSettings().clear()
+        app.setOrganizationName(prev[0])
+        app.setApplicationName(prev[1])
+
+
 def test_env_broken_run_offers_rebuild() -> None:
     # An R-load failure in the run output flags the environment broken and, at run end, offers a
     # one-click rebuild; a generic setup/design error must NOT (it is not an environment problem,

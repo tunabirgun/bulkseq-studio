@@ -1,3 +1,15 @@
+# Muffle only the benign "package X was built under R version 4.5.3" load warning: the r45 ABI
+# is stable, so the 4.5.3-built conda packages run correctly under the pinned r-base 4.5.2;
+# real warnings still surface. Shadow library()/require() so it works under Snakemake's
+# script runner at any call-stack depth (a top-level globalCallingHandlers does not).
+# Aligning r-base to 4.5.3 would force salmon off 1.10.3 onto the 2.x Rust rewrite, so we
+# muffle the harmless warning instead of changing the benchmarked environment.
+local({
+  .m <- function(f) function(...) withCallingHandlers(f(...), warning = function(w) if (grepl("built under R version", conditionMessage(w), fixed = TRUE)) invokeRestart("muffleWarning"))
+  assign("library", .m(base::library), envir = globalenv())
+  assign("require", .m(base::require), envir = globalenv())
+})
+
 # Wilcoxon rank-sum per-gene SENSITIVITY / concordance diagnostic (0.6.0).
 # A non-parametric cross-check on the DESeq2/limma calls. NOT a DEG caller: at
 # small n per group (e.g. 3v3) the exact two-sided p cannot reach 0.05, so this

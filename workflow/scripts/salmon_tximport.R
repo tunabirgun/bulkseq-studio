@@ -1,3 +1,15 @@
+# Muffle only the benign "package X was built under R version 4.5.3" load warning: the r45 ABI
+# is stable, so the 4.5.3-built conda packages run correctly under the pinned r-base 4.5.2;
+# real warnings still surface. Shadow library()/require() so it works under Snakemake's
+# script runner at any call-stack depth (a top-level globalCallingHandlers does not).
+# Aligning r-base to 4.5.3 would force salmon off 1.10.3 onto the 2.x Rust rewrite, so we
+# muffle the harmless warning instead of changing the benchmarked environment.
+local({
+  .m <- function(f) function(...) withCallingHandlers(f(...), warning = function(w) if (grepl("built under R version", conditionMessage(w), fixed = TRUE)) invokeRestart("muffleWarning"))
+  assign("library", .m(base::library), envir = globalenv())
+  assign("require", .m(base::require), envir = globalenv())
+})
+
 # Aggregate per-sample Salmon quant.sf into the canonical gene-level counts.txt
 # (featureCounts layout) via tximport. countsFromAbundance="lengthScaledTPM" makes the
 # rounded counts usable directly in standard DESeq2 (no offset needed), so run_deseq2.R

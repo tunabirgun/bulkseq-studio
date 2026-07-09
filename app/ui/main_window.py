@@ -3455,7 +3455,15 @@ class MainWindow(QMainWindow):
         )
 
     def _open_project(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "Open project")
+        # Start the picker where the user's projects actually live, not the process CWD (which
+        # is the app's install/AppData folder). Prefer the folder the last project was opened
+        # from, else the current working directory — which on WSL is the WSL-native project
+        # location the app auto-detects, so a project generated in WSL is found immediately.
+        settings = QSettings()
+        start = str(settings.value("last_project_dir", "") or "").strip()
+        if not start or not Path(start).exists():
+            start = self.workdir.text().strip()
+        directory = QFileDialog.getExistingDirectory(self, "Open project", start)
         if directory:
             self._load_project(Path(directory))
 
@@ -3508,6 +3516,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, "term_pick"):
             self._populate_term_picker()
         self._remember_recent_project(root)
+        # Remember the folder this project lives in so the "Open project" picker starts there
+        # next time (instead of the app's install/AppData folder).
+        QSettings().setValue("last_project_dir", str(root.parent))
         self.project_status.setPlainText(f"Open project: {root}")
 
     def _clear_transient_ui(self) -> None:

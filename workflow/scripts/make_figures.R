@@ -1,3 +1,15 @@
+# Muffle only the benign "package X was built under R version 4.5.3" load warning: the r45 ABI
+# is stable, so the 4.5.3-built conda packages run correctly under the pinned r-base 4.5.2;
+# real warnings still surface. Shadow library()/require() so it works under Snakemake's
+# script runner at any call-stack depth (a top-level globalCallingHandlers does not).
+# Aligning r-base to 4.5.3 would force salmon off 1.10.3 onto the 2.x Rust rewrite, so we
+# muffle the harmless warning instead of changing the benchmarked environment.
+local({
+  .m <- function(f) function(...) withCallingHandlers(f(...), warning = function(w) if (grepl("built under R version", conditionMessage(w), fixed = TRUE)) invokeRestart("muffleWarning"))
+  assign("library", .m(base::library), envir = globalenv())
+  assign("require", .m(base::require), envir = globalenv())
+})
+
 # Transcriptomics figures (protocol section 9). Each figure is written as PNG
 # (raster) and SVG (vector). Titles are omitted (captions live in text).
 # Visual style is read from config[["figures_style"]] (set in the GUI); every

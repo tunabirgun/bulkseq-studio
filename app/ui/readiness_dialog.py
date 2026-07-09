@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from app.constants import APP_NAME
 from app.core.paths import app_root
+from app.ui import theme
 from app.core.readiness import (
     ReadinessItem,
     check_readiness,
@@ -38,13 +39,17 @@ from app.core.setup_installer import (
 )
 
 # ---------------------------------------------------------------------------
-# Shared design language (mirrors app.ui.theme when present; defined locally so
-# this dialog renders correctly even before a central theme module exists).
+# Design tokens: light-theme defaults matching app.ui.theme's LIGHT_PALETTE. _use_mode()
+# rebinds these to the active (light or dark) palette when the dialog opens, so Check
+# Environment follows the app's theme selection instead of staying a fixed light dialog.
 # ---------------------------------------------------------------------------
 
 PRIMARY = "#2C6FB6"
 PRIMARY_HOVER = "#2560A0"
 PRIMARY_PRESSED = "#1E4F86"
+ON_PRIMARY = "#FFFFFF"
+PRIMARY_DISABLED_BG = "#9FBEDD"
+PRIMARY_DISABLED_TEXT = "#3F4D5A"
 BACKGROUND = "#F5F7FA"
 SURFACE = "#FFFFFF"
 BORDER = "#D7DEE6"
@@ -75,6 +80,35 @@ _PILL_COLOR = {
     STATE_OPTIONAL: REVIEW,
     STATE_CHECKING: MUTED,
 }
+
+
+def _current_mode() -> str:
+    # Match the app's light/dark selection (same QSettings key as MainWindow._current_theme_mode)
+    # so Check Environment is not a fixed light dialog over a dark app.
+    mode = str(QSettings().value("theme_mode", "light"))
+    return mode if mode in theme.PALETTES else "light"
+
+
+def _use_mode(mode: str) -> None:
+    # Rebind this module's color tokens to the active theme palette. Every color above is read
+    # from a module global at widget-build time, so rebinding here — before the dialog builds its
+    # widgets — reskins the whole dialog to the chosen theme. _PILL_COLOR is a literal, so it is
+    # rebuilt from the same palette. Called at the top of ReadinessDialog.__init__.
+    p = theme.PALETTES.get(mode, theme.LIGHT_PALETTE)
+    g = globals()
+    g["PRIMARY"], g["PRIMARY_HOVER"], g["PRIMARY_PRESSED"] = p["PRIMARY"], p["PRIMARY_HOVER"], p["PRIMARY_PRESSED"]
+    # ON_PRIMARY (text on a filled primary button) and the disabled pair must follow the theme
+    # too: in dark mode PRIMARY is light blue, so white-on-blue fails WCAG-AA — the dark palette's
+    # ON_PRIMARY is near-black for contrast (matches the app's real primary buttons).
+    g["ON_PRIMARY"] = p["ON_PRIMARY"]
+    g["PRIMARY_DISABLED_BG"], g["PRIMARY_DISABLED_TEXT"] = p["PRIMARY_DISABLED_BG"], p["PRIMARY_DISABLED_TEXT"]
+    g["BACKGROUND"], g["SURFACE"], g["BORDER"] = p["BACKGROUND"], p["SURFACE"], p["BORDER"]
+    g["TEXT"], g["MUTED"] = p["TEXT"], p["MUTED_TEXT"]
+    g["SUCCESS"], g["WARNING"], g["ERROR"], g["REVIEW"] = p["SUCCESS"], p["WARNING"], p["ERROR"], p["REVIEW"]
+    g["_PILL_COLOR"] = {
+        STATE_READY: p["SUCCESS"], STATE_ACTION: p["WARNING"],
+        STATE_OPTIONAL: p["REVIEW"], STATE_CHECKING: p["MUTED_TEXT"],
+    }
 
 
 def _make_status_pill(state: str) -> QLabel:
@@ -253,7 +287,7 @@ def _primary_button_style() -> str:
     return (
         "QPushButton {"
         f" background: {PRIMARY};"
-        " color: #FFFFFF;"
+        f" color: {ON_PRIMARY};"
         " border: none;"
         " border-radius: 6px;"
         " padding: 7px 16px;"
@@ -262,7 +296,7 @@ def _primary_button_style() -> str:
         "}"
         f"QPushButton:hover {{ background: {PRIMARY_HOVER}; }}"
         f"QPushButton:pressed {{ background: {PRIMARY_PRESSED}; }}"
-        "QPushButton:disabled { background: #A9BDD4; color: #EEF2F6; }"
+        f"QPushButton:disabled {{ background: {PRIMARY_DISABLED_BG}; color: {PRIMARY_DISABLED_TEXT}; }}"
     )
 
 
@@ -277,7 +311,7 @@ def _secondary_button_style() -> str:
         " font-size: 9.5pt;"
         "}"
         f"QPushButton:hover {{ border-color: {PRIMARY}; }}"
-        "QPushButton:disabled { color: #A9BDD4; }"
+        f"QPushButton:disabled {{ color: {PRIMARY_DISABLED_TEXT}; }}"
     )
 
 
@@ -303,6 +337,8 @@ class ReadinessCheckThread(QThread):
 class ReadinessDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        # Reskin this dialog to the app's current light/dark theme before building any widgets.
+        _use_mode(_current_mode())
         self.setWindowTitle(f"{APP_NAME} Setup")
         self.resize(720, 640)
         self.setStyleSheet(f"QDialog {{ background: {BACKGROUND}; font-family: {BASE_FONT}; }}")

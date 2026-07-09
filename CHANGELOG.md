@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.19.4 — 2026-07-09
+
+### Fixed
+
+- **"Open existing project" now starts where your projects actually live.** The picker opened in the app's install/AppData folder (the process working directory), which was especially confusing for projects created on the WSL filesystem. It now opens in the folder you last opened a project from, falling back to the current working directory — which on WSL is the WSL-native project location the app auto-detects — so a project generated in WSL is right there.
+- **The harmless "package ... was built under R version 4.5.3" warning no longer prints on every R step.** Many conda R packages are now built under R 4.5.3 while the environment pins the protocol's r-base 4.5.2; the r45 ABI is stable, so they load and run correctly, but the load-time warning was noisy in the run log. It is now muffled in the analysis R scripts (only that exact warning — real warnings still surface). r-base is deliberately kept at 4.5.2: moving to 4.5.3 would force salmon off the benchmarked 1.10.3 onto the salmon 2.x Rust rewrite, changing quantification.
+- **The Check Environment window now follows the app's light/dark theme.** It was a fixed light dialog regardless of the theme toggle; its colors (background, cards, text, status pills, buttons) now come from the active palette, so it matches the rest of the app in dark mode.
+
 ## 0.19.3 — 2026-07-09
 
 ### Fixed
