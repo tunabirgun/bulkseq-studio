@@ -181,22 +181,32 @@ def _de_table(results_csv: Path, top: int = 25, empty_msg: str = "No differentia
     cols = [c for c in ("gene_id", "symbol", "log2FoldChange", "padj", "baseMean", "biotype")
             if c in rows[0]]
 
-    def fmt(col: str, val: str) -> str:
-        if col in ("log2FoldChange", "padj", "baseMean"):
+    numeric = ("log2FoldChange", "padj", "baseMean")
+
+    def cell(col: str, val: str) -> str:
+        # baseMean is an average read count: a thousands-separated integer reads far better than
+        # 1.23e+03. data-sort-value carries the raw float so the numeric sort is not fooled by the
+        # comma grouping (parseFloat('1,234') would otherwise be 1).
+        if col == "baseMean":
             try:
-                return f"{float(val):.3g}"
+                f = float(val)
+                return f"<td class='num' data-sort-value='{f}'>{int(round(f)):,}</td>"
             except (ValueError, TypeError):
-                return html.escape(val or "")
+                return f"<td class='num'>{html.escape(val or '')}</td>"
+        if col in numeric:
+            try:
+                return f"<td class='num'>{float(val):.3g}</td>"
+            except (ValueError, TypeError):
+                return f"<td class='num'>{html.escape(val or '')}</td>"
         # Gene symbols italic (HGNC convention), matching the report's prose (_fmt_genes).
         # <i> wraps the escaped text only, so the sort JS still reads the plain symbol.
         if col == "symbol" and (val or "").strip():
-            return f"<i>{html.escape(val)}</i>"
-        return html.escape(val or "")
+            return f"<td><i>{html.escape(val)}</i></td>"
+        return f"<td>{html.escape(val or '')}</td>"
 
-    head = "".join(f"<th>{html.escape(c)}</th>" for c in cols)
-    body = "".join(
-        "<tr>" + "".join(f"<td>{fmt(c, r.get(c, ''))}</td>" for c in cols) + "</tr>"
-        for r in rows)
+    head = "".join(f"<th scope='col' class='num'>{html.escape(c)}</th>" if c in numeric
+                   else f"<th scope='col'>{html.escape(c)}</th>" for c in cols)
+    body = "".join("<tr>" + "".join(cell(c, r.get(c, "")) for c in cols) + "</tr>" for r in rows)
     # `sortable`: click a header to sort (numeric columns sort numerically). See the
     # embedded script in the page template.
     return (f"<div class='tablewrap'><table class='data sortable'><thead><tr>{head}</tr></thead>"
@@ -359,7 +369,7 @@ def _key_finding(run: dict, project: Path, sanity_text: str) -> str:
     if total == 0:
         return (f"{lead}, <b>no</b> {unit} changed at the chosen thresholds ({thr}). "
                 f"See the volcano and p-value histogram for why.")
-    of_m = f" of {tested:,}" if tested else ""
+    of_m = f" of {tested:,} tested" if tested else ""
     s = (f"{lead}, <b>{total:,}</b>{of_m} {unit} changed significantly ({thr}): "
          f"<b class='up'>{up:,}</b> were higher and <b class='down'>{down:,}</b> lower.")
     if top_up:
@@ -384,10 +394,16 @@ def _status_sentence(sanity_text: str) -> str:
             f"{', '.join(html.escape(x) for x in non)}.{tail}")
 
 
-_ORA_COLS = [("Description", "Description", "desc"), ("Fold enrichment", "FoldEnrichment", "g3"),
-             ("Genes", "Count", "int"), ("p.adjust", "p.adjust", "g2")]
-_GSEA_COLS = [("Description", "Description", "desc"), ("NES", "NES", "g3"),
-              ("p.adjust", "p.adjust", "g2"), ("Set size", "setSize", "int")]
+# (header, [candidate CSV columns — first present wins], kind). The alternate names cover the
+# g:Profiler (gost) enrichment route, whose CSV uses term_name / p_value / intersection_size /
+# term_size instead of clusterProfiler's Description / p.adjust / Count / setSize; without them the
+# GO table for a non-model organism rendered with no columns (an empty table).
+_ORA_COLS = [("Description", ["Description", "term_name"], "desc"),
+             ("Fold enrichment", ["FoldEnrichment"], "g3"),
+             ("Genes", ["Count", "intersection_size"], "int"),
+             ("p.adjust", ["p.adjust", "p_value"], "g2")]
+_GSEA_COLS = [("Description", ["Description", "term_name"], "desc"), ("NES", ["NES"], "g3"),
+              ("p.adjust", ["p.adjust", "p_value"], "g2"), ("Set size", ["setSize", "term_size"], "int")]
 
 
 def _enrich_rows(csv_path: Path, top: int) -> list[dict]:
@@ -405,8 +421,23 @@ def _enrich_rows(csv_path: Path, top: int) -> list[dict]:
 def _enrich_block(title: str, csv_path: Path, mode: str, top: int = 10) -> str:
     rows = _enrich_rows(csv_path, top)
     if not rows:
+        # CSV present but with no rows -> the analysis RAN and nothing passed the threshold; say so
+        # instead of the block silently vanishing. CSV absent -> that analysis did not run for this
+        # organism/mode -> omit it (never imply an analysis ran when it did not).
+        if csv_path.exists():
+            return (f"<div class='enr-block empty'><h3>{html.escape(title)}</h3>"
+                    f"<p class='muted small'>No terms passed the significance threshold.</p></div>")
         return ""
-    spec = [c for c in (_GSEA_COLS if mode == "gsea" else _ORA_COLS) if c[1] in rows[0]]
+    # Resolve each logical column to the first candidate header actually in the CSV, so both the
+    # clusterProfiler and g:Profiler column vocabularies render. spec entries are (header, key, kind).
+    spec = []
+    for header, keys, kind in (_GSEA_COLS if mode == "gsea" else _ORA_COLS):
+        key = next((k for k in keys if k in rows[0]), None)
+        if key is not None:
+            spec.append((header, key, kind))
+    # No recognizable columns -> suppress the block entirely rather than emit an empty table.
+    if not spec:
+        return ""
 
     def fmt(kind: str, val: str) -> str:
         if kind == "desc":
@@ -418,7 +449,7 @@ def _enrich_block(title: str, csv_path: Path, mode: str, top: int = 10) -> str:
         txt = f"{int(round(f))}" if kind == "int" else (f"{f:.2g}" if kind == "g2" else f"{f:.3g}")
         return f"<td class='num'>{txt}</td>"
 
-    head = "".join(f"<th class='{'desc' if k == 'desc' else 'num'}'>{html.escape(h)}</th>"
+    head = "".join(f"<th scope='col' class='{'desc' if k == 'desc' else 'num'}'>{html.escape(h)}</th>"
                    for h, _, k in spec)
     body = "".join("<tr>" + "".join(fmt(k, r.get(key, "")) for _, key, k in spec) + "</tr>"
                    for r in rows)
@@ -606,7 +637,7 @@ def _versions_table(run: dict) -> str:
             f"<tr><td>{html.escape(str(k))}</td><td class='mono'>{html.escape(str(v))}</td></tr>"
             for k, v in d.items())
 
-    vhead = "<thead><tr><th>Name</th><th>Version</th></tr></thead>"
+    vhead = "<thead><tr><th scope='col'>Name</th><th scope='col'>Version</th></tr></thead>"
     blocks = ""
     if sw:
         blocks += ("<div class='vcol'><h3>Tools</h3><div class='tablewrap'>"
@@ -624,6 +655,37 @@ def _versions_table(run: dict) -> str:
     prov_html = f"<p class='muted small'>{' · '.join(prov)}</p>" if prov else ""
     return (f"<section id='versions'><h2>Software &amp; provenance</h2>"
             f"<div class='vgrid'>{blocks}</div>{prov_html}</section>")
+
+
+def _sample_composition(project: Path, num, den) -> str | None:
+    """'N den * M num' replicate counts from config/samples.tsv, matched to the two contrast levels.
+
+    Returns None (card omitted) when the file or the 'condition' column is missing, or when the two
+    contrast levels are not both present as conditions — microarray, BYO-DESeq2-results, and
+    covariate/multi-level designs do not map cleanly to a single two-group count, so they degrade
+    silently rather than show a wrong or partial number.
+    """
+    if not (num and den):
+        return None
+    tsv = project / "config" / "samples.tsv"
+    if not tsv.exists():
+        return None
+    counts: dict[str, int] = {}
+    try:
+        with tsv.open(encoding="utf-8", errors="replace", newline="") as fh:
+            reader = csv.DictReader(fh, delimiter="\t")
+            if not reader.fieldnames or "condition" not in reader.fieldnames:
+                return None
+            for row in reader:
+                c = (row.get("condition") or "").strip()
+                if c:
+                    counts[c] = counts.get(c, 0) + 1
+    except OSError:
+        return None
+    n_num, n_den = counts.get(str(num)), counts.get(str(den))
+    if not n_num or not n_den:
+        return None
+    return f"{n_den} {den} · {n_num} {num}"
 
 
 def _meta_cards(run: dict, project: Path) -> str:
@@ -651,6 +713,9 @@ def _meta_cards(run: dict, project: Path) -> str:
             cards.append(("Contrast", str(contrasts[0].get("name", "—"))))
     if de.get("design_formula"):
         cards.append(("Design", str(de.get("design_formula"))))
+    comp = _sample_composition(project, num, den)
+    if comp:
+        cards.append(("Sample composition", comp))
 
     de_engine = _engine_name(run)
     alpha = de.get("alpha")
@@ -769,7 +834,7 @@ main{max-width:1080px;margin:0 auto;padding:8px clamp(16px,5vw,40px) 8px}
 /* focusable glossary term — hover AND keyboard focus; never title= */
 .term{position:relative;display:inline;border:0;background:none;padding:0;margin:0;font:inherit;
   color:var(--plain-ink);font-weight:600;cursor:help;border-bottom:1px dotted var(--brand-teal)}
-.term:focus-visible{outline:2px solid var(--brand-teal);outline-offset:2px;border-radius:3px}
+.term:focus-visible{outline:2px solid var(--brand-blue);outline-offset:2px;border-radius:3px}
 .term .tip{position:absolute;left:0;top:calc(100% + 9px);z-index:60;width:max-content;max-width:min(320px,82vw);
   background:var(--tip-bg);color:var(--tip-text);font-family:var(--sans);font-weight:400;font-size:.8rem;
   line-height:1.5;text-align:left;padding:10px 12px;border-radius:10px;box-shadow:var(--sh2);
@@ -783,7 +848,7 @@ main{max-width:1080px;margin:0 auto;padding:8px clamp(16px,5vw,40px) 8px}
 .howto>summary::-webkit-details-marker{display:none}
 .howto>summary::before{content:"?";display:inline-flex;align-items:center;justify-content:center;width:18px;
   height:18px;border-radius:50%;background:var(--brand-teal);color:#04363a;font-weight:800;font-size:.72rem}
-.howto>summary:focus-visible{outline:2px solid var(--brand-teal);outline-offset:2px;border-radius:3px}
+.howto>summary:focus-visible{outline:2px solid var(--brand-blue);outline-offset:2px;border-radius:3px}
 .howto p{font-family:var(--sans);font-size:.82rem;color:var(--muted);line-height:1.55;margin:.45rem 0 0;
   border-left:3px solid var(--plain-border);background:var(--plain-bg);padding:.5rem .7rem;border-radius:0 6px 6px 0}
 /* 3 headline stats + up/down mini-bar (the 10-second scan) */
@@ -799,7 +864,7 @@ main{max-width:1080px;margin:0 auto;padding:8px clamp(16px,5vw,40px) 8px}
 .status-line{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap;
   font-family:var(--sans);font-size:.86rem;color:var(--muted)}
 @media(max-width:560px){.chipnav{display:none}.brand .rmeta{display:none}}
-.cards{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin:22px 0 6px}
+.cards{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin:22px 0 6px}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;
   box-shadow:0 1px 2px rgba(17,24,39,.04)}
 .card-k{font-family:var(--sans);font-size:.68rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
@@ -818,10 +883,10 @@ figure.panel{margin:0;border:1px solid var(--border);border-radius:var(--r2);ove
   background:var(--surface);display:flex;flex-direction:column;box-shadow:var(--sh)}
 .panel .frame{position:relative;background:#fff;border-bottom:1px solid var(--border)}
 .panel .lab{position:absolute;top:8px;left:8px;z-index:2;font-family:var(--sans);font-weight:800;font-size:.78rem;
-  color:var(--text);background:rgba(255,255,255,.92);border:1px solid var(--border-strong);border-radius:5px;
+  color:var(--text);background:#fff;border:2px solid var(--border-strong);border-radius:5px;
   width:22px;height:22px;display:flex;align-items:center;justify-content:center;box-shadow:var(--sh)}
 .panel .figbtn{border:0;background:none;padding:0;margin:0;width:100%;display:block;cursor:zoom-in}
-.panel .figbtn:focus-visible{outline:2px solid var(--brand-teal);outline-offset:-2px}
+.panel .figbtn:focus-visible{outline:2px solid var(--brand-blue);outline-offset:-2px}
 .panel img{width:100%;display:block;background:#fff}
 figure.panel figcaption{padding:12px 14px}
 .cap-lead{font-family:var(--serif);font-size:.98rem;font-weight:600;line-height:1.4;color:var(--text)}
@@ -856,6 +921,7 @@ table.data{border-collapse:collapse;width:100%;font-family:var(--sans);font-size
 table.data th,table.data td{padding:6px 10px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
 table.data thead th{background:var(--accent-tint);color:var(--accent-2);font-weight:600;position:sticky;top:0}
 table.sortable thead th{cursor:pointer;user-select:none}
+table.sortable thead th:not([data-sort])::after{content:" \\21C5";opacity:.35}
 table.sortable thead th[data-sort=asc]::after{content:" \\2191"}
 table.sortable thead th[data-sort=desc]::after{content:" \\2193"}
 table.data tbody tr:last-child td{border-bottom:none}
@@ -894,6 +960,20 @@ footer{max-width:1080px;margin:8px auto 0;padding:22px clamp(16px,5vw,40px) 40px
   font-family:var(--sans);color:var(--muted);font-size:.82rem;border-top:1px solid var(--border)}
 footer .flinks{display:flex;flex-wrap:wrap;gap:16px;margin-bottom:8px}
 @media(max-width:560px){.barrow{grid-template-columns:100px 1fr 64px}.brand .rmeta{display:none}}
+/* Print / Save-as-PDF: scientists attach the report to lab notebooks and manuscripts. Open every
+   disclosure, let table cells wrap instead of clipping in the overflow box, keep figures with their
+   captions, preserve the direction/status colours, and drop the on-screen chrome. */
+@media print{
+  header.top{position:static}
+  .chipnav,.skip,.lb,.howto>summary::before{display:none!important}
+  details{display:block!important} details>summary{display:none!important}
+  .tablewrap{overflow:visible!important}
+  table.data th,table.data td{white-space:normal!important}
+  section,figure.panel,.enr-block,.hstat,.card,.stat,tr{break-inside:avoid}
+  .dirbar,.pill,.badge,.plain,.hstat .v,table.data thead th{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  a[href]{color:inherit}
+  body{background:#fff}
+}
 """
 
 
@@ -1007,6 +1087,9 @@ def _study_design_section(run: dict) -> str:
     add("Reference release", ref.get("release"))
     if de.get("lfc_shrinkage"):
         add("LFC shrinkage", de.get("shrinkage_method") or "enabled")
+    # DESeq2 and limma both control the false-discovery rate with Benjamini-Hochberg by default;
+    # state it so the multiple-testing method is on the record, not only in the glossary.
+    add("Multiple-testing correction", "Benjamini-Hochberg (FDR)")
     if not is_micro:
         fc = run.get("featurecounts", {}) or {}
         if fc.get("strandedness") is not None:
@@ -1070,7 +1153,7 @@ def _figure_groups(figs: Path, up: int, down: int, unit: str) -> str:
             idx += 1
         if not panels:
             continue
-        out.append(f'<div class="figgroup">{gtitle}</div>'
+        out.append(f'<h3 class="figgroup">{gtitle}</h3>'
                    f'<p class="figgroup-sub">{gsub}</p>'
                    f'<div class="panels">{"".join(panels)}</div>')
     if not out:
@@ -1107,7 +1190,7 @@ def _de_section(project: Path, up: int, down: int, num, den, unit: str) -> str:
         f'<p>Each row is one {one}. <b>log2FC</b> is the size and direction of the change '
         '(red + = higher, blue &minus; = lower); <b>padj</b> is confidence (smaller = stronger, '
         f'and every {one} here is below &alpha;); <b>baseMean</b> is overall expression — a big fold '
-        'change on a very low baseMean is worth checking before trusting it. Click any header to sort. '
+        'change on a very low baseMean is worth checking before trusting it. Click or press Enter on a header to sort. '
         'Full lists: <code>results/deseq2/upregulated_genes.csv</code> and '
         '<code>downregulated_genes.csv</code>.</p></details>')
     return (f'<section id="de"><div class="sec-head"><h2>Which genes changed</h2>{badge}</div>'
@@ -1198,33 +1281,38 @@ def build(project: Path) -> str:
 free and open-source under the MIT License. This report is fully self-contained —
 figures, tables and the logo are embedded, so no internet or external files are needed to view it.</p>
 </footer>
-<div id="bsq-lb" class="lb" onclick="bsqClose()"><span class="hint">Click image to zoom · click background or press Esc to close</span><img id="bsq-lb-img" alt=""></div>
+<div id="bsq-lb" class="lb" role="dialog" aria-modal="true" aria-label="Figure viewer" onclick="bsqClose()"><span class="hint">Click image to zoom · click background or press Esc to close</span><img id="bsq-lb-img" alt="" tabindex="-1"></div>
 <script>
-function bsqZoom(btn){{var img=btn.querySelector('img');var li=document.getElementById('bsq-lb-img');li.className='';li.src=img.src;document.getElementById('bsq-lb').classList.add('open');}}
-function bsqClose(){{document.getElementById('bsq-lb').classList.remove('open');}}
+function bsqZoom(btn){{var img=btn.querySelector('img');var li=document.getElementById('bsq-lb-img');li.className='';li.src=img.src;li.alt=img.alt||'';li.setAttribute('aria-label',img.alt||'Figure');window._bsqTrig=btn;document.getElementById('bsq-lb').classList.add('open');li.focus();}}
+function bsqClose(){{document.getElementById('bsq-lb').classList.remove('open');if(window._bsqTrig){{window._bsqTrig.focus();window._bsqTrig=null;}}}}
 (function(){{var li=document.getElementById('bsq-lb-img');
 li.addEventListener('click',function(e){{this.classList.toggle('zoomed');e.stopPropagation();}});
 document.addEventListener('keydown',function(e){{if(e.key==='Escape')bsqClose();}});}})();
 // Sortable tables: click a header to sort; numeric columns sort numerically. Third
 // click restores the original order. Purely client-side, no dependencies.
 (function(){{
+  function cellVal(cell){{if(!cell)return '';var v=cell.getAttribute('data-sort-value');return v!==null?v:(cell.textContent||'');}}
   function cmp(a,b){{var x=parseFloat(a),y=parseFloat(b);
     if(!isNaN(x)&&!isNaN(y))return x-y; return a.localeCompare(b);}}
   document.querySelectorAll('table.sortable').forEach(function(tbl){{
     var tb=tbl.tBodies[0]; if(!tb)return;
     var orig=Array.prototype.slice.call(tb.rows);
     tbl.querySelectorAll('thead th').forEach(function(th,ci){{
-      th.style.cursor='pointer'; th.title='Sort by '+(th.textContent||'').trim();
-      th.addEventListener('click',function(){{
+      th.tabIndex=0; th.setAttribute('role','button'); th.setAttribute('aria-sort','none');
+      th.title='Sort by '+(th.textContent||'').trim();
+      function doSort(){{
         var st=th.getAttribute('data-sort'); var next=st==='asc'?'desc':(st==='desc'?'none':'asc');
-        tbl.querySelectorAll('thead th').forEach(function(o){{o.removeAttribute('data-sort');}});
+        tbl.querySelectorAll('thead th').forEach(function(o){{o.removeAttribute('data-sort');o.setAttribute('aria-sort','none');}});
         var rows=Array.prototype.slice.call(tb.rows);
         if(next==='none'){{orig.forEach(function(r){{tb.appendChild(r);}});return;}}
         rows.sort(function(r1,r2){{
-          var c=cmp((r1.cells[ci]||{{}}).textContent||'',(r2.cells[ci]||{{}}).textContent||'');
+          var c=cmp(cellVal(r1.cells[ci]),cellVal(r2.cells[ci]));
           return next==='asc'?c:-c;}});
         rows.forEach(function(r){{tb.appendChild(r);}});
-        th.setAttribute('data-sort',next);}});
+        th.setAttribute('data-sort',next);
+        th.setAttribute('aria-sort',next==='asc'?'ascending':'descending');}}
+      th.addEventListener('click',doSort);
+      th.addEventListener('keydown',function(e){{if(e.key==='Enter'||e.key===' '){{e.preventDefault();doSort();}}}});
     }});
   }});
 }})();

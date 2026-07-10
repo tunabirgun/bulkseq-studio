@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.20.1 — 2026-07-10
+
+### Fixed
+
+- **Functional-enrichment tables now appear for non-model organisms.** On the g:Profiler route (organisms without a Bioconductor annotation package) the GO over-representation table rendered empty because the g:Profiler output uses different column names (`term_name`, `p_value`, `intersection_size`) than the clusterProfiler route; the report now maps both, so the table populates. An enrichment category that ran but found no significant terms now says so plainly instead of the block silently disappearing.
+
+### Changed
+
+- **HTML report refinements for end users.** Gene tables right-align their numbers to match the enrichment tables, and `baseMean` shows as a rounded count (e.g. 1,234) instead of scientific notation, with sorting still keyed to the exact value. A print / Save-as-PDF stylesheet opens every collapsible section, lets wide tables wrap instead of clipping, keeps figures with their captions, and preserves the direction and status colours on paper. Sortable table headers are now operable by keyboard and announced by screen readers, with a visible sort cue before the first click. Figure-group titles join the document outline, table headers carry column scope, the figure-zoom viewer is a proper focus-managed dialog, and focus outlines meet the contrast minimum. The study design now records the multiple-testing method (Benjamini-Hochberg) and, when the sample sheet allows it, the per-group replicate counts.
+
 ## 0.20.0 — 2026-07-10
 
 ### Added
