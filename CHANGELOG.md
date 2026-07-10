@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.20.0 — 2026-07-10
+
+### Added
+
+- **Check Environment now installs and repairs the WSL Linux distribution, not just WSL itself.** The app only checked that `wsl.exe` existed, then assumed Linux was ready — so a machine where WSL2 is installed but the distribution is missing or its virtual disk is gone (nothing to run the tools in) slipped through as "WSL ready" and every step silently failed. Check Environment now actually starts the default distribution to confirm it works, and shows an **Install Ubuntu distribution** action when it does not. Installing provisions Ubuntu non-interactively (`wsl --install -d Ubuntu --no-launch`), sets it as the default, and confirms it starts; a distribution that is registered but will not start is reported with the exact manual commands to reinstall it (never deleted for you). The environment check re-opens on the next launch until a working distribution is present.
+
+### Fixed
+
+- **The working directory no longer fills with a WSL error message when the Linux distribution is broken.** When WSL could not start its distribution, the app read `wsl.exe`'s own error text as the Linux home directory and pasted it into the Working-directory field as an unusable path. It now requires the command to succeed and return an absolute Linux path, so a broken WSL yields no auto-filled path instead of a garbage one.
+- **Unexpected-error logs now record where the error happened.** The crash log could capture only an exception's name with no traceback (a Qt-boundary error routed to the handler without one); it now recovers the traceback from the exception itself, so `%LOCALAPPDATA%\BulkSeq Studio\logs\error.log` shows the file and line.
+
 ## 0.19.4 — 2026-07-09
 
 ### Fixed

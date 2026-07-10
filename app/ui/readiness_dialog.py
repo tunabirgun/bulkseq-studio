@@ -568,7 +568,8 @@ class ReadinessDialog(QDialog):
         # A broken R/Bioconductor stack clears the version-scoped first-run prompt stamp so the
         # next app launch re-opens this check — a broken env should keep being nudged until it is
         # repaired, not silenced after one dismissal.
-        if any(it.name in ("WSL R packages", "R packages") and it.status != "PASS" for it in items):
+        if any(it.name in ("WSL R packages", "R packages", "WSL distribution") and it.status != "PASS"
+               for it in items):
             QSettings().remove("env_check_prompted_version")
 
     def _ready_count(self) -> int:
@@ -610,6 +611,7 @@ class ReadinessDialog(QDialog):
 
     def _update_wsl_card(self, items: list[ReadinessItem]) -> None:
         wsl_ok = self._status_of(items, "wsl") == "PASS"
+        distro_ok = self._status_of(items, "WSL distribution") == "PASS"
         micromamba_ok = self._status_of(items, "WSL micromamba") == "PASS"
         if not wsl_ok:
             self.card_wsl.update_state(
@@ -618,6 +620,18 @@ class ReadinessDialog(QDialog):
                 "window because Windows requires elevation; reboot if prompted.",
                 action_label="Install / enable WSL",
                 action_handler=self.install_wsl,
+            )
+        elif not distro_ok:
+            # wsl.exe is present but no Linux distribution is installed or it will not start
+            # (a missing/broken ext4.vhdx — exactly what leaves the app with no environment).
+            # Install/repair a distribution before anything can run inside WSL.
+            self.card_wsl.update_state(
+                STATE_ACTION,
+                "WSL2 is installed, but there is no working Linux distribution (none installed, or "
+                "it will not start). Installing Ubuntu opens an Administrator PowerShell window "
+                "because Windows requires elevation; reboot if Windows prompts, then click Re-check.",
+                action_label="Install Ubuntu distribution",
+                action_handler=self.install_wsl_distro,
             )
         elif not micromamba_ok:
             self.card_wsl.update_state(
@@ -775,6 +789,17 @@ class ReadinessDialog(QDialog):
         self._log(
             "Opening Administrator PowerShell to install/enable WSL. Approve the Windows "
             "UAC prompt to continue.\n"
+        )
+        launch_wsl_admin_install()
+
+    def install_wsl_distro(self) -> None:
+        # Same elevated helper as Install/Enable WSL: on a machine that already has wsl.exe it
+        # installs the Ubuntu distribution (with --no-launch, so no interactive account setup),
+        # sets it as default, and reports whether it starts. Fixes the "WSL2 present but the
+        # distro is gone/broken" state where nothing can run inside Linux.
+        self._log(
+            "Opening Administrator PowerShell to install the Ubuntu Linux distribution in WSL2. "
+            "Approve the Windows UAC prompt; reboot if prompted, then click Re-check.\n"
         )
         launch_wsl_admin_install()
 

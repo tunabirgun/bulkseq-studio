@@ -8,7 +8,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.core.paths import app_root
+from app.core.paths import app_root, wsl_has_working_distro
 
 
 PYTHON_PACKAGES = {
@@ -128,7 +128,25 @@ def check_readiness() -> list[ReadinessItem]:
     # On Windows the bioinformatics tools live inside WSL; probe it. On Linux the native
     # PATH probes above ARE the environment check, so the WSL probe is skipped.
     if is_windows:
-        items.extend(check_wsl_bulkseq_environment())
+        # wsl.exe present is not enough: a distro must be installed AND start (a missing or
+        # broken ext4.vhdx passes shutil.which yet fails every `wsl -- bash`). Probe a real
+        # launch so a no-distro machine gets a clear "install a distribution" action instead
+        # of a confusing "micromamba missing" that no in-WSL install can fix.
+        if shutil.which("wsl") is None:
+            items.append(ReadinessItem("WSL distribution", "REVIEW_REQUIRED",
+                                       "wsl.exe is not available", "Linux execution"))
+            items.append(ReadinessItem(f"WSL env:{WSL_ENV_NAME}", "REVIEW_REQUIRED",
+                                       "waiting for WSL2", "Linux bioinformatics tools"))
+        elif wsl_has_working_distro():
+            items.append(ReadinessItem("WSL distribution", "PASS",
+                                       "a Linux distribution is installed and starts", "Linux execution"))
+            items.extend(check_wsl_bulkseq_environment())
+        else:
+            items.append(ReadinessItem("WSL distribution", "REVIEW_REQUIRED",
+                                       "no Linux distribution is installed in WSL, or it will not start "
+                                       "(a missing/broken virtual disk)", "Linux execution"))
+            items.append(ReadinessItem(f"WSL env:{WSL_ENV_NAME}", "REVIEW_REQUIRED",
+                                       "waiting for a WSL Linux distribution", "Linux bioinformatics tools"))
     else:
         items.append(_native_r_packages_item())
     return items
@@ -377,6 +395,10 @@ def next_readiness_actions(items: list[ReadinessItem]) -> list[str]:
     actions: list[str] = []
     if by_name.get("wsl", ReadinessItem("wsl", "REVIEW_REQUIRED", "", "")).status != "PASS":
         actions.append("Click Install/Enable WSL, then reboot Windows if prompted.")
+        return actions
+    if by_name.get("WSL distribution", ReadinessItem("WSL distribution", "REVIEW_REQUIRED", "", "")).status != "PASS":
+        actions.append("WSL2 is installed but has no working Linux distribution. Click Install Ubuntu "
+                       "distribution (approve the Windows elevation prompt), then Re-check.")
         return actions
     if by_name.get("WSL micromamba", ReadinessItem("WSL micromamba", "REVIEW_REQUIRED", "", "")).status != "PASS":
         actions.append("Click Install/Repair Core WSL Env to install micromamba inside WSL.")

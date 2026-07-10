@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -96,8 +97,38 @@ def wsl_home(distro: str | None = None) -> str | None:
         )
     except (OSError, subprocess.SubprocessError):
         return None
+    # A distro that will not start (broken/unmounted ext4.vhdx) makes wsl.exe print its own
+    # error to STDOUT and return non-zero; without these guards that error text would be taken
+    # as $HOME and pasted into the working-directory field. A real $HOME is an absolute POSIX
+    # path, so require returncode 0 AND a leading '/'.
+    if proc.returncode != 0:
+        return None
     home = (proc.stdout or "").strip()
-    return home or None
+    return home if home.startswith("/") else None
+
+
+def wsl_has_working_distro(timeout: int = 45) -> bool:
+    """True only if a WSL distribution is installed AND actually starts.
+
+    `shutil.which("wsl")` (wsl.exe present) and `wsl -l -q` (a distro registered) both pass on a
+    machine whose distro will not launch — a missing or broken ext4.vhdx. This runs a trivial
+    command INSIDE the default distro and checks for a marker: it fails (returncode != 0, no
+    marker) when no distro is installed or the distro cannot mount, and succeeds only when Linux
+    is genuinely reachable. Read from stdout as bytes: a failed launch emits UTF-16LE wsl.exe
+    error text, and the ASCII marker simply will not be found in it.
+    """
+    if shutil.which("wsl") is None:
+        return False
+    try:
+        proc = subprocess.run(
+            ["wsl", "--", "bash", "-lc", "echo BULKSEQ_WSL_OK"],
+            capture_output=True,
+            timeout=timeout,
+            creationflags=_wsl_quiet_flags(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0 and b"BULKSEQ_WSL_OK" in (proc.stdout or b"")
 
 
 def wsl_recommended_workdir(subdir: str = "BulkSeqProjects") -> str | None:

@@ -41,6 +41,10 @@ def _install_excepthook() -> None:
     # Convert an otherwise-silent crash into a logged, visible error and keep the
     # app alive. Unhandled exceptions in Qt slots are routed here by PySide6.
     def handler(exc_type, exc, tb) -> None:
+        # PySide6 can route a Qt-boundary error (e.g. an OverflowError from an out-of-range
+        # int marshalled into a C++ slot argument) here with tb=None; recover the frames from
+        # the exception object so the log records WHERE it happened instead of a bare type name.
+        tb = tb or getattr(exc, "__traceback__", None)
         text = "".join(traceback.format_exception(exc_type, exc, tb))
         # None stderr (frozen windowed build) or a cp1252 encode error must not abort the
         # excepthook before the log + dialog below run.

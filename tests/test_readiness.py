@@ -26,11 +26,23 @@ def test_wsl_readiness_probe_is_nonfatal() -> None:
 def test_next_action_points_to_core_env_when_bulkseq_missing() -> None:
     items = [
         ReadinessItem("wsl", "PASS", "", ""),
+        ReadinessItem("WSL distribution", "PASS", "", ""),
         ReadinessItem("WSL micromamba", "PASS", "", ""),
         ReadinessItem("WSL env:bulkseq", "REVIEW_REQUIRED", "", ""),
     ]
     assert "Install/Repair Core WSL Env" in next_readiness_actions(items)[0]
     assert not has_wsl_core_environment(items)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="WSL distribution guidance is Windows-only")
+def test_next_action_points_to_distro_when_wsl_present_but_no_distro() -> None:
+    # wsl.exe is installed but no distribution starts (a missing/broken ext4.vhdx): the guidance
+    # must route to installing a distribution, not to the in-WSL micromamba step that would fail.
+    items = [
+        ReadinessItem("wsl", "PASS", "", ""),
+        ReadinessItem("WSL distribution", "REVIEW_REQUIRED", "will not start", ""),
+    ]
+    assert "Install Ubuntu distribution" in next_readiness_actions(items)[0]
 
 
 def test_core_tools_present_requires_all_core_tools() -> None:
