@@ -48,9 +48,36 @@ rule html_report:
     input:
         run_txt="results/reports/run_summary.txt",
         results="results/deseq2/deseq2_results.csv",
+        # On a multi-study run, wait for the meta summary so the main report's meta card block
+        # renders deterministically (it reads meta_analysis_summary.json opportunistically).
+        **({"meta_summary": "results/reports/meta_analysis_summary.json"} if META_MODE else {}),
     output:
         html="results/reports/results_report.html",
     log:
         "logs/html_report.log",
     shell:
         "python workflow/scripts/make_html_report.py --project . > {log} 2>&1"
+
+
+if META_MODE:
+
+    # Dedicated cross-study report (imports make_html_report.py's CSS/helpers). Depends on the
+    # meta figures + tables + summary; the enrichment inputs are optional (org-db-gated), so they
+    # are only required when enrichment is on.
+    _meta_report_inputs = {
+        "summary": "results/reports/meta_analysis_summary.json",
+        "convergent": "results/meta/meta_convergent_genes.csv",
+        "volcano": "results/figures/meta_volcano.png",
+    }
+    if WF.get("enrichment", True):
+        _meta_report_inputs["dotplot"] = "results/figures/meta_enrichment_dotplot.png"
+
+    rule meta_report:
+        input:
+            **_meta_report_inputs,
+        output:
+            html="results/reports/meta_analysis_report.html",
+        log:
+            "logs/meta_report.log",
+        shell:
+            "python workflow/scripts/make_meta_report.py --project . > {log} 2>&1"

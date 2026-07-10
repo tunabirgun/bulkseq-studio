@@ -92,10 +92,15 @@ def estimate_runtime(
         # spans minutes to hours independent of size (measured ~80x spread across runs), so it is
         # surfaced separately (download_size + download_note) rather than trusted in the estimate.
         download = (gbase * 0.8) / io_par if is_sra else 0.0
-        # Estimated FASTQ download size for SRA/ENA: gzipped FASTQ is ~0.35 bytes/base
-        # (the same factor _total_gbase uses to invert local file sizes to bases).
-        if is_sra and gbase > 0:
-            download_gib = (gbase * 1e9 * 0.35) / (1024 ** 3)
+        # Download size for SRA/ENA: prefer ENA's reported gzipped byte sizes (download_bytes,
+        # summed per run by metadata_to_samples); fall back to the ~0.35 bytes/base estimate
+        # only when those are absent, so the GB figure populates even without fastq_bytes.
+        if is_sra:
+            dl_bytes = _total_download_bytes(metadata)
+            if dl_bytes > 0:
+                download_gib = dl_bytes / (1024 ** 3)
+            elif gbase > 0:
+                download_gib = (gbase * 1e9 * 0.35) / (1024 ** 3)
 
         # Per-gbase alignment minutes, recalibrated against real benchmark runs (STAR fit from
         # 3 runs at 4/12 threads; HISAT2/Salmon scaled proportionally, preserving speed order).
@@ -196,6 +201,15 @@ def _download_label(config: AppConfig, download_gib: float) -> str:
         return "none (inputs are local)"
     # Local FASTQ route: reads are already on disk; only the reference may download.
     return "none for reads (local FASTQ); the reference genome/annotation downloads if not provided"
+
+
+def _total_download_bytes(df: pd.DataFrame | None) -> int:
+    # Sum ENA's reported gzipped FASTQ byte sizes (download_bytes column, written by
+    # metadata_to_samples) across runs. 0 when the column is absent (non-SRA / hand-built sheet),
+    # in which case the caller falls back to the per-base size estimate.
+    if df is None or "download_bytes" not in df.columns:
+        return 0
+    return int(pd.to_numeric(df["download_bytes"], errors="coerce").fillna(0).sum())
 
 
 def _total_gbase(df: pd.DataFrame | None) -> float:

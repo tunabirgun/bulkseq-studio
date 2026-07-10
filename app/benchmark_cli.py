@@ -54,7 +54,10 @@ def _validate_project(root: Path) -> None:
     manager = ProjectManager()
     config = manager.load_config(root)
     samples = load_metadata(root / "config" / "samples.tsv")
-    messages = validate_metadata(samples, allow_pending_sra=config.input.type == "sra")
+    _c = config.deseq2.contrasts[0] if config.deseq2.contrasts else None
+    contrast = (_c.numerator, _c.denominator) if _c else None
+    messages = validate_metadata(samples, allow_pending_sra=config.input.type == "sra",
+                                 contrast=contrast)
     write_check(root, "01_input_validation", messages)
     estimate = estimate_runtime(config, samples)
     print("Validation")

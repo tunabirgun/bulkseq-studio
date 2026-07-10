@@ -696,6 +696,12 @@ dependencies:
   - zlib=1.3.2=h25fd6f3_2
   - zlib-ng=2.3.3=hceb46e0_1
   - zstd=1.5.7=hb78ec9c_6
+  - bioconductor-htsfilter=1.50.0=r45hdfd78af_0
+  - r-mathjaxr=2.0_0=r45hc72bb7e_0
+  - r-metadat=1.6_0=r45hc72bb7e_0
+  - r-metafor=5.0_1=r45hc72bb7e_0
+  - r-metarnaseq=1.0.8=r45ha770c72_1
+  - r-pbapply=1.7_4=r45hc72bb7e_1
   - pip:
     - lxml==6.0.2
     - mappy==2.30

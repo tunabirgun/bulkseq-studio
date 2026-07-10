@@ -73,6 +73,12 @@ dependencies:
   # edgeR (limma companion): DGEList/filterByExpr/TMM for the optional limma-voom
   # differential-expression engine (run_voom.R).
   - bioconductor-edger
+  # Multi-study meta-analysis (0.21.0): metaRNASeq (replicate-weighted inverse-normal p-value
+  # combination), metafor (effect-size random/fixed-effects + forest plots), HTSFilter (per-study
+  # independent filtering before p-value combination).
+  - r-metarnaseq
+  - r-metafor
+  - bioconductor-htsfilter
   - bioconductor-affy
   - bioconductor-biobase
   - bioconductor-org.hs.eg.db

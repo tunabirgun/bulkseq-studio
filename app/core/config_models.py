@@ -26,6 +26,10 @@ class InputConfig(BaseModel):
     # pipeline ingests it (skipping download/QC/alignment/featureCounts) into the
     # canonical results/counts/counts.txt and runs DESeq2 -> figures -> enrichment.
     count_matrix: str | None = None
+    # When type == count_matrix: permit fractional RSEM/tximport ESTIMATED counts (rounded to
+    # integers for DESeq2). Off by default so mostly-fractional input (TPM/FPKM/RMA/normalized) is
+    # refused rather than silently rounded into a corrupt count model.
+    estimated_counts: bool = False
     # When type == deseq2_results: a user-supplied DESeq2 results table; the pipeline
     # ingests it (skipping download/QC/alignment/featureCounts/DESeq2) into the canonical
     # results/deseq2/deseq2_results.csv and runs enrichment -> figures -> PPI. Outputs that
@@ -104,6 +108,14 @@ class WorkflowConfig(BaseModel):
     # canonical artifacts. Microarray uses limma-trend and deseq2-results uploads
     # bypass DE, regardless of this value.
     de_engine: Literal["DESeq2", "limma-voom", "edgeR"] = "DESeq2"
+    # Multi-study meta-analysis: set this to ALSO run a per-study DESeq2 -> metaRNASeq inverse-normal
+    # + metafor combination and a cross-study comparative report when the sample sheet carries a
+    # 'dataset' (study-of-origin) column with >1 study. It runs ALONGSIDE the joint DESeq2. On a
+    # multi-study run the workflow auto-injects 'dataset' into a default '~ condition' design (giving
+    # '~ dataset + condition') so study-of-origin is modelled as a covariate; an explicit multi-term
+    # design the user set is respected as-is. Ignored for single-study, microarray, and results-upload
+    # runs. Only combines studies that contain BOTH contrast arms (others are dropped + reported).
+    meta_analysis: bool = False
     # Mitochondrial + chloroplast/plastid genes: keep them, discard them before DE, or
     # separate them into their own count subset (and run the main DE on nuclear genes only).
     organellar_genes: Literal["keep", "discard", "separate"] = "keep"

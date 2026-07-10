@@ -93,7 +93,8 @@ WSL_TOOLS = {
 # — probing them here catches a broken enrichment/PPI env from Check Environment, before a run.
 # Presence-checked (installed.packages), not load-tested, to stay under the 20s WSL probe timeout.
 R_ANALYSIS_PACKAGES = ("DESeq2", "edgeR", "limma", "GSVA", "clusterProfiler", "GO.db", "DOSE",
-                       "enrichplot", "fgsea", "STRINGdb", "apeglm", "ashr", "GEOquery", "affy")
+                       "enrichplot", "fgsea", "STRINGdb", "apeglm", "ashr", "GEOquery", "affy",
+                       "metaRNASeq", "metafor", "HTSFilter")
 
 
 @dataclass(frozen=True)

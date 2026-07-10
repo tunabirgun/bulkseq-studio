@@ -167,7 +167,24 @@ processors=16    # optional: limit WSL2 to 16 logical processors</code></pre>
 <h3>Try it now: a one-click example run</h3>
 <p>The fastest way to see a full analysis end to end is a bundled benchmark — no data to find and no reference to configure. On the <strong>Project</strong> tab, click <strong>Create Benchmark Project</strong> and choose <em>Pasilla paired-end subset</em>, a four-sample <em>Drosophila</em> knockdown study. The app scaffolds a ready-to-run project with the samples, the treated-versus-untreated contrast, and the Ensembl reference already filled in. Go straight to <strong>Run Monitor</strong> and click <strong>Start Run</strong>; in a few minutes the <strong>Outputs</strong> tab shows the count matrix, the DESeq2 table (about 467 differentially expressed genes, with the <em>pasilla</em> gene itself strongly down-regulated), and the figures, and <code>results_report.html</code> opens as one shareable summary. Two more one-click datasets — a yeast and a rice example — sit in the same menu. Once a benchmark run makes sense, repeat the six steps above with your own study.</p>
 
-<div class="note"><span class="t">Tip</span> Not sure the configuration is right? Use <strong>Dry Run</strong> before <strong>Start Run</strong>. A dry run validates the configuration and reports exactly which steps would execute, without downloading or computing anything.</div></section>
+<div class="note"><span class="t">Tip</span> Not sure the configuration is right? Use <strong>Dry Run</strong> before <strong>Start Run</strong>. A dry run validates the configuration and reports exactly which steps would execute, without downloading or computing anything.</div>
+
+<h3>Combining two or more studies (meta-analysis)</h3>
+<p>To ask which genes respond consistently across several independent studies of the same contrast, put them all in one project and let BulkSeq Studio run a meta-analysis.</p>
+<ol class="steps">
+  <li>
+    <h4>Add the samples of every study to one project</h4>
+    <p>Bring in each study's samples the usual way — a merged count matrix, or a fetch that tags each accession with its study — so all of them sit in a single sample sheet.</p>
+  </li>
+  <li>
+    <h4>Set the <code>dataset</code> and <code>condition</code> columns</h4>
+    <p>On the <strong>Metadata</strong> tab, give every row a <code>dataset</code> value (its study of origin) and a <code>condition</code> value (the compared group). The <code>dataset</code> column must hold more than one study, and at least one study must contain both compared groups, or the confounding gate stops the run.</p>
+  </li>
+  <li>
+    <h4>Tick Multi-study meta-analysis and run</h4>
+    <p>On the <strong>Workflow Settings</strong> tab, tick <strong>Multi-study meta-analysis</strong>, then start the run. Each study is analysed separately with DESeq2 and the per-study results are combined; the extra <code>meta_analysis_report.html</code> and the <code>results/meta/</code> tables and comparative figures appear alongside the standard outputs.</p>
+  </li>
+</ol></section>
 
     <section id="input"><p class="kicker">Five ways in</p>
 <h2>Input modes</h2>

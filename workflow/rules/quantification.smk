@@ -16,11 +16,14 @@ if COUNT_MATRIX_MODE:
         output:
             counts=COUNTS_RAW,
             summary=COUNTS_SUMMARY,
+        params:
+            estimated=("--estimated-counts" if INPUT.get("estimated_counts") else ""),
         log:
             "logs/ingest_counts.log",
         shell:
             "python workflow/scripts/ingest_counts.py --matrix {input.matrix:q} "
-            "--samples {input.samples:q} --out {output.counts:q} --summary {output.summary:q} > {log:q} 2>&1"
+            "--samples {input.samples:q} --out {output.counts:q} --summary {output.summary:q} "
+            "{params.estimated} > {log:q} 2>&1"
 
 elif USE_SALMON:
 

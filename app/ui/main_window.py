@@ -630,6 +630,11 @@ class MainWindow(QMainWindow):
             self.rseqc.setEnabled(alignment_active)  # needs a genome BAM
         if getattr(self, "gsva", None) is not None:
             self.gsva.setEnabled(mode != "deseq2_results")  # needs the normalized matrix
+        if getattr(self, "meta_analysis", None) is not None:
+            # Count-based routes only (needs a per-study count matrix); microarray / results-upload
+            # cannot run the per-study DESeq2 fan-out. The workflow additionally requires a 'dataset'
+            # column with >1 study (MULTI_DATASET) — the Snakefile is the source of truth there.
+            self.meta_analysis.setEnabled(mode in ("fastq", "sra", "mixed", "count_matrix"))
 
     def _import_deseq2_results(self) -> None:
         if not self._require_project() or self.config is None:
@@ -734,6 +739,39 @@ class MainWindow(QMainWindow):
             def clean(c: str) -> str:
                 return re.sub(r"_Aligned\.sortedByCoord\.out\.bam$", "", Path(str(c)).name)
             sample_ids = [clean(c) for c in sample_cols]
+            # Detect normalized / estimated input up front (mirrors the ingest_counts guard) so the
+            # user gets an immediate, clear choice instead of a downstream ingest failure. RSEM/
+            # tximport estimated counts are fractional but valid (rounded); TPM/FPKM/log/RMA are not.
+            self.config.input.estimated_counts = False
+            _num = df[sample_cols].apply(pd.to_numeric, errors="coerce")
+            _vals = _num.to_numpy(dtype="float64").ravel()
+            _vals = _vals[~pd.isna(_vals)]
+            _nz = _vals[_vals != 0]
+            if _nz.size and float((_nz % 1 != 0).mean()) > 0.5:
+                _colsum = _num.sum(axis=0, skipna=True).to_numpy(dtype="float64")
+                _tpm = _colsum.size and float(((abs(_colsum - 1e6) / 1e6) < 0.01).mean()) >= 0.5
+                if _tpm:
+                    QApplication.restoreOverrideCursor()
+                    QMessageBox.warning(self, APP_NAME,
+                        "The matrix columns each sum to ~1,000,000, so this is TPM, not raw counts. "
+                        "DESeq2 and the meta-analysis need raw integer counts — re-export "
+                        "un-normalized counts and import again.")
+                    return
+                QApplication.restoreOverrideCursor()
+                resp = QMessageBox.question(self, APP_NAME,
+                    "The matrix values are mostly non-integer.\n\n"
+                    "• If these are RSEM / tximport ESTIMATED counts, they will be rounded to "
+                    "integers and the run can proceed.\n"
+                    "• If they are NORMALIZED data (FPKM/RPKM, log-CPM, RMA or microarray "
+                    "intensities), DESeq2 cannot use them — cancel and re-export raw counts.\n\n"
+                    "Are these estimated counts?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Cancel)
+                if resp != QMessageBox.StandardButton.Yes:
+                    self.statusBar().showMessage("Count-matrix import cancelled.", 4000)
+                    return
+                QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+                self.config.input.estimated_counts = True
             # Copy the matrix into the project and switch to count-matrix mode.
             dest = self.project_root / "config" / "counts_matrix.txt"
             # Write the parsed table as canonical TSV. ingest_counts.py picks its
@@ -1217,6 +1255,14 @@ class MainWindow(QMainWindow):
             "Extended alignment QC with RSeQC: read genomic-context distribution (exon / intron / "
             "intergenic) and 5' to 3' gene-body coverage, added to the MultiQC report. Needs a "
             "genome BAM, so it is unavailable on the Salmon route.")
+        self.meta_analysis = QCheckBox()
+        self.meta_analysis.setToolTip(
+            "Multi-study meta-analysis: when the sample sheet carries a 'dataset' (study-of-origin) "
+            "column with more than one study, run a per-study DESeq2 -> metaRNASeq inverse-normal "
+            "p-combination + metafor effect-size pooling, with a dedicated cross-study comparative "
+            "report (convergent/discordant genes, forest, concordance, shared-vs-distinct "
+            "enrichment). Runs alongside the joint DESeq2. Ignored for single-study, microarray and "
+            "results-upload runs.")
         # fastp parameters
         self.fastp_q = QSpinBox()
         self.fastp_q.setRange(0, 40)
@@ -1384,6 +1430,7 @@ class MainWindow(QMainWindow):
         out_form.addRow("Figures", self.figures)
         out_form.addRow(self._info_label("GSVA pathway activity", "Sample-level gene-set activity scores from your custom gene sets (organism-safe). Needs a custom GMT under Custom gene sets."), self.gsva)
         out_form.addRow(self._info_label("Extended QC (RSeQC)", "Read-distribution + gene-body-coverage QC added to the MultiQC report. Genome-BAM routes only (not Salmon)."), self.rseqc)
+        out_form.addRow(self._info_label("Multi-study meta-analysis", "Combine 2+ studies (a 'dataset' column with >1 study): per-study DESeq2 + inverse-normal p-combination + effect-size pooling, with a cross-study comparative report. Ignored for single-study / microarray / results-upload."), self.meta_analysis)
         self.out_group = out_group
         layout.addWidget(out_group)
 
@@ -2994,6 +3041,7 @@ class MainWindow(QMainWindow):
             ("correlation", "Sample-correlation heatmaps"),
             ("enrichment", "Enrichment plots"),
             ("network", "PPI network"),
+            ("comparative_meta", "Multi-study meta-analysis figures"),
         ]
         self.fig_point_size = QDoubleSpinBox()
         self.fig_point_size.setRange(0.1, 12.0)
@@ -3588,6 +3636,7 @@ class MainWindow(QMainWindow):
         self.figures.setChecked(wf.figures)
         self.gsva.setChecked(getattr(wf, "gsva", False))
         self.rseqc.setChecked(getattr(wf, "rseqc", False))
+        self.meta_analysis.setChecked(getattr(wf, "meta_analysis", False))
         _eng_idx = self.de_engine.findData(getattr(wf, "de_engine", "DESeq2"))
         self.de_engine.setCurrentIndex(_eng_idx if _eng_idx >= 0 else 0)
         _org_idx = self.organellar.findData(getattr(wf, "organellar_genes", "keep"))
@@ -3846,6 +3895,13 @@ class MainWindow(QMainWindow):
         save_metadata(self.metadata_table.to_dataframe(), self.project_root / "config" / "samples.tsv")
         self.metadata_messages.setPlainText("Saved config/samples.tsv")
 
+    def _active_contrast(self) -> tuple[str, str] | None:
+        # The contrast arms drive the multi-study confounding gate (which condition-vs-condition is
+        # being compared); read them from the DE-tab combos so the gate fires for >2-level designs.
+        num = self.numerator.currentText().strip() if hasattr(self, "numerator") else ""
+        den = self.denominator.currentText().strip() if hasattr(self, "denominator") else ""
+        return (num, den) if num and den else None
+
     def _validate_metadata(self) -> None:
         allow_pending_sra = self.config is not None and self.config.input.type in (
             "sra", "count_matrix", "microarray", "deseq2_results")
@@ -3853,6 +3909,7 @@ class MainWindow(QMainWindow):
             self.metadata_table.to_dataframe(),
             allow_pending_sra=allow_pending_sra,
             design_variables=self._design_variables(),
+            contrast=self._active_contrast(),
         )
         self.metadata_messages.setPlainText(self._format_messages(messages))
 
@@ -3952,6 +4009,7 @@ class MainWindow(QMainWindow):
         self.config.workflow.figures = self.figures.isChecked()
         self.config.workflow.gsva = self.gsva.isChecked()
         self.config.workflow.rseqc = self.rseqc.isChecked()
+        self.config.workflow.meta_analysis = self.meta_analysis.isChecked()
         self.config.workflow.de_engine = self.de_engine.currentData()  # type: ignore[assignment]
         self.config.workflow.organellar_genes = self.organellar.currentData()  # type: ignore[assignment]
         self.config.gene_sets.custom_gene_sets = self.custom_gmt.text().strip() or None
@@ -4135,6 +4193,7 @@ class MainWindow(QMainWindow):
                 self.metadata_table.to_dataframe(),
                 allow_pending_sra=allow_pending_sra,
                 design_variables=self._design_variables(),
+                contrast=self._active_contrast(),
             )
             messages = list(messages) + self._enrichment_config_messages()
             write_check(self.project_root, "01_input_validation", messages)
@@ -4457,6 +4516,11 @@ class MainWindow(QMainWindow):
             if terms_dir.exists():
                 items += [f"results/enrichment/terms/{p.name}"
                           for p in sorted(terms_dir.glob("*_genes.csv"))]
+            # Multi-study meta-analysis tables (present only after a multi-dataset run).
+            for _mt in ("meta_convergent_genes.csv", "meta_study_summary.csv",
+                        "meta_analysis_results.csv", "meta_enrichment_ora.csv"):
+                if (self.project_root / "results" / "meta" / _mt).exists():
+                    items.append(f"results/meta/{_mt}")
         current = self.output_table_pick.currentText()
         self.output_table_pick.blockSignals(True)
         self.output_table_pick.clear()

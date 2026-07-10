@@ -7,6 +7,63 @@ _REF = _DE.get("reference_level", {}) or {}
 _REF_FACTOR = next(iter(_REF), "condition")
 
 
+def _design_full_rank(terms):
+    # Treatment-contrast model matrix (intercept + drop-first dummies) rank check, so we never
+    # inject a study covariate that makes the joint design rank-deficient (which DESeq2 rejects
+    # outright and limma fits with non-estimable coefficients). samples_df is in scope at parse
+    # time. If a term is absent we can't check it -> don't block.
+    import numpy as np
+    cols = [np.ones((len(samples_df), 1))]
+    for t in terms:
+        if t not in samples_df.columns:
+            return True
+        d = pd.get_dummies(samples_df[t].astype(str).str.strip(), drop_first=True).to_numpy(dtype=float)
+        if d.shape[1]:
+            cols.append(d)
+    m = np.column_stack(cols)
+    return int(np.linalg.matrix_rank(m)) == m.shape[1]
+
+
+def _joint_design():
+    # The JOINT DE fit pools all samples. On a multi-study run it MUST model study-of-origin, or
+    # study effects confound the contrast. Auto-inject 'dataset' into the *default* single-factor
+    # design (~ condition); respect an explicit multi-term design the user set (they may already
+    # model batch). Runs beside the per-study meta-analysis, which handles studies independently.
+    # Single-study runs are byte-identical (MULTI_DATASET is False). Returns (design, note).
+    d = (_DE.get("design_formula") or "~ condition").strip()
+    if not MULTI_DATASET:
+        return d, None
+    rhs = d.split("~", 1)[-1].strip()
+    terms = [t.strip() for t in rhs.replace("+", " ").split() if t.strip()]
+    if "dataset" in terms:
+        return d, None
+    cf = _CONTRAST.get("factor", "condition")
+    if terms not in ([cf], ["condition"]):
+        return d, None  # explicit multi-term design -> respect it as-is
+    injected = f"~ dataset + {rhs}"
+    if not _design_full_rank(["dataset"] + terms):
+        return d, ("fallback", injected)  # would be rank-deficient -> keep the user's design
+    return injected, ("injected", injected)
+
+
+_DESIGN, _design_note = _joint_design()
+if _design_note:
+    _kind, _inj = _design_note
+    _engine = "limma" if MICROARRAY_MODE else "DESeq2"
+    if _kind == "injected":
+        _alongside = " The per-study meta-analysis runs alongside." if META_MODE else ""
+        sys.stderr.write(
+            f"NOTE: multi-study run detected; the joint {_engine} design was set to '{_inj}' so "
+            f"study-of-origin is modelled as a covariate.{_alongside}\n")
+    else:
+        _alongside = (" (the per-study meta-analysis still handles studies separately)."
+                      if META_MODE else ".")
+        sys.stderr.write(
+            f"WARNING: multi-study run detected, but adding study-of-origin ('{_inj}') would make "
+            f"the design rank-deficient for this sample layout; keeping '{_DESIGN}'. Study-of-origin "
+            f"is NOT modelled in the joint {_engine} fit{_alongside}\n")
+
+
 if MICROARRAY_MODE:
 
     # Microarray (continuous intensities): limma instead of DESeq2. Emits the
@@ -25,7 +82,7 @@ if MICROARRAY_MODE:
             design_check="checks/08_metadata_design_qc.json",
             deseq_check="checks/09_deseq2_qc.json",
         params:
-            design=_DE.get("design_formula", "~ condition"),
+            design=_DESIGN,
             contrast_factor=_CONTRAST.get("factor", "condition"),
             numerator=_CONTRAST.get("numerator", ""),
             denominator=_CONTRAST.get("denominator", ""),
@@ -90,7 +147,7 @@ elif VOOM_MODE:
             design_check="checks/08_metadata_design_qc.json",
             deseq_check="checks/09_deseq2_qc.json",
         params:
-            design=_DE.get("design_formula", "~ condition"),
+            design=_DESIGN,
             contrast_factor=_CONTRAST.get("factor", "condition"),
             numerator=_CONTRAST.get("numerator", ""),
             denominator=_CONTRAST.get("denominator", ""),
@@ -124,7 +181,7 @@ elif EDGER_MODE:
             design_check="checks/08_metadata_design_qc.json",
             deseq_check="checks/09_deseq2_qc.json",
         params:
-            design=_DE.get("design_formula", "~ condition"),
+            design=_DESIGN,
             contrast_factor=_CONTRAST.get("factor", "condition"),
             numerator=_CONTRAST.get("numerator", ""),
             denominator=_CONTRAST.get("denominator", ""),
@@ -156,7 +213,7 @@ else:
             unchanged="results/deseq2/unchanged_genes.csv",
             equivalence_check="checks/13_equivalence_qc.json",
         params:
-            design=_DE.get("design_formula", "~ condition"),
+            design=_DESIGN,
             ref_factor=_REF_FACTOR,
             ref_level=_REF.get(_REF_FACTOR, ""),
             contrast_factor=_CONTRAST.get("factor", "condition"),

@@ -763,6 +763,32 @@ def _meta_cards(run: dict, project: Path) -> str:
     return f"<div class='cards'>{inner}</div>"
 
 
+def _meta_analysis_link(project: Path) -> str:
+    """Additive multi-study block for the MAIN report: a compact card row + a link to the dedicated
+    cross-study report. Returns "" (no effect) on single-study / non-meta runs."""
+    summary = _load_json(project / "results" / "reports" / "meta_analysis_summary.json")
+    if not summary or summary.get("n_meta_sig") is None:
+        return ""
+    conc = summary.get("direction_concordance_pct")
+    cards = [
+        ("Studies combined", summary.get("n_studies", "—")),
+        ("Convergent meta-DEGs", f"{summary.get('n_sig_up', 0)} up · {summary.get('n_sig_down', 0)} down"),
+        ("Direction concordance", f"{conc}%" if conc is not None else "—"),
+        ("Pooling", str(summary.get("pooling", "—"))),
+    ]
+    inner = "".join(
+        f"<div class='card'><div class='card-k'>{html.escape(k)}</div>"
+        f"<div class='card-v'>{html.escape(str(v))}</div></div>" for k, v in cards)
+    has_report = (project / "results" / "reports" / "meta_analysis_report.html").exists()
+    link = ("<p><a class='xlink' href='meta_analysis_report.html'>Open the cross-study "
+            "meta-analysis report →</a></p>") if has_report else ""
+    body = (f"<p class='muted'>This run combined multiple studies. The per-study DESeq2 results below "
+            f"are the joint fit; the cross-study meta-analysis (per-study DESeq2 → inverse-normal "
+            f"p-combination + effect-size pooling) is summarised here.</p>"
+            f"<div class='cards'>{inner}</div>{link}")
+    return section("Multi-study meta-analysis", body, sid="meta")
+
+
 CSS = """
 :root{
   /* Brand — from the logo spectrum bar */
@@ -798,6 +824,8 @@ CSS = """
 body{margin:0;font-family:var(--sans);color:var(--text);background:var(--bg);line-height:1.6;
   -webkit-font-smoothing:antialiased}
 a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline;text-underline-offset:2px}
+.xlink{display:inline-block;margin-top:.4rem;font-family:var(--sans);font-weight:600;color:var(--brand-blue)}
+.xlink:hover{color:var(--brand-blue-deep);text-decoration:underline;text-underline-offset:2px}
 h1,h2,h3{font-family:var(--serif);font-weight:600;letter-spacing:-.01em}
 header.top{position:sticky;top:0;z-index:50;background:var(--surface);border-bottom:1px solid var(--border)}
 header.top::before{content:"";display:block;height:3px;background:var(--spectrum)}
@@ -1238,6 +1266,7 @@ def build(project: Path) -> str:
 
     hero_findings = _hero_findings(run, project, sanity, name)
     meta_cards = _meta_cards(run, project)
+    meta_link = _meta_analysis_link(project)
     study = _study_design_section(run)
     figures = _figure_groups(figs, up, down, unit)
     de_html = _de_section(project, up, down, num, den, unit)
@@ -1261,6 +1290,7 @@ def build(project: Path) -> str:
 <main>
 {hero_findings}
 {meta_cards}
+{meta_link}
 {study}
 {figures}
 {de_html}

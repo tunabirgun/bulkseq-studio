@@ -12,6 +12,7 @@ import re
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 FC_META = ["Chr", "Start", "End", "Strand", "Length"]
@@ -29,6 +30,8 @@ def main() -> int:
     ap.add_argument("--samples", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--summary", required=True)
+    ap.add_argument("--estimated-counts", action="store_true",
+                    help="Permit fractional RSEM/tximport estimated counts (round to integers).")
     args = ap.parse_args()
 
     sep = "," if str(args.matrix).lower().endswith(".csv") else "\t"
@@ -49,6 +52,37 @@ def main() -> int:
             "Collapse duplicates (sum counts per unique gene id) or remove them, then re-import."
         )
     sample_cols = [c for c in df.columns[1:] if c not in FC_META]
+    # Guard against normalized / continuous input (TPM, FPKM/RPKM, log-CPM, RMA, DESeq2-normalized,
+    # microarray intensities), which the DESeq2 count model and the meta-analysis cannot use. RSEM/
+    # tximport *estimated* counts are legitimately fractional; shape cannot distinguish them from
+    # FPKM, so mostly-fractional input is REFUSED by default and rounded only when the user declares
+    # estimated counts (--estimated-counts / the GUI checkbox / config input.estimated_counts).
+    _num = df[sample_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype="float64")
+    _fin = _num[~pd.isna(_num)]
+    # Fraction of NON-ZERO values that are fractional: zeros are integer and dominate sparse
+    # matrices, so measuring over nonzeros stops a sparse normalized matrix from slipping past.
+    _nz = _fin[_fin != 0]
+    _frac = float((_nz % 1 != 0).mean()) if _nz.size else 0.0
+    # TPM: each column sums to ~1e6 regardless of sparsity. Check it UNCONDITIONALLY on a majority
+    # of columns (robust to one rescaled/off-spec column) before the fractional gate.
+    _colsum = pd.DataFrame(_num).sum(axis=0, skipna=True).to_numpy(dtype="float64")
+    if _colsum.size and float(np.mean(np.abs(_colsum - 1e6) / 1e6 < 0.01)) >= 0.5:
+        sys.exit(
+            "The matrix columns each sum to ~1,000,000, so this is TPM, not raw counts. DESeq2 and "
+            "the meta-analysis require raw integer counts. Re-export un-normalized counts."
+        )
+    if _frac > 0.5:
+        if args.estimated_counts:
+            print("Note: estimated-counts mode is on; rounding fractional values to the nearest "
+                  "integer for DESeq2 (per DESeq2/tximport guidance).")
+        else:
+            sys.exit(
+                "The matrix values are mostly non-integer. If these are RSEM/tximport ESTIMATED "
+                "counts, re-import with 'counts are estimated (RSEM/tximport)' enabled so they are "
+                "rounded. Otherwise this looks like NORMALIZED/transformed data (TPM, FPKM/RPKM, "
+                "log-CPM, RMA, DESeq2-normalized, or microarray intensities), which DESeq2 and the "
+                "meta-analysis cannot use — re-export RAW integer counts and re-import."
+            )
     cleaned = {c: clean_col(c) for c in sample_cols}
 
     samples = pd.read_csv(args.samples, sep="\t", dtype=str).fillna("")

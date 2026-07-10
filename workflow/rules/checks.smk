@@ -60,6 +60,12 @@ ALL_CHECKS.append("checks/15_set_overlap.json")
 # PPI network (STRING) when enabled; degrades to empty + PASS if unreachable.
 if config.get("ppi", {}).get("enabled", True):
     ALL_CHECKS.append("checks/16_ppi_network.json")
+# Multi-study meta-analysis QC (+ cross-study enrichment QC): only when META_MODE, so single-study
+# and other modes never require them. Surfaces the meta status in sanity_checks.txt + the report.
+if META_MODE:
+    ALL_CHECKS.append("checks/17_meta_analysis_qc.json")
+    if WF.get("enrichment", True):
+        ALL_CHECKS.append("checks/18_meta_enrichment_qc.json")
 
 
 rule validate_project:
@@ -80,10 +86,16 @@ rule input_check:
         prev="checks/00_project_setup.json",
     output:
         "checks/01_input_validation.json",
+    params:
+        # Pass the contrast so the multi-study confounding gate is enforced for CLI/benchmark runs
+        # too (not just GUI pre-launch). Empty for single-condition/no-contrast configs.
+        num=((config.get("deseq2", {}).get("contrasts") or [{}])[0].get("numerator", "")),
+        den=((config.get("deseq2", {}).get("contrasts") or [{}])[0].get("denominator", "")),
     benchmark:
         "benchmarks/01_input_validation.tsv"
     shell:
-        "python workflow/scripts/validate_metadata.py --samples {input.samples} --out {output}"
+        "python workflow/scripts/validate_metadata.py --samples {input.samples} "
+        "--numerator {params.num:q} --denominator {params.den:q} --out {output}"
 
 
 rule aggregate_sanity_checks:

@@ -101,6 +101,16 @@ def build_snakemake_args(
             project_root, "results/enrichment/custom_enrichment_objects.rds"
         ):
             targets.append("custom_enrichment_figure")
+        # Multi-study meta-analysis comparative figures are style-consuming too, so a restyle
+        # regenerates them from the existing meta result (no re-run of the per-study DESeq2).
+        if config.workflow.meta_analysis and _target_input_exists(
+            project_root, "results/meta/meta_analysis_results.csv"
+        ):
+            targets.append("meta_figures")
+            if config.workflow.enrichment and _target_input_exists(
+                project_root, "results/meta/meta_enrichment_objects.rds"
+            ):
+                targets.append("meta_enrichment_figures")
         args += ["--forcerun", *targets, "--allowed-rules", *targets]
     elif mode == "goi":
         # Produce only the genes-of-interest outputs from the existing DESeq2 object

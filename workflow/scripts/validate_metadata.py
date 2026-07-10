@@ -13,10 +13,45 @@ REQUIRED = ["sample_id", "condition", "layout", "fastq_1"]
 PRIORITY = {"FAIL": 4, "REVIEW_REQUIRED": 3, "WARNING": 2, "PASS": 1}
 
 
+def _multistudy_gates(df: pd.DataFrame, num: str, den: str) -> list[dict[str, str]]:
+    """Standalone mirror of app.core.metadata's multi-study gates (the pipeline runs in WSL where
+    the app package is not importable). Fires only when a 'dataset' column has >1 study."""
+    msgs: list[dict[str, str]] = []
+    if "dataset" not in df.columns:
+        return msgs
+    ds = df["dataset"].astype(str).str.strip()
+    if ds.replace("", pd.NA).nunique(dropna=True) <= 1:
+        return msgs
+    # Same-organism requirement (shared gene-id namespace), case-insensitive.
+    if "organism" in df.columns:
+        orgs = {}
+        for o in df["organism"].astype(str).str.strip():
+            if o and o.lower() not in ("unknown", "nan", "na"):
+                orgs.setdefault(o.casefold(), o)
+        if len(orgs) > 1:
+            msgs.append({"status": "FAIL", "message": (
+                f"The merged studies use different organisms ({', '.join(sorted(orgs.values()))}). "
+                "A multi-study analysis must combine studies of the SAME organism with a shared "
+                "gene-id namespace.")})
+    # Confounding: the contrast is estimable only if at least ONE dataset contains BOTH arms.
+    if "condition" in df.columns and num and den:
+        cond = df["condition"].astype(str).str.strip()
+        spans = any(({num, den} <= set(cond[ds == d])) for d in ds[ds != ""].unique())
+        if not spans:
+            msgs.append({"status": "FAIL", "message": (
+                f"The contrast '{num}' vs '{den}' is split across studies: no single dataset "
+                "contains both arms, so study-of-origin is perfectly confounded with the biological "
+                "difference. No analysis can separate them — include both conditions within at least "
+                "one study.")})
+    return msgs
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--samples", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--numerator", default="")
+    parser.add_argument("--denominator", default="")
     args = parser.parse_args()
     df = pd.read_csv(args.samples, sep="\t", dtype=str).fillna("")
     messages: list[dict[str, str]] = []
@@ -40,6 +75,8 @@ def main() -> int:
                 continue
             if count < 2:
                 messages.append({"status": "WARNING", "message": f"Condition '{condition}' has fewer than two replicates."})
+
+    messages += _multistudy_gates(df, args.numerator.strip(), args.denominator.strip())
 
     if not messages:
         messages.append({"status": "PASS", "message": "Metadata passed input validation."})

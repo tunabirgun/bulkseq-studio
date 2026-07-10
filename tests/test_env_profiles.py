@@ -78,6 +78,19 @@ def test_lock_has_deseq2_and_enrichment_packages() -> None:
         assert _has_tool(deps, pkg), f"bulkseq.lock.yaml is missing {pkg}"
 
 
+# Multi-study meta-analysis (0.21.0): the p-value combination (metaRNASeq), effect-size
+# meta-analysis (metafor) and per-study filter (HTSFilter) packages must be in the full spec AND
+# the lock, or a meta run fails ~30 min in with a missing package (readiness also load-tests them).
+META_ANALYSIS_PACKAGES = ("r-metarnaseq", "r-metafor", "bioconductor-htsfilter")
+
+
+def test_meta_analysis_packages_in_full_and_lock() -> None:
+    for env in ("bulkseq_full.yaml", "bulkseq.lock.yaml"):
+        deps = _conda_deps(ENVS / env)
+        for pkg in META_ANALYSIS_PACKAGES:
+            assert _has_tool(deps, pkg), f"{env} is missing {pkg}"
+
+
 def test_sortmerna_in_core_full_and_lock() -> None:
     # rRNA filtering (workflow.rrna_filtering) needs sortmerna in the env it runs under;
     # it is a read-processing CLI tool so it belongs in the core profile, not full only.

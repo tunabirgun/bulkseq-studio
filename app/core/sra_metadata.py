@@ -16,7 +16,7 @@ ENA_API = "https://www.ebi.ac.uk/ena/portal/api/filereport"
 GEO_ACC_API = "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi"
 ENA_FIELDS = (
     "run_accession,experiment_accession,sample_accession,library_layout,"
-    "read_count,base_count,fastq_ftp,fastq_md5,sample_title,scientific_name"
+    "read_count,base_count,fastq_bytes,fastq_ftp,fastq_md5,sample_title,scientific_name"
 )
 
 _GSE_RE = re.compile(r"^GSE\d+$", re.IGNORECASE)
@@ -96,6 +96,10 @@ def fetch_ena_metadata(accessions: list[str], timeout: int = 60) -> pd.DataFrame
                     f"If {gse_src} is a microarray series, use 'Fetch a GEO microarray series' "
                     f"instead.")
             continue
+        # Tag every run with the study-of-origin accession the user pasted, so a multi-study
+        # merge can model it as a covariate / run a meta-analysis. The label is the token the
+        # user recognises (the GEO series when resolved, else the study/run accession).
+        frame["dataset"] = gse_src or acc.upper()
         frames.append(frame)
     if not frames:
         return pd.DataFrame()
@@ -155,8 +159,11 @@ def metadata_to_samples(meta: pd.DataFrame) -> pd.DataFrame:
         layout = "paired" if str(record.get("library_layout", "")).upper() == "PAIRED" else "single"
         ftp = [u.strip() for u in str(record.get("fastq_ftp", "")).split(";")]
         md5 = [m.strip() for m in str(record.get("fastq_md5", "")).split(";")]
-        # ENA lists fastq_ftp and fastq_md5 in the same order; map each URL to its checksum.
+        byt = [b.strip() for b in str(record.get("fastq_bytes", "")).split(";")]
+        # ENA lists fastq_ftp, fastq_md5 and fastq_bytes in the same order; map each URL to
+        # its checksum and its gzipped byte size (bytes drive the download-size estimate).
         url_md5 = {u: (md5[i] if i < len(md5) else "") for i, u in enumerate(ftp) if u}
+        url_bytes = {u: (byt[i] if i < len(byt) else "") for i, u in enumerate(ftp) if u}
         urls = [u for u in ftp if u]
         r1_url = next((u for u in urls if u.endswith("_1.fastq.gz")), "")
         r2_url = next((u for u in urls if u.endswith("_2.fastq.gz")), "")
@@ -167,6 +174,14 @@ def metadata_to_samples(meta: pd.DataFrame) -> pd.DataFrame:
             r1_url = r1_url or (urls[0] if urls else "")
             r2_url = ""
             fastq_1, fastq_2 = f"data/raw/{run}.fastq.gz", ""
+        # Download size (gzipped bytes) for this run: sum ENA's reported fastq_bytes for the
+        # files actually downloaded; fall back to base_count * 0.35 bytes/base when ENA omits
+        # the sizes, so the runtime GB estimate is populated even for runs missing fastq_bytes.
+        used_bytes = sum(int(url_bytes[u]) for u in (r1_url, r2_url)
+                         if url_bytes.get(u, "").isdigit())
+        if used_bytes <= 0:
+            bc = str(record.get("base_count", "")).strip()
+            used_bytes = int(float(bc) * 0.35) if bc.replace(".", "", 1).isdigit() else 0
         rows.append(
             {
                 "sample_id": run,
@@ -180,10 +195,12 @@ def metadata_to_samples(meta: pd.DataFrame) -> pd.DataFrame:
                 "fastq_1_md5": url_md5.get(r1_url, ""),
                 "fastq_2_md5": url_md5.get(r2_url, ""),
                 "condition": "unknown",
+                "dataset": str(record.get("dataset", "")),
                 "replicate": str(len([r for r in rows]) + 1),
                 "organism": str(record.get("scientific_name", "")),
                 "read_count": str(record.get("read_count", "")),
                 "base_count": str(record.get("base_count", "")),
+                "download_bytes": str(used_bytes),
                 "sample_title": str(record.get("sample_title", "")),
             }
         )
@@ -192,4 +209,11 @@ def metadata_to_samples(meta: pd.DataFrame) -> pd.DataFrame:
     if suggested:
         for i in range(len(rows)):
             rows[i]["condition"] = suggested.get(i, rows[i]["condition"])
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    # Keep the 'dataset' column only for a genuine multi-study merge (a single-study fetch drops it).
+    # A single-study samples.tsv still gains the download_bytes column added above (it feeds the
+    # runtime download-size estimate), so it is not literally byte-identical to pre-0.21.0 — but the
+    # DE results are unaffected: download_bytes never enters the counts / design / DE path.
+    if "dataset" in df.columns and df["dataset"].replace("", pd.NA).nunique(dropna=True) <= 1:
+        df = df.drop(columns=["dataset"])
+    return df

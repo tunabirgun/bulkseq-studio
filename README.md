@@ -16,6 +16,7 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 - **Start from a count matrix.** Already have counts? Upload a gene-by-sample table (featureCounts output or any TSV/CSV) to skip download, QC, and alignment and go straight to DESeq2, figures, and enrichment.
 - **GEO microarray (GSE).** Enter a GEO series accession; the app ingests the normalized intensities (GEOquery series matrix, or RMA from raw Affymetrix CEL), maps probes to gene symbols, and runs **limma** differential expression, then the same figures, enrichment, and genes-of-interest. RNA-seq series are redirected to the SRA box. No accession — just your own processed array data? Click **Upload a local microarray matrix** and give it a gene × sample expression matrix (already-normalized log2 intensities); it runs the same limma path with no download.
 - **Bring your own DESeq2 results.** Upload a differential-expression table to run enrichment, the volcano / MA / p-value figures, and the STRING PPI network directly, with no FASTQ, alignment, or counts. See [Bring your own DESeq2 results](#bring-your-own-deseq2-results).
+- **Multi-study meta-analysis.** Combine two or more independent studies of the same contrast — a `dataset` (study-of-origin) column in the sample sheet with more than one study — into one differential-expression meta-analysis. Each study is analysed separately with DESeq2 (so platform, library-prep, and depth differences stay within a study), then the per-study statistics are combined with `metaRNASeq`'s replicate-weighted inverse-normal p-value method and a `metafor` fixed/random-effect effect-size pooling. Genes whose direction disagrees across studies are flagged as discordant and never called meta-DEGs, rather than silently fused. A dedicated cross-study report shows the convergent genes (consistent direction, significant combined FDR), the discordant genes, a meta-volcano, per-gene forest plots, a cross-study log2FC concordance scatter, a convergent-gene heatmap, and a `compareCluster` shared-vs-distinct GO enrichment across the studies; the joint DESeq2 additionally models study-of-origin as a covariate. A hard pre-run gate blocks a design where the compared groups are perfectly confounded with study (no single study contains both arms), since no method can separate them. See [Multi-study meta-analysis](#multi-study-meta-analysis).
 - **Three differential-expression engines.** DESeq2 is the default (apeglm shrinkage, VST, configurable `alpha` and `|log2FC|` thresholds, separate up- and down-regulated gene lists). Optional **limma-voom** and **edgeR quasi-likelihood** engines are provided as cross-checks, best suited to larger designs; all three emit the same result tables and figures, so everything downstream is identical. DESeq2 remains the default and its results are unchanged (validated log2FC correlation ≈ 0.997–1.000 and top-DEG Jaccard 0.94–0.97 against DESeq2 on *Fusarium graminearum*).
 - **Choice of trimmer, rRNA tool, and a contamination screen.** Adapter/quality trimming with **fastp** (default), **Trim Galore**, or **Trimmomatic**; optional ribosomal-RNA removal with **SortMeRNA** (reference-based, default) or **RiboDetector** (reference-free); and an optional **FastQ Screen** contamination report (percentage of reads matching a panel of reference genomes) that lands in the MultiQC report. FastQ Screen runs against a config file you point it at (Advanced parameters → Contamination: FastQ Screen config); it does not auto-download a genome panel. The defaults (fastp, SortMeRNA) are unchanged, so existing results are unaffected.
 - **Single-end and paired-end input.** Both layouts run the full pipeline through every trimmer, aligner, and rRNA tool; the app detects the layout from the sample sheet and blocks a mixed-layout run with guidance.
@@ -38,7 +39,7 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 - **Reproducibility built in.** Every run records a default-vs-used parameter diff, software versions, an environment lock hash, the reference accession/MD5, and R `sessionInfo`. The conda environment is pinned in `workflow/envs/bulkseq.lock.yaml`.
 - **An accessible desktop UI.** Light and dark themes (WCAG-AA contrast), grouped settings cards with a clear primary action per tab, plain-language controls, empty-state guidance, a resizable Outputs workspace that remembers its size, keyboard shortcuts (Ctrl+O open, F5 dry-run, F9 run), and a recent-projects list.
 
-The three aligner routes (STAR, HISAT2, Salmon), the featureCounts / STAR-gene-counts / Salmon-tximport quantifiers, the three trimmers (fastp / Trim Galore / Trimmomatic), the two rRNA tools (SortMeRNA / RiboDetector) and the optional FastQ Screen contamination report, the three differential-expression engines (DESeq2 / limma-voom / edgeR), single-end and paired-end input, GSVA pathway activity, RSeQC extended QC, custom gene-set enrichment, and the count-matrix, GEO microarray (limma), and DESeq2-results input routes are all implemented and validated (see [Validation](#validation)).
+The three aligner routes (STAR, HISAT2, Salmon), the featureCounts / STAR-gene-counts / Salmon-tximport quantifiers, the three trimmers (fastp / Trim Galore / Trimmomatic), the two rRNA tools (SortMeRNA / RiboDetector) and the optional FastQ Screen contamination report, the three differential-expression engines (DESeq2 / limma-voom / edgeR), the multi-study meta-analysis, single-end and paired-end input, GSVA pathway activity, RSeQC extended QC, custom gene-set enrichment, and the count-matrix, GEO microarray (limma), and DESeq2-results input routes are all implemented and validated (see [Validation](#validation)).
 
 ## Choosing an aligner
 
@@ -233,6 +234,8 @@ The two alternative differential-expression engines are validated against DESeq2
 
 Two further cross-checks were added in the 0.16.0 revision. A cross-platform comparison of the RNA-seq and microarray routes on human liver versus kidney (Marioni 2008; RNA-seq via Salmon and DESeq2, microarray via limma) agrees at a log2 fold-change Pearson correlation of 0.69 and 95.7% on the direction of change among genes significant on both platforms, with concordant tissue markers (*ALB*, *APOA1*, *SERPINA1* for liver; *UMOD*, *SLC34A1* for kidney) — benchmark B7.2. A g:Profiler-versus-OrgDb Gene Ontology concordance shows the non-model g:Profiler fallback recovers 100% of the OrgDb terms at the exact-or-parent/child level (Spearman 0.86 on the shared terms), confirming that organisms routed through g:Profiler receive the same Gene Ontology biology as those with a Bioconductor OrgDb — benchmark B8.
 
+The multi-study meta-analysis is validated on simulated data with known ground truth and on real independent studies. Under simulation, a planted shared signal is recovered at 96% sensitivity with the empirical false-discovery rate held at ~1%, a pure-null design produces essentially no meta-DEGs across many seeds (type-I control), planted opposite-direction genes are flagged discordant and never called (99%), and a three-study design with real between-study effect-size heterogeneity recovers the correct high/low I² and pooled estimates — so the combination, the sign-concordance guard, and the `metafor` effect-size branch are each checked against truth. On real data, two genuinely independent human dexamethasone RNA-seq studies (airway smooth muscle, Himes 2014, and kidney podocytes, Jiang 2016; obtained as uniformly processed count matrices) combine to recover the conserved glucocorticoid-response core convergently — *FKBP5*, *TSC22D3*/GILZ, *PER1*, *DUSP1*, *CRISPLD2* all up in both — on top of the expected large tissue-specific divergence (correctly flagged discordant), with glucocorticoid-response GO enrichment.
+
 **Bundled benchmark projects.** Three one-click datasets are available from *Create Benchmark Project* on the Project tab: the Drosophila pasilla subset above, a *Saccharomyces cerevisiae* wild-type vs *ume6Δ* subset (PRJNA630199 / SRP260000; R64-1-1, Ensembl), a small, fast genome on a different organism that exercises the g:Profiler and KEGG enrichment route, and an *Oryza sativa* (rice) super-hybrid CY1000 control vs 5-day salt-stress subset (PRJDB38133; IRGSP-1.0 NCBI RefSeq) that exercises the crop route (KEGG `osa` via the NCBI-RefSeq `LOC<GeneID>` strip, g:Profiler `osativa`, STRING taxid 39947). Each scaffolds an SRA-mode project (samples, contrast, reference) that downloads its reads and runs the full pipeline.
 
 **Benchmark archive (Zenodo).** The full quantitative validation suite behind the BulkSeq Studio paper (correctness against simulated ground truth, false-discovery and null calibration, accuracy curves, concordance with [nf-core/rnaseq](https://nf-co.re/rnaseq), cross-aligner agreement, input-mode and microarray-route equivalence, multi-organism breadth, runtime/memory scaling, and determinism, plus STAR gene-counts quantifier concordance, custom gene-set enrichment, ribosomal RNA filtering, differential-expression engine concordance, and human-dataset applicability — families B1–B15) is archived on Zenodo, together with the simulation and scoring code, the pinned scoring environment, the per-benchmark result tables and figures, and a step-by-step reproduction guide: **DOI [10.5281/zenodo.20955660](https://doi.org/10.5281/zenodo.20955660)**.
@@ -294,6 +297,47 @@ case; genuine interaction terms (such as `genotype:treatment`) can still be type
 formula field. Add the relevant columns on the **Metadata** tab first so the helper can see them.
 When in doubt, adjust for a variable only if you know it differs systematically between your groups
 and could affect expression; adding irrelevant covariates costs statistical power.
+
+## Multi-study meta-analysis
+
+When you have two or more independent studies of the same comparison — the same treatment-versus-control
+contrast run in different labs, tissues, or years — a meta-analysis asks which genes respond
+*consistently* across all of them, and which are specific to one. BulkSeq Studio runs this whenever the
+sample sheet carries a **`dataset`** column (the study of origin) with more than one study and
+**Multi-study meta-analysis** is ticked on the Workflow Settings tab. Add the samples of every study to
+one project (a merged count matrix, or a fetch that tags each accession with its study), give each row
+its `dataset` and `condition`, and the pipeline does the rest.
+
+Each study is analysed on its own with DESeq2 first, so a difference in platform, library preparation,
+sequencing depth, or read length stays inside that study instead of leaking across the comparison. The
+per-study results are then combined two ways: the p-values with `metaRNASeq`'s replicate-weighted
+inverse-normal method (Rau, Marot & Jaffrézic, *BMC Bioinformatics* 2014), and the unshrunken log2 fold
+changes with a `metafor` effect-size model (fixed-effect for two studies, DerSimonian–Laird random-effect
+for three or more). The inverse-normal p-value is directionless, so a gene up in one study and down in
+another could be fused into a spuriously significant result; to prevent that, the sign of every study's
+fold change is checked, and a gene whose direction disagrees across studies is **flagged as discordant
+and never called a meta-DEG** — it stays in the table (searchable), but it is not presented as a
+cross-study hit. A convergent meta-DEG is therefore a gene that is both significant on the combined FDR
+*and* consistent in direction in every study.
+
+The run adds a dedicated **cross-study report** (`meta_analysis_report.html`) alongside the standard one:
+a convergence/divergence summary (how many genes agree, how many are discordant, the direction-concordance
+rate), a **meta-volcano** (pooled effect versus combined FDR, coloured by cross-study direction), **forest
+plots** of the top convergent genes (each study's effect and confidence interval with the pooled estimate),
+a **cross-study log2FC concordance scatter** with its rank correlation, a **convergent-gene heatmap**
+(per-study fold changes), and a **`compareCluster` enrichment dotplot** that puts each study's up/down sets
+and the convergent sets side by side to show shared versus study-specific biology. The convergent-gene
+table, a per-study differential-expression summary, and the cross-study enrichment table are written to
+`results/meta/` and are available in the Outputs tab; the comparative figures restyle with **Regenerate
+figures** like the rest.
+
+The joint DESeq2 that runs alongside the meta-analysis automatically models study-of-origin as a covariate
+(a default `~ condition` design becomes `~ dataset + condition`) so its pooled result is not confounded by
+the studies. And because a meta-analysis is only meaningful when at least one study contains both compared
+groups, a **hard sanity gate blocks the run** when the groups are perfectly aliased with study — every
+study has only one of the two arms — since in that case the biological difference and the study effect are
+the same axis and no analysis can separate them. Studies must share one organism and one gene-identifier
+namespace so the per-study gene sets intersect; a mismatch is flagged before the run.
 
 ## Project layout
 

@@ -26,7 +26,9 @@ def load_metadata(path: Path) -> pd.DataFrame:
     return pd.read_csv(path, sep="\t", dtype=str, encoding="utf-8").fillna("")
 
 
-def validate_metadata(df: pd.DataFrame, allow_pending_sra: bool = False, design_variables: list[str] | None = None) -> list[dict[str, str]]:
+def validate_metadata(df: pd.DataFrame, allow_pending_sra: bool = False,
+                      design_variables: list[str] | None = None,
+                      contrast: tuple[str, str] | None = None) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = []
     missing = [col for col in REQUIRED_METADATA_COLUMNS if col not in df.columns]
     if missing:
@@ -72,6 +74,8 @@ def validate_metadata(df: pd.DataFrame, allow_pending_sra: bool = False, design_
             messages.append({"status": "WARNING", "message": f"Condition '{condition}' has fewer than the recommended three biological replicates."})
 
     messages.extend(detect_batch_condition_confounding(df))
+    messages.extend(detect_dataset_confounding(df, contrast))
+    messages.extend(detect_multistudy_organism_mismatch(df))
     if not messages:
         messages.append({"status": "PASS", "message": "Metadata passed validation."})
     return messages
@@ -91,3 +95,78 @@ def detect_batch_condition_confounding(df: pd.DataFrame) -> list[dict[str, str]]
     if batches and all(len(v) == 1 for v in batches.values()) and all(len(v) == 1 for v in conditions.values()):
         return [{"status": "REVIEW_REQUIRED", "message": "Batch and condition appear confounded; design matrix may not be full rank."}]
     return []
+
+
+def _dataset_levels(df: pd.DataFrame) -> pd.Series:
+    return df["dataset"].astype(str).str.strip()
+
+
+def dataset_condition_crosstab(df: pd.DataFrame):
+    """samples-per (study-of-origin × condition) table, or None when there is no dataset column."""
+    if "dataset" not in df.columns or "condition" not in df.columns:
+        return None
+    return pd.crosstab(_dataset_levels(df), df["condition"].astype(str).str.strip())
+
+
+def detect_multistudy_organism_mismatch(df: pd.DataFrame) -> list[dict[str, str]]:
+    """FAIL when a multi-study merge mixes organisms.
+
+    A meta-analysis / pooled multi-study run needs ONE organism and a shared gene-id namespace so
+    the per-study gene sets intersect. Uses the 'organism' column when present; [] for a single
+    study or when the column is absent.
+    """
+    if "dataset" not in df.columns or "organism" not in df.columns:
+        return []
+    if _dataset_levels(df).replace("", pd.NA).nunique(dropna=True) <= 1:
+        return []
+    # Dedup case-insensitively so 'Homo sapiens' / 'homo sapiens' are one organism, but report
+    # the original spelling.
+    orgs = {}
+    for o in df["organism"].astype(str).str.strip():
+        if o and o.lower() not in ("unknown", "nan", "na"):
+            orgs.setdefault(o.casefold(), o)
+    if len(orgs) > 1:
+        return [{"status": "FAIL", "message": (
+            f"The merged studies use different organisms ({', '.join(sorted(orgs.values()))}). A multi-study "
+            f"analysis must combine studies of the SAME organism with a shared gene-id namespace — "
+            f"use one organism, or map genes to a common ortholog space first.")}]
+    return []
+
+
+def detect_dataset_confounding(df: pd.DataFrame,
+                               contrast: tuple[str, str] | None = None) -> list[dict[str, str]]:
+    """Hard gate for a multi-study merge: the contrast is estimable only if at least ONE dataset
+    contains BOTH compared conditions.
+
+    When the two groups are split across studies (no single dataset has both), study-of-origin and
+    the biological difference are the same axis — perfectly aliased — and NO analysis (pooling with
+    a `~ dataset + condition` covariate, batch correction, or meta-analysis) can separate them.
+    Returns a FAIL in that case. Single-dataset frames return [] (no cross-study confounding). This
+    is NOT a generalization of the batch len==1 test, which has a false-negative for designs like
+    D1={A}, D2={B}, D3={A}.
+    """
+    if "dataset" not in df.columns or "condition" not in df.columns:
+        return []
+    datasets = _dataset_levels(df)
+    if datasets.replace("", pd.NA).nunique(dropna=True) <= 1:
+        return []  # a single study cannot be cross-study-confounded
+    conds = df["condition"].astype(str).str.strip()
+    if contrast and contrast[0] and contrast[1]:
+        num, den = str(contrast[0]).strip(), str(contrast[1]).strip()
+    else:
+        levels = [c for c in conds.unique() if c and c != "unknown"]
+        if len(levels) != 2:
+            return []  # cannot assess a hard two-group gate without a two-level contrast
+        num, den = levels[0], levels[1]
+    spans_both = any(
+        {num, den} <= set(conds[datasets == ds]) for ds in datasets.unique() if ds
+    )
+    if spans_both:
+        return []
+    return [{"status": "FAIL", "message": (
+        f"The two compared groups ('{num}' vs '{den}') are split across studies — no single "
+        f"dataset contains both. Study-of-origin and the biological difference are then the same "
+        f"axis (perfectly confounded), and no analysis — pooling with a study covariate, batch "
+        f"correction, or meta-analysis — can separate them. Compare groups that both appear "
+        f"within at least one study, or add samples so each group is present in more than one "
+        f"study.")}]

@@ -33,6 +33,7 @@ def test_workflow_controls_greyed_by_input_mode() -> None:
     assert w.organellar.isEnabled()
     assert w.rseqc.isEnabled()
     assert w.gsva.isEnabled()
+    assert w.meta_analysis.isEnabled()  # count-based route -> meta available
 
     # microarray: no alignment, limma-trend forced -> align group + de_engine + organellar +
     # rseqc greyed; enrichment/figures/gsva and the contrast builder stay live.
@@ -48,6 +49,7 @@ def test_workflow_controls_greyed_by_input_mode() -> None:
     assert w.figures.isEnabled()
     assert w.numerator.isEnabled()
     assert w.design.isEnabled()
+    assert not w.meta_analysis.isEnabled()  # microarray has no per-study count fan-out
 
     # count-matrix: no alignment, but the DE engine still runs on counts.
     w.config.input.type = "count_matrix"
@@ -55,6 +57,7 @@ def test_workflow_controls_greyed_by_input_mode() -> None:
     assert not w.align_group.isEnabled()
     assert w.de_engine.isEnabled()
     assert w.gsva.isEnabled()
+    assert w.meta_analysis.isEnabled()  # count matrix can carry a multi-study dataset column
 
     # deseq2-results: DE is bypassed and there is no per-sample matrix -> de_engine + gsva greyed.
     w.config.input.type = "deseq2_results"
@@ -63,6 +66,7 @@ def test_workflow_controls_greyed_by_input_mode() -> None:
     assert not w.de_engine.isEnabled()
     assert not w.gsva.isEnabled()
     assert w.enrichment.isEnabled()
+    assert not w.meta_analysis.isEnabled()  # a results table has no per-study counts
 
     # back to fastq: the alignment group re-enables and the trim->trimmer cascade is restored.
     w.config.input.type = "fastq"
@@ -73,4 +77,29 @@ def test_workflow_controls_greyed_by_input_mode() -> None:
     assert w.trimmer.isEnabled()
     w.trim.setChecked(False)
     assert not w.trimmer.isEnabled()
+    w.close()
+
+
+def test_meta_analysis_checkbox_roundtrip() -> None:
+    # The meta-analysis toggle must persist to config and hydrate back (no stale/unconnected control),
+    # and 'comparative_meta' must be a selectable figure-override group.
+    _app()
+    w = MainWindow()
+    w.workdir.setText(str(Path("manual_test_gui") / uuid4().hex))
+    w.project_name.setText("meta")
+    w._create_benchmark_project("pasilla_paired_subset")
+
+    assert ("comparative_meta", "Multi-study meta-analysis figures") in w.PALETTE_GROUPS
+
+    w.meta_analysis.setChecked(True)
+    assert w._save_workflow_settings() is not False
+    assert w.config.workflow.meta_analysis is True
+
+    w.config.workflow.meta_analysis = False
+    w._populate_widgets_from_config()
+    assert w.meta_analysis.isChecked() is False
+
+    w.config.workflow.meta_analysis = True
+    w._populate_widgets_from_config()
+    assert w.meta_analysis.isChecked() is True
     w.close()
