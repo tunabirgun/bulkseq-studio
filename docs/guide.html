@@ -29,7 +29,7 @@
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.20.1</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.21.0</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
     <nav>
@@ -59,8 +59,8 @@
     <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>Windows</h4>
     <p>Two downloads on the <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">Releases</a> page, pick either:</p>
     <ul>
-      <li><strong>Installer</strong> — <code>BulkSeqStudio-Setup-0.20.1.exe</code>. A per-user install that needs no administrator rights; afterwards you launch it from the Start Menu.</li>
-      <li><strong>Portable</strong> — <code>BulkSeqStudio-Portable-0.20.1.zip</code>. Unzip it anywhere and double-click <code>BulkSeqStudio.exe</code>. Nothing is installed.</li>
+      <li><strong>Installer</strong> — <code>BulkSeqStudio-Setup-0.21.0.exe</code>. A per-user install that needs no administrator rights; afterwards you launch it from the Start Menu.</li>
+      <li><strong>Portable</strong> — <code>BulkSeqStudio-Portable-0.21.0.zip</code>. Unzip it anywhere and double-click <code>BulkSeqStudio.exe</code>. Nothing is installed.</li>
     </ul>
     <p class="muted">To update, run a newer installer: it detects the existing install and offers to update or uninstall first.</p>
   </div>
@@ -205,7 +205,7 @@ processors=16    # optional: limit WSL2 to 16 logical processors</code></pre>
 
   <div class="card feature">
     <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M12 3v18"/></svg>3. Count matrix (skip alignment)</h4>
-    <p>Upload a gene-by-sample counts table (featureCounts output or any TSV/CSV) to skip download, QC, and alignment.</p>
+    <p>Upload a gene-by-sample counts table (featureCounts output or any TSV/CSV) to skip download, QC, and alignment. The table must hold <em>raw integer counts</em>; normalized values (TPM/FPKM, log-CPM, or RMA intensities) are refused by default because DESeq2 models raw counts, while RSEM/tximport estimated (non-integer) counts can be opted in when you import.</p>
     <p class="muted">Goes straight to DESeq2, then figures, enrichment, statistics, and the PPI network. Use this when alignment is already done elsewhere.</p>
   </div>
 
