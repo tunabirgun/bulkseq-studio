@@ -98,6 +98,10 @@ dependencies:
   - r-pheatmap
   - r-rcolorbrewer
   - r-svglite
+  # scales is hard-loaded by make_figures.R / sample_correlation.R on every run; name it
+  # explicitly (not just transitive to r-ggplot2) so a fallback re-solve cannot drop it the
+  # way GO.db was once dropped and then crash the mandatory figures rule mid-run.
+  - r-scales
   - r-msigdbr
   # g:Profiler GO/KEGG/Reactome ORA + ID conversion for organisms without a
   # Bioconductor OrgDb (fungi, bacteria, yeast/worm/zebrafish/Arabidopsis) (0.7.0).

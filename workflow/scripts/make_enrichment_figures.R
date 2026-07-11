@@ -99,7 +99,13 @@ render <- function(ok, expr, png_path, svg_path, empty_msg) {
   if (!isTRUE(ok)) { placeholder(empty_msg, png_path, svg_path); return(invisible()) }
   p <- tryCatch(expr, error = function(e) { message("plot failed: ", conditionMessage(e)); NULL })
   if (is.null(p)) placeholder("Figure could not be generated", png_path, svg_path)
-  else save_big(p, png_path, svg_path)
+  # The draw (save_big -> ggsave) must be guarded too: enrichplot builds cnet/emap objects lazily,
+  # so a draw-time grid error (e.g. a 2-node emap 'Viewport has zero dimension(s)') fires HERE, not
+  # at construction. Unguarded it would abort the whole multi-output rule, leaving later figures
+  # unwritten. Degrade to a placeholder so the rule always writes its declared PNG+SVG.
+  else tryCatch(save_big(p, png_path, svg_path),
+                error = function(e) { message("draw failed: ", conditionMessage(e))
+                                      placeholder("Figure could not be generated", png_path, svg_path) })
 }
 
 have_ep <- requireNamespace("enrichplot", quietly = TRUE)
@@ -140,7 +146,13 @@ gp_dotplot <- function(df, src, n) {
   d <- d[order(d$p_value), , drop = FALSE]
   d <- head(d, n)
   d$Count <- if ("intersection_size" %in% names(d)) d$intersection_size else NA_integer_
-  d$GeneRatio <- if (all(c("intersection_size", "term_size") %in% names(d)))
+  # GeneRatio = query genes in the term / query size (precision), matching the
+  # clusterProfiler/enrichplot dotplot's GeneRatio so the two routes' identically-labelled
+  # x-axes denote the same quantity. gost gives query_size; fall back to term_size (recall)
+  # only if query_size is unavailable, so the axis is never silently NA.
+  d$GeneRatio <- if (all(c("intersection_size", "query_size") %in% names(d)))
+    d$intersection_size / d$query_size
+  else if (all(c("intersection_size", "term_size") %in% names(d)))
     d$intersection_size / d$term_size else NA_real_
   d$term <- factor(d$term_name, levels = rev(d$term_name))
   ggplot(d, aes(x = GeneRatio, y = term)) +

@@ -57,7 +57,7 @@ node_max_size <- as.numeric(getp("ppi_node_max_size", 11))
 ppi_layout <- as.character(getp("ppi_layout", "fr"))
 
 pal_spec <- palette_spec(palette_name)
-base_family <- if (nzchar(font_family)) font_family else NULL
+base_family <- resolve_font(font_family)  # map a Windows font name to an installed WSL/Linux one, like the other figures
 style_theme <- make_style_theme(base_size = base_size, base_family = base_family,
                                 label_bold = label_bold)
 

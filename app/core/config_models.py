@@ -284,7 +284,11 @@ class FigureConfig(BaseModel):
     dimension_unit: Literal["in", "cm", "px"] = "in"
     # Volcano de-squeeze (W2). volcano_y_cap 0 = auto (quantile); fractions/alphas
     # are read NULL-safe by getp() in make_figures.R, so defaults reproduce behaviour.
-    volcano_y_cap: float = 0.0            # 0 = auto cap via quantile
+    # 'cap' (default) squishes the tall -log10(padj) tail to a cap line with off-scale triangle
+    # markers; 'full' shows every gene at its true height; 'sqrt' compresses the tail so extreme
+    # (hyper-significant) genes stay readable without squashing the bulk. volcano_y_cap applies to 'cap'.
+    volcano_y_scale: Literal["cap", "full", "sqrt"] = "cap"
+    volcano_y_cap: float = 0.0            # 0 = auto cap via quantile (only used when volcano_y_scale='cap')
     volcano_y_cap_quantile: float = 0.995
     volcano_cap_headroom: float = 0.10
     volcano_neglogp_floor: float = 320.0  # finite clamp for padj==0/Inf
@@ -323,13 +327,22 @@ class FigureConfig(BaseModel):
             raise ValueError("Figure dimensions and point size must be positive.")
         return value
 
-    @field_validator("base_font_size", "dpi", "volcano_top_n", "heatmap_top_n", "pca_ntop",
+    @field_validator("base_font_size", "dpi", "heatmap_top_n", "pca_ntop",
                      "enrich_show_category", "enrich_cnet_category", "enrich_emap_category",
                      "enrich_label_wrap")
     @classmethod
     def positive_int(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("Figure counts, font size, and dpi must be positive integers.")
+        return value
+
+    @field_validator("volcano_top_n")
+    @classmethod
+    def non_negative_int(cls, value: int) -> int:
+        # 0 is valid ("no volcano labels", handled by make_figures.R) and the spinner offers it, so it
+        # must round-trip — the positive_int rule above would reject 0 and make the project unreopenable.
+        if value < 0:
+            raise ValueError("Volcano top-N labels must be 0 or greater (0 = no labels).")
         return value
 
 

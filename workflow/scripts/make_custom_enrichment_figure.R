@@ -30,7 +30,10 @@ obj <- tryCatch(readRDS(snakemake@input[["objects"]]), error = function(e) list(
 out <- snakemake@output
 style <- tryCatch(snakemake@params[["style"]], error = function(e) NULL)
 if (!is.list(style)) style <- list()
-getp <- make_getp(style)
+# getp_for merges the 'enrichment' per-figure-group override on top of the global style, so this
+# custom-gene-set dotplot honours an enrichment-group palette/font override like the built-in
+# enrichment figures do (make_getp alone would only read the global defaults).
+getp <- getp_for(style, "enrichment")
 fig_w <- as.numeric(getp("width_in", 7)); fig_h <- as.numeric(getp("height_in", 6))
 fig_dpi <- as.integer(getp("dpi", 300)); base_size <- as.numeric(getp("base_font_size", 12))
 font_family <- as.character(getp("font_family", "")); label_bold <- isTRUE(as.logical(getp("label_bold", FALSE)))
@@ -39,7 +42,7 @@ palette_name <- as.character(getp("palette", "Blue-Red"))
 show_cat <- as.integer(getp("enrich_show_category", 15)); label_wrap <- as.integer(getp("enrich_label_wrap", 40))
 
 pal_spec <- palette_spec(palette_name)
-base_family <- if (nzchar(font_family)) font_family else NULL
+base_family <- resolve_font(font_family)  # map a Windows font name to an installed WSL/Linux one, like the built-in enrichment figures
 style_theme <- make_style_theme(base_size = base_size, base_family = base_family,
                                 label_bold = label_bold, title_bold = title_bold)
 save_gg <- make_save_gg(fig_w = fig_w, fig_h = fig_h, fig_dpi = fig_dpi)
@@ -50,17 +53,26 @@ placeholder <- function(msg, png_path, svg_path) {
 
 eora <- tryCatch(obj$eora, error = function(e) NULL)
 if (requireNamespace("enrichplot", quietly = TRUE) && nrows(eora) > 0) {
-  p <- tryCatch(
+  # enrichplot's dotplot maps p.adjust to the FILL aesthetic, so a colour-only scale is a no-op and
+  # the palette is ignored — set BOTH colour and fill (mirrors themed_dotplot in make_enrichment_figures.R).
+  # suppressWarnings hushes the benign "Scale for fill is already present" from replacing enrichplot's default.
+  p <- tryCatch(suppressWarnings(
     enrichplot::dotplot(eora, showCategory = show_cat,
                         label_format = function(lbl) scales::label_wrap(label_wrap)(lbl)) +
       scale_color_gradientn(colours = pal_spec$seq(255), name = "p.adjust", transform = "reverse") +
-      labs(title = NULL) + style_theme(theme_bw),
+      scale_fill_gradientn(colours = pal_spec$seq(255), name = "p.adjust", transform = "reverse") +
+      labs(title = NULL) + style_theme(theme_bw)),
     error = function(e) { message("custom dotplot failed: ", conditionMessage(e)); NULL })
   if (is.null(p)) {
     placeholder("Custom gene-set dotplot could not be generated", out[["dotplot_png"]], out[["dotplot_svg"]])
   } else {
-    ggsave(out[["dotplot_png"]], p, width = fig_w, height = fig_h, units = "in", dpi = fig_dpi, limitsize = FALSE)
-    ggsave(out[["dotplot_svg"]], p, width = fig_w, height = fig_h, units = "in", limitsize = FALSE)
+    # Guard the draw too (enrichplot renders lazily at ggsave time), degrading to a placeholder so
+    # a draw-time error never aborts the rule and leaves the declared PNG/SVG unwritten.
+    tryCatch({
+      ggsave(out[["dotplot_png"]], p, width = fig_w, height = fig_h, units = "in", dpi = fig_dpi, limitsize = FALSE)
+      ggsave(out[["dotplot_svg"]], p, width = fig_w, height = fig_h, units = "in", limitsize = FALSE)
+    }, error = function(e) { message("custom dotplot draw failed: ", conditionMessage(e))
+                            placeholder("Custom gene-set dotplot could not be generated", out[["dotplot_png"]], out[["dotplot_svg"]]) })
   }
 } else {
   placeholder("No custom gene-set ORA terms passed the cutoff", out[["dotplot_png"]], out[["dotplot_svg"]])

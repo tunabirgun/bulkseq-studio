@@ -21,6 +21,7 @@ suppressMessages({
   library(RColorBrewer)
   library(svglite)
 })
+source(file.path(snakemake@scriptdir, "figure_style.R"))
 
 log_con <- file(snakemake@log[[1]], open = "wt")
 sink(log_con, type = "message")
@@ -28,6 +29,25 @@ sink(log_con, type = "message")
 obj <- readRDS(snakemake@input[["rds"]])
 dds <- obj$dds; vsd <- obj$vsd
 out <- snakemake@output
+
+# A DESeq2-results upload carries no per-sample counts (dds/vsd are NULL in the synthetic RDS), so
+# the focused heatmap and per-gene panels cannot be built. Write graceful placeholders and exit 0 so
+# the rule never crashes on colData(NULL) (the GUI also gates this button, but a direct CLI run and a
+# future caller reach here). count-matrix / microarray runs keep a real dds, so GOI still works there.
+if (is.null(dds) || is.null(vsd)) {
+  msg <- ggplot() + annotate("text", x = 0, y = 0,
+    label = "Genes-of-interest figures need per-sample counts,\nabsent in a DESeq2-results upload.") +
+    theme_void()
+  for (pair in list(c(out[["heatmap_png"]], out[["heatmap_svg"]]),
+                    c(out[["expr_png"]], out[["expr_svg"]]))) {
+    ggsave(pair[[1]], msg, width = 7, height = 5, dpi = 150)
+    ggsave(pair[[2]], msg, width = 7, height = 5)
+  }
+  writeLines("gene,note", out[["csv"]])
+  writeLines("Genes-of-interest figures need per-sample counts, absent in a DESeq2-results upload.",
+             out[["report"]])
+  sink(type = "message"); close(log_con); quit(save = "no", status = 0)
+}
 # Gene-id -> symbol map (from the DE step) lets the user list match either ids or
 # symbols, and labels the figures by symbol. Falls back to ids when unknown.
 symbol_map <- tryCatch(obj$symbol_map, error = function(e) NULL)
@@ -38,16 +58,30 @@ lab_for <- function(ids) {
 }
 # Microarray (limma): there are no counts; use the log2 intensity matrix and a
 # linear y axis for the per-gene panel instead of normalized-count / log scale.
-is_intensity <- identical(tryCatch(obj$assay_kind, error = function(e) NULL), "log2_intensity")
+assay_kind <- tryCatch(obj$assay_kind, error = function(e) NULL)
+# Treat logCPM (limma-voom / edgeR engines) like intensity: their dds/vsd wrap only a log-scale assay
+# with NO counts slot, so counts(dds, normalized=TRUE) below would error. Mirrors make_figures.R; both
+# assay kinds are already on a log scale (no scale_y_log10).
+is_intensity <- isTRUE(assay_kind %in% c("log2_intensity", "log2_cpm"))
 
 style <- tryCatch(snakemake@params[["style"]], error = function(e) NULL)
 if (is.null(style) || !is.list(style)) style <- tryCatch(snakemake@config[["figures_style"]], error = function(e) NULL)
 if (!is.list(style)) style <- list()
-base_size <- tryCatch(as.numeric(style[["base_font_size"]]), error = function(e) 12)
+# Inherit the project palette + font instead of hardcoding them: getp_for merges any 'core'
+# per-figure-group override onto the global style, so GOI matches the other core figures.
+gp <- getp_for(style, "core")
+base_size <- tryCatch(as.numeric(gp("base_font_size", 12)), error = function(e) 12)
 if (length(base_size) != 1 || is.na(base_size)) base_size <- 12
+pal_spec <- palette_spec(as.character(gp("palette", "Blue-Red")))
+base_family <- resolve_font(as.character(gp("font_family", "")))
+style_theme <- make_style_theme(base_size = base_size, base_family = base_family,
+                                label_bold = isTRUE(as.logical(gp("label_bold", FALSE))),
+                                title_bold = isTRUE(as.logical(gp("title_bold", FALSE))))
 # Italicise gene-symbol row labels (default TRUE). pheatmap has no per-row fontface,
 # so pass a plotmath expression vector to labels_row; quotes keep special chars literal.
 gene_symbol_italic <- { gsi <- style[["gene_symbol_italic"]]; if (is.null(gsi)) TRUE else isTRUE(as.logical(gsi)) }
+# Per-sample column labels; default TRUE. Off (the Figure Style toggle) declutters a many-sample run.
+sample_labels <- { sl <- style[["sample_labels"]]; if (is.null(sl)) TRUE else isTRUE(as.logical(sl)) }
 italic_labels <- function(x, italic = TRUE) {
   if (!isTRUE(italic)) return(x)
   parse(text = paste0('italic("', gsub('"', '', as.character(x)), '")'))
@@ -135,10 +169,13 @@ rownames(mat) <- lab_for(rownames(vsd)[present])
 if (length(present) > 1) mat <- t(scale(t(mat)))
 ann <- as.data.frame(colData(dds)[, group_var, drop = FALSE])
 ph <- pheatmap(mat, scale = "none", annotation_col = ann, show_rownames = TRUE,
+               show_colnames = sample_labels,  # hide sample names to declutter a many-sample run
                labels_row = italic_labels(rownames(mat), gene_symbol_italic),
-               cluster_rows = length(present) > 1,
+               # A constant (zero-variance) gene becomes an all-NaN row after t(scale(t(mat))) (SD=0),
+               # so guard clustering on finiteness too (not just row count) — hclust aborts on NaN.
+               cluster_rows = length(present) > 1 && all(is.finite(mat)),
                clustering_method = "ward.D2", fontsize = base_size, fontsize_row = 8,
-               color = colorRampPalette(c("#2C7BB6", "white", "#C0392B"))(255),
+               color = pal_spec$div(255),  # project diverging ramp (was a hardcoded Blue-Red)
                border_color = NA, silent = TRUE)
 # Size from BOTH axes: height from gene count, width from sample count (a many-sample
 # GOI heatmap otherwise crushed its columns). Mirrors figure_style.R::heatmap_dim.
@@ -160,12 +197,18 @@ long <- do.call(rbind, lapply(seq_len(nrow(nc)), function(i) {
   data.frame(gene = rownames(nc)[i], sample = colnames(nc), count = as.numeric(nc[i, ]),
              group = groups, stringsAsFactors = FALSE)
 }))
+# Colour the groups from the project discrete palette (was ggplot defaults), recycled to cover levels.
+grp_levels <- sort(unique(long$group))
+grp_cols <- setNames(rep(pal_spec$discrete, length.out = length(grp_levels)), grp_levels)
 p_expr <- ggplot(long, aes(group, count, colour = group)) +
   geom_boxplot(outlier.shape = NA, alpha = 0.4) +
   geom_jitter(width = 0.15, size = 1.6) +
   facet_wrap(~ gene, scales = "free_y") +
-  labs(x = NULL, y = if (is_intensity) "normalized log2 intensity" else "normalised counts (log scale)") +
-  theme_bw(base_size = base_size) +
+  scale_colour_manual(values = grp_cols) +
+  labs(x = NULL, y = if (identical(assay_kind, "log2_cpm")) "log2 CPM"
+                    else if (identical(assay_kind, "log2_intensity")) "normalized log2 intensity"
+                    else "normalised counts (log scale)") +
+  style_theme(theme_bw) +
   theme(legend.position = "none", axis.text.x = element_text(angle = 30, hjust = 1))
 if (!is_intensity) p_expr <- p_expr + scale_y_log10()
 n_facet <- length(present)

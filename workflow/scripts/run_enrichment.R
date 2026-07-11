@@ -184,6 +184,20 @@ if (orgdb_ok) {
     res <- res[!is.na(res$ENTREZID), ]
     res <- res[!duplicated(res$ENTREZID), ]
     universe <- unique(res$ENTREZID)
+    # Backfill gene symbols from the OrgDb when the DE table lacked them (a GTF without gene_name, or a
+    # count matrix): without this the id_map's symbol bridge is empty, so the GUI cannot resolve a GO
+    # term's symbol-keyed genes back to rows and every GO term extracts zero genes. Fill only missing
+    # entries so a GTF that already supplied symbols keeps them. Best-effort (degrade, never abort).
+    if (is.null(res$symbol)) res$symbol <- rep(NA_character_, nrow(res))
+    res$symbol <- tryCatch({
+      need <- is.na(res$symbol) | !nzchar(res$symbol)
+      if (any(need)) {
+        sym <- suppressMessages(AnnotationDbi::mapIds(
+          orgdb, keys = as.character(res$ENTREZID), column = "SYMBOL", keytype = "ENTREZID"))
+        res$symbol[need] <- unname(sym[need])
+      }
+      res$symbol
+    }, error = function(e) res$symbol)
     write_id_map(res)  # entrez<->symbol/gene_id bridge for term-gene extraction
 
     # Map a gene_id list (from the deseq2 up/down CSVs) to ENTREZ via res.

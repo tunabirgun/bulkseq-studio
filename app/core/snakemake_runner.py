@@ -71,6 +71,29 @@ def _is_multistudy(project_root: Path | None) -> bool:
         return False
 
 
+def snakemake_run_state(project_root: Path | None) -> dict[str, bool]:
+    """Whether a project holds an interrupted, resumable Snakemake run. `.snakemake/` IS the durable
+    saved state, so this survives closing and reopening the app: a `locks/` dir with any entry means a
+    run was holding the working directory (a hard-killed / app-closed run), and an `incomplete/` dir
+    with any entry means some outputs were left half-written. Either one -> resumable, and Resume
+    (--rerun-incomplete, after an unlock) continues only the missing/incomplete steps. Pure filesystem,
+    no subprocess, so it is safe to call synchronously on the UI thread when a project loads."""
+    empty = {"resumable": False, "locked": False, "incomplete": False}
+    if project_root is None:
+        return empty
+    sm = Path(project_root) / ".snakemake"
+
+    def _nonempty(d: Path) -> bool:
+        try:
+            return d.is_dir() and any(d.iterdir())
+        except OSError:
+            return False
+
+    locked = _nonempty(sm / "locks")
+    incomplete = _nonempty(sm / "incomplete")
+    return {"resumable": locked or incomplete, "locked": locked, "incomplete": incomplete}
+
+
 def build_snakemake_args(
     config: AppConfig, mode: str = "run", project_root: Path | None = None
 ) -> list[str]:

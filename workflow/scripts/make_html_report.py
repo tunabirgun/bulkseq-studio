@@ -47,6 +47,15 @@ LOGO_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" fi
 # parses the |log2FC| cut-off out of the 09 sanity line when the JSON lacks the key.
 _CLEAN_SYM = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _LFC_RE = re.compile(r"\|log2FC\|\s*>=\s*([0-9]+(?:\.[0-9]+)?)")
+# R serialises a missing gene_name (NA_character_) as the bare token NA in the CSV; treat NA and the
+# other missing-value spellings as empty so the report falls back to the gene_id instead of printing
+# a literal "NA" as a gene symbol (breaks the headline + the symbol column on non-model organisms).
+_NA_SYMBOL_TOKENS = {"", "na", "nan", "n/a", "null", "none", "."}
+
+
+def _sym_or_blank(val: str | None) -> str:
+    s = (val or "").strip()
+    return "" if s.lower() in _NA_SYMBOL_TOKENS else s
 
 
 # One source of truth for every metric definition — feeds inline .term tooltips AND the §10 glossary.
@@ -199,9 +208,11 @@ def _de_table(results_csv: Path, top: int = 25, empty_msg: str = "No differentia
             except (ValueError, TypeError):
                 return f"<td class='num'>{html.escape(val or '')}</td>"
         # Gene symbols italic (HGNC convention), matching the report's prose (_fmt_genes).
-        # <i> wraps the escaped text only, so the sort JS still reads the plain symbol.
-        if col == "symbol" and (val or "").strip():
-            return f"<td><i>{html.escape(val)}</i></td>"
+        # <i> wraps the escaped text only, so the sort JS still reads the plain symbol. A missing
+        # symbol (NA/blank on a non-model organism) renders as an empty cell, not a literal "NA".
+        if col == "symbol":
+            sym = _sym_or_blank(val)
+            return f"<td><i>{html.escape(sym)}</i></td>" if sym else "<td></td>"
         return f"<td>{html.escape(val or '')}</td>"
 
     head = "".join(f"<th scope='col' class='num'>{html.escape(c)}</th>" if c in numeric
@@ -326,7 +337,7 @@ def _de_headline_stats(project: Path, alpha: float, lfc_t):
                     else:
                         down_thr += 1
                 if len(top_up) < 3 or len(top_down) < 3:
-                    sym = (r.get("symbol") or "").strip()
+                    sym = _sym_or_blank(r.get("symbol"))
                     if sym and not _CLEAN_SYM.match(sym):
                         continue
                     name = sym or (r.get("gene_id") or "").strip()
@@ -418,15 +429,17 @@ def _enrich_rows(csv_path: Path, top: int) -> list[dict]:
     return rows
 
 
-def _enrich_block(title: str, csv_path: Path, mode: str, top: int = 10) -> str:
+def _enrich_block(title: str, csv_path: Path, mode: str, top: int = 10,
+                  empty_msg: str = "No terms passed the significance threshold.") -> str:
     rows = _enrich_rows(csv_path, top)
     if not rows:
         # CSV present but with no rows -> the analysis RAN and nothing passed the threshold; say so
         # instead of the block silently vanishing. CSV absent -> that analysis did not run for this
-        # organism/mode -> omit it (never imply an analysis ran when it did not).
+        # organism/mode -> omit it (never imply an analysis ran when it did not). empty_msg lets the
+        # caller distinguish "ran, nothing significant" from "not run for this organism" (no OrgDb).
         if csv_path.exists():
             return (f"<div class='enr-block empty'><h3>{html.escape(title)}</h3>"
-                    f"<p class='muted small'>No terms passed the significance threshold.</p></div>")
+                    f"<p class='muted small'>{html.escape(empty_msg)}</p></div>")
         return ""
     # Resolve each logical column to the first candidate header actually in the CSV, so both the
     # clusterProfiler and g:Profiler column vocabularies render. spec entries are (header, key, kind).
@@ -463,25 +476,40 @@ def _enrichment_section(project: Path) -> str:
     if not enr.exists():
         return ""
     blocks = ""
+    # A non-model organism without a Bioconductor OrgDb skips GO/disease enrichment but still writes
+    # empty go_ora_*.csv; enrichment_summary.txt records the skip. Key the GO wording on it so an empty
+    # GO block reads "not run for this organism" instead of the misleading "nothing passed the threshold"
+    # (KEGG, which runs off a KEGG organism code, is unaffected and keeps the default wording).
+    summ = enr / "enrichment_summary.txt"
+    summary_txt = summ.read_text(encoding="utf-8", errors="replace").lower() if summ.exists() else ""
+    go_skipped = "skip" in summary_txt and any(
+        s in summary_txt for s in ("orgdb", "annotation database", "no bioconductor", "no orgdb"))
+    go_msg = ("GO enrichment was not run for this organism — no annotation database is available."
+              if go_skipped else "No terms passed the significance threshold.")
     # GO over-representation: combined when present, else the up / down splits.
     if _enrich_rows(enr / "go_ora_all.csv", 1):
         blocks += _enrich_block("GO terms — over-representation", enr / "go_ora_all.csv", "ora")
     else:
-        blocks += _enrich_block("GO terms — over-represented among up-regulated genes", enr / "go_ora_up.csv", "ora")
-        blocks += _enrich_block("GO terms — over-represented among down-regulated genes", enr / "go_ora_down.csv", "ora")
-    blocks += _enrich_block("GO gene-set enrichment (GSEA)", enr / "gsea.csv", "gsea")
+        blocks += _enrich_block("GO terms — over-represented among up-regulated genes", enr / "go_ora_up.csv", "ora", empty_msg=go_msg)
+        blocks += _enrich_block("GO terms — over-represented among down-regulated genes", enr / "go_ora_down.csv", "ora", empty_msg=go_msg)
+    blocks += _enrich_block("GO gene-set enrichment (GSEA)", enr / "gsea.csv", "gsea", empty_msg=go_msg)
     blocks += _enrich_block("KEGG pathways — over-representation", enr / "kegg_ora.csv", "ora")
     blocks += _enrich_block("KEGG pathways — gene-set enrichment (GSEA)", enr / "kegg_gsea.csv", "gsea")
     if not blocks:
-        if not (enr / "enrichment_summary.txt").exists():
+        if not summ.exists():
             return ""
-        return ("<section id='enrichment'><h2>Functional enrichment</h2>"
-                "<p class='muted'>No GO or KEGG terms passed the significance threshold for this run.</p>"
-                "</section>")
+        msg = ("Functional enrichment was not run for this organism — no annotation database is available."
+               if go_skipped else "No GO or KEGG terms passed the significance threshold for this run.")
+        return (f"<section id='enrichment'><h2>Functional enrichment</h2>"
+                f"<p class='muted'>{msg}</p></section>")
+    # The "over-represented among the changed genes" framing is only accurate if some category
+    # actually returned terms; when every block is empty/not-run, soften it to avoid implying a result.
+    any_real = any(_enrich_rows(enr / f, 1) for f in (
+        "go_ora_all.csv", "go_ora_up.csv", "go_ora_down.csv", "gsea.csv", "kegg_ora.csv", "kegg_gsea.csv"))
     plain = ('<div class="plain"><span class="tag">In plain terms</span>'
              '<p class="finding" style="font-size:1rem">These are the biological themes and pathways '
              'over-represented among the changed genes — they point to <i>what</i> the changes affect. '
-             'Read each as a hypothesis to check, not a settled conclusion.</p></div>')
+             'Read each as a hypothesis to check, not a settled conclusion.</p></div>') if any_real else ""
     return (f"<section id='enrichment'><h2>Functional enrichment</h2>{plain}{blocks}"
             f"<p class='muted small'>Top terms by adjusted p-value. Full tables (all terms, "
             f"gene members, GSEA leading edges): <code>results/enrichment/</code>.</p></section>")
@@ -1023,7 +1051,7 @@ def _hero_findings(run: dict, project: Path, sanity_text: str, name: str) -> str
     inp = run.get("input", {}) or {}
     de = run.get("deseq2", {}) or {}
     unit = "probes" if inp.get("type") == "microarray" else "genes"
-    alpha = float(de.get("alpha", 0.05))
+    alpha = float(de.get("alpha") or 0.05)
     lfc_t = _lfc_threshold(run, sanity_text)
     up, down, tested, top_up, top_down = _de_headline_stats(project, alpha, lfc_t)
     total = up + down
@@ -1138,13 +1166,31 @@ def _study_design_section(run: dict) -> str:
     return (f"<section id='design'><h2>Study design</h2><p>{sentence}</p>{details}</section>")
 
 
-def _panel(figs: Path, basename: str, letter: str, cap_lead: str = "") -> str:
+# Microarray (limma on intensities) computes no counts, no variance-stabilising transform, and no LFC
+# shrinkage, so the count/DESeq2 wording in the shared figure tech captions is wrong on that route.
+# Rewrite it to the intensity/limma equivalents (the figures themselves are already labelled correctly).
+_MICRO_TECH_SUBS = (
+    ("variance-stabilised counts", "log2 expression (array intensity)"),
+    ("mean normalised counts (log)", "mean log2 expression"),
+    ("shrunken log2 fold change", "log2 fold change (limma, unshrunken)"),
+)
+
+
+def _micro_tech(tech: str) -> str:
+    for old, new in _MICRO_TECH_SUBS:
+        tech = tech.replace(old, new)
+    return tech
+
+
+def _panel(figs: Path, basename: str, letter: str, cap_lead: str = "", is_micro: bool = False) -> str:
     # One grouped, letter-chipped figure panel. Preserves the exact zoom contract:
     # button.figbtn > img, onclick bsqZoom(this) reads querySelector('img').
     src = _fig_src(figs, basename)
     if not src:
         return ""
     _grp, title, lead, tech, howto = FIG[basename]
+    if is_micro:
+        tech = _micro_tech(tech)
     lead = cap_lead or lead
     alt = html.escape(title)
     return (
@@ -1158,7 +1204,7 @@ def _panel(figs: Path, basename: str, letter: str, cap_lead: str = "") -> str:
         '</figcaption></figure>')
 
 
-def _figure_groups(figs: Path, up: int, down: int, unit: str) -> str:
+def _figure_groups(figs: Path, up: int, down: int, unit: str, is_micro: bool = False) -> str:
     total = up + down
     dyn = {}
     if total > 0:
@@ -1174,7 +1220,7 @@ def _figure_groups(figs: Path, up: int, down: int, unit: str) -> str:
             if meta[0] != gkey:
                 continue
             letter = letters[idx] if idx < len(letters) else str(idx + 1)
-            p = _panel(figs, basename, letter, dyn.get(basename, ""))
+            p = _panel(figs, basename, letter, dyn.get(basename, ""), is_micro=is_micro)
             if not p:
                 continue
             panels.append(p)
@@ -1258,8 +1304,9 @@ def build(project: Path) -> str:
 
     inp = run.get("input", {}) or {}
     de = run.get("deseq2", {}) or {}
-    unit = "probes" if inp.get("type") == "microarray" else "genes"
-    alpha = float(de.get("alpha", 0.05))
+    is_micro = inp.get("type") == "microarray"
+    unit = "probes" if is_micro else "genes"
+    alpha = float(de.get("alpha") or 0.05)
     lfc_t = _lfc_threshold(run, sanity)
     up, down, _tested, _tu, _td = _de_headline_stats(project, alpha, lfc_t)
     num, den = _contrast_pair(run)
@@ -1268,7 +1315,7 @@ def build(project: Path) -> str:
     meta_cards = _meta_cards(run, project)
     meta_link = _meta_analysis_link(project)
     study = _study_design_section(run)
-    figures = _figure_groups(figs, up, down, unit)
+    figures = _figure_groups(figs, up, down, unit, is_micro=is_micro)
     de_html = _de_section(project, up, down, num, den, unit)
     enrichment = _enrichment_section(project)
     runtime = _timing_section(timing)

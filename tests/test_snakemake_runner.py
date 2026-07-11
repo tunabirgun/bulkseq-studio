@@ -131,3 +131,22 @@ def test_is_multistudy_matches_snakefile_pandas_na_coercion(tmp_path) -> None:
     assert _is_multistudy(tmp_path) is False
     tsv.write_text("sample_id\tcondition\ns1\tA\n")  # no dataset column
     assert _is_multistudy(tmp_path) is False
+
+
+def test_snakemake_run_state_detects_resumable(tmp_path) -> None:
+    from app.core.snakemake_runner import snakemake_run_state
+    # No .snakemake -> a fresh/clean project is not resumable.
+    assert snakemake_run_state(tmp_path) == {"resumable": False, "locked": False, "incomplete": False}
+    assert snakemake_run_state(None)["resumable"] is False
+    # Incomplete outputs (a stopped/crashed run) -> resumable.
+    inc = tmp_path / ".snakemake" / "incomplete"; inc.mkdir(parents=True); (inc / "x").write_text("1")
+    st = snakemake_run_state(tmp_path)
+    assert st["resumable"] and st["incomplete"] and not st["locked"]
+    # A held lock (hard-killed / app-closed run) -> resumable + locked.
+    lk = tmp_path / ".snakemake" / "locks"; lk.mkdir(parents=True); (lk / "0").write_text("1")
+    assert snakemake_run_state(tmp_path)["locked"]
+    # Empty locks/incomplete dirs (a cleanly completed run) -> NOT resumable.
+    for d in ("locks", "incomplete"):
+        for f in (tmp_path / ".snakemake" / d).iterdir():
+            f.unlink()
+    assert snakemake_run_state(tmp_path) == {"resumable": False, "locked": False, "incomplete": False}

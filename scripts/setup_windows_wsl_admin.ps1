@@ -78,7 +78,15 @@ try {
     $distros = @(& wsl -l -q 2>&1) | ForEach-Object { ($_ -replace "`0", "").Trim() }
     $distros | Where-Object { $_ } | ForEach-Object { Write-Step $_ }
 
-    if ($distros -match $Distro) {
+    # Resolve the REAL registered name before probing/starting it. The Store app registers Ubuntu as
+    # e.g. 'Ubuntu-24.04', so a bare '-match Ubuntu' substring test is truthy but `wsl -d Ubuntu`
+    # returns WSL_E_DISTRO_NOT_FOUND (wsl.exe does not prefix-match -d) -- which would misreport a
+    # working distro as broken and tell the user to `wsl --unregister Ubuntu` (a name that doesn't
+    # exist). Prefer an exact match, else the first name that starts with $Distro.
+    $registered = $distros | Where-Object { $_ -eq $Distro } | Select-Object -First 1
+    if (-not $registered) { $registered = $distros | Where-Object { $_ -like "$Distro*" } | Select-Object -First 1 }
+    if ($registered) {
+        $Distro = $registered
         Write-Step "'$Distro' is registered. Checking that it starts..."
         if (Test-DistroStarts $Distro) {
             Write-Step "'$Distro' starts correctly."

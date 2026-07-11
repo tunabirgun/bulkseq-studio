@@ -64,6 +64,7 @@ from app.core.snakemake_runner import (
     SnakemakeRunner,
     _new_run_tag,
     build_snakemake_command,
+    snakemake_run_state,
 )
 from app.core.timing import write_timing_summary
 from app.core.paths import data_path, windows_to_wsl_path, wsl_recommended_workdir
@@ -146,6 +147,7 @@ class MainWindow(QMainWindow):
         self._run_mode: str | None = None
         self._stop_in_progress = False
         self._recovery_offered = False
+        self._pending_recover = False  # set on the locked-resume / auto-recovery path; consumed by _on_run_finished
         self._mapping_checked: set[str] = set()
         self._mapping_halt_decided = False
         self._closing = False
@@ -573,6 +575,15 @@ class MainWindow(QMainWindow):
         if self.config is None:
             return
         mode = self.config.input.type
+        # A microarray-only SYMBOL enrichment keytype must not carry into a count-based route: it would
+        # override the organism's correct ENSEMBL/LOC default and mis-map gene ids for enrichment. The
+        # microarray ingest re-sets it; clear it for every other mode here (central guard — the per-import
+        # clears in the count-matrix / deseq2-results handlers are now redundant but harmless). Persist
+        # only on the rare transition that actually clears it.
+        if (mode != "microarray" and self.project_root is not None
+                and self.config.enrichment.keytype == "SYMBOL"):
+            self.config.enrichment.keytype = None
+            self.manager.save_config(self.project_root, self.config)
         if getattr(self, "reference_mode_banner", None) is not None:
             if mode == "microarray":
                 self.reference_mode_banner.setText(
@@ -607,7 +618,13 @@ class MainWindow(QMainWindow):
         # Persist the microarray source / log2 choice as the user picks it (Input Data tab).
         if self.config is None or self.project_root is None:
             return
-        self.config.microarray.source = self.micro_source.currentData()
+        # The Source combo only offers geo_series_matrix / affy_cel; a local-matrix upload sets
+        # source='local_matrix' (no combo item), so writing the combo's value here would clobber it
+        # to geo_series_matrix and the run would abort trying to download an empty accession. Only the
+        # GEO/CEL sources come from this combo; a local matrix keeps its source. The log2 override is a
+        # legitimate live control on the local path, so it is always persisted.
+        if self.config.microarray.source != "local_matrix":
+            self.config.microarray.source = self.micro_source.currentData()
         self.config.microarray.log2_transform = self.micro_log2.currentData()
         self.manager.save_config(self.project_root, self.config)
 
@@ -1096,7 +1113,9 @@ class MainWindow(QMainWindow):
             return
         genome = Path(self.ref_genome.text())
         annotation = Path(self.ref_annotation.text())
-        if not genome.exists() or not annotation.exists():
+        # .is_file() (not .exists()): an empty field is Path(".") which exists as a directory and
+        # would pass .exists(), then md5sum/open would fail on the directory with a raw traceback.
+        if not genome.is_file() or not annotation.is_file():
             QMessageBox.warning(self, APP_NAME, "Genome FASTA and annotation must exist.")
             return
         genome_md5 = md5sum(genome)
@@ -1712,6 +1731,21 @@ class MainWindow(QMainWindow):
     def _build_run_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
+        # Resume banner: shown when a project is reopened with an interrupted (locked/incomplete) run,
+        # so stop -> close -> reopen -> continue is one click. Amber warning styling reads on both themes.
+        self.resume_banner = QLabel()
+        self.resume_banner.setWordWrap(True)
+        self.resume_banner.setStyleSheet(
+            "background:#FFF4E5; color:#663C00; border:1px solid #E0A96D; border-radius:6px; padding:8px;")
+        self.resume_banner.setVisible(False)
+        self.resume_button = QPushButton("Resume Interrupted Run")
+        self.resume_button.setProperty("primary", True)
+        self.resume_button.setVisible(False)
+        self.resume_button.clicked.connect(self._resume_interrupted)
+        _banner_row = QHBoxLayout()
+        _banner_row.addWidget(self.resume_banner, 1)
+        _banner_row.addWidget(self.resume_button, 0)
+        layout.addLayout(_banner_row)
         buttons = QHBoxLayout()
         run_tips = {
             "dry-run": "Show what the pipeline would do, without running anything.",
@@ -1809,6 +1843,9 @@ class MainWindow(QMainWindow):
             self.stop_button.setEnabled(active)
         if active:
             self.progress.setStyleSheet("")
+        # Hide the resume banner while a run is live; re-evaluate when it ends (a stopped/failed run
+        # leaves the project resumable, a completed run does not).
+        self._refresh_resume_banner()
 
     def _tick_elapsed(self) -> None:
         import time
@@ -1931,6 +1968,43 @@ class MainWindow(QMainWindow):
         self._stop_run(announce=False)
         if self.runner is not None and self.config is not None:
             self.runner.unlock(self.config)
+
+    def _refresh_resume_banner(self) -> None:
+        # Show the resume banner iff the current project has an interrupted, resumable run (a lock or
+        # incomplete outputs left by a stop / crash / app-close) and no run is currently active. Called
+        # on project load, when a run finishes/stops, and when a run starts.
+        if getattr(self, "resume_banner", None) is None:
+            return
+        active = self._run_active or (self.runner is not None and self.runner.is_running())
+        state = (snakemake_run_state(self.project_root)
+                 if (self.project_root is not None and not active) else {"resumable": False})
+        show = bool(state.get("resumable"))
+        self.resume_banner.setVisible(show)
+        self.resume_button.setVisible(show)
+        if show:
+            self.resume_banner.setText(
+                "This project has an unfinished run — it was stopped, interrupted, or the app was closed "
+                "while it was running. Click Resume to continue from where it left off; completed steps "
+                "are reused (the project folder is the saved state).")
+
+    def _resume_interrupted(self) -> None:
+        # One-click resume from the reopen banner. A hard-killed / app-closed run leaves a lock, so
+        # unlock first, then resume: reuse the auto-recovery chain (_pending_recover -> _on_run_finished
+        # launches --rerun-incomplete once the unlock finishes). If only incomplete outputs exist (no
+        # lock), resume directly.
+        # Do NOT hide the banner here: if the run does not actually start (a pre-run gate blocks it, e.g.
+        # a persisted REVIEW_REQUIRED check needs approval), hiding it now would strand the banner hidden
+        # with nothing running. _set_running_ui(True) -> _refresh_resume_banner hides it once the run
+        # really starts; a gate-abort re-shows it (see _start_snakemake_impl), so the banner stays honest.
+        if self.project_root is None or self.config is None:
+            return
+        state = snakemake_run_state(self.project_root)
+        if state.get("locked"):
+            self._pending_recover = True
+            self.log_text.append("Resuming: releasing the previous run's lock, then continuing…")
+            self._start_snakemake("unlock")
+        else:
+            self._start_snakemake("resume")
 
     def _check_alignment_mapping(self) -> None:
         # Inspect any STAR Log.final.out files written so far; if a sample's
@@ -2623,6 +2697,15 @@ class MainWindow(QMainWindow):
                 "(Run Monitor) to produce them; afterwards this button regenerates the "
                 "genes-of-interest figures from those results without re-analyzing.")
             return
+        # A DESeq2-results upload has no per-sample counts (the synthetic RDS carries dds=vsd=NULL),
+        # so the focused GOI heatmap / per-gene panels cannot be built — gate it here like the
+        # Enrichment-Terms heatmap, rather than letting make_goi.R crash on colData(NULL) mid-run.
+        if self.config.input.type == "deseq2_results":
+            QMessageBox.information(
+                self, APP_NAME,
+                "Genes-of-interest figures need per-sample counts, which a DESeq2-results upload "
+                "does not include. Use a FASTQ/SRA, count-matrix, or microarray run for these.")
+            return
         self._start_snakemake("goi")
 
     def _persist_goi(self) -> int:
@@ -3100,12 +3183,23 @@ class MainWindow(QMainWindow):
         self.fig_dim_unit.currentTextChanged.connect(self._on_fig_unit_changed)
         # Curated subset of the W2 figure-tuning fields. The rest stay config-file
         # driven (defaults in default_config.yaml).
+        # Volcano y-axis scaling: how the tall -log10(padj) tail (hyper-significant / extreme genes)
+        # is shown. cap = squish to a cap line with off-scale triangles (default); full = true heights;
+        # sqrt = compressed so extreme genes stay visible without squashing the bulk.
+        self.fig_volcano_yscale = QComboBox()
+        for label, data in (("Cap the tail (off-scale markers)", "cap"),
+                            ("Show all at full height", "full"),
+                            ("Compress (sqrt scale)", "sqrt")):
+            self.fig_volcano_yscale.addItem(label, data)
         self.fig_volcano_ycap = QDoubleSpinBox()
         self.fig_volcano_ycap.setRange(0.0, 400.0)
         self.fig_volcano_ycap.setSingleStep(5.0)
         self.fig_volcano_ycap.setDecimals(1)
         self.fig_volcano_ycap.setValue(0.0)
         self.fig_volcano_ycap.setSpecialValueText("auto")  # 0 = auto (quantile)
+        # The numeric cap only applies in 'cap' mode; grey it out otherwise.
+        self.fig_volcano_yscale.currentIndexChanged.connect(
+            lambda _i: self.fig_volcano_ycap.setEnabled(self.fig_volcano_yscale.currentData() == "cap"))
         self.fig_volcano_alpha = QDoubleSpinBox()
         self.fig_volcano_alpha.setRange(0.05, 1.0)
         self.fig_volcano_alpha.setSingleStep(0.05)
@@ -3113,11 +3207,13 @@ class MainWindow(QMainWindow):
         self.fig_volcano_alpha.setValue(0.55)
         self.fig_pca_fixed_aspect = QCheckBox("Fix PCA aspect ratio")
         self.fig_pca_fixed_aspect.setChecked(False)
-        self.fig_sample_labels = QCheckBox("Show per-sample labels on PCA and sample heatmaps")
+        self.fig_sample_labels = QCheckBox("Show per-sample labels on PCA and heatmaps")
         self.fig_sample_labels.setChecked(True)
         self.fig_sample_labels.setToolTip(
-            "Sample-id text on the PCA, sample-distance, and sample-correlation figures. "
-            "Turn off to declutter a run with many samples (common on microarray series)."
+            "Sample-id text on the PCA, the sample-distance and correlation heatmaps, and the sample "
+            "columns of the top-DEG / up / down and genes-of-interest heatmaps. Turn off to declutter a "
+            "run with many samples or replicates (common on microarray series and large studies); the "
+            "condition colour bar above each heatmap still marks the groups."
         )
         self.fig_heatmap_zlim = QDoubleSpinBox()
         self.fig_heatmap_zlim.setRange(0.1, 10.0)
@@ -3157,7 +3253,8 @@ class MainWindow(QMainWindow):
         form.addRow(self._info_label("Width", "Saved figure width (PNG and SVG), in the units selected above."), self.fig_width)
         form.addRow(self._info_label("Height", "Saved figure height (PNG and SVG), in the units selected above."), self.fig_height)
         form.addRow(self._info_label("DPI (PNG)", "Resolution for the raster PNG export. SVG is vector and unaffected. 300 is publication quality. Also converts px width/height to inches."), self.fig_dpi)
-        form.addRow(self._info_label("Volcano y cap", "Upper limit for the volcano -log10(adjusted p) axis. 'auto' (0) caps at the 99.5th percentile so a few hyper-significant genes do not squash the rest."), self.fig_volcano_ycap)
+        form.addRow(self._info_label("Volcano y-axis", "How the tall -log10(adjusted p) tail is shown so a marginal gene with extreme significance is visible. 'Cap the tail' squishes hyper-significant genes to a cap line marked with hollow triangles (default); 'Show all at full height' plots every gene at its true height; 'Compress (sqrt)' shrinks the tall tail so extreme genes stay readable without squashing the rest."), self.fig_volcano_yscale)
+        form.addRow(self._info_label("Volcano y cap", "Upper limit for the volcano -log10(adjusted p) axis when 'Cap the tail' is selected. 'auto' (0) caps at the 99.5th percentile so a few hyper-significant genes do not squash the rest."), self.fig_volcano_ycap)
         form.addRow(self._info_label("Volcano point alpha", "Opacity of the significant points in the volcano plot (0-1). Lower values reveal density in the dense core."), self.fig_volcano_alpha)
         form.addRow(self.fig_pca_fixed_aspect)
         form.addRow(self.fig_sample_labels)
@@ -3268,6 +3365,7 @@ class MainWindow(QMainWindow):
         style.height_in = round(self._dim_to_inches(self.fig_height.value(), unit, dpi), 4)
         style.dpi = dpi
         style.dimension_unit = unit  # type: ignore[assignment]
+        style.volcano_y_scale = self.fig_volcano_yscale.currentData()
         style.volcano_y_cap = self.fig_volcano_ycap.value()
         style.volcano_point_alpha = self.fig_volcano_alpha.value()
         style.pca_fixed_aspect = self.fig_pca_fixed_aspect.isChecked()
@@ -3572,6 +3670,8 @@ class MainWindow(QMainWindow):
         # next time (instead of the app's install/AppData folder).
         QSettings().setValue("last_project_dir", str(root.parent))
         self.project_status.setPlainText(f"Open project: {root}")
+        # If this project was left with an unfinished run, surface the one-click Resume banner.
+        self._refresh_resume_banner()
 
     def _clear_transient_ui(self) -> None:
         # Reset run/output widgets so a previously opened project's log, status,
@@ -3732,7 +3832,10 @@ class MainWindow(QMainWindow):
         self._configure_dim_spins(unit)
         self.fig_width.setValue(self._dim_from_inches(fig.width_in, unit, fig.dpi))
         self.fig_height.setValue(self._dim_from_inches(fig.height_in, unit, fig.dpi))
+        _yscale_idx = self.fig_volcano_yscale.findData(fig.volcano_y_scale)
+        self.fig_volcano_yscale.setCurrentIndex(_yscale_idx if _yscale_idx >= 0 else 0)
         self.fig_volcano_ycap.setValue(fig.volcano_y_cap)
+        self.fig_volcano_ycap.setEnabled(fig.volcano_y_scale == "cap")
         self.fig_volcano_alpha.setValue(fig.volcano_point_alpha)
         self.fig_pca_fixed_aspect.setChecked(fig.pca_fixed_aspect)
         self.fig_sample_labels.setChecked(fig.sample_labels)
@@ -3788,7 +3891,11 @@ class MainWindow(QMainWindow):
         # columns are flagged in Sanity Checks before DESeq2 runs.
         if self.config is None:
             return []
-        formula = self.config.deseq2.design_formula.split("~", 1)[-1]
+        # Read the LIVE design field (mirrors _active_contrast, which reads the live combos in the same
+        # validation call) so a design edited via the helper or typed but not yet saved is checked
+        # against the metadata columns — reading the saved formula would give false reassurance.
+        raw = self.design.text() if getattr(self, "design", None) is not None else self.config.deseq2.design_formula
+        formula = str(raw).split("~", 1)[-1]
         tokens = re.split(r"[+*:]", formula)
         variables = [t.strip() for t in tokens if t.strip()]
         for contrast in self.config.deseq2.contrasts:
@@ -3830,10 +3937,16 @@ class MainWindow(QMainWindow):
         if not path:
             return
         p = Path(path)
-        if p.suffix.lower() == ".xlsx":
-            df = pd.read_excel(p, dtype=str).fillna("")
-        else:
-            df = pd.read_csv(p, sep="\t" if p.suffix.lower() == ".tsv" else ",", dtype=str).fillna("")
+        # Wrap the read like the count-matrix / DESeq2 / microarray importers do, so a malformed table
+        # shows a clean message instead of a raw traceback dialog via the global excepthook.
+        try:
+            if p.suffix.lower() == ".xlsx":
+                df = pd.read_excel(p, dtype=str).fillna("")
+            else:
+                df = pd.read_csv(p, sep="\t" if p.suffix.lower() == ".tsv" else ",", dtype=str).fillna("")
+        except Exception as exc:
+            QMessageBox.warning(self, APP_NAME, f"Could not read the table: {exc}")
+            return
         self.metadata_table.load_dataframe(df)
 
     def metadata_add_row(self) -> None:
@@ -3851,6 +3964,11 @@ class MainWindow(QMainWindow):
     def _add_column(self) -> None:
         name, ok = QInputDialog.getText(self, APP_NAME, "New column name:")
         if ok and name.strip():
+            # Reject a duplicate name: two same-named columns collapse (last-wins) in to_dataframe,
+            # silently losing one column's data on save.
+            if name.strip() in self.metadata_table.column_names():
+                QMessageBox.warning(self, APP_NAME, f"A column named '{name.strip()}' already exists. Pick a different name.")
+                return
             self.metadata_table.add_column(name.strip())
 
     def _rename_column(self) -> None:
@@ -3860,6 +3978,12 @@ class MainWindow(QMainWindow):
         current = self.metadata_table.column_names()[col]
         name, ok = QInputDialog.getText(self, APP_NAME, "Rename column:", text=current)
         if ok and name.strip():
+            # Reject a name that collides with a DIFFERENT column (renaming to itself is a harmless no-op),
+            # to avoid the silent last-wins data loss when to_dataframe keys rows by header text.
+            others = [n for i, n in enumerate(self.metadata_table.column_names()) if i != col]
+            if name.strip() in others:
+                QMessageBox.warning(self, APP_NAME, f"A column named '{name.strip()}' already exists. Pick a different name.")
+                return
             self.metadata_table.rename_column(col, name.strip())
 
     def _remove_column(self) -> None:
@@ -4016,9 +4140,20 @@ class MainWindow(QMainWindow):
         self.config.workflow.meta_analysis = self.meta_analysis.isChecked()
         self.config.workflow.de_engine = self.de_engine.currentData()  # type: ignore[assignment]
         self.config.workflow.organellar_genes = self.organellar.currentData()  # type: ignore[assignment]
-        self.config.gene_sets.custom_gene_sets = self.custom_gmt.text().strip() or None
-        self.config.gene_sets.functional_annotation_table = self.custom_annot.text().strip() or None
-        self.config.gene_sets.background_gene_list = self.custom_background.text().strip() or None
+        # Custom gene-set files are Snakemake inputs read INSIDE WSL, so a Browse-picked Windows/UNC
+        # path (C:\... or \\wsl.localhost\...) must be WSL-resolved like the reference genome above —
+        # otherwise the raw path is unusable in WSL and aborts the whole run at DAG build. Convert only
+        # a genuine Windows path; an already-/mnt or POSIX path (reloaded from config, or native Linux)
+        # is left unchanged so a reload+save never double-converts (windows_to_wsl_path is not idempotent).
+        def _to_wsl_input(text: str) -> str | None:
+            t = text.strip()
+            if not t:
+                return None
+            is_windows_path = t.startswith("\\\\") or "\\" in t or (len(t) >= 2 and t[1] == ":")
+            return windows_to_wsl_path(t) if is_windows_path else t
+        self.config.gene_sets.custom_gene_sets = _to_wsl_input(self.custom_gmt.text())
+        self.config.gene_sets.functional_annotation_table = _to_wsl_input(self.custom_annot.text())
+        self.config.gene_sets.background_gene_list = _to_wsl_input(self.custom_background.text())
         self.config.fastp.qualified_quality_phred = self.fastp_q.value()
         self.config.fastp.length_required = self.fastp_len.value()
         self.config.fastp.trim_poly_g = self.trim_poly_g.isChecked()
@@ -4306,6 +4441,7 @@ class MainWindow(QMainWindow):
                 self.log_text.append(detail)
             except Exception:
                 pass
+            self._pending_recover = False  # launch failed, no runner started: don't strand the recover flag
             self._set_running_ui(False)
             QMessageBox.critical(self, APP_NAME, f"Failed to start the run:\n\n{exc}")
 
@@ -4315,6 +4451,7 @@ class MainWindow(QMainWindow):
         # Guard double-starts: one snakemake per directory at a time.
         if self._run_active or (self.runner is not None and self.runner.is_running()):
             self.log_text.append("A run is already active. Stop it before starting another.")
+            self._pending_recover = False  # a stranded recover flag would mis-handle the active run's finish
             return
         # An existing project keeps its own copy of workflow/, so a workflow fix from an
         # app update would not reach it. Re-sync the bundled scripts when the project's
@@ -4327,10 +4464,12 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.log_text.append(f"Could not refresh project workflow scripts: {exc}")
         if mode in ("run", "resume", "recover") and not self._run_gate_ok():
+            self._refresh_resume_banner()  # a blocked resume/recover must not leave the banner stranded hidden
             return
         # Backstop the enrichment trap directly at run start (the sanity-check gate
         # only fires if the user ran checks first). Not for recovery.
         if mode in ("run", "resume") and not self._confirm_enrichment_config():
+            self._refresh_resume_banner()
             return
         # Persist the in-memory metadata table so the run uses current edits;
         # Snakemake reads config/samples.tsv from disk, not the GUI table.
@@ -4352,10 +4491,14 @@ class MainWindow(QMainWindow):
         if not self.use_wsl.isChecked() and shutil.which("snakemake") is None:
             self.log_text.append("Snakemake is not available on PATH. Command was constructed but not started.")
             self.log_text.append(command.display)
+            self._pending_recover = False  # no runner will start, so don't strand the recover flag
+            self._refresh_resume_banner()
             return
         if self.use_wsl.isChecked() and shutil.which("wsl") is None:
             self.log_text.append("WSL is not available on PATH. Command was constructed but not started.")
             self.log_text.append(command.display)
+            self._pending_recover = False
+            self._refresh_resume_banner()
             return
         import time
 

@@ -220,4 +220,14 @@ class ProjectManager:
     @staticmethod
     def _write_yaml(path: Path, data: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        # Write only when the content changed, so re-saving config on Resume does not touch the file's
+        # mtime (keeps Snakemake from re-running steps that depend on it). Compare on decoded text so a
+        # platform newline difference does not count as a change.
+        text = yaml.safe_dump(data, sort_keys=False)
+        if path.exists():
+            try:
+                if path.read_text(encoding="utf-8") == text:
+                    return
+            except (OSError, UnicodeDecodeError):
+                pass
+        path.write_text(text, encoding="utf-8")

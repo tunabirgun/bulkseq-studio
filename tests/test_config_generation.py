@@ -128,3 +128,36 @@ def test_advanced_tool_params_round_trip():
     assert reloaded.contamination.subset == 250000
     assert reloaded.star.twopass_mode is True
     assert reloaded.deseq2.min_count == 5
+
+
+def test_volcano_top_n_zero_round_trips():
+    # 0 = "no volcano labels" is offered by the spinner and handled by make_figures.R, so it must be a
+    # valid, reopenable config value — the old positive-int rule rejected 0 and made the project fail to load.
+    from app.core.config_models import FigureConfig
+    assert FigureConfig(volcano_top_n=0).volcano_top_n == 0
+    for bad in (-1,):
+        try:
+            FigureConfig(volcano_top_n=bad)
+            assert False, "negative volcano_top_n must be rejected"
+        except Exception:
+            pass
+    # other figure counts still require > 0
+    for field in ("base_font_size", "heatmap_top_n", "pca_ntop"):
+        try:
+            FigureConfig(**{field: 0})
+            assert False, f"{field}=0 must still be rejected"
+        except Exception:
+            pass
+
+
+def test_volcano_y_scale_round_trips():
+    # cap = default (current behaviour); full/sqrt let extreme genes show; a bad value is rejected.
+    from app.core.config_models import FigureConfig
+    assert FigureConfig().volcano_y_scale == "cap"
+    for v in ("cap", "full", "sqrt"):
+        assert FigureConfig(volcano_y_scale=v).volcano_y_scale == v
+    try:
+        FigureConfig(volcano_y_scale="nope")
+        assert False, "invalid volcano_y_scale must be rejected"
+    except Exception:
+        pass

@@ -43,7 +43,10 @@ def _timing_text(payload: dict[str, object]) -> str:
     slowest = payload.get("slowest_steps") or []
     if isinstance(slowest, list) and slowest:
         for idx, row in enumerate(slowest, 1):
-            lines.append(f"{idx}. {row.get('source')}: {row.get('s')} seconds")
+            # Label by the benchmark file's stem (the rule/step name), not the full .tsv path,
+            # matching make_timing_summary.py's pipeline-side report.
+            step = Path(str(row.get("source"))).stem or str(row.get("source"))
+            lines.append(f"{idx}. {step}: {row.get('s')} seconds")
     else:
         lines.append("No Snakemake benchmark files found yet.")
     return "\n".join(lines) + "\n"

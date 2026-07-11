@@ -29,7 +29,7 @@
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.21.1</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.22.0</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
     <nav>
@@ -67,13 +67,17 @@
 <h3>Figures</h3>
 <p>Each figure is written in two forms: a raster <span class="pill">PNG</span> for documents and slides, and a vector <span class="pill">SVG</span> that stays crisp at any zoom (toggle <em>Vector (SVG)</em> in the viewer to preview it). The Figure Style editor restyles and regenerates them without re-running alignment or DESeq2.</p>
 <ul>
-  <li>Volcano and MA plots.</li>
+  <li>Volcano and MA plots. The volcano <strong>y-axis scale</strong> has three modes in the Figure Style editor: <em>cap the tail</em> (default) squishes hyper-significant genes to a cap line marked with off-scale hollow triangles so the bulk of the plot stays readable; <em>show all at full height</em> plots every gene at its true &minus;log10(adjusted p) so a marginal gene with an extreme p-value is visible; and <em>compress (sqrt)</em> uses a square-root axis to shrink the tall tail while keeping all data. The y-cap value applies only in cap mode.</li>
   <li>PCA and sample-distance plots.</li>
-  <li>Top-DEG and genes-of-interest heatmaps.</li>
+  <li>Top-DEG and genes-of-interest heatmaps. The Figure Style <strong>per-sample label toggle</strong> now hides the sample-name columns on the top-DEG, up/down split, genes-of-interest, and GSVA heatmaps as well as PCA, sample-distance, and correlation — the condition colour bar stays, so groups remain distinguishable. This declutters many-replicate and microarray studies.</li>
   <li>Enrichment dotplots (GO and KEGG), GSEA running-score and ridgeplots, gene-concept and term-similarity networks.</li>
   <li>An optional GSVA pathway-activity heatmap from your own gene sets.</li>
   <li>A raw p-value histogram and, for RNA-seq, dispersion / Cook's-distance / library-size diagnostics.</li>
 </ul>
+<figure style="max-width:440px">
+  <img src="assets/screenshot-figure-style.png" alt="The Figure Style editor: color palette, a per-figure-group overrides table, fonts and sizes, the Volcano y-axis scale dropdown set to 'Cap the tail (off-scale markers)', the Volcano y cap field, and the 'Show per-sample labels on PCA and heatmaps' checkbox">
+  <figcaption>The Figure Style editor. The <strong>Volcano y-axis</strong> scale control and the <strong>Show per-sample labels</strong> toggle sit near the bottom; every change re-renders the figures with <strong>Regenerate figures</strong>, without re-running alignment or DESeq2.</figcaption>
+</figure>
 
 <h3>Quality report</h3>
 <p>The <strong>MultiQC report</strong> gathers FastQC, trimming, alignment, and (when enabled) FastQ Screen contamination and RSeQC read-distribution / gene-body-coverage statistics for every sample into one HTML page. Open it from the <em>Open MultiQC Report</em> button on the Run Monitor.</p>

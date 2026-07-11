@@ -74,3 +74,57 @@ def test_native_readiness_actions_point_to_local_env(monkeypatch) -> None:
     monkeypatch.setattr(sys, "platform", "linux")
     action = next_readiness_actions([ReadinessItem("Rscript", "PASS", "/usr/bin/Rscript", "")])[0]
     assert "bulkseq" in action
+
+
+_FULL_LOG_PATHS = {t: f"/home/u/micromamba/envs/bulkseq/bin/{t}"
+                   for t in ("snakemake", "fastqc", "multiqc", "fastp", "STAR",
+                             "featureCounts", "samtools", "hisat2", "salmon", "aria2c")}
+
+
+class _P:
+    def __init__(self, rc, out=""):
+        self.returncode = rc
+        self.stdout = out
+        self.stderr = ""
+
+
+def _patch_wsl(monkeypatch, *, recheck_rc):
+    # micromamba present; env-prefix probe FAILS; on-disk re-check of a recorded tool -> recheck_rc.
+    import app.core.readiness as R
+    monkeypatch.setattr(R.shutil, "which", lambda x: "/usr/bin/wsl" if x == "wsl" else None)
+    monkeypatch.setattr(R, "_tool_paths_from_install_log", lambda *a, **k: dict(_FULL_LOG_PATHS))
+
+    def fake_run_wsl(distro, cmd, timeout=None):
+        if ".local/bin/micromamba" in cmd:
+            return _P(0, "/home/u/.local/bin/micromamba")
+        if cmd.startswith("test -x") and "envs/bulkseq" in cmd:
+            return _P(recheck_rc)              # the new on-disk re-check
+        return _P(1)                            # env-prefix probe fails (env dir absent to probe)
+    monkeypatch.setattr(R, "_run_wsl", fake_run_wsl)
+
+
+def test_stale_install_log_does_not_report_deleted_env_as_pass(monkeypatch) -> None:
+    # Rebuild-from-scratch deleted the env then the install failed, leaving a stale success block in
+    # the log. The env-prefix probe fails AND the recorded tool is gone from disk -> must NOT PASS.
+    _patch_wsl(monkeypatch, recheck_rc=1)
+    items = check_wsl_bulkseq_environment()
+    env = next(i for i in items if i.name.startswith("WSL env:"))
+    assert env.status == "REVIEW_REQUIRED", env
+
+
+def test_probe_error_on_real_env_still_trusts_install_log(monkeypatch) -> None:
+    # The fallback's original purpose: the env-prefix probe errored (e.g. transient) but the env is
+    # really there (recorded tool IS on disk) -> keep reporting PASS from the setup log.
+    _patch_wsl(monkeypatch, recheck_rc=0)
+    items = check_wsl_bulkseq_environment()
+    env = next(i for i in items if i.name.startswith("WSL env:"))
+    assert env.status == "PASS", env
+
+
+def test_validate_reference_empty_field_fails_cleanly() -> None:
+    from pathlib import Path
+    from app.core.reference_manager import validate_reference
+    # Path("") == Path(".") exists as a dir; the guard must FAIL, not slip through to open(".").
+    for g, a in [(Path(""), Path("")), (Path("."), Path("."))]:
+        msgs = validate_reference(g, a)
+        assert msgs and all(m["status"] == "FAIL" for m in msgs)

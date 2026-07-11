@@ -64,7 +64,53 @@ def check_design(config: dict, samples_path: Path) -> list[dict[str, str]]:
 _CORE_R_PACKAGES = [
     "DESeq2", "limma", "clusterProfiler", "GO.db", "DOSE", "enrichplot", "fgsea",
     "AnnotationDbi", "ggplot2", "ggrepel", "pheatmap", "igraph", "STRINGdb",
+    # CRAN figure/plotting packages every route hard-loads in the mandatory figures +
+    # sample-correlation rules (scales especially is only a transitive dep in the fallback
+    # env spec, so a solve can drop it and pass the presence check), and msigdbr backs the
+    # set-overlap rule that runs on every DE route.
+    "scales", "svglite", "RColorBrewer", "msigdbr",
 ]
+
+
+def required_r_packages(config: dict | None = None) -> list[str]:
+    """The R/Bioconductor packages a run with this config actually loads. Core figure/DE/enrichment
+    packages plus the route-/engine-conditional ones (microarray, meta-analysis, edgeR/limma-voom,
+    GSVA, Salmon->tximport, g:Profiler), so Check Environment fails fast on exactly what the run needs."""
+    packages = list(_CORE_R_PACKAGES)
+    cfg = config or {}
+    # A microarray run loads GEOquery (and affy for the raw-CEL source) in ingest_geo.R.
+    if (cfg.get("input") or {}).get("type") == "microarray":
+        packages.append("GEOquery")
+        if ((cfg.get("microarray") or {}).get("source")) == "affy_cel":
+            packages.append("affy")
+    # Route-/engine-conditional packages the run only loads on some settings — added the same way
+    # GEOquery/affy are, so a run fails fast in Check Environment with a clear message instead of
+    # dying minutes in (e.g. run_meta_analysis.R has no metaRNASeq).
+    wf = cfg.get("workflow") or {}
+    if wf.get("meta_analysis"):
+        packages += ["metaRNASeq", "metafor", "HTSFilter"]
+    if wf.get("de_engine") in ("edgeR", "limma-voom"):
+        packages.append("edgeR")  # limma-voom's voom() uses edgeR's DGEList/normalisation
+    if wf.get("gsva"):
+        packages.append("GSVA")
+    # aligner/quantifier live in the workflow section (WorkflowConfig), not a separate 'alignment'
+    # section — read them from wf so the Salmon route actually load-tests tximport.
+    if wf.get("aligner") == "Salmon" or wf.get("quantifier") == "Salmon_tximport":
+        packages.append("tximport")
+    enr = cfg.get("enrichment") or {}
+    if enr.get("backend") == "gprofiler" or enr.get("gprofiler_organism"):
+        packages.append("gprofiler2")
+    # DESeq2 lfcShrink estimator — only a count-based DESeq2 run calls lfcShrink; the method selects
+    # apeglm (default) or ashr, each a separate package ('normal' needs none). Load-test the one this
+    # run uses so a dropped estimator fails fast here instead of minutes in at the shrinkage step.
+    itype = (cfg.get("input") or {}).get("type")
+    de = cfg.get("deseq2") or {}
+    if (wf.get("de_engine", "DESeq2") == "DESeq2" and itype not in ("microarray", "deseq2_results")
+            and de.get("lfc_shrinkage", True)):
+        shrink = de.get("shrinkage_method") or "apeglm"
+        if shrink in ("apeglm", "ashr"):
+            packages.append(shrink)
+    return list(dict.fromkeys(packages))  # de-dup, preserve order
 
 
 def check_r_packages(config: dict | None = None) -> list[dict[str, str]]:
@@ -74,15 +120,7 @@ def check_r_packages(config: dict | None = None) -> list[dict[str, str]]:
         return [{"status": "FAIL", "message": (
             "Rscript is not on PATH, so the R/Bioconductor environment (bulkseq) is not active. "
             "Activate it, or recreate it from workflow/envs/bulkseq.lock.yaml, then re-run.")}]
-    packages = list(_CORE_R_PACKAGES)
-    # A microarray run loads GEOquery (and affy for the raw-CEL source) in ingest_geo.R; add them
-    # on that route so a missing microarray package fails fast here with a clear message instead
-    # of dying raw inside ingest_geo.R with "no package called 'GEOquery'".
-    cfg = config or {}
-    if (cfg.get("input") or {}).get("type") == "microarray":
-        packages.append("GEOquery")
-        if ((cfg.get("microarray") or {}).get("source")) == "affy_cel":
-            packages.append("affy")
+    packages = required_r_packages(config)
     pkgs = ", ".join(f'"{p}"' for p in packages)
     r_code = (
         f"pkgs <- c({pkgs}); "

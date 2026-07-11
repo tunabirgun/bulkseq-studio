@@ -26,7 +26,7 @@ n_forest <- as.integer(tryCatch(snakemake@params[["n_forest"]], error = function
 fig_dpi <- as.integer(getp("dpi", 300))
 base_size <- as.numeric(gp("base_font_size", 12)); font_family <- as.character(gp("font_family", ""))
 palette_name <- as.character(gp("palette", "Blue-Red"))
-italic_genes <- isTRUE(as.logical(getp("italic_gene_labels", TRUE)))
+italic_genes <- isTRUE(as.logical(getp("gene_symbol_italic", TRUE)))  # same key as the other figures
 pal_spec <- palette_spec(palette_name)
 base_family <- resolve_font(font_family)
 style_theme <- make_style_theme(base_size = base_size, base_family = base_family)
@@ -35,7 +35,11 @@ save_gg <- make_save_gg(fig_w = as.numeric(gp("width_in", 7)), fig_h = as.numeri
 DIR_COL <- c(up = pal_spec$discrete[2], down = pal_spec$discrete[1], discordant = "grey70")
 
 save_placeholder <- function(png_path, svg_path, msg) {
-  p <- ggplot() + annotate("text", x = 0, y = 0, label = msg, size = 4.2, family = base_family) +
+  # A NULL base_family (the default when no figure font is configured) makes annotate() silently drop
+  # the text, producing a blank image. Coerce it to the device default "" so the message renders --
+  # otherwise the k=2 heterogeneity placeholder embeds as an empty white box in the meta report.
+  fam <- if (is.null(base_family)) "" else base_family
+  p <- ggplot() + annotate("text", x = 0, y = 0, label = msg, size = 4.2, family = fam) +
     theme_void() + xlim(-1, 1) + ylim(-1, 1)
   tryCatch(save_gg(p, png_path, svg_path), error = function(e) message("placeholder save failed: ", conditionMessage(e)))
 }
@@ -113,7 +117,9 @@ emit(out[["volcano_png"]], out[["volcano_svg"]], {
 emit(out[["forest_png"]], out[["forest_svg"]], {
   if (!has_rows || nrow(sig) == 0) stop("no convergent genes")
   top <- head(sig[order(sig$combined_padj), , drop = FALSE], n_forest)
-  top$sym <- gsym(top$gene_id, id_map)
+  # make.unique: distinct gene_ids can share one symbol; duplicate facet/row labels would collapse two
+  # different genes into one panel (forest) or hard-error on duplicate factor levels (heatmap).
+  top$sym <- make.unique(gsym(top$gene_id, id_map))
   rows <- list()
   for (i in seq_len(nrow(top))) {
     g <- top$gene_id[i]
@@ -181,7 +187,7 @@ emit(out[["heatmap_png"]], out[["heatmap_svg"]], {
   if (!has_rows || nrow(sig) == 0) stop("no convergent genes")
   top <- head(sig[order(sig$combined_padj), , drop = FALSE], as.integer(getp("meta_heatmap_top", 50)))
   top <- top[order(top$rem_log2FC), , drop = FALSE]
-  mat <- as.matrix(top[, study_cols, drop = FALSE]); rownames(mat) <- gsym(top$gene_id, id_map)
+  mat <- as.matrix(top[, study_cols, drop = FALSE]); rownames(mat) <- make.unique(gsym(top$gene_id, id_map))
   colnames(mat) <- studies
   lim <- as.numeric(quantile(abs(mat[is.finite(mat)]), 0.98, na.rm = TRUE)); if (!is.finite(lim) || lim <= 0) lim <- 1
   long <- data.frame(gene = factor(rep(rownames(mat), ncol(mat)), levels = rownames(mat)),

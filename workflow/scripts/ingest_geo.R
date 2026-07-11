@@ -136,10 +136,12 @@ if (is.null(exprs_mat) || nrow(exprs_mat) < 1 || ncol(exprs_mat) < 1)
 # ---- 2. log2 transform decision (GEO2R quantile heuristic) -------------------
 applied_log2 <- FALSE
 log2_reason <- ""
-if (identical(log2_opt, "yes")) {
+if (identical(log2_opt, "yes") && !already_log2) {
   exprs_mat[exprs_mat <= 0] <- NA
   exprs_mat <- log2(exprs_mat); applied_log2 <- TRUE
   log2_reason <- "forced (log2_transform=yes)"
+# already_log2 (Affymetrix CEL -> RMA output is already log2) wins over a forced log2_transform=yes,
+# so a user override cannot double-log2 (log2(log2(x))) an already-log-scale intensity matrix.
 } else if (identical(log2_opt, "no") || already_log2) {
   applied_log2 <- FALSE
   log2_reason <- if (already_log2) "skipped (RMA output already log2)" else "skipped (log2_transform=no)"

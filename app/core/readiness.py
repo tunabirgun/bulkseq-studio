@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import shlex
 import shutil
 import subprocess
 import sys
@@ -94,7 +95,13 @@ WSL_TOOLS = {
 # Presence-checked (installed.packages), not load-tested, to stay under the 20s WSL probe timeout.
 R_ANALYSIS_PACKAGES = ("DESeq2", "edgeR", "limma", "GSVA", "clusterProfiler", "GO.db", "DOSE",
                        "enrichplot", "fgsea", "STRINGdb", "apeglm", "ashr", "GEOquery", "affy",
-                       "metaRNASeq", "metafor", "HTSFilter")
+                       "metaRNASeq", "metafor", "HTSFilter", "tximport", "gprofiler2",
+                       # CRAN figure/plotting + set-overlap packages hard-loaded by the mandatory
+                       # figures/sample-correlation/set-overlap rules on every run; scales in
+                       # particular is only a transitive dep in the fallback spec, so a solve can
+                       # drop it (like GO.db) and pass every check, then crash the figures rule.
+                       "ggplot2", "ggrepel", "pheatmap", "igraph", "scales", "svglite",
+                       "RColorBrewer", "msigdbr")
 
 
 @dataclass(frozen=True)
@@ -169,7 +176,16 @@ def check_wsl_bulkseq_environment(distro: str | None = None, env_name: str = WSL
     probe = _run_wsl(distro, env_prefix_command)
     if probe.returncode != 0:
         log_paths = _tool_paths_from_install_log(env_name)
-        if _core_tools_present(log_paths):
+        # A nonzero probe can mean either a transient probe error while the env is really present
+        # (the error-127 trap this setup-log fallback was added for) OR the env directory is
+        # genuinely gone — e.g. a "Rebuild from scratch" that deleted the env then failed mid-install,
+        # leaving the prior success block as the last one in the log. Only trust the log if a tool it
+        # recorded still exists on disk; otherwise a deleted env would be reported PASS and every
+        # `micromamba run -n <env>` step would fail immediately after a green Check Environment.
+        probe_path = log_paths.get("snakemake") or next(iter(log_paths.values()), "")
+        on_disk = bool(probe_path) and _run_wsl(
+            distro, f"test -x {shlex.quote(probe_path)}").returncode == 0
+        if _core_tools_present(log_paths) and on_disk:
             items.append(ReadinessItem(f"WSL env:{env_name}", "PASS", "micromamba environment found in setup log", "Linux bioinformatics tools"))
             items.extend(_items_from_tool_paths(log_paths))
             return items

@@ -9,6 +9,11 @@ input:
   layout: unknown
   samples: config/samples.tsv
   sra_accessions: config/sra_accessions.txt
+  # These match the model defaults so the run_summary provenance diff can detect when they change
+  # (diff_configs skips any key absent from this bundled reference).
+  count_matrix: null
+  deseq2_results: null
+  estimated_counts: false
 microarray:
   # Only used when input.type == microarray (GEO/GSE). limma replaces DESeq2.
   gse_accession: null
@@ -16,6 +21,7 @@ microarray:
   source: geo_series_matrix   # or affy_cel (RMA from raw CEL)
   normalization: auto         # auto | rma | none
   log2_transform: auto        # auto | yes | no
+  expression_matrix: null     # set by the local-microarray-matrix upload path
 reference:
   mode: unset
   organism_name: unset
@@ -37,6 +43,7 @@ reference:
   annotation_md5: null
   genome_size_category: custom
 workflow:
+  meta_analysis: false   # multi-study meta-analysis (a `dataset` column with >1 study, ticked on)
   fastqc_pre_trim: true
   trimming: true
   # Trimmer: fastp (default) | trim-galore | trimmomatic.
@@ -77,6 +84,7 @@ ribodetector:
   ensure: norrna
 contamination:
   subset: 100000
+  conf: null     # FastQ Screen config path (Advanced parameters); no auto-download of a genome panel
 sortmerna:
   paired_mode: paired_in
   database: null
@@ -143,6 +151,9 @@ figures_style:
   font_family: ""
   label_bold: false
   title_bold: false
+  gene_symbol_italic: true    # italic gene-symbol labels (matches the model default)
+  sample_labels: true         # per-sample labels on PCA + heatmaps; off declutters a many-sample run
+  dimension_unit: in          # in | cm | px for the width/height fields
   volcano_top_n: 15
   heatmap_top_n: 30
   pca_ntop: 500
@@ -150,6 +161,7 @@ figures_style:
   height_in: 5.0
   dpi: 300
   # Volcano de-squeeze + shared-style fields (W2). 0 = auto where noted.
+  volcano_y_scale: cap
   volcano_y_cap: 0.0
   volcano_y_cap_quantile: 0.995
   volcano_cap_headroom: 0.10

@@ -235,3 +235,92 @@ def test_enrichment_without_organism_flags_review() -> None:
         (window.project_root / "checks" / "01_input_validation.json").read_text(encoding="utf-8"))
     assert payload["status"] == "REVIEW_REQUIRED"
     window.close()
+
+
+def test_microarray_symbol_keytype_cleared_on_switch_to_count_route() -> None:
+    # A microarray-only enrichment keytype='SYMBOL' must not leak into a count-based route, where it
+    # would override the organism's ENSEMBL default and mis-map ids. Central guard in _apply_input_mode_ui.
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from pathlib import Path
+    from uuid import uuid4
+    from PySide6.QtWidgets import QApplication
+    from app.ui.main_window import MainWindow
+    app = QApplication.instance() or QApplication([])
+    w = MainWindow()
+    w.workdir.setText(str(Path("manual_test_gui") / uuid4().hex))
+    w.project_name.setText("kt")
+    w._create_benchmark_project("pasilla_paired_subset")
+    w.config.enrichment.keytype = "SYMBOL"
+    w.config.input.type = "microarray"
+    w._apply_input_mode_ui()
+    assert w.config.enrichment.keytype == "SYMBOL"       # microarray keeps it
+    w.config.input.type = "fastq"
+    w._apply_input_mode_ui()
+    assert w.config.enrichment.keytype is None            # cleared for the count route
+    w.close()
+
+
+def test_goi_blocked_in_deseq2_results_mode(monkeypatch, tmp_path) -> None:
+    # A DESeq2-results upload has no per-sample counts (synthetic RDS: dds=vsd=NULL), so "Generate
+    # genes-of-interest" must be gated in the GUI, not launch make_goi.R and crash on colData(NULL).
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from pathlib import Path
+    from uuid import uuid4
+    from PySide6.QtWidgets import QApplication, QMessageBox
+    from app.ui import main_window as mw
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: None))
+    w = mw.MainWindow()
+    w.workdir.setText(str(Path("manual_test_gui") / uuid4().hex))
+    w.project_name.setText("goigate")
+    w._create_benchmark_project("pasilla_paired_subset")
+    launched = []
+    monkeypatch.setattr(w, "_start_snakemake", lambda mode: launched.append(mode))
+    # a gene + an existing rds so the earlier guards pass; the mode gate is what must stop it
+    w.goi_box.setPlainText("FBgn0025111")
+    rds = w.project_root / "results" / "deseq2" / "deseq2_objects.rds"
+    rds.parent.mkdir(parents=True, exist_ok=True)
+    rds.write_text("x")
+    w.config.input.type = "deseq2_results"
+    w._generate_goi()
+    assert launched == [], "GOI must NOT launch in deseq2_results mode"
+    # a count-based mode with the same setup DOES launch
+    w.config.input.type = "count_matrix"
+    w._generate_goi()
+    assert launched == ["goi"], f"GOI should launch for count_matrix, got {launched}"
+    w.close()
+
+
+def test_resume_banner_and_new_figure_controls(monkeypatch, tmp_path) -> None:
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from pathlib import Path
+    from uuid import uuid4
+    from PySide6.QtWidgets import QApplication
+    from app.ui.main_window import MainWindow
+    app = QApplication.instance() or QApplication([])
+    w = MainWindow()
+    w.workdir.setText(str(Path("manual_test_gui") / uuid4().hex))
+    w.project_name.setText("resume")
+    w._create_benchmark_project("pasilla_paired_subset")
+    # new volcano-scale + sample-label controls round-trip through the config
+    w.fig_volcano_yscale.setCurrentIndex(w.fig_volcano_yscale.findData("full"))
+    w.fig_sample_labels.setChecked(False)
+    w._apply_figure_style()
+    assert w.config.figures_style.volcano_y_scale == "full"
+    assert w.config.figures_style.sample_labels is False
+    assert not w.fig_volcano_ycap.isEnabled()      # y-cap greyed out in non-cap mode
+    # resume banner: seed an incomplete-run marker, refresh, assert it surfaces
+    (w.project_root / ".snakemake" / "incomplete").mkdir(parents=True, exist_ok=True)
+    (w.project_root / ".snakemake" / "incomplete" / "x").write_text("1")
+    w._refresh_resume_banner()
+    # isHidden() reflects the explicit setVisible() state without needing the window shown.
+    assert not w.resume_banner.isHidden() and not w.resume_button.isHidden()
+    # clear it -> banner hides
+    (w.project_root / ".snakemake" / "incomplete" / "x").unlink()
+    w._refresh_resume_banner()
+    assert w.resume_banner.isHidden()
+    w.close()

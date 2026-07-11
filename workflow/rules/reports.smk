@@ -48,6 +48,14 @@ rule html_report:
     input:
         run_txt="results/reports/run_summary.txt",
         results="results/deseq2/deseq2_results.csv",
+        # Order the report AFTER the figures rule: the report embeds results/figures/*.png read off
+        # disk at build time (not as declared inputs), so without a DAG edge it can win the race and
+        # embed pre-restyle / not-yet-written figures (stale panels on Regenerate; blank panels on a
+        # fresh multi-core run). volcano.png is produced by `rule figures` in EVERY input mode (a real
+        # plot or a placeholder), so requiring it forces the whole single-rule figure render first with
+        # no MissingInputException. Gated on the figures flag so a figures-off run is not forced to render
+        # them; enrichment/PPI figures stay opportunistic (they are conditionally absent).
+        **({"figures": "results/figures/volcano.png"} if WF.get("figures", True) else {}),
         # On a multi-study run, wait for the meta summary so the main report's meta card block
         # renders deterministically (it reads meta_analysis_summary.json opportunistically).
         **({"meta_summary": "results/reports/meta_analysis_summary.json"} if META_MODE else {}),

@@ -32,9 +32,11 @@ def catalog_entry_for_organism(organism_name: str | None) -> dict[str, object] |
 
 def validate_reference(genome_fasta: Path, annotation: Path) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = []
-    if not genome_fasta.exists():
+    # .is_file() (not .exists()): an empty text field becomes Path("") == Path(".") whose .exists()
+    # is True (the cwd), which would slip past this guard and then raise PermissionError on open(".").
+    if not genome_fasta.is_file():
         messages.append({"status": "FAIL", "message": f"Genome FASTA not found: {genome_fasta}"})
-    if not annotation.exists():
+    if not annotation.is_file():
         messages.append({"status": "FAIL", "message": f"Annotation file not found: {annotation}"})
     if messages:
         return messages
@@ -84,9 +86,19 @@ def md5sum(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _open_text(path: Path):
+    # Transparently read gzipped references: the Reference Manager file picker offers *.fa.gz /
+    # *.fasta.gz / *.gtf.gz / *.gff3.gz, so validate_reference must decompress a .gz input — reading
+    # the DEFLATE bytes as plain text finds no '>' headers / no tab-split rows and falsely FAILs a
+    # valid reference. Reads headers/feature rows only, so it stays cheap on a large gzipped genome.
+    import gzip
+    opener = gzip.open if str(path).endswith(".gz") else open
+    return opener(path, "rt", encoding="utf-8", errors="replace")
+
+
 def _first_fasta_contigs(path: Path, limit: int = 10000) -> set[str]:
     contigs: set[str] = set()
-    with path.open("r", encoding="utf-8", errors="replace") as handle:
+    with _open_text(path) as handle:
         for line in handle:
             if line.startswith(">"):
                 contigs.add(line[1:].split()[0])
@@ -98,7 +110,7 @@ def _first_fasta_contigs(path: Path, limit: int = 10000) -> set[str]:
 def _annotation_info(path: Path) -> dict[str, object]:
     contigs: set[str] = set()
     gene_features = exon_features = cds_features = gene_name = 0
-    with path.open("r", encoding="utf-8", errors="replace") as handle:
+    with _open_text(path) as handle:
         for line in handle:
             if not line.strip() or line.startswith("#"):
                 continue

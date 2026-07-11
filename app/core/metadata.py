@@ -17,9 +17,18 @@ def dataframe_from_rows(rows: list[dict[str, str]]) -> pd.DataFrame:
 
 def save_metadata(df: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Explicit UTF-8 so non-ASCII metadata (e.g. a Greek delta in a GEO genotype) always
-    # writes cleanly regardless of the platform's default encoding.
-    df.to_csv(path, sep="\t", index=False, encoding="utf-8")
+    # Serialize first, then write ONLY if the bytes changed. Re-saving an unchanged sample sheet — as
+    # happens when Resuming a stopped run — must NOT touch samples.tsv's mtime, or Snakemake reruns
+    # every rule that reads it (rebuilding the whole pipeline instead of continuing). Explicit UTF-8 so
+    # non-ASCII metadata (e.g. a Greek delta in a GEO genotype) writes cleanly on any platform; write via
+    # bytes (newline='' semantics) so it stays byte-identical to the previous df.to_csv(path, ...) output.
+    import io
+    buf = io.StringIO()
+    df.to_csv(buf, sep="\t", index=False)
+    data = buf.getvalue().encode("utf-8")
+    if path.exists() and path.read_bytes() == data:
+        return
+    path.write_bytes(data)
 
 
 def load_metadata(path: Path) -> pd.DataFrame:

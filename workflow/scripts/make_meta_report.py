@@ -83,7 +83,7 @@ def _hero(summary: dict, meta_status: str) -> str:
     lead = (f"Across {studies} studies, {_num(n_sig)} genes reach the combined-FDR threshold with a "
             f"consistent direction in every study (convergent), "
             + (f"while {_num(k.get('n_discordant'))} genes are flagged discordant "
-               "(significant combination but conflicting per-study signs) and are never called "
+               "(conflicting per-study signs) and are never called "
                "meta-DEGs. " if k.get("n_discordant") else "")
             + (f"Overall {_num(conc)}% of shared genes agree in direction across studies."
                if conc is not None else ""))

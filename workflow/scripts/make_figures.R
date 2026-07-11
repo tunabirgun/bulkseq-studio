@@ -269,6 +269,11 @@ ufloor <- as.numeric(getp("volcano_neglogp_floor", 320))  # ~ -log10(double min)
 was_inf <- !is.finite(vol$neglog10padj)
 vol$neglog10padj[was_inf] <- ufloor
 
+# volcano_y_scale: 'cap' (default) squishes the tall -log10(padj) tail to a cap line with off-scale
+# triangle markers; 'full' / 'sqrt' keep every gene at its TRUE height so a marginal gene with extreme
+# significance shows up. Default 'cap' reproduces the previous output byte-for-byte.
+yscale <- as.character(getp("volcano_y_scale", "cap"))
+
 # Y cap: 0 = auto (quantile over finite-padj genes), then squish with pmin.
 ycap <- as.numeric(getp("volcano_y_cap", 0))
 if (ycap <= 0) {
@@ -276,12 +281,20 @@ if (ycap <= 0) {
   if (!length(finite_y)) finite_y <- vol$neglog10padj  # all-underflow guard
   ycap <- as.numeric(stats::quantile(finite_y, getp("volcano_y_cap_quantile", 0.995)))
 }
-# Cap only when underflow exists (Inf must be squished) or a finite outlier exceeds
-# the cap by the headroom margin, so clean datasets (no extreme tail) stay un-capped.
-do_cap <- any(was_inf) ||
-  max(vol$neglog10padj) > ycap * (1 + as.numeric(getp("volcano_cap_headroom", 0.10)))
-vol$y_plot <- if (do_cap) pmin(vol$neglog10padj, ycap) else vol$neglog10padj
-vol$capped <- do_cap & vol$neglog10padj > ycap
+if (identical(yscale, "cap")) {
+  # Cap only when underflow exists (Inf must be squished) or a finite outlier exceeds
+  # the cap by the headroom margin, so clean datasets (no extreme tail) stay un-capped.
+  do_cap <- any(was_inf) ||
+    max(vol$neglog10padj) > ycap * (1 + as.numeric(getp("volcano_cap_headroom", 0.10)))
+  vol$y_plot <- if (do_cap) pmin(vol$neglog10padj, ycap) else vol$neglog10padj
+  vol$capped <- do_cap & vol$neglog10padj > ycap
+} else {
+  # 'full' / 'sqrt': every gene sits at its true -log10(padj); only the padj==0 machine-underflow
+  # genes (floored to ufloor) keep an off-scale triangle marker, so nothing is silently relocated.
+  do_cap <- FALSE
+  vol$y_plot <- vol$neglog10padj
+  vol$capped <- was_inf
+}
 
 vol$direction <- "n.s."
 vol$direction[vol$padj < alpha_thr & vol$log2FoldChange >=  lfc_thr] <- "Up"
@@ -299,7 +312,7 @@ sig_alpha <- as.numeric(getp("volcano_point_alpha", 0.55))
 xm   <- max(abs(vol$log2FoldChange))
 ytop <- if (do_cap) {
   ycap * (1 + as.numeric(getp("volcano_cap_headroom", 0.10)))
-} else max(vol$y_plot)
+} else max(vol$y_plot) * 1.02
 
 p_vol <- ggplot(vol, aes(log2FoldChange, y_plot)) +
   geom_vline(xintercept = c(-lfc_thr, lfc_thr), linetype = "dashed",
@@ -333,8 +346,13 @@ p_vol <- p_vol +
   scale_shape_manual(values = shp, name = NULL) +
   coord_cartesian(xlim = c(-xm, xm), ylim = c(0, ytop), clip = "off") +
   labs(x = "log2 fold change",
-       y = if (do_cap) "-log10 adjusted p (axis capped)" else "-log10 adjusted p") +
+       y = if (do_cap) "-log10 adjusted p (axis capped)"
+           else if (identical(yscale, "sqrt")) "-log10 adjusted p (sqrt scale)"
+           else "-log10 adjusted p") +
   style_theme(theme_bw) + theme(legend.position = "top")
+# 'sqrt' compresses the tall padj tail (incl. the padj==0 floor shelf) so extreme genes stay readable
+# without squashing the bulk. It is a scale transform, so the guide lines / repel ylim stay in data units.
+if (identical(yscale, "sqrt")) p_vol <- p_vol + scale_y_sqrt()
 vol_dim <- fig_dim("volcano")
 save_gg(p_vol, out[["volcano_png"]], out[["volcano_svg"]], w = vol_dim[1], h = vol_dim[2])
 
@@ -360,7 +378,9 @@ hm_levels <- unique(as.character(ann[[group_var]]))
 hm_ann_cols <- setNames(pal_spec$discrete[seq_along(hm_levels)], hm_levels)
 fs_row <- if (heatmap_fs_row > 0) heatmap_fs_row else max(4, base_size - 4)
 ph2 <- pheatmap(hm, scale = "none", annotation_col = ann, show_rownames = TRUE,
+                show_colnames = sample_labels,  # hide sample names to declutter a many-sample run
                 labels_row = italic_labels(rownames(hm), gene_symbol_italic),
+                cluster_rows = nrow(hm) >= 2,  # heatmap_top_n = 1 -> 1 row; hclust needs >= 2
                 clustering_method = "ward.D2",
                 color = pal_spec$div(255), breaks = hm_breaks,
                 legend_breaks = c(-zlim, 0, zlim),
@@ -409,7 +429,9 @@ make_dir_heatmap <- function(direction, png_path, svg_path) {
   hm_ann_cols <- setNames(pal_spec$discrete[seq_along(hm_levels)], hm_levels)
   fs_row <- if (heatmap_fs_row > 0) heatmap_fs_row else max(4, base_size - 4)
   ph <- pheatmap(hm, scale = "none", annotation_col = ann, show_rownames = TRUE,
+                 show_colnames = sample_labels,  # hide sample names to declutter a many-sample run
                  labels_row = italic_labels(rownames(hm), gene_symbol_italic),
+                 cluster_rows = nrow(hm) >= 2,  # heatmap_top_n = 1 -> 1 row; hclust needs >= 2
                  clustering_method = "ward.D2",
                  color = pal_spec$div(255), breaks = hm_breaks,
                  legend_breaks = c(-heatmap_zlim, 0, heatmap_zlim),
