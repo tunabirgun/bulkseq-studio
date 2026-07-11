@@ -35,14 +35,18 @@ def _joint_design():
         return d, None
     rhs = d.split("~", 1)[-1].strip()
     terms = [t.strip() for t in rhs.replace("+", " ").split() if t.strip()]
-    if "dataset" in terms:
+    if "dataset" in terms or not terms:
         return d, None
-    cf = _CONTRAST.get("factor", "condition")
-    if terms not in ([cf], ["condition"]):
-        return d, None  # explicit multi-term design -> respect it as-is
+    # Any multi-study design that omits study-of-origin — the default ~ condition OR an explicit
+    # multi-term ADDITIVE design like ~ batch + condition — is study-confounded, so inject 'dataset'.
+    # Only inject when every term is a plain factor column: an interaction/operator design (a token
+    # like '*' or ':' that is not a column) can't be rank-checked reliably at parse time, so we keep
+    # the user's design unchanged and warn rather than risk a rank-deficient joint design. The rank
+    # check makes the additive case safe: if covariates already span study (e.g. batch == dataset) the
+    # injected design is rank-deficient and we fall back to their design unchanged with a warning.
     injected = f"~ dataset + {rhs}"
-    if not _design_full_rank(["dataset"] + terms):
-        return d, ("fallback", injected)  # would be rank-deficient -> keep the user's design
+    if not all(t in samples_df.columns for t in terms) or not _design_full_rank(["dataset"] + terms):
+        return d, ("fallback", injected)
     return injected, ("injected", injected)
 
 
@@ -59,8 +63,9 @@ if _design_note:
         _alongside = (" (the per-study meta-analysis still handles studies separately)."
                       if META_MODE else ".")
         sys.stderr.write(
-            f"WARNING: multi-study run detected, but adding study-of-origin ('{_inj}') would make "
-            f"the design rank-deficient for this sample layout; keeping '{_DESIGN}'. Study-of-origin "
+            f"WARNING: multi-study run detected, but study-of-origin could not be safely added to the "
+            f"design (injecting '{_inj}' would be rank-deficient for this sample layout, or the design "
+            f"uses interaction terms that cannot be auto-checked); keeping '{_DESIGN}'. Study-of-origin "
             f"is NOT modelled in the joint {_engine} fit{_alongside}\n")
 
 

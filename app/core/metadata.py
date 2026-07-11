@@ -76,6 +76,8 @@ def validate_metadata(df: pd.DataFrame, allow_pending_sra: bool = False,
     messages.extend(detect_batch_condition_confounding(df))
     messages.extend(detect_dataset_confounding(df, contrast))
     messages.extend(detect_multistudy_organism_mismatch(df))
+    messages.extend(detect_unsafe_dataset_names(df))
+    messages.extend(detect_multistudy_admissibility(df, contrast))
     if not messages:
         messages.append({"status": "PASS", "message": "Metadata passed validation."})
     return messages
@@ -153,6 +155,12 @@ def detect_dataset_confounding(df: pd.DataFrame,
     conds = df["condition"].astype(str).str.strip()
     if contrast and contrast[0] and contrast[1]:
         num, den = str(contrast[0]).strip(), str(contrast[1]).strip()
+        # A contrast whose arms are not (yet) present in the sample sheet cannot be assessed — e.g.
+        # a freshly fetched multi-study sheet where condition is still "unknown" while the DE tab
+        # still holds the default treated/control. Do not emit a spurious confounding FAIL.
+        present = {c for c in conds if c and c != "unknown"}
+        if num not in present or den not in present:
+            return []
     else:
         levels = [c for c in conds.unique() if c and c != "unknown"]
         if len(levels) != 2:
@@ -170,3 +178,68 @@ def detect_dataset_confounding(df: pd.DataFrame,
         f"correction, or meta-analysis — can separate them. Compare groups that both appear "
         f"within at least one study, or add samples so each group is present in more than one "
         f"study.")}]
+
+
+def detect_unsafe_dataset_names(df: pd.DataFrame) -> list[dict[str, str]]:
+    """The 'dataset' (study-of-origin) column names per-study output files and figure/table columns,
+    so — like sample_id — it must be filename/column safe. A value with spaces or path characters
+    breaks the meta-analysis per-study files and figures. FAIL on any value outside [A-Za-z0-9_.-]."""
+    if "dataset" not in df.columns:
+        return []
+    # Only relevant for a genuine multi-study merge — that is when 'dataset' becomes a per-study
+    # file/column token. On a single-study sheet the column is ignored downstream (mirrors the WSL
+    # gate, which checks the name only after the >1-study early-out), so do not block there.
+    if _dataset_levels(df).replace("", pd.NA).nunique(dropna=True) <= 1:
+        return []
+    vals = [v for v in df["dataset"].astype(str).str.strip().unique() if v]
+    bad = [v for v in vals if not re.match(r"^[A-Za-z0-9_.-]+$", v)]
+    if not bad:
+        return []
+    preview = ", ".join(bad[:5]) + (" ..." if len(bad) > 5 else "")
+    return [{"status": "FAIL", "message": (
+        f"Unsafe study-of-origin (dataset) name(s): {preview}. Use only letters, numbers, "
+        f"underscore, dot, and hyphen (no spaces or slashes) — the dataset name labels the "
+        f"per-study result files and the cross-study figure columns.")}]
+
+
+def detect_multistudy_admissibility(df: pd.DataFrame,
+                                    contrast: tuple[str, str] | None = None,
+                                    min_reps: int = 2) -> list[dict[str, str]]:
+    """Fail-fast for a multi-study meta-analysis: it needs at least TWO studies that each contain
+    BOTH contrast arms with >= min_reps replicates. Warns (not a hard block — the joint DESeq2 may
+    still run) when fewer than two studies are admissible, so the user is not surprised by an empty
+    meta-analysis after a full run."""
+    if "dataset" not in df.columns or "condition" not in df.columns:
+        return []
+    datasets = _dataset_levels(df)
+    if datasets.replace("", pd.NA).nunique(dropna=True) <= 1:
+        return []
+    conds = df["condition"].astype(str).str.strip()
+    if contrast and contrast[0] and contrast[1]:
+        num, den = str(contrast[0]).strip(), str(contrast[1]).strip()
+        present = {c for c in conds if c and c != "unknown"}
+        if num not in present or den not in present:
+            return []  # contrast arms not in the sheet yet — cannot assess
+    else:
+        levels = [c for c in conds.unique() if c and c != "unknown"]
+        if len(levels) != 2:
+            return []
+        num, den = levels[0], levels[1]
+    # If no single study contains BOTH arms, the contrast is study-confounded: detect_dataset_confounding
+    # already emits a hard FAIL for that, so do not also raise a (redundant, contradictory) admissibility
+    # WARNING here. This mirrors the WSL gate, which nests admissibility under the "spans a study" branch.
+    if not any({num, den} <= set(conds[datasets == ds]) for ds in datasets.unique() if ds):
+        return []
+    admissible = 0
+    for ds in datasets.unique():
+        if not ds:
+            continue
+        sub = conds[datasets == ds]
+        if (sub == num).sum() >= min_reps and (sub == den).sum() >= min_reps:
+            admissible += 1
+    if admissible >= 2:
+        return []
+    return [{"status": "WARNING", "message": (
+        f"Only {admissible} study contains both '{num}' and '{den}' with at least {min_reps} "
+        f"replicates each. A multi-study meta-analysis needs at least two such studies, so it will "
+        f"not run (the joint analysis still runs); add replicates or another study to enable it.")}]

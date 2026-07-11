@@ -85,6 +85,13 @@ def fetch_ena_metadata(accessions: list[str], timeout: int = 60) -> pd.DataFrame
                     f"(SRR/ERR/DRR…), experiment (SRX…), or study (SRP…/PRJNA…), or a "
                     f"GEO series (GSE…). GEO samples (GSM…) are not supported here.") from exc
             raise ValueError(f"ENA query failed for '{acc}': HTTP {exc.code}.") from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            # Non-HTTP network failure (no connection, DNS, timeout): surface a plain, actionable
+            # message instead of a raw URLError, so the GUI shows something a user can act on.
+            reason = getattr(exc, "reason", exc)
+            raise ValueError(
+                f"Could not reach the ENA Portal API for '{acc}': {reason}. Check your internet "
+                f"connection and try again.") from exc
         frame = (pd.read_csv(io.StringIO(text), sep="\t", dtype=str).fillna("")
                  if text.strip() else pd.DataFrame())
         if frame.empty:

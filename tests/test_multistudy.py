@@ -107,3 +107,45 @@ def test_validate_metadata_wires_dataset_gate():
     ])
     msgs = validate_metadata(df, allow_pending_sra=True, contrast=("A", "B"))
     assert any(m["status"] == "FAIL" and "split across studies" in m["message"] for m in msgs)
+
+
+def test_confounding_gate_ignores_absent_contrast_arms():
+    # A freshly fetched multi-study sheet (condition still 'unknown') must NOT get a spurious
+    # confounding FAIL just because the DE tab still holds the default treated/control contrast.
+    df = _samples([("s1", "D1", "unknown"), ("s2", "D2", "unknown")])
+    assert detect_dataset_confounding(df, ("treated", "control")) == []
+
+
+def test_unsafe_dataset_name_fails():
+    from app.core.metadata import detect_unsafe_dataset_names
+    bad = _samples([("s1", "Control cohort", "A"), ("s2", "D2", "B")])
+    out = detect_unsafe_dataset_names(bad)
+    assert out and out[0]["status"] == "FAIL" and "Control cohort" in out[0]["message"]
+    assert detect_unsafe_dataset_names(_samples([("s1", "D1", "A"), ("s2", "D2", "B")])) == []
+    # A single-study sheet must NOT block on an unsafe name (the dataset column is ignored downstream);
+    # this aligns the GUI gate with its WSL mirror, which checks names only after the >1-study early-out.
+    solo_bad = _samples([("s1", "Bad Name", "A"), ("s2", "Bad Name", "B")])
+    assert detect_unsafe_dataset_names(solo_bad) == []
+
+
+def test_multistudy_admissibility_warns_when_under_two_studies():
+    from app.core.metadata import detect_multistudy_admissibility
+    # D1 has both arms x2, D2 is single-arm -> only 1 admissible study -> WARNING.
+    one = _samples([("s1", "D1", "A"), ("s2", "D1", "A"), ("s3", "D1", "B"), ("s4", "D1", "B"),
+                    ("s5", "D2", "A"), ("s6", "D2", "A")])
+    out = detect_multistudy_admissibility(one, ("A", "B"))
+    assert out and out[0]["status"] == "WARNING"
+    # Both studies admissible -> no warning.
+    two = _samples([("s1", "D1", "A"), ("s2", "D1", "A"), ("s3", "D1", "B"), ("s4", "D1", "B"),
+                    ("s5", "D2", "A"), ("s6", "D2", "A"), ("s7", "D2", "B"), ("s8", "D2", "B")])
+    assert detect_multistudy_admissibility(two, ("A", "B")) == []
+
+
+def test_admissibility_defers_to_confounding_on_full_split():
+    from app.core.metadata import detect_multistudy_admissibility
+    # Fully split (no study has both arms) is study-confounding, owned by detect_dataset_confounding's
+    # hard FAIL; admissibility must stay silent so the GUI does not show a redundant WARNING alongside.
+    split = _samples([("s1", "D1", "A"), ("s2", "D1", "A"), ("s3", "D2", "B"), ("s4", "D2", "B")])
+    assert detect_multistudy_admissibility(split, ("A", "B")) == []
+    # And the confounding gate does FAIL that same sheet.
+    assert detect_dataset_confounding(split, ("A", "B"))[0]["status"] == "FAIL"

@@ -74,3 +74,60 @@ def test_native_command_has_no_use_conda() -> None:
     cfg = default_config("demo", Path("demo"))
     command = build_snakemake_command(Path("demo"), cfg, mode="run")
     assert "--use-conda" not in command.command
+
+
+def test_figures_mode_meta_targets_gated_on_current_sheet_being_multistudy(tmp_path) -> None:
+    # A stale results/meta/ left from an earlier multi-study run must NOT make "Regenerate figures"
+    # force the meta rules once the sheet is edited down to one study (those rules are then undefined,
+    # and naming them aborts the run). The gate is the CURRENT samples.tsv, not the leftover outputs.
+    cfg = default_config("demo", tmp_path)
+    cfg.workflow.meta_analysis = True
+    cfg.workflow.enrichment = True
+    (tmp_path / "results" / "meta").mkdir(parents=True)
+    (tmp_path / "results" / "meta" / "meta_analysis_results.csv").write_text("x")
+    (tmp_path / "results" / "meta" / "meta_enrichment_objects.rds").write_text("x")
+    (tmp_path / "results" / "reports").mkdir(parents=True)
+    (tmp_path / "results" / "reports" / "meta_analysis_summary.json").write_text("{}")
+    (tmp_path / "config").mkdir(parents=True)
+    # Single-study sheet -> no meta targets even though the meta outputs still exist on disk.
+    (tmp_path / "config" / "samples.tsv").write_text(
+        "sample_id\tdataset\tcondition\ns1\tD1\tA\ns2\tD1\tB\n")
+    single = build_snakemake_command(tmp_path, cfg, mode="figures").command
+    assert "meta_figures" not in single
+    assert "meta_report" not in single
+    # Genuine multi-study sheet -> meta targets are forced.
+    (tmp_path / "config" / "samples.tsv").write_text(
+        "sample_id\tdataset\tcondition\ns1\tD1\tA\ns2\tD2\tB\n")
+    multi = build_snakemake_command(tmp_path, cfg, mode="figures").command
+    assert "meta_figures" in multi
+    assert "meta_report" in multi
+    # Even multi-study, the meta rules are undefined for microarray / uploaded-DE-results inputs
+    # (Snakefile META_MODE excludes them), so figures-mode must not force them there either.
+    for non_count in ("deseq2_results", "microarray"):
+        cfg.input.type = non_count
+        cmd = build_snakemake_command(tmp_path, cfg, mode="figures").command
+        assert "meta_figures" not in cmd, non_count
+        assert "meta_report" not in cmd, non_count
+
+
+def test_is_multistudy_matches_snakefile_pandas_na_coercion(tmp_path) -> None:
+    # _is_multistudy must mirror the Snakefile's MULTI_DATASET exactly, incl. pandas coercing NA-family
+    # tokens to empty. A study literally named "NA" collapses to '', so {"NA","D2"} is a SINGLE study.
+    from app.core.snakemake_runner import _is_multistudy
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    tsv = cfg_dir / "samples.tsv"
+
+    def _write(rows):
+        tsv.write_text("sample_id\tdataset\tcondition\n" + "".join(rows))
+
+    _write(["s1\tNA\tA\n", "s2\tD2\tB\n"])          # NA -> '' -> only D2 -> single study
+    assert _is_multistudy(tmp_path) is False
+    _write(["s1\tD1\tA\n", "s2\tD2\tB\n"])          # two real studies
+    assert _is_multistudy(tmp_path) is True
+    _write(["s1\t \tA\n", "s2\tD1\tB\n"])           # whitespace-only + one real -> single study
+    assert _is_multistudy(tmp_path) is False
+    _write(["s1\tD1\tA\n"])                          # one study
+    assert _is_multistudy(tmp_path) is False
+    tsv.write_text("sample_id\tcondition\ns1\tA\n")  # no dataset column
+    assert _is_multistudy(tmp_path) is False

@@ -153,6 +153,10 @@ class MainWindow(QMainWindow):
         self.stop_button: QPushButton | None = None
 
         self.tabs = QTabWidget()
+        # At narrow window widths the 12 tabs would overflow to scroll arrows that hide the last
+        # tab (PPI Network); elide the labels instead so every tab stays visible and reachable.
+        self.tabs.setElideMode(Qt.TextElideMode.ElideRight)
+        self.tabs.tabBar().setUsesScrollButtons(False)
         self.setCentralWidget(self.tabs)
         # The window owns its minimum so the size contract holds even under direct
         # construction (tests), and the restore-geometry size guard has a real bound.
@@ -418,7 +422,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(QLabel("SRA / ENA accessions"))
         layout.addWidget(self.sra_box)
         layout.addLayout(buttons)
-        _ena_hint = QLabel("Fetched from the ENA Portal API: layout, FASTQ URLs, read counts. Condition is set to 'unknown' for you to edit in the Metadata tab.")
+        _ena_hint = QLabel("Fetched from the ENA Portal API: layout, FASTQ URLs, read counts. A condition grouping is suggested from the sample titles (or GEO characteristics) where possible; always review and correct it in the Metadata tab before running — it sets the differential-expression contrast.")
         _ena_hint.setWordWrap(True)  # long hint must wrap, not force width / clip on narrow windows
         layout.addWidget(_ena_hint)
         layout.addWidget(self.input_preview)
@@ -1693,7 +1697,7 @@ class MainWindow(QMainWindow):
         refresh.clicked.connect(self._refresh_phase_checks)
         buttons.addWidget(run)
         buttons.addWidget(refresh)
-        self.approve_review = QCheckBox("I have reviewed and approve REVIEW_REQUIRED items")
+        self.approve_review = QCheckBox("I have reviewed and approved the items flagged for review above")
         self.sanity_busy = self._busy_bar()
         self.sanity_text = QTextEdit()
         self.sanity_text.setReadOnly(True)
@@ -2272,7 +2276,7 @@ class MainWindow(QMainWindow):
         results_splitter.addWidget(control_panel)
         results_splitter.setStretchFactor(0, 3)
         results_splitter.setStretchFactor(1, 1)
-        results_splitter.setSizes([640, 340])
+        results_splitter.setSizes([560, 420])  # wider control panel so the figure-override columns fit
         self._outputs_results_splitter = results_splitter
 
         main_splitter = QSplitter(Qt.Orientation.Vertical)

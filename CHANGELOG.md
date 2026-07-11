@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.21.1 — 2026-07-11
+
+### Fixed
+
+- **The multi-study joint design no longer crashes on an interaction formula.** When a run combined two or more studies and the differential-expression design was an interaction model (for example `~ batch * condition`) whose covariate is aliased with study-of-origin, the automatic study-covariate injection built a rank-deficient design that DESeq2 rejects, aborting the run. The joint design now auto-injects `dataset` only into an additive design whose terms are all plain factor columns; an interaction design, or one where the covariate already spans study, is kept unchanged with a warning that study-of-origin is not modelled in the joint fit (the per-study meta-analysis still handles studies separately). The default `~ condition` and additive `~ batch + condition` cases are unchanged.
+- **Regenerate figures no longer fails after a sample sheet is edited down to a single study.** With leftover `results/meta/` outputs from an earlier multi-study run and the Multi-study meta-analysis switch still on, Regenerate figures could force meta-analysis rules that are no longer defined for a single-study sheet (or for a microarray / uploaded-DE-results input), aborting the run. The comparative-figure and cross-study-report targets are now gated on the current run mode exactly as the pipeline defines them.
+- **The app and the pipeline now agree on the study-of-origin name and confounding checks.** The app flags an unsafe `dataset` name (spaces, slashes, other path characters) only on a genuine multi-study sheet — matching the pipeline's own gate — and no longer shows a redundant meta-analysis warning next to the hard confounding failure when the two compared groups are fully split across studies. A freshly fetched multi-study sheet whose conditions are still unset no longer produces a spurious confounding failure.
+
+### Changed
+
+- **Clearer sample-sheet guidance.** The metadata note after an SRA/ENA fetch now states that the condition grouping is only a suggestion and must be reviewed on the Metadata tab before running, because it sets the differential-expression contrast. A multi-study sheet that does not yet have at least two studies with both compared groups replicated warns that the meta-analysis will not run. A failed ENA lookup caused by no internet connection now shows a plain, actionable message instead of a raw network error.
+- **Interface polish.** Long tab labels elide with an ellipsis instead of clipping; the Outputs figure-style panel is wider so the per-figure override table fits without horizontal scrolling; the review-approval checkbox wording is clearer; the PPI network viewer no longer flashes white on first paint when the app is in dark mode.
+- **Check Environment load-tests the meta-analysis R stack.** The environment probe now loads `metaRNASeq`, `metafor`, and `HTSFilter` so a broken meta-analysis install is caught before a run rather than partway through it.
+
 ## 0.21.0 — 2026-07-10
 
 ### Added

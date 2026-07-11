@@ -22,6 +22,12 @@ def _multistudy_gates(df: pd.DataFrame, num: str, den: str) -> list[dict[str, st
     ds = df["dataset"].astype(str).str.strip()
     if ds.replace("", pd.NA).nunique(dropna=True) <= 1:
         return msgs
+    # Study-of-origin names label per-study files + figure columns, so they must be filename-safe.
+    bad_ds = [v for v in ds.unique() if v and not re.match(r"^[A-Za-z0-9_.-]+$", v)]
+    if bad_ds:
+        msgs.append({"status": "FAIL", "message": (
+            "Unsafe study-of-origin (dataset) name(s): " + ", ".join(bad_ds[:5])
+            + ". Use only letters, numbers, underscore, dot, and hyphen (no spaces or slashes).")})
     # Same-organism requirement (shared gene-id namespace), case-insensitive.
     if "organism" in df.columns:
         orgs = {}
@@ -33,16 +39,27 @@ def _multistudy_gates(df: pd.DataFrame, num: str, den: str) -> list[dict[str, st
                 f"The merged studies use different organisms ({', '.join(sorted(orgs.values()))}). "
                 "A multi-study analysis must combine studies of the SAME organism with a shared "
                 "gene-id namespace.")})
-    # Confounding: the contrast is estimable only if at least ONE dataset contains BOTH arms.
+    # Confounding + admissibility: only assess when the contrast arms are actually present.
     if "condition" in df.columns and num and den:
         cond = df["condition"].astype(str).str.strip()
-        spans = any(({num, den} <= set(cond[ds == d])) for d in ds[ds != ""].unique())
-        if not spans:
-            msgs.append({"status": "FAIL", "message": (
-                f"The contrast '{num}' vs '{den}' is split across studies: no single dataset "
-                "contains both arms, so study-of-origin is perfectly confounded with the biological "
-                "difference. No analysis can separate them — include both conditions within at least "
-                "one study.")})
+        present = {c for c in cond if c and c != "unknown"}
+        if num in present and den in present:
+            levels = [set(cond[ds == d]) for d in ds[ds != ""].unique()]
+            spans = any({num, den} <= lv for lv in levels)
+            if not spans:
+                msgs.append({"status": "FAIL", "message": (
+                    f"The contrast '{num}' vs '{den}' is split across studies: no single dataset "
+                    "contains both arms, so study-of-origin is perfectly confounded with the "
+                    "biological difference. No analysis can separate them — include both conditions "
+                    "within at least one study.")})
+            else:
+                admissible = sum((cond[ds == d] == num).sum() >= 2 and (cond[ds == d] == den).sum() >= 2
+                                 for d in ds[ds != ""].unique())
+                if admissible < 2:
+                    msgs.append({"status": "WARNING", "message": (
+                        f"Only {admissible} study contains both '{num}' and '{den}' with >=2 replicates; "
+                        "a multi-study meta-analysis needs at least two, so it will not run (the joint "
+                        "analysis still runs).")})
     return msgs
 
 

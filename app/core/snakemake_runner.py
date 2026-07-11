@@ -45,6 +45,32 @@ def _target_input_exists(project_root: Path | None, rel_path: str) -> bool:
     return (Path(project_root) / rel_path).exists()
 
 
+def _is_multistudy(project_root: Path | None) -> bool:
+    """True when the project's samples.tsv is a genuine multi-study sheet (a 'dataset' column with
+    more than one distinct non-empty value) — an EXACT mirror of the Snakefile's MULTI_DATASET, using
+    the identical pandas parse so NA-family tokens (NA/NULL/None/nan/N/A) coerce to empty on both sides
+    and the two never disagree. The meta-analysis figure/report rules are DEFINED only in that case, so
+    figures-mode must not force them otherwise (naming an undefined rule aborts the whole regenerate
+    run); a stale results/meta/ left from an earlier multi-study run must not trigger them once the
+    sheet is edited down to one study. Unknown root (None) -> True, matching _target_input_exists so
+    arg-structure tests keep prior behaviour."""
+    if project_root is None:
+        return True
+    samples = Path(project_root) / "config" / "samples.tsv"
+    if not samples.exists():
+        return False
+    try:
+        import pandas as pd
+        df = pd.read_csv(samples, sep="\t", dtype=str).fillna("")
+        if "dataset" not in df.columns:
+            return False
+        return df["dataset"].astype(str).str.strip().replace("", pd.NA).nunique(dropna=True) > 1
+    except (OSError, ValueError):
+        # ValueError covers pandas EmptyDataError/ParserError and UnicodeDecodeError (a UnicodeError,
+        # itself a ValueError) — an unreadable/empty/garbled sheet is treated as not multi-study.
+        return False
+
+
 def build_snakemake_args(
     config: AppConfig, mode: str = "run", project_root: Path | None = None
 ) -> list[str]:
@@ -84,7 +110,12 @@ def build_snakemake_args(
         # All style-consuming rules, so "Regenerate figures" restyles the whole figure
         # set, not just the core DESeq2 figures. Optional rules are gated on their config
         # so they are only forced when their inputs exist (else MissingInputException).
-        targets = ["figures", "sample_correlation", "wilcoxon_sensitivity", "set_overlap"]
+        targets = ["figures", "set_overlap"]
+        # sample-correlation + the Wilcoxon diagnostic need a per-sample count matrix, which a
+        # deseq2-results upload does not have (the synthetic objects RDS carries no dds/vsd), so
+        # they are not part of that mode's normal run — do not force them there.
+        if config.input.type != "deseq2_results":
+            targets += ["sample_correlation", "wilcoxon_sensitivity"]
         if config.workflow.enrichment and _target_input_exists(
             project_root, "results/enrichment/enrichment_objects.rds"
         ):
@@ -102,8 +133,14 @@ def build_snakemake_args(
         ):
             targets.append("custom_enrichment_figure")
         # Multi-study meta-analysis comparative figures are style-consuming too, so a restyle
-        # regenerates them from the existing meta result (no re-run of the per-study DESeq2).
-        if config.workflow.meta_analysis and _target_input_exists(
+        # regenerates them from the existing meta result (no re-run of the per-study DESeq2). Mirror
+        # the Snakefile's META_MODE exactly (meta_analysis AND multi-study AND a count-based input):
+        # the meta rules are undefined when the sheet is single-study OR the input is microarray /
+        # uploaded DE results, and forcing an undefined rule aborts the whole regenerate run. Gate on
+        # the CURRENT sheet + input type, not merely on stale meta outputs left on disk.
+        _meta_on = (config.workflow.meta_analysis and _is_multistudy(project_root)
+                    and config.input.type not in ("microarray", "deseq2_results"))
+        if _meta_on and _target_input_exists(
             project_root, "results/meta/meta_analysis_results.csv"
         ):
             targets.append("meta_figures")
@@ -111,6 +148,15 @@ def build_snakemake_args(
                 project_root, "results/meta/meta_enrichment_objects.rds"
             ):
                 targets.append("meta_enrichment_figures")
+        # Re-embed the restyled figures into the self-contained HTML reports, which inline every
+        # figure as base64 — otherwise the shared report keeps showing the pre-restyle figures.
+        # Their inputs already exist after a completed run, so this re-runs only the report step.
+        if _target_input_exists(project_root, "results/reports/run_summary.txt"):
+            targets.append("html_report")
+        if _meta_on and _target_input_exists(
+            project_root, "results/reports/meta_analysis_summary.json"
+        ):
+            targets.append("meta_report")
         args += ["--forcerun", *targets, "--allowed-rules", *targets]
     elif mode == "goi":
         # Produce only the genes-of-interest outputs from the existing DESeq2 object

@@ -215,7 +215,7 @@ attempt_install() {
 # NOT the exit code — `micromamba run` can mask a non-zero status. A dropped GO.db or an
 # r-base ABI drift leaves these installed-but-unloadable, which is what kills enrichment
 # mid-run. Core/empty profile -> trivially "loads".
-R_STACK_PROBE='q<-c("DESeq2","limma","clusterProfiler","GO.db","DOSE","enrichplot","fgsea","STRINGdb","GEOquery","affy"); ok<-function(p) isTRUE(tryCatch(suppressWarnings(suppressMessages(requireNamespace(p,quietly=TRUE))),error=function(e)FALSE)); bad<-q[!vapply(q,ok,logical(1))]; cat(if(length(bad)) paste0("R_STACK_BAD:",paste(bad,collapse=",")) else "R_STACK_OK")'
+R_STACK_PROBE='q<-c("DESeq2","limma","clusterProfiler","GO.db","DOSE","enrichplot","fgsea","STRINGdb","GEOquery","affy","metaRNASeq","metafor","HTSFilter"); ok<-function(p) isTRUE(tryCatch(suppressWarnings(suppressMessages(requireNamespace(p,quietly=TRUE))),error=function(e)FALSE)); bad<-q[!vapply(q,ok,logical(1))]; cat(if(length(bad)) paste0("R_STACK_BAD:",paste(bad,collapse=",")) else "R_STACK_OK")'
 r_stack_loads() {
   [ "$PROFILE" = "full" ] || return 0
   local out

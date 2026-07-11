@@ -5,6 +5,9 @@
 <style>
   html, body { margin: 0; padding: 0; height: 100%; overflow: hidden;
                font-family: 'Segoe UI', Arial, sans-serif; background: #ffffff; }
+  /* Avoid a white first-paint flash before the theme JS runs when the app is in dark mode
+     (Qt propagates the app colour scheme to QtWebEngine's prefers-color-scheme). */
+  @media (prefers-color-scheme: dark) { html, body { background: #1c1c1e; } }
   #cy { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
   #tip { position: absolute; display: none; pointer-events: none; z-index: 10;
          background: rgba(28,28,30,0.94); color: #fff; padding: 7px 10px;
