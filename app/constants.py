@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 APP_NAME = "BulkSeq Studio"
-APP_VERSION = "0.22.0"
-WORKFLOW_VERSION = "0.22.0"
+APP_VERSION = "0.23.0"
+WORKFLOW_VERSION = "0.23.0"
 
 # Below this STAR uniquely-mapped %, the Run Monitor warns and offers to stop the
 # run; a wrong reference or contaminated reads otherwise waste hours of alignment.

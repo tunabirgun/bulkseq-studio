@@ -29,6 +29,9 @@ rule enrichment:
         go="results/enrichment/go_ora_all.csv",
         go_up="results/enrichment/go_ora_up.csv",
         go_down="results/enrichment/go_ora_down.csv",
+        go_bp="results/enrichment/go_ora_BP.csv",
+        go_mf="results/enrichment/go_ora_MF.csv",
+        go_cc="results/enrichment/go_ora_CC.csv",
         gsea="results/enrichment/gsea.csv",
         kegg="results/enrichment/kegg_ora.csv",
         kegg_gsea="results/enrichment/kegg_gsea.csv",
@@ -83,6 +86,12 @@ rule enrichment_figures:
         kegg_dotplot_svg="results/figures/enrichment_kegg_dotplot.svg",
         kegg_gsea_png="results/figures/enrichment_kegg_gsea.png",
         kegg_gsea_svg="results/figures/enrichment_kegg_gsea.svg",
+        go_bp_png="results/figures/enrichment_go_BP_dotplot.png",
+        go_bp_svg="results/figures/enrichment_go_BP_dotplot.svg",
+        go_mf_png="results/figures/enrichment_go_MF_dotplot.png",
+        go_mf_svg="results/figures/enrichment_go_MF_dotplot.svg",
+        go_cc_png="results/figures/enrichment_go_CC_dotplot.png",
+        go_cc_svg="results/figures/enrichment_go_CC_dotplot.svg",
     params:
         style=config.get("figures_style", {}),
     benchmark:

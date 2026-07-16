@@ -354,8 +354,10 @@ class MainWindow(QMainWindow):
         workdir_hint.setWordWrap(True)
         create = QPushButton("New Project")
         create.setProperty("primary", True)
+        create.setToolTip("Scaffold a new project folder: a default config.yaml and an empty samples.tsv.")
         create.clicked.connect(self._create_project)
         benchmark = QPushButton("Create Benchmark Project")
+        benchmark.setToolTip("Set up a project pre-loaded with a bundled validation dataset, for testing or a worked example.")
         benchmark.clicked.connect(lambda: self._create_benchmark_project())
         open_existing = QPushButton("Open Existing Project")
         open_existing.clicked.connect(self._open_project)
@@ -452,6 +454,9 @@ class MainWindow(QMainWindow):
         self.gse_box = QLineEdit()
         self.gse_box.setPlaceholderText("GSE accession, e.g. GSE5583")
         self.gse_box.setMaximumWidth(220)
+        self.gse_box.setToolTip(
+            "GEO Series (GSE) microarray accessions only. For RNA-seq, enter SRA/ENA run "
+            "accessions in the other box instead.")
         geo_btn = QPushButton("Fetch a GEO microarray series (GSE)")
         geo_btn.setToolTip("Load a GEO/GSE microarray dataset. The pipeline ingests the normalized "
                            "intensities (GEOquery/affy), runs limma differential expression, then the "
@@ -612,6 +617,19 @@ class MainWindow(QMainWindow):
         self._update_organism_label()
         if getattr(self, "micro_group", None) is not None:
             self.micro_group.setVisible(mode == "microarray")
+        if getattr(self, "micro_source", None) is not None:
+            # A local-matrix upload has no combo item (source="local_matrix"); leaving the combo
+            # enabled at its default index would visibly contradict the persisted config.
+            is_local = mode == "microarray" and self.config.microarray.source == "local_matrix"
+            self.micro_source.setEnabled(not is_local)
+            self.micro_source.setToolTip(
+                "Not applicable: this project uses a locally uploaded expression matrix, not a "
+                "GEO/CEL download."
+                if is_local else
+                "How the microarray intensities are obtained. 'GEO series matrix' (recommended) uses the "
+                "submitter's normalized table, correct for the large majority of GEO datasets. 'Affymetrix "
+                "raw CEL → RMA' downloads the raw CEL archive and re-normalizes with affy::rma — Affymetrix "
+                "arrays only, a larger download, and it needs the full R environment.")
         self._apply_workflow_mode_gating(mode)
 
     def _on_micro_option_changed(self) -> None:
@@ -656,6 +674,10 @@ class MainWindow(QMainWindow):
             # cannot run the per-study DESeq2 fan-out. The workflow additionally requires a 'dataset'
             # column with >1 study (MULTI_DATASET) — the Snakefile is the source of truth there.
             self.meta_analysis.setEnabled(mode in ("fastq", "sra", "mixed", "count_matrix"))
+        if getattr(self, "per_study_enrichment", None) is not None:
+            # Only meaningful when meta-analysis is both available (mode) and enabled.
+            self.per_study_enrichment.setEnabled(
+                self.meta_analysis.isEnabled() and self.meta_analysis.isChecked())
 
     def _import_deseq2_results(self) -> None:
         if not self._require_project() or self.config is None:
@@ -1191,6 +1213,12 @@ class MainWindow(QMainWindow):
         if self.quantifier.currentText() not in valid:
             self.quantifier.setCurrentText(valid[0])
         self.quantifier.setEnabled(len(valid) > 1)
+        # RSeQC needs a genome BAM; the Salmon route has none, so the Snakefile skips it.
+        # Grey the toggle out under Salmon so the setting can't be silently dropped.
+        if hasattr(self, "rseqc"):
+            self.rseqc.setEnabled(name != "Salmon")
+            if name == "Salmon":
+                self.rseqc.setChecked(False)
 
     def _build_workflow_tab(self) -> None:
         page = QWidget()
@@ -1286,6 +1314,14 @@ class MainWindow(QMainWindow):
             "report (convergent/discordant genes, forest, concordance, shared-vs-distinct "
             "enrichment). Runs alongside the joint DESeq2. Ignored for single-study, microarray and "
             "results-upload runs.")
+        self.per_study_enrichment = QCheckBox()
+        self.per_study_enrichment.setToolTip(
+            "Opt-in and slow: run the full GO/KEGG enrichment for every study in the "
+            "meta-analysis, not just the pooled cross-study enrichment. Only available when "
+            "multi-study meta-analysis is on.")
+        # Dependent enable: only meaningful when meta-analysis is active.
+        self.meta_analysis.toggled.connect(
+            lambda on: self.per_study_enrichment.setEnabled(self.meta_analysis.isEnabled() and on))
         # fastp parameters
         self.fastp_q = QSpinBox()
         self.fastp_q.setRange(0, 40)
@@ -1454,6 +1490,7 @@ class MainWindow(QMainWindow):
         out_form.addRow(self._info_label("GSVA pathway activity", "Sample-level gene-set activity scores from your custom gene sets (organism-safe). Needs a custom GMT under Custom gene sets."), self.gsva)
         out_form.addRow(self._info_label("Extended QC (RSeQC)", "Read-distribution + gene-body-coverage QC added to the MultiQC report. Genome-BAM routes only (not Salmon)."), self.rseqc)
         out_form.addRow(self._info_label("Multi-study meta-analysis", "Combine 2+ studies (a 'dataset' column with >1 study): per-study DESeq2 + inverse-normal p-combination + effect-size pooling, with a cross-study comparative report. Ignored for single-study / microarray / results-upload."), self.meta_analysis)
+        out_form.addRow(self._info_label("Per-study enrichment (opt-in — slow: runs enrichment for every study)", "Run the full GO/KEGG enrichment separately for each study in the meta-analysis. Slow; off by default. Requires multi-study meta-analysis."), self.per_study_enrichment)
         self.out_group = out_group
         layout.addWidget(out_group)
 
@@ -1538,9 +1575,12 @@ class MainWindow(QMainWindow):
 
     def _refresh_conditions(self) -> None:
         df = self.metadata_table.to_dataframe()
-        if "condition" not in df.columns:
+        # Use the configured contrast factor column (not a hardcoded "condition"), matching
+        # _open_design_helper / _save_workflow_settings, so a custom factor populates correctly.
+        factor = self.contrast_factor.text().strip() or "condition"
+        if factor not in df.columns:
             return
-        values = sorted({str(v) for v in df["condition"].tolist() if str(v) and str(v) != "unknown"})
+        values = sorted({str(v) for v in df[factor].tolist() if str(v) and str(v) != "unknown"})
         if not values:
             for combo in (self.numerator, self.denominator, self.reference_level):
                 combo.clear()
@@ -1632,6 +1672,7 @@ class MainWindow(QMainWindow):
                              "RAM allocated to the pipeline. Alignment (STAR) is the most memory-intensive step."),
             self.ram)
         save = QPushButton("Save Resources")
+        save.setToolTip("Persist the CPU core and memory allocation above to the project config.")
         save.clicked.connect(self._save_resources)
         manual_form.addRow(save)
         layout.addWidget(manual_group)
@@ -1691,6 +1732,9 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         estimate = QPushButton("Estimate Runtime")
         estimate.setProperty("primary", True)
+        estimate.setToolTip(
+            "Estimate wall-clock runtime from your sample count, input mode, and resource settings, "
+            "calibrated against past runs on this machine.")
         estimate.clicked.connect(self._estimate_runtime)
         self.runtime_busy = self._busy_bar()
         self.runtime_text = QTextEdit()
@@ -1711,8 +1755,12 @@ class MainWindow(QMainWindow):
         buttons = QHBoxLayout()
         run = QPushButton("Run Project and Metadata Checks")
         run.setProperty("primary", True)
+        run.setToolTip(
+            "Validate the project config and samples.tsv (sample sheet consistency, design/contrast "
+            "sanity, file paths) before starting a run.")
         run.clicked.connect(self._run_sanity_checks)
         refresh = QPushButton("Refresh Phase Checks")
+        refresh.setToolTip("Re-run the per-phase readiness checks against the project's current settings.")
         refresh.clicked.connect(self._refresh_phase_checks)
         buttons.addWidget(run)
         buttons.addWidget(refresh)
@@ -1768,15 +1816,24 @@ class MainWindow(QMainWindow):
         _is_windows = sys.platform.startswith("win")
         self.use_wsl.setChecked(_is_windows)
         self.use_wsl.setVisible(_is_windows)
+        self.use_wsl.setToolTip(
+            "Run the pipeline inside the WSL2 Ubuntu distribution instead of natively on Windows. "
+            "Recommended: the Linux toolchain (Snakemake, aligners, R/Bioconductor) is the validated "
+            "route on Windows. Unchecked runs natively on Windows if a local environment is set up.")
         buttons.addWidget(self.use_wsl)
         actions = QHBoxLayout()
         stop = QPushButton("Stop")
         stop.setEnabled(False)
+        stop.setToolTip("Terminate the running pipeline. Already-completed steps are kept and can be resumed later.")
         stop.clicked.connect(self._stop_run)
         self.stop_button = stop
         open_folder = QPushButton("Open Project Folder")
+        open_folder.setToolTip("Open the project's root directory in the system file browser.")
         open_folder.clicked.connect(self._open_folder)
         open_report = QPushButton("Open MultiQC Report")
+        open_report.setToolTip(
+            "Open the aggregated MultiQC quality-control report (read QC, alignment/quantification "
+            "metrics) in your browser. Produced when a run finishes.")
         open_report.clicked.connect(self._open_report)
         open_html = QPushButton("Open Results Report")
         open_html.setToolTip(
@@ -1802,6 +1859,7 @@ class MainWindow(QMainWindow):
         self.elapsed_timer.timeout.connect(self._tick_elapsed)
         self._run_start = 0.0
         self.command_text = QLineEdit()
+        self.command_text.setReadOnly(True)  # displays the launched command; not user-editable
         self.status_label = QLabel("Idle")
         # Plain-language "current phase" line so non-CLI users can follow along;
         # the raw Snakemake log below is for power users.
@@ -2408,6 +2466,13 @@ class MainWindow(QMainWindow):
             self.ppi_color_pick.addItem(label, val)
         self.ppi_color_pick.currentIndexChanged.connect(
             lambda _i: self.ppi_viewer.set_color_by(self.ppi_color_pick.currentData()))
+        self.ppi_view_pick = QComboBox()
+        for label, val in [("All", "all"), ("Up-regulated", "up"), ("Down-regulated", "down")]:
+            self.ppi_view_pick.addItem(label, val)
+        self.ppi_view_pick.setToolTip("Show all proteins, or only those up- or down-regulated "
+                                      "(by log2 fold-change sign).")
+        self.ppi_view_pick.currentIndexChanged.connect(
+            lambda _i: self.ppi_viewer.set_direction_filter(self.ppi_view_pick.currentData()))
         self.ppi_size_pick = QComboBox()
         for label, val in [("Node degree", "degree"), ("Mean expression", "meanExpr"),
                            ("−log₁₀ adj. p", "neglog10padj")]:
@@ -2431,6 +2496,8 @@ class MainWindow(QMainWindow):
         row1.addWidget(self.ppi_layout_pick)
         row1.addWidget(QLabel("Colour:"))
         row1.addWidget(self.ppi_color_pick)
+        row1.addWidget(QLabel("Show:"))
+        row1.addWidget(self.ppi_view_pick)
         row1.addWidget(QLabel("Size:"))
         row1.addWidget(self.ppi_size_pick)
         row1.addWidget(self.ppi_labels_cb)
@@ -3146,7 +3213,9 @@ class MainWindow(QMainWindow):
         self.fig_font_family.addItem(self.FONT_DEFAULT_LABEL)
         self.fig_font_family.addItems(QFontDatabase.families())
         self.fig_label_bold = QCheckBox("Bold axis tick labels")
+        self.fig_label_bold.setToolTip("Render the axis tick labels (the value text along each axis) in bold.")
         self.fig_title_bold = QCheckBox("Bold axis titles")
+        self.fig_title_bold.setToolTip("Render the axis titles (the axis name/unit text) in bold.")
         self.fig_gene_italic = QCheckBox("Italicize gene symbols")
         self.fig_gene_italic.setChecked(True)
         self.fig_gene_italic.setToolTip(
@@ -3263,6 +3332,9 @@ class MainWindow(QMainWindow):
         form.addRow(self._info_label("PPI layout", "Graph layout algorithm for the PPI network figure (graphlayouts). 'fr' (Fruchterman-Reingold) is force-directed and the default; 'stress' is a compact alternative."), self.fig_ppi_layout)
         form.addRow(save_style)
         # --- PPI network (STRING) controls: customise + regenerate in-app ---
+        ppi_subheader = QLabel("PPI network (STRING) — also saved by 'Save figure style' above")
+        ppi_subheader.setStyleSheet("font-weight: bold; margin-top: 6px;")
+        form.addRow(ppi_subheader)
         self.ppi_score = QSpinBox()
         self.ppi_score.setRange(0, 1000)
         self.ppi_score.setValue(400)
@@ -3373,6 +3445,12 @@ class MainWindow(QMainWindow):
         style.heatmap_zlim = self.fig_heatmap_zlim.value()
         style.enrich_show_category = self.fig_enrich_show.value()
         style.ppi_layout = self.fig_ppi_layout.currentText().strip() or "fr"
+        # PPI score / hub-label controls live on this tab but feed config.ppi (not figures_style);
+        # persist them here so a normal Run honors them, not just Regenerate PPI.
+        if hasattr(self, "ppi_score"):
+            self.config.ppi.score_threshold = self.ppi_score.value()
+        if hasattr(self, "ppi_hub_labels"):
+            self.config.ppi.hub_label_count = self.ppi_hub_labels.value()
         self.manager.save_config(self.project_root, self.config)
         return True
 
@@ -3400,7 +3478,10 @@ class MainWindow(QMainWindow):
         if not self._require_project():
             return
         assert self.project_root is not None
-        path = self.project_root / self.output_table_pick.currentText()
+        # Namespaced entries (per-study) carry their relative path as userData;
+        # plain entries fall back to the display text, which is the relative path.
+        rel = self.output_table_pick.currentData() or self.output_table_pick.currentText()
+        path = self.project_root / rel
         if not path.exists():
             self.output_table.setRowCount(0)
             self.output_table.setColumnCount(1)
@@ -3433,12 +3514,28 @@ class MainWindow(QMainWindow):
         prev = self.figure_pick.currentText()
         self.figure_pick.blockSignals(True)
         self.figure_pick.clear()
-        figures = []
+        # (display name, absolute path) pairs. Regular figures carry no userData
+        # (path is reconstructed from results/figures); per-study figures carry the
+        # full path so they resolve outside that directory.
+        entries: list[tuple[str, object]] = []
         if self.project_root is not None:
-            figures = sorted((self.project_root / "results" / "figures").glob("*.png"))
-        if figures:
+            for f in sorted((self.project_root / "results" / "figures").glob("*.png")):
+                entries.append((f.name, None))
+            # Multi-study meta-analysis: surface per-study figures, namespaced by study
+            # id (e.g. "PRJNA123 / volcano"). Gated on the manifest so single-study runs
+            # are unaffected. PNGs only — the Vector toggle swaps to the matching .svg.
+            manifest = self.project_root / "results" / "meta" / "per_study" / "manifest.json"
+            if manifest.exists():
+                per_study = self.project_root / "results" / "meta" / "per_study"
+                # figures/ plus the opt-in enrichment/ dotplot (same <study>/<sub>/<file> layout).
+                for sub in ("figures", "enrichment"):
+                    for f in sorted(per_study.glob(f"*/{sub}/*.png")):
+                        study = f.parent.parent.name
+                        entries.append((f"{study} / {f.stem}", str(f)))
+        if entries:
             self.figure_pick.setEnabled(True)
-            self.figure_pick.addItems([f.name for f in figures])
+            for display, data in entries:
+                self.figure_pick.addItem(display, data)
             # Keep the user on the figure they were viewing across a refresh /
             # post-run rescan; fall back to the first only if it's gone.
             idx = self.figure_pick.findText(prev)
@@ -3454,7 +3551,10 @@ class MainWindow(QMainWindow):
     def _show_selected_figure(self, name: str) -> None:
         if not name or name.startswith("(no figures") or self.project_root is None:
             return
-        path = self.project_root / "results" / "figures" / name
+        # Per-study figures carry their full path as userData; regular figures have
+        # None and are reconstructed under results/figures from the bare filename.
+        data = self.figure_pick.currentData()
+        path = Path(data) if data else self.project_root / "results" / "figures" / name
         # When the vector toggle is on, prefer the matching .svg (crisp at any zoom).
         if getattr(self, "svg_toggle", None) is not None and self.svg_toggle.isChecked():
             svg = path.with_suffix(".svg")
@@ -3741,6 +3841,10 @@ class MainWindow(QMainWindow):
         self.gsva.setChecked(getattr(wf, "gsva", False))
         self.rseqc.setChecked(getattr(wf, "rseqc", False))
         self.meta_analysis.setChecked(getattr(wf, "meta_analysis", False))
+        self.per_study_enrichment.setChecked(getattr(wf, "per_study_enrichment", False))
+        # Re-sync the dependent enable after both checked-states are set.
+        self.per_study_enrichment.setEnabled(
+            self.meta_analysis.isEnabled() and self.meta_analysis.isChecked())
         _eng_idx = self.de_engine.findData(getattr(wf, "de_engine", "DESeq2"))
         self.de_engine.setCurrentIndex(_eng_idx if _eng_idx >= 0 else 0)
         _org_idx = self.organellar.findData(getattr(wf, "organellar_genes", "keep"))
@@ -4138,6 +4242,7 @@ class MainWindow(QMainWindow):
         self.config.workflow.gsva = self.gsva.isChecked()
         self.config.workflow.rseqc = self.rseqc.isChecked()
         self.config.workflow.meta_analysis = self.meta_analysis.isChecked()
+        self.config.workflow.per_study_enrichment = self.per_study_enrichment.isChecked()
         self.config.workflow.de_engine = self.de_engine.currentData()  # type: ignore[assignment]
         self.config.workflow.organellar_genes = self.organellar.currentData()  # type: ignore[assignment]
         # Custom gene-set files are Snakemake inputs read INSIDE WSL, so a Browse-picked Windows/UNC
@@ -4479,6 +4584,9 @@ class MainWindow(QMainWindow):
         if not self._save_workflow_settings(validate=mode in ("run", "resume", "recover")):
             return  # invalid contrast; the user was warned
         self._save_resources()
+        # Persist figure-style + PPI controls so in-session edits are honored by the run
+        # (previously only Save/Regenerate applied them; a plain Run dropped them).
+        self._apply_figure_style()
         run_tag = _new_run_tag() if self.use_wsl.isChecked() else None
         command = build_snakemake_command(
             self.project_root,
@@ -4657,21 +4765,41 @@ class MainWindow(QMainWindow):
                       "results/networks/enrichment_emap_nodes.csv",
                       "results/networks/enrichment_genemap_nodes.csv",
                       "results/networks/string_ppi_nodes.csv", "results/networks/ppi_hub_genes.csv"]
+        # Extra entries whose display name differs from the project-relative path go
+        # through userData: (display, relative-path). Plain strings above resolve via
+        # currentText() as before.
+        extra: list[tuple[str, str]] = []
         # Keep any extracted per-term gene tables reachable across a picker rebuild.
         if self.project_root is not None:
             terms_dir = self.project_root / "results" / "enrichment" / "terms"
             if terms_dir.exists():
                 items += [f"results/enrichment/terms/{p.name}"
                           for p in sorted(terms_dir.glob("*_genes.csv"))]
+            # Genes-of-interest DESeq2 subset (present only when a GOI list was supplied).
+            if (self.project_root / "results" / "genes_of_interest" / "goi_deseq2_results.csv").exists():
+                items.append("results/genes_of_interest/goi_deseq2_results.csv")
             # Multi-study meta-analysis tables (present only after a multi-dataset run).
             for _mt in ("meta_convergent_genes.csv", "meta_study_summary.csv",
                         "meta_analysis_results.csv", "meta_enrichment_ora.csv"):
                 if (self.project_root / "results" / "meta" / _mt).exists():
                     items.append(f"results/meta/{_mt}")
+            # Per-study tables, namespaced by study id (e.g. "PRJNA123 / volcano").
+            # Gated on the manifest so single-study runs are unaffected.
+            manifest = self.project_root / "results" / "meta" / "per_study" / "manifest.json"
+            if manifest.exists():
+                per_study = self.project_root / "results" / "meta" / "per_study"
+                # tables/ plus the opt-in enrichment/ go_ora_*.csv (same <study>/<sub>/<file> layout).
+                for sub in ("tables", "enrichment"):
+                    for p in sorted(per_study.glob(f"*/{sub}/*.csv")):
+                        study = p.parent.parent.name
+                        rel = p.relative_to(self.project_root).as_posix()
+                        extra.append((f"{study} / {p.stem}", rel))
         current = self.output_table_pick.currentText()
         self.output_table_pick.blockSignals(True)
         self.output_table_pick.clear()
         self.output_table_pick.addItems(items)
+        for display, rel in extra:
+            self.output_table_pick.addItem(display, rel)
         idx = self.output_table_pick.findText(current)
         self.output_table_pick.setCurrentIndex(idx if idx >= 0 else 0)
         self.output_table_pick.blockSignals(False)

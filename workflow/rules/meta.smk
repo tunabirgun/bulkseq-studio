@@ -64,6 +64,27 @@ if META_MODE:
         script:
             "../scripts/make_meta_figures.R"
 
+    # Per-study figures + tables (everything tier). Aggregating rule: depends on the meta result
+    # (so per_study_<S>.csv + per_study_vsd_<S>.rds already exist), discovers studies on-disk, and
+    # emits ONE declared target -- the manifest -- so there is no parse-time expand()/drift (the
+    # 0.21.1 lesson). Report + GUI read the manifest to enumerate studies.
+    rule meta_per_study:
+        input:
+            results="results/meta/meta_analysis_results.csv",
+            de_results="results/deseq2/deseq2_results.csv",
+        output:
+            manifest="results/meta/per_study/manifest.json",
+        params:
+            style=config.get("figures_style", {}),
+            alpha=_META_DE.get("alpha", 0.05),
+            lfc_threshold=_META_DE.get("lfc_threshold", 1.0),
+        benchmark:
+            "benchmarks/meta_per_study.tsv"
+        log:
+            "logs/meta_per_study.log",
+        script:
+            "../scripts/make_meta_per_study_figures.R"
+
     if WF.get("enrichment", True):
 
         # Cross-study functional enrichment: compareCluster over per-study + convergent gene sets on
@@ -103,3 +124,27 @@ if META_MODE:
                 "logs/meta_enrichment_figures.log",
             script:
                 "../scripts/make_meta_enrichment_figures.R"
+
+        # Optional per-study enrichment (opt-in: workflow.per_study_enrichment; default OFF). Heavy:
+        # clusterProfiler x N studies. Runs ORA on each study's up/down lists over a per-study
+        # universe, writing results/meta/per_study/<S>/enrichment/ + an enrichment_manifest.json.
+        if WF.get("per_study_enrichment", False):
+
+            rule meta_per_study_enrichment:
+                input:
+                    manifest="results/meta/per_study/manifest.json",
+                output:
+                    manifest="results/meta/per_study/enrichment_manifest.json",
+                params:
+                    orgdb=_ENR.get("orgdb") or _MAPPED[0],
+                    keytype=_ENR.get("keytype") or ("SYMBOL" if MICROARRAY_MODE else _MAPPED[1]),
+                    kegg=_ENR.get("kegg_organism") or _MAPPED[2],
+                    ont=_ENR.get("go_ontology", "BP"),
+                    alpha=_META_DE.get("alpha", 0.05),
+                    style=config.get("figures_style", {}),
+                benchmark:
+                    "benchmarks/meta_per_study_enrichment.tsv"
+                log:
+                    "logs/meta_per_study_enrichment.log",
+                script:
+                    "../scripts/run_meta_per_study_enrichment.R"

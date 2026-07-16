@@ -44,6 +44,7 @@ reference:
   genome_size_category: custom
 workflow:
   meta_analysis: false   # multi-study meta-analysis (a `dataset` column with >1 study, ticked on)
+  per_study_enrichment: false   # opt-in: per-study ORA/GSEA in a meta run (heavy; clusterProfiler x N studies)
   fastqc_pre_trim: true
   trimming: true
   # Trimmer: fastp (default) | trim-galore | trimmomatic.

@@ -30,6 +30,95 @@ obj <- readRDS(snakemake@input[["rds"]])
 dds <- obj$dds; vsd <- obj$vsd
 out <- snakemake@output
 
+# ---- Figure style (moved ahead of the dds/vsd-NULL early exit: the log2FC forest
+# figure needs pal_spec/style_theme on every code path, including placeholders) ---
+style <- tryCatch(snakemake@params[["style"]], error = function(e) NULL)
+if (is.null(style) || !is.list(style)) style <- tryCatch(snakemake@config[["figures_style"]], error = function(e) NULL)
+if (!is.list(style)) style <- list()
+# Inherit the project palette + font instead of hardcoding them: getp_for merges any 'core'
+# per-figure-group override onto the global style, so GOI matches the other core figures.
+gp <- getp_for(style, "core")
+base_size <- tryCatch(as.numeric(gp("base_font_size", 12)), error = function(e) 12)
+if (length(base_size) != 1 || is.na(base_size)) base_size <- 12
+pal_spec <- palette_spec(as.character(gp("palette", "Blue-Red")))
+base_family <- resolve_font(as.character(gp("font_family", "")))
+style_theme <- make_style_theme(base_size = base_size, base_family = base_family,
+                                label_bold = isTRUE(as.logical(gp("label_bold", FALSE))),
+                                title_bold = isTRUE(as.logical(gp("title_bold", FALSE))))
+# Italicise gene-symbol row labels (default TRUE). pheatmap has no per-row fontface,
+# so pass a plotmath expression vector to labels_row; quotes keep special chars literal.
+gene_symbol_italic <- { gsi <- style[["gene_symbol_italic"]]; if (is.null(gsi)) TRUE else isTRUE(as.logical(gsi)) }
+italic_labels <- function(x, italic = TRUE) {
+  if (!isTRUE(italic)) return(x)
+  parse(text = paste0('italic("', gsub('"', '', as.character(x)), '")'))
+}
+
+# ---- DESeq2-results table (always available, even for a results-upload run) -
+# Loaded up front so the de_slice CSV + log2FC forest figure can be produced on
+# every code path, including the early-exit placeholder branches below.
+de_tab <- tryCatch(read.csv(snakemake@input[["de_results"]], stringsAsFactors = FALSE),
+                   error = function(e) NULL)
+de_cols <- c("gene_id", "symbol", "baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj")
+strip_ver0 <- function(x) { e <- grepl("^ENS", x); x[e] <- sub("\\.\\d+$", "", x[e]); x }
+alpha_cfg0 <- tryCatch(snakemake@config[["deseq2"]], error = function(e) NULL)
+num_cfg0 <- function(key, default) {
+  v <- tryCatch(as.numeric(alpha_cfg0[[key]]), error = function(e) default)
+  if (length(v) != 1 || is.na(v)) default else v
+}
+alpha_thr <- if (is.list(alpha_cfg0)) num_cfg0("alpha", 0.05) else 0.05
+lfc_thr <- if (is.list(alpha_cfg0)) num_cfg0("lfc_threshold", 1) else 1
+
+# Match a requested gene list directly against the DE table (id, then version-stripped
+# id, then symbol), independent of vsd/dds -- so it also works in upload mode. Returns a
+# data.frame in de_cols, ordered by the requested gene order, unmatched genes dropped.
+slice_de_by_genes <- function(genes) {
+  if (is.null(de_tab)) return(setNames(as.data.frame(matrix(nrow = 0, ncol = length(de_cols))), de_cols))
+  if (!all(c("gene_id") %in% colnames(de_tab)) || length(genes) < 1) {
+    return(de_tab[0, intersect(de_cols, colnames(de_tab)), drop = FALSE])
+  }
+  gid <- as.character(de_tab$gene_id)
+  j <- match(genes, gid)
+  un <- is.na(j)
+  if (any(un)) j[un] <- match(strip_ver0(genes[un]), strip_ver0(gid))
+  if (!is.null(de_tab$symbol)) {
+    un <- is.na(j)
+    if (any(un)) j[un] <- match(toupper(genes[un]), toupper(as.character(de_tab$symbol)))
+  }
+  keep <- !is.na(j)
+  sl <- de_tab[j[keep], intersect(de_cols, colnames(de_tab)), drop = FALSE]
+  rownames(sl) <- NULL
+  sl
+}
+
+# Log2FC forest/lollipop figure: one row per matched gene (ordered by log2FoldChange),
+# point + 95% CI (log2FoldChange +/- 1.96*lfcSE), coloured by direction, matching the
+# volcano-plot convention in make_figures.R (Up/Down/n.s., same palette slots).
+make_log2fc_forest <- function(sl) {
+  if (is.null(sl) || nrow(sl) < 1 || !("log2FoldChange" %in% colnames(sl))) {
+    return(ggplot() + annotate("text", x = 0, y = 0, label = "No genes of interest to plot") + theme_void())
+  }
+  sl$label <- ifelse(is.na(sl$symbol) | !nzchar(sl$symbol), sl$gene_id, sl$symbol)
+  sl$direction <- "n.s."
+  sig <- !is.na(sl$padj) & !is.na(sl$log2FoldChange)
+  sl$direction[sig & sl$padj < alpha_thr & sl$log2FoldChange >= lfc_thr] <- "Up"
+  sl$direction[sig & sl$padj < alpha_thr & sl$log2FoldChange <= -lfc_thr] <- "Down"
+  sl <- sl[order(sl$log2FoldChange), , drop = FALSE]
+  sl$label <- factor(sl$label, levels = unique(sl$label))
+  se <- ifelse(is.na(sl$lfcSE), 0, sl$lfcSE)
+  sl$ci_lo <- sl$log2FoldChange - 1.96 * se
+  sl$ci_hi <- sl$log2FoldChange + 1.96 * se
+  pal <- c(Up = pal_spec$discrete[2], Down = pal_spec$discrete[1], "n.s." = "grey60")
+  ggplot(sl, aes(x = log2FoldChange, y = label, colour = direction)) +
+    geom_vline(xintercept = 0, linetype = "solid", colour = "grey40", linewidth = 0.3) +
+    geom_vline(xintercept = c(-lfc_thr, lfc_thr), linetype = "dashed", colour = "grey60", linewidth = 0.3) +
+    geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi), height = 0, linewidth = 0.6) +
+    geom_point(size = 2.4) +
+    scale_colour_manual(values = pal, name = NULL, drop = FALSE) +
+    labs(x = expression(log[2]~"fold change (95% CI)"), y = NULL) +
+    scale_y_discrete(labels = function(x) italic_labels(x, gene_symbol_italic)) +
+    style_theme(theme_bw)
+}
+
 # A DESeq2-results upload carries no per-sample counts (dds/vsd are NULL in the synthetic RDS), so
 # the focused heatmap and per-gene panels cannot be built. Write graceful placeholders and exit 0 so
 # the rule never crashes on colData(NULL) (the GUI also gates this button, but a direct CLI run and a
@@ -46,6 +135,18 @@ if (is.null(dds) || is.null(vsd)) {
   writeLines("gene,note", out[["csv"]])
   writeLines("Genes-of-interest figures need per-sample counts, absent in a DESeq2-results upload.",
              out[["report"]])
+  # The DE-slice table + log2FC forest need only deseq2_results.csv (no counts), so they
+  # can still be produced here from the raw requested gene list.
+  genes0 <- character(0)
+  gp0 <- tryCatch(snakemake@input[["genes"]], error = function(e) character(0))
+  if (length(gp0) >= 1 && nzchar(gp0[[1]]) && file.exists(gp0[[1]])) {
+    genes0 <- trimws(readLines(gp0[[1]], warn = FALSE))
+    genes0 <- genes0[nzchar(genes0) & !startsWith(genes0, "#")]
+  }
+  sl0 <- slice_de_by_genes(genes0)
+  write.csv(sl0, out[["de_slice"]], row.names = FALSE)
+  ggsave(out[["log2fc_png"]], make_log2fc_forest(sl0), width = 7, height = 5, dpi = 300)
+  ggsave(out[["log2fc_svg"]], make_log2fc_forest(sl0), width = 7, height = 5)
   sink(type = "message"); close(log_con); quit(save = "no", status = 0)
 }
 # Gene-id -> symbol map (from the DE step) lets the user list match either ids or
@@ -64,31 +165,11 @@ assay_kind <- tryCatch(obj$assay_kind, error = function(e) NULL)
 # assay kinds are already on a log scale (no scale_y_log10).
 is_intensity <- isTRUE(assay_kind %in% c("log2_intensity", "log2_cpm"))
 
-style <- tryCatch(snakemake@params[["style"]], error = function(e) NULL)
-if (is.null(style) || !is.list(style)) style <- tryCatch(snakemake@config[["figures_style"]], error = function(e) NULL)
-if (!is.list(style)) style <- list()
-# Inherit the project palette + font instead of hardcoding them: getp_for merges any 'core'
-# per-figure-group override onto the global style, so GOI matches the other core figures.
-gp <- getp_for(style, "core")
-base_size <- tryCatch(as.numeric(gp("base_font_size", 12)), error = function(e) 12)
-if (length(base_size) != 1 || is.na(base_size)) base_size <- 12
-pal_spec <- palette_spec(as.character(gp("palette", "Blue-Red")))
-base_family <- resolve_font(as.character(gp("font_family", "")))
-style_theme <- make_style_theme(base_size = base_size, base_family = base_family,
-                                label_bold = isTRUE(as.logical(gp("label_bold", FALSE))),
-                                title_bold = isTRUE(as.logical(gp("title_bold", FALSE))))
-# Italicise gene-symbol row labels (default TRUE). pheatmap has no per-row fontface,
-# so pass a plotmath expression vector to labels_row; quotes keep special chars literal.
-gene_symbol_italic <- { gsi <- style[["gene_symbol_italic"]]; if (is.null(gsi)) TRUE else isTRUE(as.logical(gsi)) }
 # Per-sample column labels; default TRUE. Off (the Figure Style toggle) declutters a many-sample run.
-sample_labels <- { sl <- style[["sample_labels"]]; if (is.null(sl)) TRUE else isTRUE(as.logical(sl)) }
-italic_labels <- function(x, italic = TRUE) {
-  if (!isTRUE(italic)) return(x)
-  parse(text = paste0('italic("', gsub('"', '', as.character(x)), '")'))
-}
+sample_labels <- { slv <- style[["sample_labels"]]; if (is.null(slv)) TRUE else isTRUE(as.logical(slv)) }
 
 group_var <- "condition"
-de_cfg <- tryCatch(snakemake@config[["deseq2"]], error = function(e) NULL)
+de_cfg <- alpha_cfg0
 if (is.list(de_cfg)) {
   cons <- de_cfg[["contrasts"]]
   if (is.list(cons) && length(cons) >= 1 && !is.null(cons[[1]][["factor"]])) group_var <- as.character(cons[[1]][["factor"]])
@@ -106,6 +187,9 @@ if (length(genes_path) < 1 || !nzchar(genes_path[[1]]) || !file.exists(genes_pat
   ggsave(out[["expr_png"]], empty, width = 7, height = 5, dpi = 300)
   ggsave(out[["expr_svg"]], empty, width = 7, height = 5)
   writeLines("gene,note", out[["csv"]])
+  write.csv(slice_de_by_genes(character(0)), out[["de_slice"]], row.names = FALSE)
+  ggsave(out[["log2fc_png"]], make_log2fc_forest(NULL), width = 7, height = 5, dpi = 300)
+  ggsave(out[["log2fc_svg"]], make_log2fc_forest(NULL), width = 7, height = 5)
   sink(type = "message"); close(log_con); quit(save = "no", status = 0)
 }
 goi <- readLines(genes_path[[1]], warn = FALSE)
@@ -160,6 +244,12 @@ if (length(present) < 1) {
   save_gg(msg, out[["heatmap_png"]], out[["heatmap_svg"]])
   save_gg(msg, out[["expr_png"]], out[["expr_svg"]])
   writeLines("gene,note", out[["csv"]])
+  # None matched the count matrix, but the raw requested list may still hit the DE table
+  # (e.g. a gene present in deseq2_results.csv but filtered out of the VST object upstream).
+  sl_na <- slice_de_by_genes(goi)
+  write.csv(sl_na, out[["de_slice"]], row.names = FALSE)
+  ggsave(out[["log2fc_png"]], make_log2fc_forest(sl_na), width = 7, height = 5, dpi = 300)
+  ggsave(out[["log2fc_svg"]], make_log2fc_forest(sl_na), width = 7, height = 5)
   sink(type = "message"); close(log_con); quit(save = "no", status = 0)
 }
 
@@ -214,6 +304,15 @@ if (!is_intensity) p_expr <- p_expr + scale_y_log10()
 n_facet <- length(present)
 save_gg(p_expr, out[["expr_png"]], out[["expr_svg"]],
         w = min(12, 3 * ceiling(sqrt(n_facet))), h = min(12, 2.5 * ceiling(n_facet / ceiling(sqrt(n_facet)))))
+
+# ---- DESeq2-results slice + log2FC forest for the matched genes -------------
+# Uses the same matched gene ids as the heatmap/boxplot (rownames(vsd)[present]),
+# in the requested (goi) order, so all four GOI outputs describe the same gene set.
+matched_ids <- rownames(vsd)[present]
+sl <- slice_de_by_genes(matched_ids)
+write.csv(sl, out[["de_slice"]], row.names = FALSE)
+save_gg(make_log2fc_forest(sl), out[["log2fc_png"]], out[["log2fc_svg"]],
+       w = 7, h = min(max(nrow(sl) * 0.28 + 1.5, 3), 22))
 
 write.csv(as.data.frame(nc), out[["csv"]])
 sink(type = "message"); close(log_con)

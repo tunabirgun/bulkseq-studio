@@ -119,6 +119,31 @@ def _enrichment_table(path: Path, top_per: int = 6) -> str:
     return _table(["Gene set", "GO term", "GeneRatio", "p.adjust"], keep, num_cols={3})
 
 
+def _per_study_reports(project: Path) -> str:
+    # Link-out cards to each study's self-contained results/meta/per_study/<S>/index.html.
+    # Never base64-embed these — the per-study figure sets can total tens of MB. Report lives
+    # at results/reports/meta_analysis_report.html, so a manifest path (project-relative, e.g.
+    # results/meta/per_study/<S>/index.html) needs "../../" prepended to resolve on disk.
+    manifest = R._load_json(project / "results" / "meta" / "per_study" / "manifest.json")
+    studies = manifest.get("studies") if manifest else None
+    if not studies:
+        return "<p class='muted'>Per-study report pages were not available.</p>"
+    cards = []
+    for s in studies:
+        sid = html.escape(str(s.get("study", "—")))
+        href = html.escape("../../" + str(s.get("index", "")).replace("\\", "/"))
+        stats = (f"{_num(s.get('n_tested'))} tested · {_num(s.get('n_up'))} up · "
+                 f"{_num(s.get('n_down'))} down")
+        cards.append(
+            "<div class='card'>"
+            f"<div class='card-k'>{sid}</div>"
+            f"<div class='card-v'>{html.escape(stats)}</div>"
+            f"<div style='margin-top:6px'><a href='{href}' target='_blank' rel='noopener'>"
+            "Open study report ↗</a></div>"
+            "</div>")
+    return f"<div class='cards'>{''.join(cards)}</div>"
+
+
 def build(project: Path) -> str:
     reports = project / "results" / "reports"
     figs = project / "results" / "figures"
@@ -157,9 +182,10 @@ def build(project: Path) -> str:
         sh, sr = _csv_rows(meta / "meta_study_summary.csv")
         perstudy = R.section("Per-study differential expression",
                              _table(sh, sr, num_cols={i for i in range(1, len(sh))}), sid="per-study")
+        perstudy_reports = R.section("Per-study results", _per_study_reports(project), sid="per-study-reports")
         enr = R.section("Cross-study functional enrichment (shared vs distinct)",
                         _enrichment_table(meta / "meta_enrichment_ora.csv"), sid="enrichment")
-        body = _hero(summary, status) + figures + conv + perstudy + enr
+        body = _hero(summary, status) + figures + conv + perstudy + perstudy_reports + enr
 
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">

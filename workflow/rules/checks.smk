@@ -66,6 +66,16 @@ if META_MODE:
     ALL_CHECKS.append("checks/17_meta_analysis_qc.json")
     if WF.get("enrichment", True):
         ALL_CHECKS.append("checks/18_meta_enrichment_qc.json")
+# Contrast-orientation QC (config-only): flags an inverted case-vs-control contrast where positive
+# log2FC would mean up in the control group. Applies to every mode that runs DESeq2.
+ALL_CHECKS.append("checks/19_orientation_qc.json")
+# Re-deposited (pseudo-replicated) study detection: META_MODE only (needs >1 study).
+if META_MODE:
+    ALL_CHECKS.append("checks/20_duplicate_study_qc.json")
+    # Per-study strandedness divergence from the featureCounts summary: only when the pipeline
+    # aligns + runs featureCounts (i.e. not count-matrix / microarray / DE-results uploads).
+    if not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE):
+        ALL_CHECKS.append("checks/21_strandedness_qc.json")
 
 
 rule validate_project:
@@ -96,6 +106,58 @@ rule input_check:
     shell:
         "python workflow/scripts/validate_metadata.py --samples {input.samples} "
         "--numerator {params.num:q} --denominator {params.den:q} --out {output}"
+
+
+# Contrast-orientation QC: config-only, so it depends on the config alone (plus an ordering
+# handle on 01 to keep it late in the check sequence). Always defined.
+rule orientation_check:
+    input:
+        config="config/config.yaml",
+        prev="checks/01_input_validation.json",
+    output:
+        "checks/19_orientation_qc.json",
+    benchmark:
+        "benchmarks/19_orientation_qc.tsv"
+    shell:
+        "python workflow/scripts/check_orientation.py --config {input.config} --out {output}"
+
+
+if META_MODE:
+
+    # Re-deposited (pseudo-replicated) study detection. Depends on the meta result so the
+    # per_study_*.csv DE tables already exist when the DE-correlation check runs.
+    rule duplicate_study_check:
+        input:
+            samples=config["input"]["samples"],
+            prev="checks/17_meta_analysis_qc.json",
+        output:
+            "checks/20_duplicate_study_qc.json",
+        params:
+            meta_dir="results/meta",
+        benchmark:
+            "benchmarks/20_duplicate_study_qc.tsv"
+        shell:
+            "python workflow/scripts/check_duplicate_studies.py --samples {input.samples} "
+            "--meta-dir {params.meta_dir} --out {output}"
+
+    if not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE):
+
+        # Per-study strandedness divergence from the featureCounts summary. Depends on the summary
+        # (produced by featureCounts) and the meta result (ordering handle late in the sequence).
+        rule strandedness_check:
+            input:
+                # COUNTS_SUMMARY is the featureCounts .summary (counts.txt.summary, or
+                # counts.raw.txt.summary when organellar filtering renames the counts file).
+                summary=COUNTS_SUMMARY,
+                samples=config["input"]["samples"],
+                prev="checks/17_meta_analysis_qc.json",
+            output:
+                "checks/21_strandedness_qc.json",
+            benchmark:
+                "benchmarks/21_strandedness_qc.tsv"
+            shell:
+                "python workflow/scripts/check_strandedness.py --summary {input.summary} "
+                "--samples {input.samples} --out {output}"
 
 
 rule aggregate_sanity_checks:

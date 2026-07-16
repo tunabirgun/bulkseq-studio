@@ -54,6 +54,7 @@ if _GOI:
         input:
             rds="results/deseq2/deseq2_objects.rds",
             genes=_GOI,
+            de_results="results/deseq2/deseq2_results.csv",
         output:
             heatmap_png="results/figures/goi_heatmap.png",
             heatmap_svg="results/figures/goi_heatmap.svg",
@@ -61,6 +62,9 @@ if _GOI:
             expr_svg="results/figures/goi_expression.svg",
             csv="results/genes_of_interest/goi_normalized_counts.csv",
             report="results/genes_of_interest/goi_report.txt",
+            de_slice="results/genes_of_interest/goi_deseq2_results.csv",
+            log2fc_png="results/figures/goi_log2fc.png",
+            log2fc_svg="results/figures/goi_log2fc.svg",
         params:
             style=config.get("figures_style", {}),
         benchmark:
@@ -74,12 +78,13 @@ if _GOI:
 # Enrichment-term heatmap: reuses make_goi.R on the gene list of a chosen enrichment term
 # (written by the app to config/enrichment_term.txt), producing a focused heatmap without
 # re-running the pipeline. Always defined (never in `rule all`); reached only via
-# --allowed-rules from the app's "term" mode. All six make_goi.R outputs are provided so the
+# --allowed-rules from the app's "term" mode. All nine make_goi.R outputs are provided so the
 # script never KeyErrors; outputs land in results/figures/ so the existing gallery shows them.
 rule enrichment_term_heatmap:
     input:
         rds="results/deseq2/deseq2_objects.rds",
         genes="config/enrichment_term.txt",
+        de_results="results/deseq2/deseq2_results.csv",
     output:
         heatmap_png="results/figures/term_heatmap.png",
         heatmap_svg="results/figures/term_heatmap.svg",
@@ -87,6 +92,9 @@ rule enrichment_term_heatmap:
         expr_svg="results/figures/term_expression.svg",
         csv="results/enrichment/terms/term_normalized_counts.csv",
         report="results/enrichment/terms/term_report.txt",
+        de_slice="results/enrichment/terms/term_deseq2_results.csv",
+        log2fc_png="results/figures/term_log2fc.png",
+        log2fc_svg="results/figures/term_log2fc.svg",
     params:
         style=config.get("figures_style", {}),
     benchmark:

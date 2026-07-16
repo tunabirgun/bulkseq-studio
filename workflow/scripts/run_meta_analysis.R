@@ -38,8 +38,10 @@ combine_meta <- function(per_study, nrep, alpha = 0.05) {
   if (k < 2) stop("meta-analysis needs at least 2 admissible studies")
   empty_result <- function() data.frame(
     gene_id = character(0), combined_pvalue = numeric(0), combined_padj = numeric(0),
-    common_direction = character(0), n_studies_sig = integer(0), rem_log2FC = numeric(0),
-    rem_ci_lo = numeric(0), rem_ci_hi = numeric(0), rem_pvalue = numeric(0), tau2 = numeric(0),
+    combined_z = numeric(0), combined_z_offscale = logical(0),
+    common_direction = character(0), n_studies_sig = integer(0),
+    rem_log2FC = numeric(0), rem_ci_lo = numeric(0), rem_ci_hi = numeric(0),
+    rem_pvalue = numeric(0), tau2 = numeric(0),
     I2 = numeric(0), QEp = numeric(0), meta_sig = logical(0), stringsAsFactors = FALSE)
   common <- Reduce(intersect, lapply(per_study, rownames))
   # No shared gene ids -> almost always a gene-id namespace / organism mismatch; return an empty
@@ -82,10 +84,25 @@ combine_meta <- function(per_study, nrep, alpha = 0.05) {
   if (!is.matrix(rem)) rem <- matrix(rem, ncol = 7L, dimnames = list(NULL, rc))
   if (k < 3) rem[, c("tau2", "I2", "QEp")] <- NA_real_   # heterogeneity not estimable at k=2
 
+  # Combined inverse-normal Z (metaRNASeq statistic): always finite, so the meta-volcano can plot a
+  # rankable y-axis for genes whose combined FDR underflows to exact 0 (fit-all-elements mode).
+  cz <- tryCatch(as.numeric(fc$TestStatistic), error = function(e) rep(NA_real_, length(common)))
+  if (length(cz) != length(common)) cz <- rep(NA_real_, length(common))
+  # metaRNASeq's qnorm(1 - p) is +/-Inf when any study's p underflows to ~0 (DESeq2 emits exact-0 p
+  # for strong genes). Left as Inf, ggplot silently DROPS those rows from the z-axis meta-volcano --
+  # the strongest meta-DEGs. Cap to a finite ceiling just past the largest finite |z| and flag them,
+  # so the figure renders them as off-scale triangles instead of losing them.
+  cz_off <- !is.finite(cz)
+  if (any(cz_off)) {
+    ceil <- if (any(is.finite(cz))) max(abs(cz[is.finite(cz)])) * 1.1 else 100
+    cz[cz_off] <- sign(as.numeric(fc$TestStatistic))[cz_off] * ceil
+  }
   out <- data.frame(
     gene_id          = common,
     combined_pvalue  = fc$rawpval,
     combined_padj    = fc$adjpval,
+    combined_z       = cz,
+    combined_z_offscale = cz_off,
     common_direction = ifelse(commonsgn > 0, "up", ifelse(commonsgn < 0, "down", "discordant")),
     n_studies_sig    = as.integer(rowSums(!is.na(padjmat) & padjmat < alpha)),
     rem_log2FC = rem[, "beta"], rem_ci_lo = rem[, "ci.lb"], rem_ci_hi = rem[, "ci.ub"],
@@ -112,7 +129,7 @@ per_study_deseq <- function(cts, samples, dataset_col, contrast_factor, num, den
   samples[[dataset_col]] <- trimws(as.character(samples[[dataset_col]]))  # match the Python gates
   studies <- unique(samples[[dataset_col]])
   studies <- studies[nzchar(studies)]
-  per_study <- list(); nrep <- integer(); excluded <- character()
+  per_study <- list(); nrep <- integer(); excluded <- character(); vsd_list <- list()
   for (ds in studies) {
     ss <- samples[as.character(samples[[dataset_col]]) == ds, , drop = FALSE]
     ss <- ss[as.character(ss[[contrast_factor]]) %in% c(num, den), , drop = FALSE]
@@ -131,8 +148,13 @@ per_study_deseq <- function(cts, samples, dataset_col, contrast_factor, num, den
     r <- results(dds, contrast = c(contrast_factor, num, den), independentFiltering = FALSE)
     per_study[[ds]] <- as.data.frame(r)[, c("baseMean", "log2FoldChange", "lfcSE", "pvalue", "padj")]
     nrep[ds] <- nrow(ss)
+    # Persist a variance-stabilised transform (post-HTSFilter, matches the study's gene set) so the
+    # per-study PCA + expression heatmaps reuse it without recomputing. vst needs ncol > 1; small
+    # subsets can fail, so fall back to rlog, then NULL (that study's PCA/heatmap degrade gracefully).
+    vsd_list[[ds]] <- tryCatch(DESeq2::vst(dds, blind = FALSE),
+      error = function(e) tryCatch(DESeq2::rlog(dds, blind = FALSE), error = function(e2) NULL))
   }
-  list(per_study = per_study, nrep = nrep, excluded = excluded)
+  list(per_study = per_study, nrep = nrep, excluded = excluded, vsd = vsd_list)
 }
 
 
@@ -154,9 +176,16 @@ if (exists("snakemake")) {
 
   fanout <- per_study_deseq(cts, samples, ds_col, con_factor, num, den)
   # write per-study tables + the excluded report
+  meta_dir <- dirname(snakemake@output[["results"]])
+  # Clear stale per-study side-effect files first: these are undeclared outputs, so Snakemake never
+  # removes them. Without this, dropping/renaming a study leaves its old per_study_<S>.csv / _vsd.rds
+  # on disk, and the on-disk-discovery meta_per_study + per-study-enrichment steps would resurrect it.
+  unlink(list.files(meta_dir, pattern = "^per_study_.*\\.(csv|rds)$", full.names = TRUE))
   for (s in names(fanout$per_study)) {
     d <- fanout$per_study[[s]]; d$gene_id <- rownames(d)
-    write.csv(d, file.path(dirname(snakemake@output[["results"]]), paste0("per_study_", s, ".csv")), row.names = FALSE)
+    write.csv(d, file.path(meta_dir, paste0("per_study_", s, ".csv")), row.names = FALSE)
+    # Save the per-study vsd so the per-study figure rule builds PCA/heatmaps without recompute.
+    if (!is.null(fanout$vsd[[s]])) saveRDS(fanout$vsd[[s]], file.path(meta_dir, paste0("per_study_vsd_", s, ".rds")))
   }
   writeLines(if (length(fanout$excluded)) paste(names(fanout$excluded), fanout$excluded)
              else "All studies admissible.",

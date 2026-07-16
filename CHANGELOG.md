@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.23.0 — 2026-07-16
+
+### Added
+
+- **A per-study breakdown for every meta-analysis.** A multi-study run now writes a complete single-study report for each study it combines, under `results/meta/per_study/<STUDY>/`: a volcano, MA plot, p-value histogram, PCA, and top-DEG heatmap (PNG and SVG), the `de_results`/`upregulated`/`downregulated`/`summary` tables, and a self-contained `index.html` linking them. A top-level `manifest.json` lists every study with its tested/up/down counts, and the cross-study report links out to each study's page. Because each study is drawn on its own, a re-deposited or duplicated dataset is obvious — its volcano, PCA, and heatmap visibly match another study's instead of showing independent biology. The per-study PCA and heatmap reuse a variance-stabilised transform saved during the per-study DESeq2 fan-out, so no counts are recomputed.
+- **Optional per-study functional enrichment.** A new **Per-study enrichment** switch (Workflow Settings, off by default) runs GO over-representation on each study's up- and down-regulated gene lists over that study's own tested-gene universe, writing per-study `go_ora_up`/`go_ora_down` tables and a dotplot plus an `enrichment_manifest.json`. It is opt-in because it repeats a clusterProfiler run once per study; the pooled cross-study enrichment still runs regardless.
+- **GO over-representation split by ontology.** The enrichment step now writes separate Biological Process, Molecular Function, and Cellular Component tables and a dotplot for each, so the three GO namespaces are read apart rather than pooled into one plot. On organisms without a Bioconductor annotation package (the g:Profiler route) each category degrades to a labelled placeholder instead of a misleading empty plot.
+- **A fold-change forest and a statistics table for genes of interest.** Supplying a gene list now also produces `goi_deseq2_results.csv` — the full DESeq2 statistics (fold change, p-value, adjusted p-value, base mean) sliced to just those genes — and `goi_log2fc`, a per-gene log2 fold-change plot with 95% confidence intervals coloured by direction. Both are built from the finished run, and both work in the uploaded-DESeq2-results mode where no count matrix exists.
+- **Three new pre-run sanity checks.** A **contrast-orientation** check flags an inverted case-versus-control contrast where a positive log2 fold change would mean up in the control group. A **re-deposited-study** check (meta runs) flags two studies whose per-sample library sizes match exactly or whose per-study fold-change vectors correlate above 0.999 — pseudo-replication that inflates meta significance. A **per-study strandedness** check flags a study whose featureCounts assignment rate diverges from the others, which a single global strandedness setting cannot fit.
+- **Two optional meta-volcano y-axes.** The combined FDR from the inverse-normal method underflows to exact zero for the strongest genes, which the default axis shows as off-scale triangles at a finite cap. Two opt-in styles are now available: **fit all elements**, which expands the axis to the largest finite value instead of clipping, and **inverse-normal Z**, which plots the always-finite combined Z statistic so no gene is off-scale. Both default off; the default axis is unchanged.
+- **Direction filter and multi-select in the PPI network viewer.** A **Show** control restricts the network to up- or down-regulated proteins (by fold-change sign), and Ctrl/Cmd-click adds a protein and its interactors to the current selection so a gene can be dragged together with its neighbours.
+
+### Changed
+
+- **Figure-style and PPI settings now apply on a normal Run.** Edits made in the Figure Style panel — including the STRING score threshold and hub-label count — were previously honoured only by Save or Regenerate figures; a plain Run dropped them. They are now persisted at the start of every run.
+- **The contrast dropdowns follow the configured factor.** The numerator/denominator/reference menus now read the levels of whatever contrast factor the design uses, instead of a hardcoded `condition` column, so a custom factor populates them correctly.
+- **Interface polish.** New tooltips throughout the project, input, workflow, resources, checks, and run tabs; the Extended-QC (RSeQC) toggle greys out under Salmon (which has no genome BAM for it to read); the launched-command box is read-only; and the microarray-source selector is disabled and explained when the project uses a locally uploaded expression matrix.
+
+### Fixed
+
+- **Stale per-study results no longer carry over between meta-analysis reruns.** The per-study tables and saved transforms are undeclared side-effect files that Snakemake never cleans up, so dropping or renaming a study left its old outputs on disk, and the on-disk study discovery would resurrect the removed study. The meta step now clears the previous `per_study_*` files before rewriting.
+- **Per-ontology GO figures no longer show misleading placeholders on a g:Profiler run.** The GO dotplots now switch on the enrichment backend, so a run without a Bioconductor annotation package reads "not run for this organism" rather than the misleading "nothing passed the threshold".
+
+## 0.22.0 — 2026-07-11
+
+### Added
+
+- **A volcano-plot y-axis scale.** A marginal gene with an extremely small p-value used to sit at the very top of the volcano regardless of the others; the new scale option (cap / full / square-root) lets it show at its true height. The `cap` default reproduces the previous plot exactly.
+- **Resume an interrupted run after closing the app.** Reopening a project whose run was stopped or interrupted now shows a Run Monitor banner that unlocks and continues from where it left off, reusing the completed steps instead of restarting.
+- **Sample-label declutter on the heatmaps.** The "Show per-sample labels" toggle now also hides the sample columns on the differential-expression, up/down, genes-of-interest, and GSVA heatmaps, so a many-sample run is readable.
+
+### Fixed
+
+- **A comprehensive audit closed sixteen issues** (one blocker, five major, ten minor). Enrichment-figure draw errors now degrade to a placeholder instead of aborting the rule (a two-term emap plot could crash on a zero-dimension viewport). The results report now waits for the figures step, so it no longer embeds a stale or blank figure on Regenerate or on a fresh multi-core run. Reference validation reads gzipped FASTA/GTF instead of failing them; a local-microarray upload's source is no longer overwritten; the resume banner no longer strands on a blocked approval gate; a GSVA pathway with zero variance no longer crashes clustering; the custom-enrichment figures inherit the project palette and font; and the run's saved-settings diff now covers every configuration key. `WORKFLOW_VERSION` is bumped so existing projects re-sync the fixed scripts.
+
 ## 0.21.1 — 2026-07-11
 
 ### Fixed

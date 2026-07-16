@@ -475,7 +475,7 @@ def _enrichment_section(project: Path) -> str:
     enr = project / "results" / "enrichment"
     if not enr.exists():
         return ""
-    blocks = ""
+    figs = project / "results" / "figures"
     # A non-model organism without a Bioconductor OrgDb skips GO/disease enrichment but still writes
     # empty go_ora_*.csv; enrichment_summary.txt records the skip. Key the GO wording on it so an empty
     # GO block reads "not run for this organism" instead of the misleading "nothing passed the threshold"
@@ -486,6 +486,23 @@ def _enrichment_section(project: Path) -> str:
         s in summary_txt for s in ("orgdb", "annotation database", "no bioconductor", "no orgdb"))
     go_msg = ("GO enrichment was not run for this organism — no annotation database is available."
               if go_skipped else "No terms passed the significance threshold.")
+    # The per-ontology GO dotplot trio (BP/MF/CC) is meaningful only on the OrgDb/clusterProfiler
+    # route. On the g:Profiler route only GO:BP is queried and it is already shown as the main
+    # enrichment dotplot (the MF/CC tiles are "not queried" placeholders); on a no-OrgDb route the
+    # whole trio is empty. Suppress it in both cases so the report never shows redundant or
+    # placeholder GO panels next to the real dotplot.
+    is_gprofiler = any(s in summary_txt for s in ("gost", "g:profiler", "gprofiler"))
+    if is_gprofiler or go_skipped:
+        go_trio = ""
+    else:
+        # Each _fig() returns "" when its figure is absent, so the row degrades gracefully to
+        # whichever categories were rendered.
+        go_trio = "".join(f for f in (
+            _fig(figs, "enrichment_go_BP_dotplot", "GO Biological Process — over-representation"),
+            _fig(figs, "enrichment_go_MF_dotplot", "GO Molecular Function — over-representation"),
+            _fig(figs, "enrichment_go_CC_dotplot", "GO Cellular Component — over-representation"),
+        ) if f)
+    blocks = (f"<div class='panels'>{go_trio}</div>") if go_trio else ""
     # GO over-representation: combined when present, else the up / down splits.
     if _enrich_rows(enr / "go_ora_all.csv", 1):
         blocks += _enrich_block("GO terms — over-representation", enr / "go_ora_all.csv", "ora")
@@ -1271,6 +1288,28 @@ def _de_section(project: Path, up: int, down: int, num, den, unit: str) -> str:
             f'{plain}{legend}{split}{howto}</section>')
 
 
+def _goi_section(project: Path) -> str:
+    # Custom gene-of-interest list (config/gene_sets.custom_gene_list): focused heatmap,
+    # per-gene expression, log2FC bar chart, and a DESeq2 slice table. Every piece is optional
+    # (the rule only runs when a gene list is configured), so each embeds only if present and
+    # the whole section vanishes via section()'s empty-body check when nothing exists.
+    figs = project / "results" / "figures"
+    figures = "".join(f for f in (
+        _fig(figs, "goi_heatmap", "Genes of interest — focused heatmap across samples"),
+        _fig(figs, "goi_expression", "Genes of interest — per-gene expression across conditions"),
+        _fig(figs, "goi_log2fc", "Genes of interest — log2 fold change"),
+    ) if f)
+    fig_html = f"<div class='panels'>{figures}</div>" if figures else ""
+    table = _de_table(project / "results" / "genes_of_interest" / "goi_deseq2_results.csv", top=25,
+                      empty_msg="No genes-of-interest DESeq2 results available.")
+    table_html = "" if table.startswith("<p class='muted small'>No genes-of-interest") else (
+        f"<h3>Genes of interest — DESeq2 results</h3>{table}"
+        f"<p class='muted small'>Full table: "
+        f"<code>results/genes_of_interest/goi_deseq2_results.csv</code>.</p>")
+    body = fig_html + table_html
+    return body
+
+
 def _glossary_section() -> str:
     items = "".join(
         f'<div class="gterm">{html.escape(label)}</div>'
@@ -1317,6 +1356,7 @@ def build(project: Path) -> str:
     study = _study_design_section(run)
     figures = _figure_groups(figs, up, down, unit, is_micro=is_micro)
     de_html = _de_section(project, up, down, num, den, unit)
+    goi_html = section("Genes of interest", _goi_section(project), sid="goi")
     enrichment = _enrichment_section(project)
     runtime = _timing_section(timing)
     sanity_html = _sanity_section(sanity)
@@ -1341,6 +1381,7 @@ def build(project: Path) -> str:
 {study}
 {figures}
 {de_html}
+{goi_html}
 {enrichment}
 {sanity_html}
 {runtime}

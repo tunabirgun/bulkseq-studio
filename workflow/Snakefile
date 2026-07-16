@@ -410,10 +410,14 @@ def final_targets():
                     "meta_convergent_heatmap", "meta_heterogeneity", "meta_combined_p_hist",
                     "meta_integration_gain"):
             targets += [f"results/figures/{_mf}.png", f"results/figures/{_mf}.svg"]
+        # Per-study figures + tables: one declared target (the manifest); the script fans out on-disk.
+        targets.append("results/meta/per_study/manifest.json")
         if WF.get("enrichment", True):
             targets += ["results/meta/meta_enrichment_ora.csv", "checks/18_meta_enrichment_qc.json",
                         "results/figures/meta_enrichment_dotplot.png",
                         "results/figures/meta_enrichment_dotplot.svg"]
+            if WF.get("per_study_enrichment", False):
+                targets.append("results/meta/per_study/enrichment_manifest.json")
     if not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE):
         # MultiQC aggregates FastQC/fastp/STAR — irrelevant without alignment.
         targets.insert(0, "results/qc/multiqc/multiqc_report.html")
@@ -432,7 +436,10 @@ def final_targets():
         targets.append("results/enrichment/kegg_gsea.csv")
         for fig in ("enrichment_dotplot", "enrichment_gsea", "enrichment_ridgeplot",
                     "enrichment_cnetplot", "enrichment_emapplot", "enrichment_do_dotplot",
-                    "enrichment_kegg_dotplot", "enrichment_kegg_gsea"):
+                    "enrichment_kegg_dotplot", "enrichment_kegg_gsea",
+                    # GO categories: one dotplot per ontology (Biological Process /
+                    # Molecular Function / Cellular Component), selectable in the gallery.
+                    "enrichment_go_BP_dotplot", "enrichment_go_MF_dotplot", "enrichment_go_CC_dotplot"):
             targets.append(f"results/figures/{fig}.png")
             targets.append(f"results/figures/{fig}.svg")
         for net in ("enrichment_emap", "enrichment_genemap"):
@@ -455,6 +462,9 @@ def final_targets():
     if config.get("gene_sets", {}).get("custom_gene_list") and not DE_RESULTS_MODE:
         targets.append("results/figures/goi_heatmap.png")
         targets.append("results/figures/goi_expression.png")
+        targets.append("results/figures/goi_log2fc.png")
+        targets.append("results/figures/goi_log2fc.svg")
+        targets.append("results/genes_of_interest/goi_deseq2_results.csv")
         targets.append("results/genes_of_interest/goi_report.txt")
     if config.get("ppi", {}).get("enabled", True):
         for ext in ("graphml", "sif", "cyjs"):

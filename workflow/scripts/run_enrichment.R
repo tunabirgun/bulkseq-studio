@@ -61,7 +61,10 @@ strip_version <- function(id) {
 }
 
 # Always create the output files first so the rule succeeds even on failure.
-for (k in c("go", "go_up", "go_down", "gsea", "kegg", "kegg_gsea")) writeLines("", out[[k]])
+# go_bp/go_mf/go_cc are the uniform per-ontology ORA trio (in addition to the untouched
+# go_ora_all.csv); they must exist on every route, incl. the no-route early quit below.
+for (k in c("go", "go_up", "go_down", "gsea", "kegg", "kegg_gsea",
+            "go_bp", "go_mf", "go_cc")) writeLines("", out[[k]])
 # id bridge (gene_id, base_id, symbol, entrez) so the app can resolve an enrichment term's
 # genes (entrez on the KEGG-OrgDb / GSEA routes) back to symbols/ids without re-deriving them.
 # Written with a header up front; the OrgDb branch fills it in, other branches leave entrez blank.
@@ -208,13 +211,13 @@ if (orgdb_ok) {
       base <- strip_version(df$gene_id)
       unique(res$ENTREZID[match(base, res$base_id)])
     }
-    run_ora <- function(genes, path) {
+    run_ora <- function(genes, path, ont = "BP") {
       genes <- genes[!is.na(genes)]
       if (length(genes) < 1) return(NULL)
       # pvalueCutoff follows the user's deseq2.alpha (default 0.05); qvalueCutoff is
       # left at clusterProfiler's enrichGO default (0.20), independent of alpha.
       ego <- tryCatch(enrichGO(gene = genes, universe = universe, OrgDb = orgdb,
-                      keyType = "ENTREZID", ont = "BP", pAdjustMethod = "BH",
+                      keyType = "ENTREZID", ont = ont, pAdjustMethod = "BH",
                       pvalueCutoff = alpha, qvalueCutoff = 0.20,
                       minGSSize = 10, maxGSSize = 500, readable = TRUE),
                       error = function(e) NULL)
@@ -222,6 +225,13 @@ if (orgdb_ok) {
         write.csv(as.data.frame(ego), path, row.names = FALSE)
       }
       ego  # return the enrichResult (or NULL) so it can be persisted for figures
+    }
+    # Write a per-ontology ORA CSV (header-only when the enrichResult is a valid 0-row
+    # object; the pre-created empty file stays when ego is NULL). Never throws.
+    write_ont_csv <- function(ego, path) {
+      if (is.null(ego)) return(invisible())
+      tryCatch(write.csv(as.data.frame(ego), path, row.names = FALSE),
+               error = function(e) NULL)
     }
 
     up_e <- to_entrez(up_file)
@@ -231,6 +241,15 @@ if (orgdb_ok) {
     ego_up <- run_ora(up_e, out[["go_up"]])
     ego_down <- run_ora(down_e, out[["go_down"]])
     n_all <- nrows(ego_all); n_up <- nrows(ego_up); n_down <- nrows(ego_down)
+
+    # Per-ontology GO ORA trio on the combined significant set: BP (reuses ego_all),
+    # plus MF and CC. Written to the uniform go_ora_<ONT>.csv paths, leaving the
+    # existing go_ora_all.csv (from run_ora above) untouched.
+    ego_mf <- run_ora(all_sig, out[["go_mf"]], ont = "MF")
+    ego_cc <- run_ora(all_sig, out[["go_cc"]], ont = "CC")
+    write_ont_csv(ego_all, out[["go_bp"]])
+    write_ont_csv(ego_mf, out[["go_mf"]])
+    write_ont_csv(ego_cc, out[["go_cc"]])
 
     gene_list <- res$log2FoldChange
     names(gene_list) <- res$ENTREZID
@@ -265,6 +284,7 @@ if (orgdb_ok) {
     # enrichment_figures rule can render dotplot/GSEA/network plots without re-running.
     # backend/gprofiler_table let the figures rule switch on obj$backend uniformly.
     saveRDS(list(ego_all = ego_all, ego_up = ego_up, ego_down = ego_down,
+                 ego_mf = ego_mf, ego_cc = ego_cc,
                  gse = gse, ego_do = ego_do,
                  ekegg_all = kegg$ekegg_all, kegg_gse = kegg$kegg_gse,
                  geneList = gene_list, orgdb = orgdb_name,

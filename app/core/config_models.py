@@ -116,6 +116,9 @@ class WorkflowConfig(BaseModel):
     # design the user set is respected as-is. Ignored for single-study, microarray, and results-upload
     # runs. Only combines studies that contain BOTH contrast arms (others are dropped + reported).
     meta_analysis: bool = False
+    # Per-study figures + tables in a meta run always emit; per-study ENRICHMENT is opt-in (heavy:
+    # clusterProfiler x N studies). Ignored outside a multi-study meta run.
+    per_study_enrichment: bool = False
     # Mitochondrial + chloroplast/plastid genes: keep them, discard them before DE, or
     # separate them into their own count subset (and run the main DE on nuclear genes only).
     organellar_genes: Literal["keep", "discard", "separate"] = "keep"

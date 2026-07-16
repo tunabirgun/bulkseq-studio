@@ -80,27 +80,58 @@ sig <- if (has_rows) res[res$meta_sig %in% TRUE, , drop = FALSE] else res[0, , d
 
 # ============================ FIGURES =========================================
 # 1. Meta-volcano: pooled effect vs combined significance, coloured by concordance.
+# Opt-in style keys (both default FALSE; unset/FALSE reproduces the original behavior exactly):
+#   meta_volcano_fit    : #4 fit-all-elements -- expand y to the finite max instead of a fixed cap
+#   meta_volcano_z_axis : #5 plot y = |combined_z| (always finite -> no cap/triangles needed) when
+#                         the combined_z column exists and isn't all-NA; else falls back to -log10(FDR)
+fit_all <- isTRUE(as.logical(getp("meta_volcano_fit", FALSE)))
+z_axis <- isTRUE(as.logical(getp("meta_volcano_z_axis", FALSE))) &&
+  "combined_z" %in% colnames(res) && any(is.finite(res$combined_z))
 emit(out[["volcano_png"]], out[["volcano_svg"]], {
   if (!has_rows) stop("no meta result")
   d <- res; d$neglog <- -log10(pmax(d$combined_padj, .Machine$double.xmin))
   d$dir <- factor(d$common_direction, levels = names(DIR_COL))
   d$x <- ifelse(is.na(d$rem_log2FC), 0, d$rem_log2FC)
-  # metaRNASeq combined FDR hits exact 0 for strong genes -> -log10 saturates at ~308 and squashes
-  # the informative band. Cap the y-axis just above the largest FINITE (padj>0) value and mark the
-  # off-scale genes with a triangle, so the real 0..cap region fills the plot (EnhancedVolcano-style).
-  fin <- d$neglog[d$combined_padj > 0 & is.finite(d$neglog)]
-  cap <- if (length(fin)) max(fin) * 1.1 else -log10(alpha) * 3
-  cap <- max(cap, -log10(alpha) * 2)
-  d$capped <- d$neglog > cap; d$yy <- pmin(d$neglog, cap)
-  # Label meta-DEGs: break padj ties by |effect| so labels spread across x, not stacked at the cap.
-  lab <- sig; lab <- lab[order(lab$combined_padj, -abs(lab$rem_log2FC)), , drop = FALSE]
-  lab <- head(lab, as.integer(getp("meta_label_top", 10)))
-  lab$yy <- pmin(-log10(pmax(lab$combined_padj, .Machine$double.xmin)), cap)
-  lab$x <- ifelse(is.na(lab$rem_log2FC), 0, lab$rem_log2FC); lab$sym <- gsym(lab$gene_id, id_map)
-  ncap <- sum(d$capped, na.rm = TRUE)
+  if (z_axis) {
+    # Stouffer/inverse-normal Z is always finite -- no exact-0 underflow, so no cap/triangles needed.
+    d$yq <- abs(d$combined_z)
+    d$capped <- FALSE; d$yy <- d$yq
+    lab <- sig; lab <- lab[order(lab$combined_padj, -abs(lab$rem_log2FC)), , drop = FALSE]
+    lab <- head(lab, as.integer(getp("meta_label_top", 10)))
+    lab$yy <- abs(lab$combined_z)
+    lab$x <- ifelse(is.na(lab$rem_log2FC), 0, lab$rem_log2FC); lab$sym <- gsym(lab$gene_id, id_map)
+    ncap <- 0L
+    ylab <- "|combined Z| (inverse-normal)"
+    hline <- NULL  # no fixed significance line on the Z scale (alpha threshold is FDR-space, not Z-space)
+    ysub <- "Stouffer/inverse-normal combined Z (always finite; no off-scale genes)"
+  } else {
+    # metaRNASeq combined FDR hits exact 0 for strong genes -> -log10 saturates at ~308 and squashes
+    # the informative band. Cap the y-axis just above the largest FINITE (padj>0) value and mark the
+    # off-scale genes with a triangle, so the real 0..cap region fills the plot (EnhancedVolcano-style).
+    fin <- d$neglog[d$combined_padj > 0 & is.finite(d$neglog)]
+    cap <- if (length(fin)) max(fin) * 1.1 else -log10(alpha) * 3
+    cap <- max(cap, -log10(alpha) * 2)
+    if (fit_all) {
+      # #4 fit-all-elements: don't clip finite points to a cap -- still floor padj==0 (which is
+      # non-finite on -log10) at the finite ceiling so those genes stay plottable as triangles.
+      d$capped <- d$combined_padj <= 0 | !is.finite(d$neglog); d$yy <- ifelse(d$capped, cap, d$neglog)
+    } else {
+      d$capped <- d$neglog > cap; d$yy <- pmin(d$neglog, cap)
+    }
+    # Label meta-DEGs: break padj ties by |effect| so labels spread across x, not stacked at the cap.
+    lab <- sig; lab <- lab[order(lab$combined_padj, -abs(lab$rem_log2FC)), , drop = FALSE]
+    lab <- head(lab, as.integer(getp("meta_label_top", 10)))
+    lab_neglog <- -log10(pmax(lab$combined_padj, .Machine$double.xmin))
+    lab$yy <- if (fit_all) ifelse(lab$combined_padj <= 0, cap, lab_neglog) else pmin(lab_neglog, cap)
+    lab$x <- ifelse(is.na(lab$rem_log2FC), 0, lab$rem_log2FC); lab$sym <- gsym(lab$gene_id, id_map)
+    ncap <- sum(d$capped, na.rm = TRUE)
+    ylab <- "-log10 combined FDR"
+    hline <- geom_hline(yintercept = -log10(alpha), linetype = 2, colour = "grey40")
+    ysub <- if (ncap > 0) sprintf("%d genes off-scale (combined FDR near 0), shown as triangles at the cap", ncap) else NULL
+  }
   ggplot(d, aes(x, yy, colour = dir)) +
     geom_point(aes(shape = capped), alpha = 0.6, size = 1.5) +
-    geom_hline(yintercept = -log10(alpha), linetype = 2, colour = "grey40") +
+    hline +
     geom_vline(xintercept = c(-lfc_thr, lfc_thr), linetype = 2, colour = "grey40") +
     (if (nrow(lab)) geom_text_repel(data = lab, aes(x, yy, label = sym), inherit.aes = FALSE,
         size = 2.8, fontface = if (italic_genes) 3 else 1, max.overlaps = 20, min.segment.length = 0,
@@ -108,8 +139,7 @@ emit(out[["volcano_png"]], out[["volcano_svg"]], {
     scale_colour_manual(values = DIR_COL, drop = FALSE, name = "cross-study\ndirection") +
     scale_shape_manual(values = c(`FALSE` = 16, `TRUE` = 17), guide = "none") +
     scale_y_continuous(expand = expansion(mult = c(0.02, 0.20))) +
-    labs(x = "pooled log2 fold change (random/fixed-effect)", y = "-log10 combined FDR",
-         subtitle = if (ncap > 0) sprintf("%d genes off-scale (combined FDR near 0), shown as triangles at the cap", ncap) else NULL) +
+    labs(x = "pooled log2 fold change (random/fixed-effect)", y = ylab, subtitle = ysub) +
     style_theme()
 }, "Meta-volcano unavailable\n(no shared genes / meta not run)")
 
@@ -189,7 +219,10 @@ emit(out[["heatmap_png"]], out[["heatmap_svg"]], {
   top <- top[order(top$rem_log2FC), , drop = FALSE]
   mat <- as.matrix(top[, study_cols, drop = FALSE]); rownames(mat) <- make.unique(gsym(top$gene_id, id_map))
   colnames(mat) <- studies
-  lim <- as.numeric(quantile(abs(mat[is.finite(mat)]), 0.98, na.rm = TRUE)); if (!is.finite(lim) || lim <= 0) lim <- 1
+  # #4 fit-all-elements: use the true max (no squish) instead of the 98th-percentile winsorized cap.
+  lim <- if (fit_all) as.numeric(max(abs(mat[is.finite(mat)]), na.rm = TRUE)) else
+    as.numeric(quantile(abs(mat[is.finite(mat)]), 0.98, na.rm = TRUE))
+  if (!is.finite(lim) || lim <= 0) lim <- 1
   long <- data.frame(gene = factor(rep(rownames(mat), ncol(mat)), levels = rownames(mat)),
                      study = factor(rep(colnames(mat), each = nrow(mat)), levels = colnames(mat)),
                      lfc = as.vector(mat))

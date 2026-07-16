@@ -14,6 +14,7 @@ const state = {
   geneItalic: true,           // gene symbols in italic (HGNC convention)
   focusLabels: true,          // on node click, show only the clicked node + neighbours' labels
   selectionActive: false,     // a node is currently selected (drives focusLabels)
+  dirFilter: "all",           // direction view: all | up | down (by log2FoldChange sign)
   layout: "fcose",            // current layout name (kept in sync with the Qt combo)
   floor: 0,                   // confidence (edge weight) floor
   theme: { bg: "#ffffff", text: "#1a1a1a", edge: "#c7c7c7", muted: "#8a8a8a" },
@@ -95,6 +96,8 @@ function styleArrayFor(theme) {
     { selector: "node.faded", style: { "opacity": 0.12 } },
     { selector: "edge.faded", style: { "opacity": 0.05 } },
     { selector: "node.hl", style: { "border-width": 3, "border-color": "#1a73e8" } },
+    { selector: ".dirhidden", style: { "display": "none" } },
+    { selector: "node:selected", style: { "border-width": 4, "border-color": "#e8710a" } },
   ];
 }
 function styleArray() { return styleArrayFor(state.theme); }
@@ -141,6 +144,44 @@ function relayout(name) {
   lay.run();
 }
 
+// Direction view: hide nodes whose log2FC sign does not match the mode (up>0, down<0);
+// missing/NaN are hidden in up/down, shown in all. Node visibility uses the .dirhidden
+// class; edge visibility is delegated to applyEdgeVisibility so the direction and
+// confidence filters share ONE mechanism. A class rule cannot override the inline
+// display bypass the confidence slider writes, which previously left edges dangling to
+// hidden nodes once the slider had been touched. Positions are preserved (no relayout).
+function applyDirFilter() {
+  if (!cy) return;
+  var mode = state.dirFilter;
+  cy.batch(function () {
+    if (mode === "all") {
+      cy.nodes().removeClass("dirhidden");
+    } else {
+      cy.nodes().forEach(function (n) {
+        var v = n.data("log2FoldChange");
+        var vis = (v !== null && v !== undefined && !isNaN(v)) &&
+                  (mode === "up" ? v > 0 : v < 0);
+        if (vis) n.removeClass("dirhidden"); else n.addClass("dirhidden");
+      });
+    }
+    applyEdgeVisibility();
+  });
+}
+
+// Single source of truth for edge display: an edge shows iff its weight clears the
+// confidence floor AND (in a direction view) neither endpoint is direction-hidden.
+// Uses an inline display bypass so it composes with the confidence slider instead of
+// racing a class rule against it.
+function applyEdgeVisibility() {
+  if (!cy) return;
+  var floor = state.floor, dir = state.dirFilter !== "all";
+  cy.edges().forEach(function (e) {
+    var okConf = (e.data("weight") || 0) >= floor;
+    var okDir = !dir || (!e.source().hasClass("dirhidden") && !e.target().hasClass("dirhidden"));
+    e.style("display", (okConf && okDir) ? "element" : "none");
+  });
+}
+
 const tip = function () { return document.getElementById("tip"); };
 function fmt(v, dp) {
   if (v === null || v === undefined || isNaN(v)) return "n/a";
@@ -170,7 +211,16 @@ function bindInteractions() {
   cy.on("mousemove", "node", moveTip);
   cy.on("mouseout", "node", hideTip);
   cy.on("tap", "node", function (evt) {
-    const n = evt.target, nb = n.closedNeighborhood();
+    const n = evt.target;
+    // Ctrl/Meta+click ADDS the node and its direct neighbours to the current
+    // selection (no clearing), so a gene can be dragged together with its
+    // interactors. Plain click keeps the existing focus/fade behaviour.
+    const oe = evt.originalEvent;
+    if (oe && (oe.ctrlKey || oe.metaKey)) {
+      n.closedNeighborhood().nodes().select();
+      return;
+    }
+    const nb = n.closedNeighborhood();
     cy.elements().addClass("faded"); nb.removeClass("faded"); n.addClass("hl");
     // Re-evaluate labels so focus mode can hide the background node names.
     state.selectionActive = true;
@@ -179,6 +229,7 @@ function bindInteractions() {
   cy.on("tap", function (evt) {
     if (evt.target === cy) {
       cy.elements().removeClass("faded"); cy.nodes().removeClass("hl");
+      cy.elements().unselect();
       state.selectionActive = false;
       if (state.focusLabels) cy.style(styleArray());
     }
@@ -204,9 +255,11 @@ window.PPI = {
       container: document.getElementById("cy"),
       elements: elements, style: styleArray(),
       wheelSensitivity: 0.2, layout: { name: "preset" },
+      selectionType: "additive", boxSelectionEnabled: true,
     });
     bindInteractions();
     relayout(state.layout);
+    applyDirFilter();  // survive a reload: re-apply the current direction view
     return JSON.stringify({ nodes: cy.nodes().length, edges: cy.edges().length });
   },
   setLayout: function (name) { relayout(name); },
@@ -215,9 +268,13 @@ window.PPI = {
   setLabels: function (on) { state.labels = !!on; if (cy) cy.style(styleArray()); },
   setGeneItalic: function (on) { state.geneItalic = !!on; if (cy) cy.style(styleArray()); },
   setFocusLabels: function (on) { state.focusLabels = !!on; if (cy) cy.style(styleArray()); },
+  setDirectionFilter: function (mode) {
+    state.dirFilter = (mode === "up" || mode === "down") ? mode : "all";
+    applyDirFilter();
+  },
   setConfidence: function (floor) {
     state.floor = floor; if (!cy) return;
-    cy.edges().forEach(function (e) { e.style("display", (e.data("weight") || 0) >= floor ? "element" : "none"); });
+    applyEdgeVisibility();  // reconcile the floor with the current direction view
   },
   setTheme: function (t) {
     if (t) state.theme = t;

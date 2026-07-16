@@ -280,5 +280,26 @@ render(have_ep && nrows(obj$kegg_gse) > 0,
        theme_gsea(gseaplot2(obj$kegg_gse, geneSetID = 1, base_size = base_size, color = gsea_col)),
        out[["kegg_gsea_png"]], out[["kegg_gsea_svg"]], no_kegg)
 
+# Per-ontology GO ORA dotplots (BP/MF/CC), backend-aware. OrgDb/clusterProfiler route: from the
+# persisted enrichResults (ego_all reused as BP, plus ego_mf/ego_cc). g:Profiler route queries only
+# GO:BP (gost sources = GO:BP), so BP is drawn from gprofiler_table exactly like the main dotplot,
+# and MF/CC carry a g:Profiler-specific message -- never the "no OrgDb" wording, which otherwise
+# falsely denied the real GO:BP terms the main dotplot shows on that route. Dotplots need the S4
+# object (or the manual gp_dotplot); they are never fed a CSV data frame.
+if (identical(backend, "gprofiler")) {
+  render(TRUE, gp_dotplot(gp_tab, "GO:BP", show_cat),
+         out[["go_bp_png"]], out[["go_bp_svg"]], "No GO:BP enrichment (g:Profiler returned no terms)")
+  placeholder("GO Molecular Function not queried on the g:Profiler route", out[["go_mf_png"]], out[["go_mf_svg"]])
+  placeholder("GO Cellular Component not queried on the g:Profiler route", out[["go_cc_png"]], out[["go_cc_svg"]])
+} else {
+  go_ont_msg <- function(lab) if (have_orgdb) sprintf("No GO %s terms passed the significance cutoff", lab) else no_go
+  render(have_ep && nrows(obj$ego_all) > 0, themed_dotplot(obj$ego_all, show_cat),
+         out[["go_bp_png"]], out[["go_bp_svg"]], go_ont_msg("Biological Process"))
+  render(have_ep && nrows(obj$ego_mf) > 0, themed_dotplot(obj$ego_mf, show_cat),
+         out[["go_mf_png"]], out[["go_mf_svg"]], go_ont_msg("Molecular Function"))
+  render(have_ep && nrows(obj$ego_cc) > 0, themed_dotplot(obj$ego_cc, show_cat),
+         out[["go_cc_png"]], out[["go_cc_svg"]], go_ont_msg("Cellular Component"))
+}
+
 sink(type = "message")
 close(log_con)
