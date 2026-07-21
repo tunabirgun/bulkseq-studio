@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -52,6 +53,12 @@ def windows_to_wsl_path(path: str | Path) -> str:
 def is_wsl_unc_path(path: str | Path) -> bool:
     """True if the path is a WSL-native UNC path (already on the Linux filesystem)."""
     return bool(_WSL_UNC.match(str(path).replace("\\", "/")))
+
+
+def wsl_unc_distro(path: str | Path) -> str | None:
+    """The distro name inside a WSL-native UNC path (\\\\wsl.localhost\\<distro>\\...), else None."""
+    m = re.match(r"^//wsl(?:\.localhost|\$)/([^/]+)", str(path).replace("\\", "/"), re.IGNORECASE)
+    return m.group(1) if m else None
 
 
 def _wsl_quiet_flags() -> int:
@@ -144,3 +151,69 @@ def wsl_recommended_workdir(subdir: str = "BulkSeqProjects") -> str | None:
     if not home:
         return None
     return "\\\\wsl.localhost\\" + distro + home.replace("/", "\\") + "\\" + subdir
+
+
+def wsl_vhdx_basepath(distro: str | None = None) -> Path | None:
+    """Windows folder that stores the distro's ext4.vhdx — the drive that physically backs WSL.
+
+    Read from the WSL registry (HKCU\\...\\Lxss\\<guid>\\BasePath), which stays correct even
+    when the vhdx was relocated off C:. Falls back to %LOCALAPPDATA% then %SystemDrive% (WSL's
+    default install location). Windows only; None elsewhere or when nothing resolves.
+    Pass `distro` explicitly (from wsl_unc_distro) to avoid the wsl.exe probe in wsl_default_distro.
+    """
+    if not sys.platform.startswith("win"):
+        return None
+    name = distro or wsl_default_distro()
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Lxss") as lxss:
+            i = 0
+            while True:
+                try:
+                    sub = winreg.EnumKey(lxss, i)
+                except OSError:
+                    break
+                i += 1
+                try:
+                    with winreg.OpenKey(lxss, sub) as key:
+                        reg_name = str(winreg.QueryValueEx(key, "DistributionName")[0])
+                        if name is not None and reg_name.lower() != name.lower():
+                            continue
+                        base = str(winreg.QueryValueEx(key, "BasePath")[0])
+                except OSError:
+                    continue
+                if base.startswith("\\\\?\\"):  # extended-length prefix
+                    base = base[4:]
+                p = Path(base)
+                if p.exists():
+                    return p
+    except OSError:
+        pass
+    for val in (os.environ.get("LOCALAPPDATA"), os.environ.get("SystemDrive")):
+        if val and Path(val).exists():
+            return Path(val)
+    return None
+
+
+def usable_disk_free_bytes(path: str | Path) -> int:
+    """Free bytes actually usable at `path`, corrected for the WSL2 vhdx over-report.
+
+    shutil.disk_usage on a WSL-native UNC path returns the ext4.vhdx *virtual* capacity
+    (default ~1 TB), not the physical free space on the Windows drive that backs it: the
+    sparse vhdx can only grow into that drive's free space. Report min(vhdx-reported-free,
+    backing-drive-free) so a low-disk warning reflects the real limit, not a phantom terabyte.
+    A plain Windows/Linux path is returned unchanged.
+    """
+    virtual_free = shutil.disk_usage(str(path)).free
+    if not is_wsl_unc_path(path):
+        return virtual_free
+    base = wsl_vhdx_basepath(wsl_unc_distro(path))
+    if base is None:
+        return virtual_free
+    try:
+        host_free = shutil.disk_usage(str(base)).free
+    except OSError:
+        return virtual_free
+    return min(virtual_free, host_free)

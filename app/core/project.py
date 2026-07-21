@@ -11,7 +11,7 @@ import yaml
 
 from app.constants import APP_VERSION, PROJECT_DIRS, SAFE_ID_PATTERN, WORKFLOW_VERSION
 from app.core.config_models import AppConfig, default_config
-from app.core.paths import data_path, is_wsl_unc_path, workflow_root
+from app.core.paths import data_path, is_wsl_unc_path, usable_disk_free_bytes, workflow_root
 
 
 _DECIMAL_COMMA_RE = re.compile(r"^-?\d+,\d+$")
@@ -69,8 +69,9 @@ def validate_working_directory(path: Path, min_free_gb: float = 5.0, use_wsl: bo
         messages.append({"status": "FAIL", "message": f"Directory is not writable: {exc}"})
         return messages
 
-    usage = shutil.disk_usage(path)
-    free_gb = usage.free / (1024**3)
+    # usable_disk_free_bytes corrects the WSL vhdx over-report (a near-empty vhdx claims
+    # its ~1 TB virtual size as free, hiding a nearly full physical drive).
+    free_gb = usable_disk_free_bytes(path) / (1024**3)
     if free_gb < min_free_gb:
         messages.append({"status": "WARNING", "message": f"Low free disk space: {free_gb:.1f} GB"})
 

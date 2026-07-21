@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.23.1 — 2026-07-21
+
+### Fixed
+
+- **Free disk space is no longer over-reported for a project on the WSL filesystem.** When the working directory sat on the WSL-native filesystem (`\\wsl.localhost\...`), the free-space readout came from the Linux disk, which is a sparse virtual disk (ext4.vhdx) whose *virtual* capacity defaults to ~1 TB. A machine with, say, 91 GB physically free could therefore be shown as having ~991 GB free, and the low-disk warning that guards against a run filling the drive never fired. The app now resolves the Windows drive that actually backs the WSL disk (from its registered `BasePath`, so a relocated vhdx is handled) and reports the smaller of the vhdx's reported free space and that drive's real free space. The resources readout also names the backing drive (e.g. "428 GB free disk on D: (backs the WSL disk)"). A plain local-drive path is unaffected.
+
 ## 0.23.0 — 2026-07-16
 
 ### Added

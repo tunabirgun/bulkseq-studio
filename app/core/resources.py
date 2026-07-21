@@ -9,6 +9,8 @@ from pathlib import Path
 
 import psutil
 
+from app.core.paths import usable_disk_free_bytes
+
 
 @dataclass
 class SystemResources:
@@ -18,6 +20,10 @@ class SystemResources:
     logical_threads: int
     total_ram_gb: float
     available_ram_gb: float
+    # Physical free space usable at disk_path. For a WSL-native path this is the drive
+    # that backs the vhdx, NOT the vhdx's ~1 TB virtual size (see usable_disk_free_bytes).
+    # There is deliberately no disk_total field: the WSL vhdx total is a phantom terabyte,
+    # so a future percentage must not divide by it.
     disk_free_gb: float
     disk_path: str
     wsl_available: bool
@@ -44,7 +50,7 @@ def detect_system(path: Path | None = None) -> SystemResources:
         logical_threads=psutil.cpu_count(logical=True) or 1,
         total_ram_gb=round(vm.total / (1024**3), 1),
         available_ram_gb=round(vm.available / (1024**3), 1),
-        disk_free_gb=round(shutil.disk_usage(disk_path).free / (1024**3), 1),
+        disk_free_gb=round(usable_disk_free_bytes(disk_path) / (1024**3), 1),
         disk_path=disk_path,
         wsl_available=_command_available(["wsl", "--status"]),
         conda_available=shutil.which("conda") is not None,

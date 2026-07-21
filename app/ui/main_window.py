@@ -67,7 +67,14 @@ from app.core.snakemake_runner import (
     snakemake_run_state,
 )
 from app.core.timing import write_timing_summary
-from app.core.paths import data_path, windows_to_wsl_path, wsl_recommended_workdir
+from app.core.paths import (
+    data_path,
+    is_wsl_unc_path,
+    windows_to_wsl_path,
+    wsl_recommended_workdir,
+    wsl_unc_distro,
+    wsl_vhdx_basepath,
+)
 from app.ui.image_viewer import SVG_AVAILABLE, ImageViewer
 from app.ui.metadata_editor import MetadataTable
 from app.ui.readiness_dialog import ReadinessDialog
@@ -4334,10 +4341,17 @@ class MainWindow(QMainWindow):
         self._last_system = system
         self.cores.setValue(int(rec["total_threads"]))
         self.ram.setValue(int(rec["total_memory_gb"]))
+        # For a WSL-native workdir the free space is bounded by the Windows drive that
+        # backs the vhdx; name it so the number reads as real, not the vhdx's virtual size.
+        disk_note = ""
+        if is_wsl_unc_path(system.disk_path):
+            base = wsl_vhdx_basepath(wsl_unc_distro(system.disk_path))
+            if base is not None and base.drive:
+                disk_note = f" on {base.drive} (backs the WSL disk)"
         info = (
             f"{system.cpu_model} — {system.physical_cores} cores "
             f"({system.logical_threads} threads), {system.total_ram_gb:.0f} GB RAM, "
-            f"{system.disk_free_gb:.0f} GB free disk."
+            f"{system.disk_free_gb:.0f} GB free disk{disk_note}."
         )
         if getattr(system, "wsl_ram_gb", 0):
             # The pipeline runs in WSL2, whose caps (not the host total) bound it.
