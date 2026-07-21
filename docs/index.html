@@ -29,7 +29,7 @@
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.23.0</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.23.1</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
     <nav>
@@ -71,8 +71,8 @@
 <p class="lead">BulkSeq Studio is for biologists who want to analyse their own bulk RNA-seq or microarray data without learning the command line. You point a tabbed graphical interface at your data and a reference genome; it runs a transparent <a href="https://snakemake.github.io/">Snakemake</a> pipeline and produces a count matrix, a DESeq2 (or limma) results table, GO/KEGG enrichment, a STRING interaction network, and figures. Everything runs locally on your own machine, on Windows the pipeline runs inside WSL2, and on Linux it runs natively; either way the results are identical and every parameter, tool version, and reference is recorded so a run can be reproduced later.</p>
 
 <figure class="diagram">
-  <object type="image/svg+xml" data="assets/figure1_overview.svg" aria-label="BulkSeq Studio architecture and analysis flow diagram" width="100%"></object>
-  <figcaption>Architecture and analysis flow. Five input modes feed a shared pipeline: quality control and trimming (fastp, Trim Galore, or Trimmomatic; optional rRNA depletion and contamination screening), alignment/quantification (STAR, HISAT2, or Salmon), differential expression (DESeq2, limma-voom, or edgeR; limma-trend for microarrays), then functional enrichment, STRING protein networks, and figures. The count-matrix, microarray, and DESeq2-results modes enter downstream. Both paired-end and single-end reads are supported. <a class="diagram-fullsize" href="assets/figure1_overview.svg" target="_blank" rel="noopener">View full size ↗</a></figcaption>
+  <img src="assets/bulkseq-workflow.png" alt="BulkSeq Studio workflow diagram: input entry points (local FASTQ, SRA/ENA accession, and the shortcut count-matrix, microarray, and DESeq2-results modes) feeding four stages — QC and trimming, alignment and quantification, differential expression, and downstream outputs — plus an optional multi-study meta-analysis lane, with a legend." loading="lazy">
+  <figcaption>The full analysis flow. Two read inputs (local FASTQ or an auto-downloaded SRA/ENA accession) and three shortcut entry points (a count matrix, a microarray series, or a pre-computed DESeq2 table) feed four stages: <b>1</b> QC and trimming (fastp, Trim Galore, or Trimmomatic; optional rRNA depletion and contamination screening), <b>2</b> alignment and quantification (STAR, HISAT2, or Salmon), <b>3</b> differential expression (DESeq2, limma-voom, or edgeR; limma for microarrays), and <b>4</b> downstream outputs — functional enrichment, a STRING protein network, figures, and a reproducible report. An optional multi-study meta-analysis lane runs alongside when the sample sheet holds several compatible datasets. Click to zoom, or <a class="diagram-fullsize" href="assets/bulkseq-workflow.svg" target="_blank" rel="noopener">view the vector version ↗</a>.</figcaption>
 </figure>
 
 <figure>
