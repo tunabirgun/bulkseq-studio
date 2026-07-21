@@ -4,9 +4,9 @@ A **cross-platform** desktop application (Windows and Linux) for reproducible, r
 
 BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://snakemake.github.io/) pipeline — inside WSL2 on Windows, or natively in a local environment on Linux. You point it at your data and a reference; it produces a count matrix, DESeq2 results, GO/KEGG enrichment, and figures, and records the exact parameters, tool versions, and environment so a run can be reproduced later. On Linux the same pipeline runs directly (no WSL); see [Running on Linux](#running-on-linux).
 
-![BulkSeq Studio workflow: local FASTQ or an SRA/ENA accession, plus count-matrix, microarray, and DESeq2-results shortcut entry points, feeding four stages — QC and trimming, alignment and quantification, differential expression, and downstream outputs (enrichment, STRING network, figures, report) — with an optional multi-study meta-analysis lane](docs/assets/bulkseq-workflow.png)
+![BulkSeq Studio workflow: local FASTQ or an SRA/ENA accession, plus count-matrix, microarray, and DESeq2-results shortcut entry points, feeding four stages — QC and trimming, alignment and quantification, differential expression, and downstream outputs (enrichment, STRING network, figures, report) — with an optional multi-study meta-analysis lane](docs/assets/bulkseq-workflow.svg)
 
-*The full analysis flow. Two read inputs and three shortcut entry points feed four stages (QC & trimming → alignment & quantification → differential expression → downstream outputs), with an optional multi-study meta-analysis lane. Bracketed groups (fastp / Trim Galore / Trimmomatic; STAR / HISAT2 / Salmon; DESeq2 / limma-voom / edgeR) are pick-one; dashed boxes are optional. A [vector version](docs/assets/bulkseq-workflow.svg) is also available.*
+*The full analysis flow. Two read inputs and three shortcut entry points feed four stages (QC & trimming → alignment & quantification → differential expression → downstream outputs), with an optional multi-study meta-analysis lane. Bracketed groups (fastp / Trim Galore / Trimmomatic; STAR / HISAT2 / Salmon; DESeq2 / limma-voom / edgeR) are pick-one; dashed boxes are optional.*
 
 ![BulkSeq Studio, from data to results](docs/screenshot-overview-light.png)
 
