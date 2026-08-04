@@ -87,7 +87,7 @@ def test_generated_qss_wires_every_missing_subcontrol_glyph(mode: str) -> None:
 
 
 def test_font_family_is_resolved_not_hardcoded() -> None:
-    # "Segoe UI" does not exist on macOS or most Linux installs. The QSS font-family
+    # "Segoe UI" does not exist on most Linux installs. The QSS font-family
     # rule overrides the QApplication font, so both must come from one resolved value
     # or the style sheet silently wins with a family the platform lacks.
     from app.ui.theme import BASE_FONT_FAMILY, system_ui_font_family

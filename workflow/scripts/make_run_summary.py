@@ -200,8 +200,9 @@ def parse_session_info(text: str) -> dict:
 
 def platform_provenance(session_info: dict) -> dict:
     # OS/arch of the machine that ran this Python process, plus the R-side platform and
-    # BLAS/LAPACK line when reachable (sessionInfo.txt exists) -- distinguishes e.g. a macOS
-    # arm64 run from a Linux x86_64 one, and flags an unexpected non-reference BLAS backend.
+    # BLAS/LAPACK line when reachable (sessionInfo.txt exists) -- distinguishes a WSL2 run
+    # from a native Linux one, and flags an unexpected non-reference BLAS backend, which is
+    # the usual explanation when two runs of the same data disagree in the last digits.
     return {
         "os": platform.system(),
         "os_release": platform.release(),

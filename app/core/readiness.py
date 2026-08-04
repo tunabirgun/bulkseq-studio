@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import importlib.util
 import os
-import platform
 import shlex
 import shutil
 import subprocess
@@ -105,53 +104,16 @@ _R_PACKAGES_ALL = ("DESeq2", "edgeR", "limma", "GSVA", "clusterProfiler", "GO.db
                    "ggplot2", "ggrepel", "pheatmap", "igraph", "scales", "svglite",
                    "RColorBrewer", "msigdbr")
 
-# Packages with no osx-arm64 conda build. bioconductor-gsva has none at any version;
-# bioconductor-affy's affyio dependency has none at r45, and pulling the r44 chain would
-# drag the whole Bioconductor graph back a release (DESeq2 1.50.2 -> 1.46.0) and
-# invalidate the benchmarks. Both are therefore absent from
-# workflow/envs/bulkseq_macos_arm64_r.yaml by design. Probing for them on that platform
-# would report a correct environment as broken, so the expected set is derived from the
-# platform rather than hardcoded. Remove an entry here the moment its arm64 build lands.
-MACOS_ARM64_UNAVAILABLE_R_PACKAGES = ("GSVA", "affy")
-
-
-def unavailable_r_packages() -> tuple[str, ...]:
-    """R packages this platform genuinely cannot provide."""
-    if sys.platform == "darwin" and platform.machine() == "arm64":
-        return MACOS_ARM64_UNAVAILABLE_R_PACKAGES
-    return ()
-
-
-def expected_r_packages() -> tuple[str, ...]:
-    missing = set(unavailable_r_packages())
-    return tuple(p for p in _R_PACKAGES_ALL if p not in missing)
-
-
-# Backwards-compatible name; callers that want the platform-correct set call
-# expected_r_packages() instead.
-R_ANALYSIS_PACKAGES = expected_r_packages()
-
-# Optional-route CLI tools with no osx-arm64 build. fastq_screen is blocked by perl-gd;
-# its output is optional anyway (rules/qc.smk declares only _screen.txt and moves the PNG
-# with `|| true`). SortMeRNA is installed from the upstream GitHub release on this
-# platform rather than from conda, so it is NOT listed here.
-MACOS_ARM64_UNAVAILABLE_TOOLS = ("fastq_screen",)
-
-
-def unavailable_tools() -> tuple[str, ...]:
-    if sys.platform == "darwin" and platform.machine() == "arm64":
-        return MACOS_ARM64_UNAVAILABLE_TOOLS
-    return ()
+R_ANALYSIS_PACKAGES = _R_PACKAGES_ALL
 
 
 def _env_search_path() -> str:
     """PATH to probe tools on, including the directories a run will actually use.
 
-    A native run prepends the environment's bin — and on Apple Silicon the shim
-    directory holding Rscript and sortmerna — via
+    A native run prepends the bulkseq environment's bin via
     snakemake_runner.native_path_prefix(). Probing the launching process's bare PATH
-    instead would report a correctly-installed Mac as missing Rscript and the entire
-    R/Bioconductor stack, because neither is on the GUI's own PATH.
+    instead would report the tools missing whenever the GUI was started from a shell
+    that had not activated the environment.
     """
     from app.core.snakemake_runner import native_path_prefix  # local: avoids a cycle
 
@@ -188,16 +150,7 @@ def check_readiness() -> list[ReadinessItem]:
         status = "PASS" if shutil.which(command) else ("WARNING" if command == "mamba" else "REVIEW_REQUIRED")
         detail = shutil.which(command) or "not found on PATH"
         items.append(ReadinessItem(command, status, detail, purpose))
-    unavailable = set(unavailable_tools())
     for command, purpose in BIOINFORMATICS_TOOLS.items():
-        if command in unavailable:
-            # No build exists for this platform; the pipeline gates the route rather than
-            # failing mid-run, so flag it as a known gap instead of a broken install the
-            # user is expected to repair.
-            items.append(ReadinessItem(command, "WARNING",
-                                       "not available on this platform (no build); the route is disabled",
-                                       purpose))
-            continue
         found = _which_in_env(command)
         status = "PASS" if found else "REVIEW_REQUIRED"
         not_found = "not found on PATH or inside this Windows session" if is_windows else "not found on PATH"
@@ -376,10 +329,8 @@ def _r_packages_item(name: str, out: str, ok: bool) -> ReadinessItem:
 
 
 def _native_r_packages_item() -> ReadinessItem:
-    # Resolve Rscript the way a run will: on Apple Silicon the R/Bioconductor stack is a
-    # SEPARATE micromamba prefix reached through a shim, so bare shutil.which("Rscript")
-    # either finds nothing or finds the tools prefix's bare r-base (which rseqc pulls in
-    # and which has no Bioconductor) — reporting a correct install as broken either way.
+    # Resolve Rscript the way a run will — through the environment's bin, not just the
+    # PATH the GUI happened to inherit.
     rscript = _which_in_env("Rscript")
     if rscript is None:
         return ReadinessItem("R packages", "REVIEW_REQUIRED", "Rscript not on PATH",
@@ -527,7 +478,7 @@ def has_wsl_core_environment(items: list[ReadinessItem]) -> bool:
 
 
 def has_native_core_environment(items: list[ReadinessItem]) -> bool:
-    # Native (Linux/macOS) counterpart of has_wsl_core_environment: the core tools are on PATH.
+    # Native (Linux) counterpart of has_wsl_core_environment: the core tools are on PATH.
     by_name = {item.name: item for item in items}
     required = ("snakemake", "STAR", "featureCounts", "samtools", "fastp", "fastqc", "multiqc")
     return all(by_name.get(name, ReadinessItem(name, "REVIEW_REQUIRED", "", "")).status == "PASS" for name in required)

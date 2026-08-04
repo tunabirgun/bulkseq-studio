@@ -69,10 +69,6 @@
 <h4>Does it work on Linux without WSL?</h4>
 <p>Yes. On Linux the same GUI drives the same Snakemake pipeline natively in a local micromamba environment, with no WSL involved, and produces identical results. There is no WSL setup step and no memory cap below the host's RAM.</p>
 
-<h4>Does BulkSeq Studio run on macOS? Does it need Rosetta or WSL?</h4>
-<p>Yes, on Apple Silicon (M-series) Macs — natively, the same as on Linux. It needs neither Rosetta 2 nor WSL: the app and the bioinformatics tools run as native arm64, in a local micromamba environment (split into two prefixes, <code>bulkseq</code> and <code>bulkseq-r</code>, for a packaging reason unrelated to Rosetta or WSL — see the <a href="guide.html#macos">install guide</a>). Intel Macs are out of scope, since this project targets macOS 27, which is Apple-Silicon-only.</p>
-<p>No packaged build has shipped yet, so today this means running from source (see <a href="guide.html#macos-source">Running on macOS from source</a>). Three features have no osx-arm64 conda build and are unavailable: <strong>GSVA pathway activity</strong>, <strong>Affymetrix raw-CEL/RMA ingest</strong> (the GEO series-matrix microarray route is unaffected), and the <strong>FastQ Screen contamination screen</strong>. A fourth, <strong>SortMeRNA</strong> rRNA filtering, works but from a different upstream binary (4.4.0+) rather than the conda-pinned 4.3.7; RiboDetector is unaffected. Everything else — alignment, DESeq2/limma-voom/edgeR, GO/KEGG enrichment, the STRING network, and multi-study meta-analysis — is unchanged. See the <a href="guide.html#macos-matrix">platform feature matrix</a> for the full picture.</p>
-
 <h4>How do I update to a new version?</h4>
 <p>On Windows, run the newer installer: it detects the existing install and offers to update (remove the old version and install the new one) or to uninstall first. The portable ZIP has nothing to update — unzip the new one. On Linux, download the newer AppImage and delete the old one, or run <a href="https://github.com/AppImage/AppImageUpdate">AppImageUpdate</a> on the AppImage; the build carries zsync update information, so it fetches only the changed chunks from the latest release.</p>
 
@@ -140,7 +136,7 @@
 </p>
 <ul>
   <li><strong>Source code:</strong> <a href="https://github.com/tunabirgun/bulkseq-studio">github.com/tunabirgun/bulkseq-studio</a></li>
-  <li><strong>Downloads:</strong> <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">github.com/tunabirgun/bulkseq-studio/releases/latest</a> (Windows installer, portable ZIP, Linux build; no macOS build has shipped yet, see the <a href="guide.html#macos">install guide</a>)</li>
+  <li><strong>Downloads:</strong> <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">github.com/tunabirgun/bulkseq-studio/releases/latest</a> (Windows installer, portable ZIP, Linux build)</li>
   <li><strong>Benchmark archive:</strong> <a href="https://doi.org/10.5281/zenodo.20955660">doi.org/10.5281/zenodo.20955660</a></li>
 </ul>
 

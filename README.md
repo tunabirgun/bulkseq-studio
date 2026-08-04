@@ -1,8 +1,8 @@
 # BulkSeq Studio
 
-A **cross-platform** desktop application (Windows, Linux, and macOS on Apple Silicon) for reproducible, reference-based **bulk RNA-seq analysis**, from raw FASTQ/SRA reads to differential expression, functional enrichment, and publication figures, with no command line required.
+A **cross-platform** desktop application (Windows and Linux) for reproducible, reference-based **bulk RNA-seq analysis**, from raw FASTQ/SRA reads to differential expression, functional enrichment, and publication figures, with no command line required.
 
-BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://snakemake.github.io/) pipeline — inside WSL2 on Windows, or natively in a local environment on Linux and on Apple Silicon Macs. You point it at your data and a reference; it produces a count matrix, DESeq2 results, GO/KEGG enrichment, and figures, and records the exact parameters, tool versions, and environment so a run can be reproduced later. On Linux and macOS the same pipeline runs directly (no WSL); see [Running on Linux](#running-on-linux) and [Running on macOS](#running-on-macos). macOS support is new: the environment specs are solve-verified on Apple Silicon, but no packaged build has shipped yet — see [Install](#install).
+BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://snakemake.github.io/) pipeline — inside WSL2 on Windows, or natively in a local environment on Linux. You point it at your data and a reference; it produces a count matrix, DESeq2 results, GO/KEGG enrichment, and figures, and records the exact parameters, tool versions, and environment so a run can be reproduced later. On Linux the same pipeline runs directly (no WSL); see [Running on Linux](#running-on-linux).
 
 ![BulkSeq Studio workflow: local FASTQ or an SRA/ENA accession, plus count-matrix, microarray, and DESeq2-results shortcut entry points, feeding four stages — QC and trimming, alignment and quantification, differential expression, and downstream outputs (enrichment, STRING network, figures, report) — with an optional multi-study meta-analysis lane](docs/assets/bulkseq-workflow.svg)
 
@@ -40,7 +40,7 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 - **Downstream exports.** A normalized-expression matrix (VST counts, or log2 intensities for microarray) as CSV, a stat-ranked `.rnk` for preranked GSEA, and the DESeq2/limma results table.
 - **Provenance you can export.** When a run finishes, the Run Monitor lets you save a **tools & references** file (tool and R/Bioconductor package versions, the reference genome and annotation with source URLs and MD5, and the enrichment database codes) and a **study design** file (samples, conditions, layout, design formula, and contrasts) for that specific run.
 - **Low-mapping safeguard.** If a sample aligns poorly (uniquely-mapped rate below a threshold, usually a wrong reference or contamination), the run pauses and asks whether to stop or continue, instead of silently wasting hours.
-- **Reproducibility built in.** Every run records a default-vs-used parameter diff, software versions, an environment lock hash, the reference accession/MD5, and R `sessionInfo`. On Windows and Linux the conda environment is pinned in `workflow/envs/bulkseq.lock.yaml` (a linux-64 snapshot); on macOS it is pinned across the two osx-arm64 specs instead (`workflow/envs/bulkseq_macos_arm64_tools.yaml` and `bulkseq_macos_arm64_r.yaml`), since the lock file does not target that platform.
+- **Reproducibility built in.** Every run records a default-vs-used parameter diff, software versions, an environment lock hash, the reference accession/MD5, and R `sessionInfo`. The conda environment is pinned in `workflow/envs/bulkseq.lock.yaml` (a linux-64 snapshot).
 - **An accessible desktop UI.** Light and dark themes (WCAG-AA contrast), grouped settings cards with a clear primary action per tab, plain-language controls, empty-state guidance, a resizable Outputs workspace that remembers its size, keyboard shortcuts (Ctrl+O open, F5 dry-run, F9 run), and a recent-projects list.
 
 The three aligner routes (STAR, HISAT2, Salmon), the featureCounts / STAR-gene-counts / Salmon-tximport quantifiers, the three trimmers (fastp / Trim Galore / Trimmomatic), the two rRNA tools (SortMeRNA / RiboDetector) and the optional FastQ Screen contamination report, the three differential-expression engines (DESeq2 / limma-voom / edgeR), the multi-study meta-analysis, single-end and paired-end input, GSVA pathway activity, RSeQC extended QC, custom gene-set enrichment, and the count-matrix, GEO microarray (limma), and DESeq2-results input routes are all implemented and validated (see [Validation](#validation)).
@@ -82,17 +82,11 @@ The interactive PPI Network tab. Hover a protein to read its fold-change, adjust
 
 - A 64-bit Linux distribution with Python 3.10+ and [micromamba](https://mamba.readthedocs.io/) (or conda/mamba). The GUI and the pipeline run natively in your local environment; no WSL is involved.
 
-**macOS (Apple Silicon)**
-
-- An Apple Silicon (M-series) Mac. Intel Macs are out of scope: this project targets macOS 27, which is Apple-Silicon-only (Rosetta 2 support ends after it), so there is no Intel path to support.
-- The packaged app declares a macOS 13.0 floor in its `Info.plist` (`LSMinimumSystemVersion`), matching the minimum of the Qt version actually bundled — a build resolves `PySide6>=6.7` to the current 6.11.x, whose Qt floor is macOS 13. Verification to date has been on macOS 27 / Apple M5 Pro; earlier macOS versions are unverified.
-- [micromamba](https://mamba.readthedocs.io/); the app's setup screen installs it and the bioinformatics environment for you, the same as on Linux. No WSL is involved.
-
 **All platforms**
 
 - About 10 GB free disk for the toolchain and reference indices; 16 GB+ RAM recommended (STAR alignment is the memory-intensive step; for very large genomes use the HISAT2 or Salmon aligner, which need far less).
 
-The bioinformatics tools (Snakemake, STAR, HISAT2, Salmon, featureCounts, samtools, fastp, FastQC, MultiQC, DESeq2, clusterProfiler, and more) install into a pinned micromamba environment — inside WSL2 on Windows, or locally on Linux and macOS. On macOS (Apple Silicon) this is two micromamba prefixes rather than one; see [Running on macOS](#running-on-macos). The GUI itself is PySide6/Qt and runs on all three.
+The bioinformatics tools (Snakemake, STAR, HISAT2, Salmon, featureCounts, samtools, fastp, FastQC, MultiQC, DESeq2, clusterProfiler, and more) install into a pinned micromamba environment — inside WSL2 on Windows, or locally on Linux. The GUI itself is PySide6/Qt and runs on both.
 
 ## Install
 
@@ -100,8 +94,6 @@ Download the latest build from the [**Releases**](https://github.com/tunabirgun/
 
 - **Installer:** `BulkSeqStudio-Setup-<version>.exe`. Per-user install (no administrator rights); launch from the Start Menu.
 - **Portable:** `BulkSeqStudio-Portable-<version>.zip`. Unzip anywhere and double-click `BulkSeq Studio\BulkSeqStudio.exe`. No installation.
-
-**macOS (Apple Silicon):** the [build workflow](.github/workflows/build.yml) builds a `BulkSeq Studio.app` bundle on an Apple-Silicon GitHub Actions runner and, when Apple signing secrets are configured, packages it into a signed `BulkSeqStudio-<version>-macos-arm64.dmg` and submits it for notarization (`codesign` → `create-dmg` → `notarytool submit --wait` → `stapler staple`, in `scripts/build_macos.sh`). The unsigned bundle **builds successfully** on `macos-26`. The signed `.dmg` has **not** been produced: the signing secrets are not configured, so `codesign`, `create-dmg` and `notarytool` are wired into the script but have never run. An unsigned `.app` will not open on a clean Mac without a Gatekeeper override (right-click → Open), and this bundle has been built but **not launched or tested on a Mac**. Until a signed build ships, run BulkSeq Studio on macOS from source; see [Running on macOS](#running-on-macos).
 
 **Updating:** run a newer installer and it detects the existing install, then offers to update (remove the old version and install the new one) or to uninstall. The portable ZIP has nothing to update — just unzip the new one.
 
@@ -128,7 +120,7 @@ Work top to bottom: click each *Install…* button, press **Re-check** to refres
 > processors=16    # optional: limit WSL2 to 16 logical processors
 > ```
 >
-> See Microsoft's [Advanced settings configuration in WSL](https://learn.microsoft.com/windows/wsl/wsl-config#configuration-setting-for-wslconfig) for the full list of `.wslconfig` options. On Linux and macOS there is no cap to configure; the pipeline runs natively with your machine's full RAM.
+> See Microsoft's [Advanced settings configuration in WSL](https://learn.microsoft.com/windows/wsl/wsl-config#configuration-setting-for-wslconfig) for the full list of `.wslconfig` options. On Linux there is no cap to configure; the pipeline runs natively with your machine's full RAM.
 
 ### Run from source (development)
 
@@ -188,45 +180,6 @@ On Linux, BulkSeq Studio runs **natively** — there is no WSL. The same PySide6
 The full GUI — every tab, the Figure Style editor, and the interactive cytoscape.js PPI viewer (QtWebEngine) — runs the same on Linux as on Windows; the WSL2 controls are hidden, since the pipeline runs locally.
 
 ![BulkSeq Studio running natively on Linux](docs/screenshot-linux.png)
-
-## Running on macOS
-
-BulkSeq Studio runs **natively** on Apple Silicon Macs, the same as on Linux: there is no WSL, and no virtual-machine memory cap to configure. The same PySide6 GUI drives the same Snakemake pipeline directly in local micromamba environments. Intel Macs are out of scope — this project targets macOS 27, which is Apple-Silicon-only (Rosetta 2 support ends after it).
-
-No packaged release build exists for macOS yet (see [Install](#install)), so running BulkSeq Studio on macOS today means running it from source:
-
-1. Create the pipeline environment once. Unlike Windows and Linux, macOS (Apple Silicon) needs **two** micromamba prefixes, `bulkseq` (alignment and QC tools) and `bulkseq-r` (R/Bioconductor), instead of one — the alignment tools pin `libdeflate <1.23` while `r-base` 4.5.2 pins `>=1.24`, and the bioconda repodata patch that reconciles the two on linux-64/osx-64 was never extended to osx-arm64, so a single-prefix solve fails on that constraint. You do not need to manage this split by hand: the same script the app's **Check Environment** window runs on Linux creates both prefixes for you, plus a small `Rscript`/`R` shim (in `$MAMBA_ROOT_PREFIX/shims`, ahead of the tools prefix on `PATH`) that routes R calls to the `bulkseq-r` prefix, so Snakemake finds one working `Rscript`. From a terminal it is one command:
-
-   ```bash
-   bash scripts/setup_wsl_bioenv.sh bulkseq full
-   ```
-
-2. Get the GUI dependencies and launch (from-source is the only path until a packaged build ships):
-
-   ```bash
-   micromamba activate bulkseq
-   pip install PySide6 pandas pydantic pyyaml psutil openpyxl pillow
-   python -m app.main
-   ```
-
-A few tool versions differ from the Windows/Linux conda-pinned set because of missing osx-arm64 conda builds. Most notably, **SortMeRNA** is installed from the upstream GitHub release (4.4.0+, checksum-pinned) instead of the conda-pinned 4.3.7 — no arm64 build of SortMeRNA exists at any version, and the upstream 4.4.0+ binary is verified a drop-in for the rRNA-filtering rule, so this is a version difference rather than a missing feature. RiboDetector, the reference-free rRNA filter, is unaffected (it is a `noarch` conda package). Three other features have no osx-arm64 conda build at all and are genuinely unavailable on this platform for that reason, not a platform limitation; see the platform feature matrix below.
-
-## Platform feature matrix
-
-Everything not listed in this table works identically on Windows, Linux, and macOS (Apple Silicon). The four rows below differ because of missing osx-arm64 conda **builds**, not platform limitations: three are unavailable, and one (SortMeRNA) substitutes a differently-versioned upstream binary. Each is restored the moment its build lands (tracked in `app/core/readiness.py`).
-
-| Feature | Windows | Linux | macOS (Apple Silicon) |
-| --- | --- | --- | --- |
-| GSVA pathway activity | Yes | Yes | No — `bioconductor-gsva` has no osx-arm64 build at any version |
-| Affymetrix raw-CEL / RMA ingest | Yes | Yes | No — `affyio` has no osx-arm64 build at R 4.5; the GEO series-matrix microarray route below is unaffected and works normally |
-| FastQ Screen contamination screen | Yes | Yes | No — the `fastq-screen` conda package cannot be installed on osx-arm64 (blocked transitively by `perl-gd`, which has no osx-arm64 build), so the whole screen is unavailable here, not just its PNG plot |
-| SortMeRNA rRNA filtering | Yes (4.3.7, conda-pinned) | Yes (4.3.7, conda-pinned) | Yes — 4.4.0+ from the upstream GitHub release (checksum-pinned), not the conda-pinned 4.3.7; verified a drop-in |
-| STAR / HISAT2 / Salmon alignment | Yes | Yes | Yes |
-| DESeq2 / limma-voom / edgeR | Yes | Yes | Yes |
-| GO / KEGG enrichment | Yes | Yes | Yes |
-| STRING PPI network | Yes | Yes | Yes |
-| GEO microarray (series-matrix) route | Yes | Yes | Yes |
-| Multi-study meta-analysis | Yes | Yes | Yes |
 
 ## Quick start
 
@@ -412,14 +365,12 @@ namespace so the per-study gene sets intersect; a mismatch is flagged before the
 
 See [`LICENSE`](LICENSE).
 
-## WSL2 on Windows versus native Linux versus native macOS
+## WSL2 on Windows versus native Linux
 
-All three routes run the identical Snakemake pipeline and, wherever a tool is available on that platform (see the [platform feature matrix](#platform-feature-matrix) above), produce identical results — the choice is about your environment, not the science.
+Both routes run the identical Snakemake pipeline and produce identical results — the choice is about your environment, not the science.
 
 On Windows the pipeline runs inside WSL2, a lightweight Linux virtual machine. This keeps the desktop experience on Windows, where many wet-lab biologists work, while giving the bioinformatics tools a genuine Linux toolchain. The trade-offs are a one-time WSL2 setup that needs a single administrator step to enable the Windows feature; a memory cap on the WSL2 virtual machine that sits below the host's total RAM, so the very largest genome indices can exceed a limit the host could otherwise satisfy (bread wheat's STAR index needs about 95 GiB, which overflows a typical WSL2 cap, and the HISAT2 or Salmon route is then the fallback); and slower file access when a project lives on a Windows drive (`C:\...`) rather than the WSL filesystem, because every read crosses the Windows–Linux 9P boundary.
 
 Native Linux avoids all of this. There is no virtual machine, so no memory cap below the host's RAM and no 9P file-access penalty; there is no WSL setup step; and large-genome indexing and the many-small-file steps (alignment, package installation) are correspondingly faster and simpler.
 
-Native macOS (Apple Silicon) shares Linux's advantages — no virtual machine, no memory cap, no WSL setup — but has a different environment cost of its own: the pipeline runs from two micromamba prefixes instead of one (see [Running on macOS](#running-on-macos)), created automatically by the same setup flow used on Linux. Three features (GSVA, Affymetrix raw-CEL/RMA ingest, and the FastQ Screen contamination screen) are unavailable pending upstream osx-arm64 conda builds, and SortMeRNA runs a different version (4.4.0+ from upstream, not the conda-pinned 4.3.7) — see the [platform feature matrix](#platform-feature-matrix). No packaged release build exists yet, so running on macOS today means building or running from source.
-
-The practical guidance follows from that: on Windows, keep projects on the WSL filesystem and switch to HISAT2 or Salmon for crop genomes that exceed the WSL2 memory cap; on Linux, run natively and use the full host RAM; on macOS, run natively, let the setup script create both prefixes for you, and check the platform feature matrix before relying on GSVA, raw-CEL microarray ingest, or the FastQ Screen contamination report. The graphical interface and every output file are the same across all three, wherever the underlying tool is available.
+The practical guidance follows from that: on Windows, keep projects on the WSL filesystem and switch to HISAT2 or Salmon for crop genomes that exceed the WSL2 memory cap; on Linux, run natively and use the full host RAM. The graphical interface and every output file are the same on both.

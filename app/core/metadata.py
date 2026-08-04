@@ -86,7 +86,7 @@ def validate_metadata(df: pd.DataFrame, allow_pending_sra: bool = False,
         messages.append({
             "status": "FAIL",
             "message": (
-                "Sample ids differing only in capitalisation collide on Windows and macOS "
+                "Sample ids differing only in capitalisation collide on Windows "
                 f"(one file per pair): {', '.join(case_clashes)}. Rename them so each id is "
                 "distinct regardless of case."
             ),

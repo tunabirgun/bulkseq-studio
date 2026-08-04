@@ -11,21 +11,9 @@
 
 ### Added
 
-- **macOS support on Apple Silicon.** The GUI and the full pipeline now run natively on
-  Apple Silicon — no Rosetta, no virtual machine, no WSL. The setup script detects the
-  platform and provisions the environment for it. Four features are unavailable on this
-  platform because their conda packages have no `osx-arm64` build (not because of any
-  platform limitation): GSVA pathway activity, Affymetrix raw-CEL/RMA ingest, and the
-  FastQ Screen contamination screen; SortMeRNA is installed from the upstream release at
-  4.4.0+ instead of the conda-pinned 4.3.7. The GEO series-matrix microarray route,
-  RiboDetector rRNA filtering, and everything else work identically to Windows and Linux.
-  See the platform feature matrix in the README. Intel Macs are not supported.
-  **No macOS installer has been published yet** — run from source for now.
-- **A tri-platform CI build workflow** (`.github/workflows/build.yml`) covering Windows,
-  Linux and macOS, with code-signing and notarization steps for the macOS bundle.
 - **Platform provenance in the run summary.** Runs now record the operating system,
-  architecture, and R's BLAS/LAPACK libraries, so a macOS run is distinguishable from a
-  Linux one when comparing results.
+  architecture, and R's BLAS/LAPACK libraries, so a run under WSL2 on Windows is
+  distinguishable from a native Linux run when comparing results.
 - **Tool versions for every configured route.** The run summary now records the trimmer,
   rRNA filter and contamination screen actually selected, rather than assuming fastp and
   SortMeRNA.
@@ -70,21 +58,22 @@
   default CSV export on a non-English Windows locale (cp1252) failed with a raw
   `UnicodeDecodeError` on the first accented character.
 - **Sample ids differing only in capitalisation are now rejected.** `Sample1` and `sample1`
-  passed validation but resolve to one file on Windows and macOS, so the two samples
-  overwrote each other's intermediates and the run reported whichever wrote last.
-- **Stopping a run now terminates the whole process tree on Linux and macOS.** Stop
-  signalled only the Snakemake process, leaving STAR, featureCounts and Rscript running.
+  passed validation but resolve to one file on Windows (NTFS is case-insensitive), so the
+  two samples overwrote each other's intermediates and the run reported whichever wrote
+  last.
+- **Stopping a run now terminates the whole process tree on Linux.** Stop signalled only
+  the Snakemake process, leaving STAR, featureCounts and Rscript running.
 - **Combo-box arrows, spin-box arrows and checkbox ticks now render.** Styling the
   drop-down sub-control suppressed the native arrow without supplying a replacement, so
   every combo box in the application showed an empty square.
 - **Form controls are sized to their content.** Fields and buttons stretched to the window
   width — a combo box holding a unit abbreviation rendered 756 px wide, and 57 buttons were
   wider than 400 px.
-- **The GUI uses each platform's system font.** The interface hardcoded Segoe UI, which
-  does not exist on macOS or most Linux installs.
+- **The GUI uses the platform's system font.** The interface hardcoded Segoe UI, which does
+  not exist on most Linux installs.
 - **Per-user files follow platform convention.** The error log was written to a folder in
-  the user's home directory on Linux and macOS instead of the platform's application-data
-  location.
+  the user's home directory on Linux instead of following the XDG base-directory
+  convention.
 - **A benchmark dataset with single-end reads no longer crashes project creation.**
 - **The microarray normalization setting is no longer silently ignored.** It has one
   implemented code path (RMA on raw CEL); a configuration it cannot honour now raises a

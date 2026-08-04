@@ -146,14 +146,13 @@ REVIEW = LIGHT_PALETTE["REVIEW"]
 # sheet would be worse than the hardcoded name it replaced.
 _FALLBACK_FONT_FAMILY = {
     "win32": "Segoe UI",
-    "darwin": "Helvetica Neue",
 }
 
 
 def system_ui_font_family() -> str:
     """The platform's UI font family name.
 
-    Segoe UI does not exist on macOS or on most Linux installs, so hardcoding it made
+    Segoe UI does not exist on most Linux installs, so hardcoding it made
     Qt substitute an arbitrary family there. Qt knows the real system UI font per
     platform, but only once a QApplication exists; call this at style-generation time
     (apply_theme) to get the true value, and accept the fallback before that.

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 set -euo pipefail
 
 ENV_NAME="${1:-bulkseq}"
@@ -6,19 +6,18 @@ PROFILE="${2:-core}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ---------------------------------------------------------------------------
-# Host platform. The same script serves WSL2/Linux and native macOS, so the
-# micromamba build, the environment spec and the shell rc all key off this.
+# Host platform. The same script serves WSL2 on Windows and native Linux, and the
+# micromamba build to download keys off the detected architecture.
 # ---------------------------------------------------------------------------
 HOST_OS="$(uname -s)"
 HOST_ARCH="$(uname -m)"
 case "${HOST_OS}/${HOST_ARCH}" in
-  Linux/x86_64)          MM_PLATFORM="linux-64" ;;
+  Linux/x86_64)              MM_PLATFORM="linux-64" ;;
   Linux/aarch64|Linux/arm64) MM_PLATFORM="linux-aarch64" ;;
-  Darwin/x86_64)         MM_PLATFORM="osx-64" ;;
-  Darwin/arm64)          MM_PLATFORM="osx-arm64" ;;
   *)
     echo "Unsupported platform: ${HOST_OS} ${HOST_ARCH}." >&2
-    echo "BulkSeq Studio supports Linux (x86_64/aarch64) and macOS (Intel/Apple Silicon)." >&2
+    echo "BulkSeq Studio runs the pipeline on Linux (x86_64 or aarch64), natively or" >&2
+    echo "inside WSL2 on Windows." >&2
     exit 1 ;;
 esac
 if [ "$PROFILE" = "full" ]; then
@@ -30,52 +29,32 @@ if [ "$PROFILE" = "full" ]; then
   # that is not linux-64 (the lock is a linux-64 snapshot).
   ENV_FILE="$REPO_DIR/workflow/envs/bulkseq.lock.yaml"
   FALLBACK_ENV_FILE="$REPO_DIR/workflow/envs/bulkseq_full.yaml"
-  if [ "$MM_PLATFORM" = "osx-arm64" ]; then
-    # Apple Silicon needs TWO prefixes, not one. The alignment tools pin
-    # libdeflate <1.23 while r-base 4.5.2 pins >=1.24; on linux-64/osx-64 bioconda's
-    # repodata patch widens the tool bound and the conflict disappears, but that
-    # patch coverage was never extended to osx-arm64. Verified on macOS 27 / M5 Pro:
-    # a single-prefix solve fails on exactly that constraint, and these two specs
-    # each resolve at the protocol-pinned versions.
-    ENV_FILE="$REPO_DIR/workflow/envs/bulkseq_macos_arm64_tools.yaml"
-    R_ENV_FILE="$REPO_DIR/workflow/envs/bulkseq_macos_arm64_r.yaml"
-    R_ENV_NAME="${ENV_NAME}-r"
-    FALLBACK_ENV_FILE=""
-    SPLIT_R_PREFIX=1
-    echo "Note: Apple Silicon — installing a split environment (${ENV_NAME} + ${R_ENV_NAME})."
-  elif [ "$MM_PLATFORM" != "linux-64" ]; then
+  if [ "$MM_PLATFORM" != "linux-64" ]; then
     # The lock is a linux-64 snapshot pinned to exact builds, so it cannot solve on
     # any other subdir. Go straight to the float spec rather than burning a long
     # solve on a guaranteed failure and reporting it as an error.
-    echo "Note: ${MM_PLATFORM} host — installing from the float spec, not the linux-64 lock."
+    echo "Note: ${MM_PLATFORM} host â€” installing from the float spec, not the linux-64 lock."
     ENV_FILE="$FALLBACK_ENV_FILE"
     FALLBACK_ENV_FILE=""
   fi
 else
   ENV_FILE="$REPO_DIR/workflow/envs/bulkseq_core.yaml"
   FALLBACK_ENV_FILE=""
-  if [ "$MM_PLATFORM" = "osx-arm64" ]; then
-    # Same split rationale as the full profile; the core profile has no R half, so
-    # only the tools spec changes.
-    ENV_FILE="$REPO_DIR/workflow/envs/bulkseq_macos_arm64_tools.yaml"
-  fi
 fi
-: "${R_ENV_FILE:=}"
-: "${R_ENV_NAME:=}"
-: "${SPLIT_R_PREFIX:=0}"
 LOG_DIR="$REPO_DIR/scripts/logs"
 LOG_FILE="$LOG_DIR/wsl_bioenv_install.log"
 MAMBA_ROOT="$HOME/micromamba"
 MICROMAMBA="$HOME/.local/bin/micromamba"
 MM_URL="https://micro.mamba.pm/api/micromamba/${MM_PLATFORM}/latest"
 
-# `timeout` is GNU coreutils: present on Linux, absent from a stock macOS. The tool
-# verification below wraps each probe in an `if`, so `set -e` never fires and a missing
-# `timeout` would make EVERY tool report "not found or timed out" on a correctly
-# installed Mac. Fall back to a portable background-and-kill wait.
+# `timeout` comes from GNU coreutils and is not guaranteed: a minimal container image
+# or a BusyBox userland may not have it. The tool verification below wraps each probe in
+# an `if`, so `set -e` never fires — a missing `timeout` would silently make EVERY tool
+# report "not found or timed out" on a correctly installed system. Fall back to a
+# portable background-and-kill wait.
 if command -v timeout >/dev/null 2>&1; then
   TIMEOUT_BIN="timeout"
-elif command -v gtimeout >/dev/null 2>&1; then   # coreutils from Homebrew
+elif command -v gtimeout >/dev/null 2>&1; then
   TIMEOUT_BIN="gtimeout"
 else
   TIMEOUT_BIN=""
@@ -137,7 +116,7 @@ acquire_lock() {
       fi
     fi
     if [ "$announced" -eq 0 ]; then
-      echo "Another BulkSeq setup is already running; waiting for it to finish…"
+      echo "Another BulkSeq setup is already running; waiting for it to finishâ€¦"
       announced=1
     fi
     sleep 3
@@ -255,7 +234,7 @@ REBUILD="${BULKSEQ_REBUILD:-0}"
 env_exists() { "$MICROMAMBA" env list | awk '{print $1}' | grep -qx "$ENV_NAME"; }
 
 remove_env() {
-  echo "Removing existing environment '$ENV_NAME' for a clean install…"
+  echo "Removing existing environment '$ENV_NAME' for a clean installâ€¦"
   "$MICROMAMBA" env remove --yes -n "$ENV_NAME" || rm -rf "$MAMBA_ROOT/envs/$ENV_NAME"
 }
 
@@ -272,10 +251,10 @@ create_or_update() {
 }
 
 # Drop only the index/shard cache (not downloaded package tarballs) to recover
-# from a truncated JSON shard left by an interrupted or concurrent fetch — the
+# from a truncated JSON shard left by an interrupted or concurrent fetch â€” the
 # state that makes every run die with "parse error ... empty input".
 clean_index_cache() {
-  echo "Cleaning the micromamba index cache to recover from a corrupted shard…"
+  echo "Cleaning the micromamba index cache to recover from a corrupted shardâ€¦"
   "$MICROMAMBA" clean --index-cache --yes 2>/dev/null || true
   rm -rf "$MAMBA_ROOT/pkgs/cache" 2>/dev/null || true
 }
@@ -291,23 +270,14 @@ attempt_install() {
 }
 
 # Full profile only: does the R/Bioconductor stack actually LOAD? Reads a stdout marker,
-# NOT the exit code — `micromamba run` can mask a non-zero status. A dropped GO.db or an
+# NOT the exit code â€” `micromamba run` can mask a non-zero status. A dropped GO.db or an
 # r-base ABI drift leaves these installed-but-unloadable, which is what kills enrichment
 # mid-run. Core/empty profile -> trivially "loads".
-# GSVA and affy are deliberately absent from the osx-arm64 R spec (no arm64 build of
-# bioconductor-gsva; affy's affyio dependency has none at r45 and pulling it would drag
-# the whole Bioconductor graph back a release). Probing for them there would report a
-# correct environment as broken, so the expected package list is built per platform
-# rather than hardcoded.
-R_OPTIONAL_PKGS='"GSVA","affy",'
-[ "$MM_PLATFORM" = "osx-arm64" ] && R_OPTIONAL_PKGS=''
-R_STACK_PROBE='q<-c("DESeq2","edgeR","limma",'"$R_OPTIONAL_PKGS"'"clusterProfiler","GO.db","DOSE","enrichplot","fgsea","STRINGdb","GEOquery","metaRNASeq","metafor","HTSFilter","tximport","gprofiler2","ggplot2","scales","svglite","RColorBrewer","msigdbr"); ok<-function(p) isTRUE(tryCatch(suppressWarnings(suppressMessages(requireNamespace(p,quietly=TRUE))),error=function(e)FALSE)); bad<-q[!vapply(q,ok,logical(1))]; cat(if(length(bad)) paste0("R_STACK_BAD:",paste(bad,collapse=",")) else "R_STACK_OK")'
+R_STACK_PROBE='q<-c("DESeq2","edgeR","limma","GSVA","clusterProfiler","GO.db","DOSE","enrichplot","fgsea","STRINGdb","GEOquery","affy","metaRNASeq","metafor","HTSFilter","tximport","gprofiler2","ggplot2","scales","svglite","RColorBrewer","msigdbr"); ok<-function(p) isTRUE(tryCatch(suppressWarnings(suppressMessages(requireNamespace(p,quietly=TRUE))),error=function(e)FALSE)); bad<-q[!vapply(q,ok,logical(1))]; cat(if(length(bad)) paste0("R_STACK_BAD:",paste(bad,collapse=",")) else "R_STACK_OK")'
 r_stack_loads() {
   [ "$PROFILE" = "full" ] || return 0
-  local out probe_env="$ENV_NAME"
-  # On the split (Apple Silicon) layout the R stack lives in its own prefix.
-  [ "$SPLIT_R_PREFIX" = "1" ] && probe_env="$R_ENV_NAME"
-  out="$("$MICROMAMBA" run -n "$probe_env" Rscript --vanilla -e "$R_STACK_PROBE" 2>/dev/null || true)"
+  local out
+  out="$("$MICROMAMBA" run -n "$ENV_NAME" Rscript --vanilla -e "$R_STACK_PROBE" 2>/dev/null || true)"
   echo "$out" | grep -q "R_STACK_OK"
 }
 
@@ -327,109 +297,11 @@ else
   exit 1
 fi
 
-# Stage 2a-pre (Apple Silicon, both profiles): SortMeRNA from the upstream release.
-#
-# There is no osx-arm64 conda build of sortmerna at ANY version -- 4.3.7 bundles an SSW
-# aligner that includes <emmintrin.h> (x86 SSE2), so it cannot build for arm64. Upstream
-# ships a native arm64 Mach-O from 4.4.0 onward, verified a drop-in for the exact command
-# lines in rules/rrna.smk by scripts/test_sortmerna_macos.sh (28/28 on Linux, 15/15 on an
-# M5 Pro). It is installed here into the shim directory rather than the env prefix so a
-# later `micromamba install` into that prefix cannot clobber it.
-#
-# The checksum is pinned: this binary is outside the conda lock, so the SHA256 is what
-# keeps the environment reproducible. Verify it before trusting a new version.
-SORTMERNA_MACOS_VERSION="4.4.0"
-SORTMERNA_MACOS_SHA256="82fe9b9954c86b041e5383b7ae0b30dc248ab121683a58fd0b116cd030e597ff"
-
-_install_sortmerna_macos() {
-  local bindir="$1"
-  local ver="$SORTMERNA_MACOS_VERSION"
-  local asset="sortmerna-${ver}-Darwin.tar.gz"
-  local url="https://github.com/sortmerna/sortmerna/releases/download/v${ver}/${asset}"
-  local workdir="$MAMBA_ROOT/.sortmerna-src"
-
-  mkdir -p "$bindir" "$workdir"
-  if [ -x "$bindir/sortmerna" ] && "$bindir/sortmerna" --version >/dev/null 2>&1; then
-    echo "sortmerna already installed at $bindir/sortmerna"
-    return 0
-  fi
-
-  echo "Installing SortMeRNA ${ver} (native arm64) from the upstream release"
-  if ! curl -fsSL -o "$workdir/$asset" "$url"; then
-    echo "WARNING: could not download $url" >&2
-    echo "         rRNA filtering with SortMeRNA will be unavailable; RiboDetector still works." >&2
-    return 0
-  fi
-
-  local actual
-  actual="$(shasum -a 256 "$workdir/$asset" 2>/dev/null | cut -d' ' -f1)"
-  [ -n "$actual" ] || actual="$(sha256sum "$workdir/$asset" 2>/dev/null | cut -d' ' -f1)"
-  if [ "$actual" != "$SORTMERNA_MACOS_SHA256" ]; then
-    echo "ERROR: SortMeRNA checksum mismatch — refusing to install." >&2
-    echo "  expected $SORTMERNA_MACOS_SHA256" >&2
-    echo "  actual   ${actual:-<none>}" >&2
-    rm -f "$workdir/$asset"
-    return 1
-  fi
-
-  tar xzf "$workdir/$asset" -C "$workdir"
-  local extracted="$workdir/sortmerna-${ver}-Darwin/bin/sortmerna"
-  if [ ! -f "$extracted" ]; then
-    echo "WARNING: unexpected archive layout; sortmerna not installed." >&2
-    return 0
-  fi
-  install -m 0755 "$extracted" "$bindir/sortmerna"
-  # A downloaded binary carries the quarantine attribute; without clearing it Gatekeeper
-  # blocks execution and every rRNA rule fails with an opaque kill signal.
-  xattr -d com.apple.quarantine "$bindir/sortmerna" 2>/dev/null || true
-  rm -rf "$workdir"
-  echo "sortmerna ${ver} -> $bindir/sortmerna"
-}
-
-if [ "$MM_PLATFORM" = "osx-arm64" ]; then
-  echo ""
-  echo "Stage 2a-pre: SortMeRNA (no arm64 conda build exists)"
-  _install_sortmerna_macos "$MAMBA_ROOT/shims" || exit 1
-fi
-
-# Stage 2a-bis (Apple Silicon, full profile): the R/Bioconductor prefix.
-#
-# Snakemake invokes R rules as `Rscript --vanilla <file>`, resolved from PATH, so the
-# split layout is bridged with a shim rather than by editing any .smk file. The shim
-# MUST live in its own directory placed ahead of the tools prefix on PATH, never inside
-# the tools prefix's bin/: rseqc depends on bare r-base, so the tools prefix ships its
-# own Rscript at a different R version with no Bioconductor. If that one wins, every
-# library(DESeq2) fails -- loudly, not silently, but it fails.
-if [ "$SPLIT_R_PREFIX" = "1" ] && [ "$PROFILE" = "full" ]; then
-  echo ""
-  echo "Stage 2a-bis: R / Bioconductor prefix ($R_ENV_NAME)"
-  if ! "$MICROMAMBA" create --yes -n "$R_ENV_NAME" --file "$R_ENV_FILE"; then
-    echo "R environment setup failed." >&2
-    exit 1
-  fi
-  SHIM_DIR="$MAMBA_ROOT/shims"
-  mkdir -p "$SHIM_DIR"
-  R_PREFIX="$MAMBA_ROOT/envs/$R_ENV_NAME"
-  for r_tool in Rscript R; do
-    cat > "$SHIM_DIR/$r_tool" <<SHIM
-#!/usr/bin/env bash
-# BulkSeq Studio shim: route R to the split Bioconductor prefix (Apple Silicon).
-# Generated by scripts/setup_wsl_bioenv.sh -- edits here are overwritten on re-run.
-exec "$R_PREFIX/bin/$r_tool" "\$@"
-SHIM
-    chmod +x "$SHIM_DIR/$r_tool"
-  done
-  echo "Rscript shim -> $R_PREFIX/bin/Rscript  (in $SHIM_DIR)"
-  if [ ! -x "$R_PREFIX/bin/Rscript" ]; then
-    echo "WARNING: $R_PREFIX/bin/Rscript is missing; the R prefix did not install correctly." >&2
-  fi
-fi
-
 # Stage 2b (full profile): confirm the R stack loads. An in-place update can leave a package
 # installed-but-unloadable that `env update` will not repair; escalate to ONE clean rebuild
 # from the lock, which reproduces a self-consistent stack. No-op for a healthy or core env.
 if ! r_stack_loads; then
-  echo "The R/Bioconductor stack did not load after the update; doing a clean rebuild from the lock…"
+  echo "The R/Bioconductor stack did not load after the update; doing a clean rebuild from the lockâ€¦"
   remove_env
   attempt_install "$ENV_FILE" || { echo "Clean rebuild failed." >&2; exit 1; }
   if ! r_stack_loads; then
@@ -442,10 +314,10 @@ fi
 
 echo ""
 echo "Stage 3/3: Configuring shell activation helper"
-# macOS has defaulted to zsh since Catalina, so writing only to ~/.bashrc leaves the
-# hook unreachable from the user's actual login shell. Write to every rc that applies:
-# always bash (the app invokes `bash -lc` for its own probes), plus zsh when that is
-# the login shell or a ~/.zshrc already exists. Each gets its own --shell argument.
+# Writing only to ~/.bashrc leaves the hook unreachable for anyone whose login shell is
+# zsh. Write to every rc that applies: always bash (the app invokes `bash -lc` for its own
+# probes), plus zsh when that is the login shell or a ~/.zshrc already exists. Each gets
+# its own --shell argument.
 _install_shell_hook() {  # $1 = rc file, $2 = micromamba shell name
   local rc="$1" shell_name="$2"
   if grep -q "micromamba shell hook" "$rc" 2>/dev/null; then

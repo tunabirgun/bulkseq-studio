@@ -20,18 +20,14 @@ from app.ui.theme import PALETTES, apply_theme, system_ui_font_family
 def error_log_path() -> Path:
     """Per-user log location, following each platform's convention.
 
-    Windows keeps %LOCALAPPDATA%\\BulkSeq Studio\\logs. Elsewhere the previous
-    fallback was a bare Path.home(), which drops a "BulkSeq Studio" folder straight
-    into the user's home directory — wrong on macOS (~/Library/Application Support)
-    and on Linux ($XDG_DATA_HOME, default ~/.local/share).
+    Windows keeps %LOCALAPPDATA%\\BulkSeq Studio\\logs. On Linux the previous fallback
+    was a bare Path.home(), which drops a "BulkSeq Studio" folder straight into the
+    user's home directory instead of $XDG_DATA_HOME (default ~/.local/share).
     """
     local_appdata = os.environ.get("LOCALAPPDATA")
     if local_appdata:
         return Path(local_appdata) / APP_NAME / "logs" / "error.log"
-    if sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support"
-    else:
-        base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+    base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
     return base / APP_NAME / "logs" / "error.log"
 
 

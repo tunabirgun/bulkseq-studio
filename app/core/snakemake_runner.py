@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import platform
 import shlex
 import signal
 import subprocess
@@ -285,25 +284,15 @@ def build_snakemake_command(
 def native_path_prefix() -> list[str]:
     """Directories to prepend to PATH for a native (non-WSL) run.
 
-    The WSL branch does this inside _wrap_wsl; the native branch had no equivalent,
-    which is fine on Linux where the user activates the environment, but not on
-    Apple Silicon. There the R/Bioconductor stack lives in a SECOND micromamba
-    prefix (the alignment tools and r-base cannot share one -- see
-    workflow/envs/bulkseq_macos_arm64_r.yaml), reached through a shim so that
-    Snakemake's ``Rscript --vanilla`` resolves to it without any rule changing.
+    The WSL branch does this inside _wrap_wsl; the native branch had no equivalent, so
+    a run launched from a shell that had not activated the environment resolved tools
+    from the ambient PATH instead of the one it was configured to use.
 
-    Order matters: the shim directory must come BEFORE the tools prefix. rseqc
-    depends on bare r-base, so the tools prefix ships its own Rscript with no
-    Bioconductor; if that one wins, every library(DESeq2) fails.
-
-    Only existing directories are returned, so a Linux or Windows host is unaffected.
+    Only existing directories are returned, so a host without the environment (every
+    Windows box, and a Linux box using an already-activated shell) is unaffected.
     """
     root = Path(os.environ.get("MAMBA_ROOT_PREFIX") or (Path.home() / "micromamba"))
     dirs: list[str] = []
-    if sys.platform == "darwin" and platform.machine() == "arm64":
-        shim = root / "shims"
-        if shim.is_dir():
-            dirs.append(str(shim))
     env_bin = root / "envs" / WSL_ENV_NAME / "bin"
     if env_bin.is_dir():
         dirs.append(str(env_bin))
@@ -397,8 +386,7 @@ class SnakemakeRunner:
         env = {**os.environ, "LC_NUMERIC": "C"}
         if not self.use_wsl:
             # The WSL branch exports PATH inside _wrap_wsl; do the equivalent here so a
-            # native run finds the environment's tools (and, on Apple Silicon, the
-            # Rscript shim for the split R prefix).
+            # native run finds the environment's tools.
             prefix = native_path_prefix()
             if prefix:
                 env["PATH"] = os.pathsep.join([*prefix, env.get("PATH", "")])
@@ -454,7 +442,7 @@ class SnakemakeRunner:
         if sys.platform.startswith("win"):
             _run_quiet(["taskkill", "/F", "/T", "/PID", str(self.process.pid)])
             return
-        # POSIX (native Linux and macOS): signal the process group, mirroring what
+        # POSIX (native Linux): signal the process group, mirroring what
         # taskkill /T does on Windows and what build_wsl_kill_command does in the VM.
         # SIGTERM first so Snakemake can unlock the working directory, then SIGKILL
         # for anything that ignored it.
