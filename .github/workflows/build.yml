@@ -190,10 +190,26 @@ jobs:
         # Windows (core.filemode=false), so the script is committed without its exec bit.
         run: bash scripts/build_macos.sh
 
+      # Archive the bundle before uploading. actions/upload-artifact walks the directory
+      # and stores each file individually, which FOLLOWS the symlinks Qt frameworks rely
+      # on (Versions/Current -> Versions/A, and the top-level Headers/Resources links).
+      # That both multiplies the size — the first run produced 1.31 GB against 431 MB for
+      # Windows — and yields a bundle whose framework layout no longer matches what
+      # codesign and dyld expect. ditto is Apple's own tool for this and preserves symlinks,
+      # resource forks and extended attributes.
+      - name: Archive the .app (preserving symlinks)
+        run: |
+          set -euo pipefail
+          mkdir -p installer_output
+          ditto -c -k --sequesterRsrc --keepParent \
+            "dist/BulkSeq Studio.app" \
+            "installer_output/BulkSeqStudio-macos-arm64.zip"
+          ls -lh installer_output/BulkSeqStudio-macos-arm64.zip
+
       - uses: actions/upload-artifact@v4
         with:
           name: BulkSeqStudio-macos-app
-          path: dist/BulkSeq Studio.app
+          path: installer_output/BulkSeqStudio-macos-arm64.zip
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4

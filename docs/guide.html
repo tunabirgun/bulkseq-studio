@@ -75,12 +75,12 @@
   </div>
   <div class="card feature" id="macos">
     <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19c-3 3-6.2 1-8-2-2.6-4.3-1.8-10 2-12 1.8-1 3.6-.7 5 0 1.4-.7 3.2-1 5 0 1.8 1 3 3 3.5 5-2.5 1-4 3-4 5.5 0 2 1 3.3 2.5 4-1 2-3 4.5-6 4.5-1.2 0-2-.5-3-.5-1 0-1.8.5-3 .5Z"/><path d="M13 6c.3-1.5 1.6-3 3-3 .2 1.6-.4 3-1.3 3.9-.9.9-2.2 1.4-3.4 1.2 0-1.4.6-2.7 1.7-4.1Z"/></svg>macOS (Apple Silicon)</h4>
-    <p>A CI workflow (<code>.github/workflows/build.yml</code>) is configured to build the following on an Apple-Silicon runner, on pushes to <code>main</code> and on version tags. <strong>It has never run</strong>, so neither artifact exists yet:</p>
+    <p>A CI workflow (<code>.github/workflows/build.yml</code>) builds on an Apple-Silicon runner (<code>macos-26</code>) on pushes to <code>main</code> and on version tags:</p>
     <ul>
-      <li><strong><code>BulkSeq Studio.app</code></strong> — an unsigned app bundle.</li>
-      <li><strong><code>BulkSeqStudio-&lt;version&gt;-macos-arm64.dmg</code></strong> — a disk image, produced only when a signing identity is configured, and notarized only when Apple notarization credentials are supplied as well (<code>codesign</code> → <code>create-dmg</code> → <code>notarytool</code> → <code>stapler staple</code>).</li>
+      <li><strong><code>BulkSeqStudio-macos-arm64.zip</code></strong> — an <strong>unsigned</strong> app bundle. This builds successfully.</li>
+      <li><strong><code>BulkSeqStudio-&lt;version&gt;-macos-arm64.dmg</code></strong> — a disk image, produced only when a signing identity is configured, and notarized only when Apple notarization credentials are supplied as well (<code>codesign</code> → <code>create-dmg</code> → <code>notarytool</code> → <code>stapler staple</code>). <strong>Not yet produced</strong>: the signing secrets are not configured, so this path has never been exercised.</li>
     </ul>
-    <p class="muted">No <code>.app</code> or <code>.dmg</code> has been built or run anywhere, and the sign-and-notarize path has never been exercised. There is nothing on the <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">Releases</a> page for macOS yet — run BulkSeq Studio on macOS <a href="#macos-source">from source</a> for now.</p>
+    <p class="muted">Because the bundle is unsigned, macOS Gatekeeper will refuse to open it on first launch — you would need to right-click → Open, or clear the quarantine attribute, to run it. It has been built but <strong>not launched or tested on a Mac</strong>. Until a signed build is published, running BulkSeq Studio on macOS <a href="#macos-source">from source</a> is the supported route.</p>
   </div>
 </div>
 
