@@ -17,6 +17,29 @@ from app.core.paths import data_path, is_wsl_unc_path, usable_disk_free_bytes, w
 _DECIMAL_COMMA_RE = re.compile(r"^-?\d+,\d+$")
 
 
+class ProjectExistsError(ValueError):
+    """Raised when scaffolding would overwrite an existing project.
+
+    Subclasses ValueError deliberately: both GUI call sites already catch
+    (OSError, ValueError), so an unhandled escape is impossible even if a
+    caller is not updated to handle this type specifically.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        super().__init__(f"A BulkSeq Studio project already exists at {root}")
+
+
+def is_project_root(path: Path) -> bool:
+    """True when *path* is an existing BulkSeq Studio project.
+
+    Single definition of "is a project", shared by the create-time overwrite
+    guard and the GUI's open-project validation, so the two cannot drift into
+    disagreeing about what counts as a project.
+    """
+    return (path / "config" / "config.yaml").is_file()
+
+
 def normalize_decimal_commas(data: Any) -> tuple[Any, list[str]]:
     """Recursively rewrite comma-decimal string values (e.g. "0,05") to dot floats.
 
@@ -91,7 +114,15 @@ def validate_working_directory(path: Path, min_free_gb: float = 5.0, use_wsl: bo
 
 
 class ProjectManager:
-    def create_project(self, project_name: str, working_directory: Path) -> Path:
+    def create_project(self, project_name: str, working_directory: Path,
+                       overwrite: bool = False) -> Path:
+        """Scaffold a new project directory.
+
+        Refuses to scaffold over an existing project unless *overwrite* is set:
+        the writes below reset samples.tsv, contrasts.yaml, gene_sets.yaml and
+        config.yaml to empty defaults, which would destroy a user's sample sheet
+        and experiment configuration without warning.
+        """
         safe_name = project_name.strip().replace(" ", "_")
         if not safe_name:
             raise ValueError("Project name cannot be empty.")
@@ -103,6 +134,8 @@ class ProjectManager:
                 "Project name may only contain letters, numbers, '_', '-' and '.' "
                 f"(spaces become underscores). Got: {project_name!r}")
         root = working_directory.expanduser().resolve() / safe_name
+        if not overwrite and is_project_root(root):
+            raise ProjectExistsError(root)
         for relative in PROJECT_DIRS:
             (root / relative).mkdir(parents=True, exist_ok=True)
 

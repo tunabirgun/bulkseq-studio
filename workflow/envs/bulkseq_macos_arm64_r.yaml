@@ -1,0 +1,86 @@
+# macOS / Apple Silicon (osx-arm64) — R / BIOCONDUCTOR prefix.
+#
+# Pairs with bulkseq_macos_arm64_tools.yaml; see that file for why the environment
+# is split on this platform (the libdeflate bound differs between the alignment
+# tools and r-base, and bioconda's repodata patch does not cover osx-arm64).
+#
+# r-base stays pinned at 4.5.2 for the same reason as bulkseq_full.yaml: bumping it
+# forces salmon off the protocol-pinned 1.10.3 onto the salmon 2.x Rust rewrite,
+# which changes quantification and invalidates the benchmarks.
+#
+# DIFFERENCES FROM the R half of bulkseq_full.yaml — two omissions, both verified
+# on real Apple Silicon rather than inferred:
+#
+#   - bioconductor-affy: bioconda publishes affy 1.88.0 for osx-arm64, but its own
+#     dependency bioconductor-affyio has no osx-arm64 build at r45 (only 1.76.0 at
+#     r44). The solver therefore falls back to an r44 affy needing biobase 2.66,
+#     which collides with DESeq2 1.50.2 needing biobase 2.70. Including affy would
+#     drag the ENTIRE Bioconductor graph back one release (DESeq2 1.50.2 -> 1.46.0,
+#     limma 3.66 -> 3.62, edgeR 4.8 -> 4.4, clusterProfiler 4.18 -> 4.14) and
+#     invalidate every benchmark. Omitting it costs only the raw Affymetrix
+#     CEL -> RMA ingest branch (ingest_geo.R, source_kind == "affy_cel"); the GEO
+#     series-matrix microarray route is unaffected.
+#
+#   - bioconductor-gsva: no osx-arm64 build exists at any version. The recipe
+#     declares additional-platforms: [linux-aarch64] and never opted osx-arm64 in.
+#     Costs the optional GSVA pathway-activity output.
+#
+# Both are missing BUILDS, not platform limitations. A one-line recipe change
+# upstream (or a local project-channel build) restores each; re-add the package
+# here the moment its osx-arm64 build lands, and drop the matching entry from the
+# feature-gating list in app/core/readiness.py.
+name: bulkseq-r
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base=4.5.2
+  # Fonts for the figure scripts: a serif/sans/mono set + fontconfig setup, so a
+  # configured font renders instead of falling back to a sans default.
+  - fonts-conda-ecosystem
+  - font-ttf-dejavu
+  - bioconductor-deseq2
+  - bioconductor-apeglm
+  # ashr: the lfcShrink type used as the contrast fallback in run_deseq2.R.
+  - r-ashr
+  - bioconductor-tximport
+  - bioconductor-clusterprofiler>=4.14
+  - bioconductor-go.db
+  - bioconductor-enrichplot
+  - bioconductor-fgsea
+  - bioconductor-biomart
+  - bioconductor-complexheatmap
+  - bioconductor-enhancedvolcano
+  - bioconductor-org.dm.eg.db
+  # Microarray / GEO support: GEOquery ingest + limma DE. (Affy RMA is unavailable
+  # on this platform — see the header.)
+  - bioconductor-geoquery
+  - bioconductor-limma
+  - bioconductor-edger
+  # Multi-study meta-analysis.
+  - r-metarnaseq
+  - r-metafor
+  - bioconductor-htsfilter
+  - bioconductor-biobase
+  - bioconductor-org.hs.eg.db
+  - bioconductor-org.mm.eg.db
+  - bioconductor-org.sc.sgd.db
+  - bioconductor-org.at.tair.db
+  - bioconductor-org.ce.eg.db
+  - bioconductor-org.dr.eg.db
+  - r-ggplot2
+  - r-ggrepel
+  - r-ggridges
+  - r-ggtext
+  - r-pheatmap
+  - r-rcolorbrewer
+  - r-svglite
+  - r-scales
+  - r-msigdbr
+  - r-gprofiler2
+  # PPI networks + graph handling.
+  - bioconductor-stringdb
+  - r-igraph
+  - r-ggraph
+  - r-tidygraph
+  - r-jsonlite

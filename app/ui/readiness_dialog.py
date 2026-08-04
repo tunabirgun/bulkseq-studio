@@ -55,11 +55,15 @@ SURFACE = "#FFFFFF"
 BORDER = "#D7DEE6"
 TEXT = "#1F2933"
 MUTED = "#6B7785"
-SUCCESS = "#2E7D32"
-WARNING = "#B26A00"
-ERROR = "#C0392B"
-REVIEW = "#6A1B9A"
-BASE_FONT = "'Segoe UI', 'Segoe UI Variable', sans-serif"
+# Defaults for the light theme, taken from the shared palette rather than repeated
+# as literals — these are the fallbacks used before _apply_palette() swaps in the
+# active mode's values, and a second copy would drift from the AA-verified source.
+SUCCESS = theme.LIGHT_PALETTE["SUCCESS"]
+WARNING = theme.LIGHT_PALETTE["WARNING"]
+ERROR = theme.LIGHT_PALETTE["ERROR"]
+REVIEW = theme.LIGHT_PALETTE["REVIEW"]
+# Resolved from the platform's system UI font, not a Windows-only family name.
+BASE_FONT = f"'{theme.BASE_FONT_FAMILY}', sans-serif"
 
 # Card states used by the UI, independent of the raw ReadinessItem status.
 STATE_READY = "ready"

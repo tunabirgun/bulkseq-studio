@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import platform
 import re
 import subprocess
 from datetime import datetime
@@ -36,8 +37,6 @@ TOOLS = {
     "python": ["python", "--version"],
     "fastqc": ["fastqc", "--version"],
     "multiqc": ["multiqc", "--version"],
-    "fastp": ["fastp", "--version"],
-    "sortmerna": ["sortmerna", "--version"],
     "STAR": ["STAR", "--version"],
     "HISAT2": ["hisat2", "--version"],
     "salmon": ["salmon", "--version"],
@@ -46,6 +45,73 @@ TOOLS = {
     "featureCounts": ["featureCounts", "-v"],
     "Rscript": ["Rscript", "--version"],
 }
+
+# Trimmer / rRNA-filter / contamination-screen probe commands, keyed by the config value that
+# selects them (workflow.trimmer, workflow.rrna_tool, workflow.contamination_screen -- see
+# app/core/config_models.py). TOOLS above only covers tools every run touches; these three are
+# config-selectable alternatives, so probing them unconditionally would either miss the tool
+# that actually ran (e.g. trim_galore, ribodetector) or report a version for a tool that never
+# ran. select_tools() below gates each entry on what the run's config actually enabled.
+TRIMMER_TOOL_CMD = {
+    "fastp": ("fastp", ["fastp", "--version"]),
+    "trim-galore": ("trim_galore", ["trim_galore", "--version"]),
+    "trimmomatic": ("trimmomatic", ["trimmomatic", "-version"]),
+}
+RRNA_TOOL_CMD = {
+    "sortmerna": ("sortmerna", ["sortmerna", "--version"]),
+    "ribodetector": ("ribodetector", ["ribodetector_cpu", "--version"]),
+}
+
+
+_DE_ENGINE_LABELS = {"deseq2": "DESeq2", "limma-voom": "limma-voom", "limma_voom": "limma-voom",
+                     "voom": "limma-voom", "edger": "edgeR"}
+
+
+def de_engine_label(payload: dict, is_microarray: bool, shrink_realized, shrink_configured) -> str:
+    """Human-readable "<engine>, shrinkage: <method>" for the run summary.
+
+    Only DESeq2 applies LFC shrinkage; run_voom.R and run_edger.R set resLFC <- res,
+    and the microarray route uses limma. Naming DESeq2/apeglm for those runs reports an
+    engine and a method that never ran.
+    """
+    if is_microarray:
+        return "limma (no LFC shrinkage)"
+    engine_key = str((payload.get("workflow") or {}).get("de_engine", "deseq2")).lower()
+    engine = _DE_ENGINE_LABELS.get(engine_key, engine_key or "DESeq2")
+    if engine != "DESeq2":
+        return f"{engine} (no LFC shrinkage)"
+    return f"DESeq2, shrinkage: {shrink_realized or shrink_configured}"
+
+
+def select_tools(config: dict) -> dict:
+    # Tool version probes for this run: TOOLS (always run) plus whichever trimmer / rRNA
+    # filter / contamination screen the config actually enabled, so a run that used
+    # trim_galore, ribodetector, or fastq_screen is reproducible from what gets recorded.
+    wf = config.get("workflow", {})
+    tools = dict(TOOLS)
+    # Mirror the Snakefile's gates exactly (workflow/Snakefile: TRIMMING, RRNA_FILTER,
+    # CONTAM_SCREEN). They are strictly stronger than the workflow switches alone:
+    #   - the read-processing steps do not exist at all when the input is a count matrix,
+    #     a microarray series, or an uploaded DESeq2 table, regardless of the switches,
+    #     which keep their defaults in a project converted from a FASTQ run;
+    #   - the contamination screen additionally needs a FastQ Screen config path.
+    # Recording a version for a tool the run never executed is the misreporting this
+    # function exists to prevent, so the two sets of conditions must not drift.
+    reads_processed = str((config.get("input") or {}).get("type", "fastq")) not in (
+        "count_matrix", "microarray", "deseq2_results")
+
+    if reads_processed and wf.get("trimming", True):
+        trimmer_name, trimmer_cmd = TRIMMER_TOOL_CMD.get(wf.get("trimmer", "fastp"),
+                                                        TRIMMER_TOOL_CMD["fastp"])
+        tools[trimmer_name] = trimmer_cmd
+    if reads_processed and wf.get("rrna_filtering"):
+        rrna_name, rrna_cmd = RRNA_TOOL_CMD.get(wf.get("rrna_tool", "sortmerna"), RRNA_TOOL_CMD["sortmerna"])
+        tools[rrna_name] = rrna_cmd
+    if (reads_processed and wf.get("contamination_screen")
+            and (config.get("contamination") or {}).get("conf")):
+        tools["fastq_screen"] = ["fastq_screen", "--version"]
+    return tools
+
 
 # Key R analysis packages (DE, enrichment, network, figures). Their versions are the
 # effective "database versions" for the annotation/enrichment back-ends (OrgDb, MSigDB).
@@ -114,6 +180,39 @@ def collect_warnings(sanity_text: str) -> list[str]:
     return [line.strip() for line in sanity_text.splitlines() if "WARNING" in line or "REVIEW_REQUIRED" in line]
 
 
+def parse_session_info(text: str) -> dict:
+    # run_deseq2.R / run_edger.R / run_limma.R / run_voom.R / ingest_deseq2_results.R all write
+    # results/reports/sessionInfo.txt via capture.output(sessionInfo()); run_deseq2.R additionally
+    # prefixes a "Shrinkage method used: ..." provenance line (see run_deseq2.R, near sessionInfo()).
+    # Absent entirely on the microarray/limma backends (no shrinkage) or when the R step never ran.
+    info: dict = {}
+    for line in text.splitlines():
+        if line.startswith("Shrinkage method used:"):
+            info["shrinkage_used"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Platform:"):
+            info["r_platform"] = line.split(":", 1)[1].strip()
+        elif line.startswith("BLAS:"):
+            info["blas"] = line.split(":", 1)[1].strip()
+        elif line.startswith("LAPACK:"):
+            info["lapack"] = line.split(":", 1)[1].strip()
+    return info
+
+
+def platform_provenance(session_info: dict) -> dict:
+    # OS/arch of the machine that ran this Python process, plus the R-side platform and
+    # BLAS/LAPACK line when reachable (sessionInfo.txt exists) -- distinguishes e.g. a macOS
+    # arm64 run from a Linux x86_64 one, and flags an unexpected non-reference BLAS backend.
+    return {
+        "os": platform.system(),
+        "os_release": platform.release(),
+        "arch": platform.machine(),
+        "python_platform": platform.platform(),
+        "r_platform": session_info.get("r_platform"),
+        "r_blas": session_info.get("blas"),
+        "r_lapack": session_info.get("lapack"),
+    }
+
+
 def download_integrity(root: Path) -> dict:
     # Aggregate the per-file checksum sidecars written by the download rule: how many FASTQ
     # downloads were verified against ENA's published MD5 (a data-integrity guarantee).
@@ -158,10 +257,13 @@ def main() -> int:
     defaults = yaml.safe_load(default_path.read_text(encoding="utf-8")) if default_path.exists() else {}
     customized = diff_configs(drop_project(defaults), drop_project(config))
 
-    versions = {name: run_version(command) for name, command in TOOLS.items()}
+    versions = {name: run_version(command) for name, command in select_tools(config).items()}
     r_pkgs = r_package_versions(extra=[config.get("enrichment", {}).get("orgdb")])
     sanity_path = root / "checks/sanity_checks.txt"
     sanity_text = sanity_path.read_text(encoding="utf-8") if sanity_path.exists() else ""
+    session_path = root / "results/reports/sessionInfo.txt"
+    session_text = session_path.read_text(encoding="utf-8") if session_path.exists() else ""
+    session_info = parse_session_info(session_text)
     project = config.get("project", {})
 
     payload = {
@@ -193,6 +295,8 @@ def main() -> int:
         "output_paths": existing_outputs(root),
         "download_integrity": download_integrity(root),
         "sanity_checks": sanity_text,
+        "session_info": session_info,
+        "platform": platform_provenance(session_info),
     }
     reports = root / "results/reports"
     reports.mkdir(parents=True, exist_ok=True)
@@ -234,9 +338,14 @@ def render_text(p: dict) -> str:
                   f"Source/release: {ref.get('source')} {ref.get('release', '')}",
                   f"Genome MD5: {ref.get('genome_md5')}  Annotation MD5: {ref.get('annotation_md5')}", ""]
     de = p["deseq2"]
-    # limma (microarray) has no shrinkage; DESeq2 does.
-    de_method = ("limma (no LFC shrinkage)" if is_microarray
-                 else f"DESeq2, shrinkage: {de.get('shrinkage_method')}")
+    # Name the engine that actually ran. Only DESeq2 shrinks: run_voom.R and run_edger.R
+    # set resLFC <- res and never call lfcShrink, and limma (microarray) has no shrinkage
+    # either, so reporting "DESeq2, shrinkage: apeglm" for those runs names both the wrong
+    # engine and a method that was never applied. Prefer the REALISED shrinkage method
+    # run_deseq2.R recorded in sessionInfo.txt over the configured one: apeglm can silently
+    # fall back to ashr (see run_deseq2.R), so the config value alone can misreport what ran.
+    shrink_realized = p.get("session_info", {}).get("shrinkage_used")
+    de_method = de_engine_label(p, is_microarray, shrink_realized, de.get("shrinkage_method"))
     lines += ["Design", "------",
               f"Design formula: {de.get('design_formula')}",
               f"Reference level: {de.get('reference_level')}",
@@ -260,6 +369,11 @@ def render_text(p: dict) -> str:
         lines += ["", "Data integrity (FASTQ downloads)", "--------------------------------", note]
     lines += ["", "Output paths", "------------"]
     lines += p["output_paths"] or ["None yet."]
+    plat = p.get("platform", {})
+    lines += ["", "Platform", "--------",
+              f"OS: {plat.get('os')} {plat.get('os_release')}    Arch: {plat.get('arch')}",
+              f"R platform: {plat.get('r_platform') or 'n/a (no R DE step ran)'}",
+              f"R BLAS: {plat.get('r_blas') or 'n/a'}    R LAPACK: {plat.get('r_lapack') or 'n/a'}"]
     lines += ["", "Software Versions", "-----------------"]
     lines += [f"{k}: {v}" for k, v in p["software_versions"].items()]
     return "\n".join(lines) + "\n"

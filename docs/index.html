@@ -29,7 +29,7 @@
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.23.1</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.24.0</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
     <nav>
@@ -56,7 +56,7 @@
   <h1>BulkSeq Studio</h1>
   <p>A free desktop app that takes you from raw reads or a count table to differential expression, functional enrichment, protein-interaction networks, and publication figures, without writing a single line of code.</p>
   <div class="badges">
-    <span class="badge">Windows + Linux</span>
+    <span class="badge">Windows · Linux · macOS</span>
     <span class="badge">No coding required</span>
     <span class="badge">DESeq2 · limma-voom · edgeR</span>
     <span class="badge">STAR · HISAT2 · Salmon</span>
@@ -68,7 +68,7 @@
   </div>
 </div>
 
-<p class="lead">BulkSeq Studio is for biologists who want to analyse their own bulk RNA-seq or microarray data without learning the command line. You point a tabbed graphical interface at your data and a reference genome; it runs a transparent <a href="https://snakemake.github.io/">Snakemake</a> pipeline and produces a count matrix, a DESeq2 (or limma) results table, GO/KEGG enrichment, a STRING interaction network, and figures. Everything runs locally on your own machine, on Windows the pipeline runs inside WSL2, and on Linux it runs natively; either way the results are identical and every parameter, tool version, and reference is recorded so a run can be reproduced later.</p>
+<p class="lead">BulkSeq Studio is for biologists who want to analyse their own bulk RNA-seq or microarray data without learning the command line. You point a tabbed graphical interface at your data and a reference genome; it runs a transparent <a href="https://snakemake.github.io/">Snakemake</a> pipeline and produces a count matrix, a DESeq2 (or limma) results table, GO/KEGG enrichment, a STRING interaction network, and figures. Everything runs locally on your own machine: on Windows the pipeline runs inside WSL2, and on Linux and on Apple Silicon Macs it runs natively; wherever a tool is available on that platform the results are identical, and every parameter, tool version, and reference is recorded so a run can be reproduced later. macOS support is new — the environment specs are solve-verified on Apple Silicon, but no packaged build has shipped yet, so running on macOS today means running from source (see <a href="guide.html#macos">Install</a>). The <a href="guide.html#macos-matrix">platform feature matrix</a> in the install guide lists the handful of features that differ by platform.</p>
 
 <figure class="diagram">
   <img src="assets/bulkseq-workflow.svg" alt="BulkSeq Studio workflow diagram: input entry points (local FASTQ, SRA/ENA accession, and the shortcut count-matrix, microarray, and DESeq2-results modes) feeding four stages — QC and trimming, alignment and quantification, differential expression, and downstream outputs — plus an optional multi-study meta-analysis lane, with a legend." loading="lazy">

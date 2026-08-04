@@ -149,9 +149,17 @@ if (!(numerator %in% .lv) || !(denominator %in% .lv)) {
 }
 res <- results(dds, contrast = c(con_factor, numerator, denominator), alpha = alpha)
 coef_name <- paste0(con_factor, "_", numerator, "_vs_", denominator)
+# lfcShrink(type=apeglm) can fail (e.g. apeglm needs a single model coefficient, which a
+# multi-level contrast does not give it) and fall back to ashr inside this tryCatch. Track
+# the REALISED method (and why), not just the requested shrink_type, so the run summary
+# reports what actually ran (see the provenance note near sessionInfo() below).
+shrink_method_used <- shrink_type
+shrink_fallback_reason <- NA_character_
 resLFC <- tryCatch(
   lfcShrink(dds, coef = coef_name, type = shrink_type),
   error = function(e) {
+    shrink_method_used <<- "ashr"
+    shrink_fallback_reason <<- conditionMessage(e)
     warning(sprintf("lfcShrink type='%s' failed (%s); falling back to ashr.",
                     shrink_type, conditionMessage(e)))
     lfcShrink(dds, contrast = c(con_factor, numerator, denominator), type = "ashr")
@@ -214,6 +222,15 @@ write_check(snakemake@output[["equivalence_check"]], "13_equivalence_qc", "PASS"
               message = sprintf("%d genes equivalent to no change (|log2FC| < %.2g at padj < %.3g, TOST lessAbs).",
                                 nrow(eq_out), L_eq, alpha))))
 
-writeLines(capture.output(sessionInfo()), snakemake@output[["session"]])
+# Provenance line make_run_summary.py parses to report the REALISED shrinkage method
+# (config only records what was requested; a silent apeglm -> ashr fallback above would
+# otherwise be invisible to anyone trying to reproduce the run).
+shrink_line <- if (identical(shrink_method_used, shrink_type)) {
+  sprintf("Shrinkage method used: %s (as requested)", shrink_method_used)
+} else {
+  sprintf("Shrinkage method used: %s (requested '%s' failed and fell back: %s)",
+          shrink_method_used, shrink_type, shrink_fallback_reason)
+}
+writeLines(c(shrink_line, "", capture.output(sessionInfo())), snakemake@output[["session"]])
 sink(type = "message")
 close(log_con)

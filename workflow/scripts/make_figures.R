@@ -257,6 +257,18 @@ save_gg(p_ma, out[["ma_png"]], out[["ma_svg"]], w = ma_dim[1], h = ma_dim[2])
 vol <- as.data.frame(resLFC)
 vol$gene <- rownames(vol)
 vol$label <- label_for(vol$gene)
+# x position keeps the SHRUNKEN resLFC effect size (apeglm/ashr; correct display convention:
+# it de-noises low-count genes' fold changes). Up/Down classification below instead uses the
+# RAW log2FoldChange from `res`, matching upregulated_genes.csv / downregulated_genes.csv
+# (run_deseq2.R:181-185) and the up/down heatmaps below, so the figure's point colours agree
+# with the CSV row counts make_html_report.py captions it with.
+vol$log2FoldChange_raw <- res$log2FoldChange[match(vol$gene, rownames(res))]
+# Only the DESeq2 backend shrinks: run_voom.R, run_edger.R, run_limma.R (microarray) and
+# ingest_deseq2_results.R all set `resLFC <- res`, so on those routes the x axis carries the
+# raw value and calling it "shrunken" would be a false claim -- the same one
+# make_html_report.py (_micro_tech, ~:1200) already strips from the shared tech captions.
+# Derive it from the data instead of hardcoding, so a new backend cannot desync the label.
+lfc_is_shrunken <- !identical(res$log2FoldChange, resLFC$log2FoldChange)
 vol <- vol[!is.na(vol$padj), ]
 vol$neglog10padj <- -log10(vol$padj)
 
@@ -297,8 +309,13 @@ if (identical(yscale, "cap")) {
 }
 
 vol$direction <- "n.s."
-vol$direction[vol$padj < alpha_thr & vol$log2FoldChange >=  lfc_thr] <- "Up"
-vol$direction[vol$padj < alpha_thr & vol$log2FoldChange <= -lfc_thr] <- "Down"
+# Guard on !is.na(log2FoldChange_raw) so an NA raw LFC is classified "n.s." rather than
+# left to the comparison's NA. A gene can have a non-NA padj with an NA raw LFC (a gene
+# present in resLFC but absent from res, so the match() above yields NA). With the
+# length-1 RHS used here R would silently skip those positions anyway, so this is about
+# stating the intent, not avoiding an error.
+vol$direction[!is.na(vol$log2FoldChange_raw) & vol$padj < alpha_thr & vol$log2FoldChange_raw >=  lfc_thr] <- "Up"
+vol$direction[!is.na(vol$log2FoldChange_raw) & vol$padj < alpha_thr & vol$log2FoldChange_raw <= -lfc_thr] <- "Down"
 lab <- vol[vol$direction != "n.s.", ]
 lab <- head(lab[order(lab$padj), ], volcano_top)
 
@@ -345,7 +362,7 @@ p_vol <- p_vol +
   scale_colour_manual(values = pal, name = NULL) +
   scale_shape_manual(values = shp, name = NULL) +
   coord_cartesian(xlim = c(-xm, xm), ylim = c(0, ytop), clip = "off") +
-  labs(x = "log2 fold change",
+  labs(x = if (lfc_is_shrunken) "log2 fold change (shrunken)" else "log2 fold change",
        y = if (do_cap) "-log10 adjusted p (axis capped)"
            else if (identical(yscale, "sqrt")) "-log10 adjusted p (sqrt scale)"
            else "-log10 adjusted p") +

@@ -114,12 +114,26 @@ read_ids_csv <- function(path) {
 # "ncbi-geneid" when ENTREZ ids are supplied (OrgDb organisms) or "kegg" when the
 # raw gene ids are KEGG gene ids (e.g. FGSG locus tags for Fusarium). Each call is
 # wrapped so a flaky rest.kegg.jp lookup degrades to empty instead of failing.
-run_kegg <- function(genes_all, ranked, kegg_keytype) {
+run_kegg <- function(genes_all, ranked, kegg_keytype, background = NULL) {
   genes_all <- unique(genes_all[!is.na(genes_all)])
+  # `background` is the ORA universe: the genes that were actually tested, in the
+  # same id space as `genes_all`. Without it enrichKEGG defaults to every gene in
+  # the KEGG organism, which inflates enrichment -- an unexpressed pathway counts
+  # as depleted background rather than as absent from the experiment. enrichGO and
+  # enrichDO in this script already pass their universe; KEGG was the sole outlier.
+  # Caller supplies it per route because the id space differs (ENTREZ on the OrgDb
+  # route, raw locus tags elsewhere), and a background in the wrong space would
+  # silently return zero terms.
+  kegg_args <- list(gene = genes_all, organism = kegg_org, keyType = kegg_keytype,
+                    pAdjustMethod = "BH", pvalueCutoff = alpha, qvalueCutoff = 0.20,
+                    minGSSize = 10, maxGSSize = 500)
+  background <- unique(as.character(background[!is.na(background)]))
+  # Omit the argument entirely when no background is available, rather than passing
+  # an empty vector: clusterProfiler treats a zero-length universe as a failure, and
+  # trading an inflated result for no result is the worse error.
+  if (length(background) > 0) kegg_args$universe <- background
   ek <- if (length(genes_all) >= 1) tryCatch(
-    enrichKEGG(gene = genes_all, organism = kegg_org, keyType = kegg_keytype,
-               pAdjustMethod = "BH", pvalueCutoff = alpha, qvalueCutoff = 0.20,
-               minGSSize = 10, maxGSSize = 500),
+    do.call(enrichKEGG, kegg_args),
     error = function(e) { message("enrichKEGG failed: ", conditionMessage(e)); NULL }) else NULL
   if (nrows(ek) > 0) write.csv(as.data.frame(ek), out[["kegg"]], row.names = FALSE)
   kg <- NULL
@@ -277,7 +291,10 @@ if (orgdb_ok) {
     n_do <- nrows(ego_do)
 
     # KEGG ORA + GSEA on the ENTREZ ids (KEGG uses NCBI GeneIDs for OrgDb species).
-    kegg <- if (has_kegg) run_kegg(all_sig, gene_list, "ncbi-geneid")
+    # `universe` (not names(gene_list)): gene_list drops genes with NA log2FoldChange,
+    # so it is a strict subset. Passing it would give KEGG a different background from
+    # enrichGO/enrichDO -- the same inconsistency this fix removes, one layer down.
+    kegg <- if (has_kegg) run_kegg(all_sig, gene_list, "ncbi-geneid", background = universe)
             else list(ekegg_all = NULL, kegg_gse = NULL, n_ora = 0, n_gsea = 0)
 
     # Persist the enrichment objects (+ ranked geneList and OrgDb name) so the
@@ -376,7 +393,8 @@ if (orgdb_ok) {
     }
 
     # KEGG ORA + GSEA via clusterProfiler on the raw locus-tag ids (always-on tail).
-    kegg <- if (has_kegg) run_kegg(all_ids, gene_list, "kegg")
+    # Same tested-gene background g:Profiler receives as custom_bg, in locus-tag space.
+    kegg <- if (has_kegg) run_kegg(all_ids, gene_list, "kegg", background = tested_genes)
             else list(ekegg_all = NULL, kegg_gse = NULL, n_ora = 0, n_gsea = 0)
 
     saveRDS(list(ego_all = NULL, ego_up = NULL, ego_down = NULL,
@@ -421,11 +439,13 @@ if (orgdb_ok) {
     names(gene_list) <- res$base_id
     gene_list <- sort(gene_list[!duplicated(names(gene_list))], decreasing = TRUE)
 
+    tested_genes <- unique(res$base_id)  # tested-gene background for the KEGG ORA universe
+
     up_ids <- read_ids_csv(up_file)
     down_ids <- read_ids_csv(down_file)
     all_ids <- unique(c(up_ids, down_ids))
 
-    kegg <- run_kegg(all_ids, gene_list, "kegg")
+    kegg <- run_kegg(all_ids, gene_list, "kegg", background = tested_genes)
 
     saveRDS(list(ego_all = NULL, ego_up = NULL, ego_down = NULL,
                  gse = NULL, ego_do = NULL,

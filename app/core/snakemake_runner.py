@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import platform
 import shlex
+import signal
 import subprocess
 import sys
 import uuid
@@ -280,6 +282,34 @@ def build_snakemake_command(
     return SnakemakeCommand(args, subprocess.list2cmdline(args), use_wsl=False)
 
 
+def native_path_prefix() -> list[str]:
+    """Directories to prepend to PATH for a native (non-WSL) run.
+
+    The WSL branch does this inside _wrap_wsl; the native branch had no equivalent,
+    which is fine on Linux where the user activates the environment, but not on
+    Apple Silicon. There the R/Bioconductor stack lives in a SECOND micromamba
+    prefix (the alignment tools and r-base cannot share one -- see
+    workflow/envs/bulkseq_macos_arm64_r.yaml), reached through a shim so that
+    Snakemake's ``Rscript --vanilla`` resolves to it without any rule changing.
+
+    Order matters: the shim directory must come BEFORE the tools prefix. rseqc
+    depends on bare r-base, so the tools prefix ships its own Rscript with no
+    Bioconductor; if that one wins, every library(DESeq2) fails.
+
+    Only existing directories are returned, so a Linux or Windows host is unaffected.
+    """
+    root = Path(os.environ.get("MAMBA_ROOT_PREFIX") or (Path.home() / "micromamba"))
+    dirs: list[str] = []
+    if sys.platform == "darwin" and platform.machine() == "arm64":
+        shim = root / "shims"
+        if shim.is_dir():
+            dirs.append(str(shim))
+    env_bin = root / "envs" / WSL_ENV_NAME / "bin"
+    if env_bin.is_dir():
+        dirs.append(str(env_bin))
+    return dirs
+
+
 def build_unlock_command(
     project_root: Path,
     config: AppConfig,
@@ -352,11 +382,41 @@ class SnakemakeRunner:
             text=True,
             bufsize=1,
             creationflags=creationflags,
+            # POSIX counterpart of CREATE_NEW_PROCESS_GROUP above: setsid() puts the
+            # child in its own process group (pgid == pid) so Stop can signal the whole
+            # tree. Without it, terminating the Snakemake process leaves its children
+            # -- STAR, featureCounts, Rscript -- running for hours on the user's machine.
+            start_new_session=not sys.platform.startswith("win"),
             # Dot decimal separator for the native (Linux) run too, so a comma-decimal host
             # locale cannot leak "0,05" into tool output. (WSL runs set this inside _wrap_wsl.)
-            env={**os.environ, "LC_NUMERIC": "C"},
+            env=self._child_env(),
         )
         return self.process
+
+    def _child_env(self) -> dict[str, str]:
+        env = {**os.environ, "LC_NUMERIC": "C"}
+        if not self.use_wsl:
+            # The WSL branch exports PATH inside _wrap_wsl; do the equivalent here so a
+            # native run finds the environment's tools (and, on Apple Silicon, the
+            # Rscript shim for the split R prefix).
+            prefix = native_path_prefix()
+            if prefix:
+                env["PATH"] = os.pathsep.join([*prefix, env.get("PATH", "")])
+        return env
+
+    def _signal_native_group(self, sig: int) -> bool:
+        """Signal the child's whole process group. True if the signal was delivered.
+
+        Falls back to the single process when the group cannot be resolved (the child
+        already exited, or start_new_session did not apply).
+        """
+        if self.process is None:
+            return False
+        try:
+            os.killpg(os.getpgid(self.process.pid), sig)
+            return True
+        except (ProcessLookupError, PermissionError, OSError):
+            return False
 
     def is_running(self) -> bool:
         return self.process is not None and self.process.poll() is None
@@ -393,24 +453,39 @@ class SnakemakeRunner:
         assert self.process is not None
         if sys.platform.startswith("win"):
             _run_quiet(["taskkill", "/F", "/T", "/PID", str(self.process.pid)])
-        else:
+            return
+        # POSIX (native Linux and macOS): signal the process group, mirroring what
+        # taskkill /T does on Windows and what build_wsl_kill_command does in the VM.
+        # SIGTERM first so Snakemake can unlock the working directory, then SIGKILL
+        # for anything that ignored it.
+        if not self._signal_native_group(signal.SIGTERM):
             self.process.terminate()
+            return
+        try:
+            self.process.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            self._signal_native_group(signal.SIGKILL)
 
     def _reap_local(self) -> None:
         if self.process is None:
             return
         if self.process.poll() is None:
-            try:
-                self.process.terminate()
-            except OSError:
-                pass
+            # Prefer the group on POSIX: a bare terminate()/kill() here reaches only
+            # the relay handle and would let the tool processes escape the same way
+            # _stop_native_tree used to.
+            if not (not sys.platform.startswith("win") and self._signal_native_group(signal.SIGTERM)):
+                try:
+                    self.process.terminate()
+                except OSError:
+                    pass
         try:
             self.process.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            try:
-                self.process.kill()
-            except OSError:
-                pass
+            if not (not sys.platform.startswith("win") and self._signal_native_group(signal.SIGKILL)):
+                try:
+                    self.process.kill()
+                except OSError:
+                    pass
 
     def unlock(self, config: AppConfig) -> None:
         """Synchronously run `snakemake --unlock` to clear a stale directory lock."""

@@ -29,7 +29,7 @@
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.23.1</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.24.0</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
     <nav>
@@ -80,6 +80,7 @@
 
 <h3>Contamination screening (FastQ Screen)</h3>
 <p>An optional <strong>FastQ Screen</strong> pass maps a subset of each sample's reads against a panel of reference genomes and reports the fraction that matches each one, a quick check for cross-species contamination or unexpected sources. The result lands in the MultiQC report alongside the other QC modules. Point it at a FastQ Screen config file (Advanced parameters &rarr; Contamination: FastQ Screen config) that lists the bowtie2 genome indexes to screen against; it does not download a genome panel. If the screen is enabled without a config, it is skipped and the sanity check notes it.</p>
+<p class="muted">Not available on macOS (Apple Silicon): the <code>fastq-screen</code> conda package has no osx-arm64 build. See the <a href="guide.html#macos-matrix">platform feature matrix</a>.</p>
 
 <h3>Alignment and quantification</h3>
 <p>Three aligners are available, all validated end to end. They feed a gene-level count matrix in the same format, so everything after counting (differential expression, enrichment, the network, every figure) runs identically whichever you pick. Both single-end and paired-end reads run through all three routes.</p>
@@ -115,6 +116,7 @@
 
 <h3>GSVA pathway activity</h3>
 <p>An optional <strong>GSVA</strong> module scores gene-set activity per sample from your own custom gene sets, drawn as a sample-by-set heatmap. Because it uses only the gene sets you supply, it is organism-safe and valid for non-model organisms. GSVA produces descriptive per-sample activity scores, not a significance test, so read the heatmap as a view of how each set's activity varies across samples rather than as a formal enrichment result.</p>
+<p class="muted">Not available on macOS (Apple Silicon): <code>bioconductor-gsva</code> has no osx-arm64 build at any version. See the <a href="guide.html#macos-matrix">platform feature matrix</a>.</p>
 
 <h3>Protein-interaction networks</h3>
 <p>BulkSeq Studio builds a STRING protein-protein interaction network for the significant genes and seeds it by symbol or, for symbol-less annotations like the <code>FGSG_</code> locus tags of <em>Fusarium graminearum</em>, by gene ID. The network exports to Cytoscape as GraphML, SIF, and cytoscape.js JSON for external editing. A dedicated PPI Network tab embeds the same network in an interactive view.</p>

@@ -35,6 +35,30 @@ def load_metadata(path: Path) -> pd.DataFrame:
     return pd.read_csv(path, sep="\t", dtype=str, encoding="utf-8").fillna("")
 
 
+# Excel's default "CSV (Comma delimited)" export on a non-English Windows locale
+# writes cp1252, not UTF-8. Reading such a file as UTF-8 raises UnicodeDecodeError
+# on the first accented character, so every user-supplied table is read through
+# this fallback chain rather than pandas' platform default.
+USER_TABLE_ENCODINGS: tuple[str, ...] = ("utf-8-sig", "cp1252", "latin-1")
+
+
+def read_user_table(path: Path, **kwargs: object) -> pd.DataFrame:
+    """Read a user-supplied CSV/TSV, tolerating non-UTF-8 encodings.
+
+    Tries each encoding in USER_TABLE_ENCODINGS in turn. latin-1 is last and
+    cannot raise, so a table always loads rather than failing the import with a
+    raw UnicodeDecodeError. Use only for files the *user* provides; files this
+    application writes are UTF-8 by construction and should be read as such.
+    """
+    last: UnicodeDecodeError | None = None
+    for encoding in USER_TABLE_ENCODINGS:
+        try:
+            return pd.read_csv(path, encoding=encoding, **kwargs)  # type: ignore[arg-type]
+        except UnicodeDecodeError as exc:
+            last = exc
+    raise last  # unreachable: latin-1 decodes any byte sequence
+
+
 def validate_metadata(df: pd.DataFrame, allow_pending_sra: bool = False,
                       design_variables: list[str] | None = None,
                       contrast: tuple[str, str] | None = None) -> list[dict[str, str]]:
@@ -48,6 +72,25 @@ def validate_metadata(df: pd.DataFrame, allow_pending_sra: bool = False,
     duplicates = [sid for sid, count in Counter(ids).items() if count > 1]
     if duplicates:
         messages.append({"status": "FAIL", "message": f"Duplicate sample_id values: {', '.join(duplicates)}"})
+
+    # Sample ids become file names (data/trimmed/<sample_id>_1.fastq.gz and so on).
+    # NTFS and APFS are case-insensitive by default, so "Sample1" and "sample1" are
+    # distinct ids that resolve to ONE file: the two samples would silently overwrite
+    # each other's intermediates and the run would report results for whichever wrote
+    # last. Exact duplicates are already caught above; this catches the case-only pair.
+    case_groups: dict[str, list[str]] = defaultdict(list)
+    for sid in dict.fromkeys(ids):  # unique, order preserved
+        case_groups[sid.casefold()].append(sid)
+    case_clashes = ["/".join(group) for group in case_groups.values() if len(group) > 1]
+    if case_clashes:
+        messages.append({
+            "status": "FAIL",
+            "message": (
+                "Sample ids differing only in capitalisation collide on Windows and macOS "
+                f"(one file per pair): {', '.join(case_clashes)}. Rename them so each id is "
+                "distinct regardless of case."
+            ),
+        })
 
     unsafe = [sid for sid in ids if not re.match(SAFE_ID_PATTERN, sid)]
     if unsafe:

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BulkSeq Studio — Install &amp; quick start</title>
-<meta name="description" content="Install BulkSeq Studio on Windows or Linux, let the first-run setup install the tools, and run your first bulk RNA-seq or microarray analysis. Covers all five input modes.">
+<meta name="description" content="Install BulkSeq Studio on Windows, Linux, or macOS (Apple Silicon), let the first-run setup install the tools, and run your first bulk RNA-seq or microarray analysis. Covers all five input modes.">
 <link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -29,7 +29,7 @@
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.23.1</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.24.0</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
     <nav>
@@ -52,15 +52,15 @@
   <main class="content">
     <section id="install"><p class="kicker">Get started</p>
 <h2>Install & setup</h2>
-<p class="lead">BulkSeq Studio is free and runs on Windows and Linux. You download one file, launch it, and let the app set up the bioinformatics tools for you the first time. No coding, and on Windows no administrator account for the install itself.</p>
+<p class="lead">BulkSeq Studio is free and runs on Windows, Linux, and macOS on Apple Silicon. On Windows and Linux you download one file, launch it, and let the app set up the bioinformatics tools for you the first time — no coding, and on Windows no administrator account for the install itself. macOS support is new: see <a href="#macos">macOS</a> below for what is and is not shipped yet.</p>
 
-<div class="grid cols-2">
+<div class="grid">
   <div class="card feature">
     <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>Windows</h4>
     <p>Two downloads on the <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">Releases</a> page, pick either:</p>
     <ul>
-      <li><strong>Installer</strong> — <code>BulkSeqStudio-Setup-0.23.1.exe</code>. A per-user install that needs no administrator rights; afterwards you launch it from the Start Menu.</li>
-      <li><strong>Portable</strong> — <code>BulkSeqStudio-Portable-0.23.1.zip</code>. Unzip it anywhere and double-click <code>BulkSeqStudio.exe</code>. Nothing is installed.</li>
+      <li><strong>Installer</strong> — <code>BulkSeqStudio-Setup-0.24.0.exe</code>. A per-user install that needs no administrator rights; afterwards you launch it from the Start Menu.</li>
+      <li><strong>Portable</strong> — <code>BulkSeqStudio-Portable-0.24.0.zip</code>. Unzip it anywhere and double-click <code>BulkSeqStudio.exe</code>. Nothing is installed.</li>
     </ul>
     <p class="muted">To update, run a newer installer: it detects the existing install and offers to update or uninstall first.</p>
   </div>
@@ -68,22 +68,31 @@
     <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>Linux</h4>
     <p>Download from the same Releases page and pick either:</p>
     <ul>
-      <li><strong>AppImage</strong> — a single self-contained file. Make it executable, then run it; nothing to extract or install. To update, download the newer file or run <a href="https://github.com/AppImage/AppImageUpdate">AppImageUpdate</a> on it (the build ships zsync update info).</li>
-      <li><strong>Tarball</strong> — extract it and run the bundled launcher <code>BulkSeqStudio</code>.</li>
+      <li><strong>AppImage</strong> — <code>BulkSeqStudio-0.24.0-x86_64.AppImage</code>, a single self-contained file. Make it executable, then run it; nothing to extract or install. To update, download the newer file or run <a href="https://github.com/AppImage/AppImageUpdate">AppImageUpdate</a> on it (the build ships a companion <code>.AppImage.zsync</code> for chunked updates).</li>
+      <li><strong>Tarball</strong> — <code>BulkSeqStudio-linux-&lt;version&gt;.tar.gz</code>. Extract it and run the bundled launcher <code>BulkSeqStudio</code>. Published with earlier releases; the current CI workflow builds only the AppImage, so a tarball may not accompany every release.</li>
     </ul>
     <p class="muted">Both bundle the interface, so you do not need system Python. They are built on Ubuntu 24.04 and need glibc 2.39 or newer.</p>
+  </div>
+  <div class="card feature" id="macos">
+    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19c-3 3-6.2 1-8-2-2.6-4.3-1.8-10 2-12 1.8-1 3.6-.7 5 0 1.4-.7 3.2-1 5 0 1.8 1 3 3 3.5 5-2.5 1-4 3-4 5.5 0 2 1 3.3 2.5 4-1 2-3 4.5-6 4.5-1.2 0-2-.5-3-.5-1 0-1.8.5-3 .5Z"/><path d="M13 6c.3-1.5 1.6-3 3-3 .2 1.6-.4 3-1.3 3.9-.9.9-2.2 1.4-3.4 1.2 0-1.4.6-2.7 1.7-4.1Z"/></svg>macOS (Apple Silicon)</h4>
+    <p>A CI workflow (<code>.github/workflows/build.yml</code>) is configured to build the following on an Apple-Silicon runner, on pushes to <code>main</code> and on version tags. <strong>It has never run</strong>, so neither artifact exists yet:</p>
+    <ul>
+      <li><strong><code>BulkSeq Studio.app</code></strong> — an unsigned app bundle.</li>
+      <li><strong><code>BulkSeqStudio-&lt;version&gt;-macos-arm64.dmg</code></strong> — a disk image, produced only when a signing identity is configured, and notarized only when Apple notarization credentials are supplied as well (<code>codesign</code> → <code>create-dmg</code> → <code>notarytool</code> → <code>stapler staple</code>).</li>
+    </ul>
+    <p class="muted">No <code>.app</code> or <code>.dmg</code> has been built or run anywhere, and the sign-and-notarize path has never been exercised. There is nothing on the <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">Releases</a> page for macOS yet — run BulkSeq Studio on macOS <a href="#macos-source">from source</a> for now.</p>
   </div>
 </div>
 
 <h3>What is WSL2, and why does Windows need it?</h3>
 <p>The bioinformatics tools that do the analysis (alignment, counting, DESeq2, enrichment) are Linux programs. On Windows, BulkSeq Studio runs them inside <strong>WSL2</strong> — the Windows Subsystem for Linux, a lightweight Linux that Windows runs quietly in the background. You never open a Linux terminal yourself. The window you see is only the graphical interface; the actual computation happens in a managed <em>micromamba</em> environment inside WSL2. The app can enable WSL2 and install that environment for you from its setup screen, so you do not configure anything by hand.</p>
-<p class="muted">On Linux there is no WSL: the same interface runs the same pipeline directly in a local environment, and the results are identical.</p>
+<p class="muted">On Linux and on Apple Silicon Macs there is no WSL: the same interface runs the same pipeline directly in a local micromamba environment, and, wherever a tool is available on that platform, the results are identical. See <a href="#macos">macOS</a> below — on Apple Silicon the environment is split into two micromamba prefixes instead of one, for reasons unrelated to WSL.</p>
 
 <h3>Install and first run, step by step</h3>
 <ol class="steps">
   <li>
     <h4>Download and open the app</h4>
-    <p>Grab the Windows installer or portable ZIP (or, on Linux, the AppImage or tarball) from the Releases page, then launch BulkSeq Studio. The per-user Windows install does not ask for an administrator password.</p>
+    <p>Grab the Windows installer or portable ZIP, or, on Linux, the AppImage or tarball, from the Releases page, then launch BulkSeq Studio. The per-user Windows install does not ask for an administrator password. On macOS there is no packaged download yet; see <a href="#macos">macOS</a> below for running from source instead.</p>
   </li>
   <li>
     <h4>Let the Environment setup screen check your machine</h4>
@@ -111,7 +120,7 @@
   <li><strong>Core bioinformatics environment ("bulkseq")</strong> — Snakemake, the three aligners (STAR, HISAT2, Salmon), featureCounts, samtools, fastp, FastQC, and MultiQC. The download takes a few minutes.</li>
   <li><strong>R / DESeq2 stack</strong> — R with DESeq2, the enrichment packages, and the figure toolchain. This is the largest, slowest install and can take a while; you only do it once.</li>
 </ul>
-<p class="muted">On Linux the WSL2 row does not apply — the pipeline runs locally and those controls are hidden.</p>
+<p class="muted">On Linux and on macOS the WSL2 row does not apply — the pipeline runs locally and those controls are hidden. On macOS the same readiness script creates the two micromamba prefixes described in <a href="#macos">macOS</a> below, plus an R shim.</p>
 
 <div class="note"><span class="t">Disk space</span> Set aside about 10 GB of free disk for the toolchain and reference indices, and 16 GB or more of RAM is recommended (STAR alignment is the memory-heavy step; for very large genomes the HISAT2 or Salmon aligner needs far less). The one-time environment setup downloads several packages, so the first run is slower than later ones — give it time and a stable internet connection.</div>
 
@@ -120,12 +129,52 @@
 <pre><code>[wsl2]
 memory=48GB      # cap the VM at 48 GB (default is ~50% of host RAM)
 processors=16    # optional: limit WSL2 to 16 logical processors</code></pre>
-<p class="muted">See Microsoft's <a href="https://learn.microsoft.com/windows/wsl/wsl-config#configuration-setting-for-wslconfig" target="_blank" rel="noopener">Advanced settings configuration in WSL ↗</a> for every <code>.wslconfig</code> option. On Linux there is no cap to configure — the pipeline runs natively with your machine's full RAM.</p>
+<p class="muted">See Microsoft's <a href="https://learn.microsoft.com/windows/wsl/wsl-config#configuration-setting-for-wslconfig" target="_blank" rel="noopener">Advanced settings configuration in WSL ↗</a> for every <code>.wslconfig</code> option. On Linux and on macOS there is no cap to configure — the pipeline runs natively with your machine's full RAM.</p>
 
 <figure>
   <img src="assets/screenshot-linux.png" alt="BulkSeq Studio running natively on a Linux desktop.">
   <figcaption>The same application running natively on Linux. Every tab, the Figure Style editor, and the interactive PPI viewer work the same as on Windows.</figcaption>
-</figure></section>
+</figure>
+
+<h3 id="macos-source">Running on macOS (Apple Silicon) from source</h3>
+<p>BulkSeq Studio runs natively on Apple Silicon Macs, the same as on Linux: no WSL, and no virtual-machine memory cap to configure. Intel Macs are out of scope — this project targets macOS 27, which is Apple-Silicon-only (Rosetta 2 support ends after it). No packaged release build exists for macOS yet (see the macOS card above), so running BulkSeq Studio on macOS today means running it from source.</p>
+<ol class="steps">
+  <li>
+    <h4>Create the pipeline environment once</h4>
+    <p>Unlike Windows and Linux, macOS (Apple Silicon) needs <strong>two</strong> micromamba prefixes, <code>bulkseq</code> (alignment and QC tools) and <code>bulkseq-r</code> (R/Bioconductor), instead of one — the alignment tools pin <code>libdeflate &lt;1.23</code> while <code>r-base</code> 4.5.2 pins <code>&gt;=1.24</code>, and the bioconda repodata patch that reconciles the two on linux-64/osx-64 was never extended to osx-arm64, so a single-prefix solve fails on that constraint. You do not need to manage this split by hand: the same script the app's Check Environment window runs on Linux creates both prefixes for you, plus a small <code>Rscript</code>/<code>R</code> shim (in <code>$MAMBA_ROOT_PREFIX/shims</code>, ahead of the tools prefix on <code>PATH</code>) that routes R calls to the <code>bulkseq-r</code> prefix, so Snakemake finds one working <code>Rscript</code>. From a terminal it is one command:</p>
+    <pre><code>bash scripts/setup_wsl_bioenv.sh bulkseq full</code></pre>
+  </li>
+  <li>
+    <h4>Get the GUI dependencies and launch</h4>
+    <p>From-source is the only path until a packaged build ships:</p>
+    <pre><code>micromamba activate bulkseq
+pip install PySide6 pandas pydantic pyyaml psutil openpyxl pillow
+python -m app.main</code></pre>
+  </li>
+</ol>
+<p>A few tool versions differ from the Windows/Linux conda-pinned set because of missing osx-arm64 conda builds. Most notably, <strong>SortMeRNA</strong> is installed from the upstream GitHub release (4.4.0+, checksum-pinned) instead of the conda-pinned 4.3.7 — no arm64 build of SortMeRNA exists at any version, and the upstream 4.4.0+ binary is verified a drop-in for the rRNA-filtering rule, so this is a version difference rather than a missing feature. RiboDetector, the reference-free rRNA filter, is unaffected (it is a <code>noarch</code> conda package). Three other features have no osx-arm64 conda build at all and are genuinely unavailable on this platform for that reason, not a platform limitation; see the platform feature matrix below.</p>
+
+<h3 id="macos-matrix">Platform feature matrix</h3>
+<p>Everything not listed in this table works identically on Windows, Linux, and macOS (Apple Silicon). The four rows below differ because of missing osx-arm64 conda <strong>builds</strong>, not platform limitations: three are unavailable, and one (SortMeRNA) substitutes a differently-versioned upstream binary. Each is restored the moment its build lands.</p>
+<div class="tablewrap">
+<table>
+<thead>
+<tr><th>Feature</th><th>Windows</th><th>Linux</th><th>macOS (Apple Silicon)</th></tr>
+</thead>
+<tbody>
+<tr><td>GSVA pathway activity</td><td>Yes</td><td>Yes</td><td>No — <code>bioconductor-gsva</code> has no osx-arm64 build at any version</td></tr>
+<tr><td>Affymetrix raw-CEL / RMA ingest</td><td>Yes</td><td>Yes</td><td>No — <code>affyio</code> has no osx-arm64 build at R 4.5; the GEO series-matrix microarray route is unaffected and works normally</td></tr>
+<tr><td>FastQ Screen contamination screen</td><td>Yes</td><td>Yes</td><td>No — the <code>fastq-screen</code> conda package cannot be installed on osx-arm64 (blocked transitively by <code>perl-gd</code>, which has no osx-arm64 build), so the whole screen is unavailable here, not just its PNG plot</td></tr>
+<tr><td>SortMeRNA rRNA filtering</td><td>Yes (4.3.7, conda-pinned)</td><td>Yes (4.3.7, conda-pinned)</td><td>Yes — 4.4.0+ from the upstream GitHub release (checksum-pinned), not the conda-pinned 4.3.7; verified a drop-in</td></tr>
+<tr><td>STAR / HISAT2 / Salmon alignment</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+<tr><td>DESeq2 / limma-voom / edgeR</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+<tr><td>GO / KEGG enrichment</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+<tr><td>STRING PPI network</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+<tr><td>GEO microarray (series-matrix) route</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+<tr><td>Multi-study meta-analysis</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+</tbody>
+</table>
+</div></section>
 
     <section id="quickstart"><p class="kicker">Your first analysis</p>
 <h2>Quick start</h2>

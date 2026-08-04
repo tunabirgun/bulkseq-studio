@@ -74,7 +74,7 @@ GLOSS = {
  "heatmap":  "Rows are genes, columns are samples; colour is relative expression (warm high, cool low). Samples of one group should look alike.",
  "nes":      "Normalised enrichment score (GSEA). Sign = whether the whole set trends up (+) or down (−); magnitude = strength. Uses every gene, not just the significant list.",
  "foldenr":  "Fold enrichment (ORA). How many more of your changed genes fall in this category than chance predicts.",
- "padjust":  "Adjusted p-value for the term — the expected false-alarm share if you trust it.",
+ "padjust":  "Adjusted p-value for the term — the expected false-alarm share if you trust it. Corrected by Benjamini–Hochberg on the clusterProfiler route (shown as 'p.adjust (BH)') and by g:SCS, g:Profiler's own graph-aware method, on the g:Profiler route (shown as 'p (g:SCS)'). Both are already corrected for multiple testing; they are not comparable to each other term-for-term.",
  "setsize":  "How many measured genes belong to that set or category.",
  "ppi":      "Known protein–protein interactions among your changed genes (STRING). Tight clusters suggest genes acting together; highly connected nodes are hubs.",
  "wilcoxon": "A rank-based cross-check, not used to call genes. With few replicates it is underpowered — read it only as a rank-concordance check.",
@@ -87,7 +87,7 @@ GLOSS_ORDER = [
  ("α (alpha)", "alpha"), ("PCA", "pca"), ("Sample distance", "distance"),
  ("p-value histogram", "pvalhist"), ("Volcano plot", "volcano"), ("MA plot", "ma"),
  ("Heatmap", "heatmap"), ("NES", "nes"), ("Fold enrichment", "foldenr"),
- ("p.adjust (term)", "padjust"), ("Set size", "setsize"),
+ ("Adjusted p-value (term)", "padjust"), ("Set size", "setsize"),
  ("Protein–protein interaction (PPI)", "ppi"), ("Wilcoxon cross-check", "wilcoxon"),
 ]
 
@@ -416,6 +416,14 @@ _ORA_COLS = [("Description", ["Description", "term_name"], "desc"),
 _GSEA_COLS = [("Description", ["Description", "term_name"], "desc"), ("NES", ["NES"], "g3"),
               ("p.adjust", ["p.adjust", "p_value"], "g2"), ("Set size", ["setSize", "term_size"], "int")]
 
+# The two enrichment routes correct for multiple testing by DIFFERENT methods, so one
+# shared "p.adjust" header states the wrong one for whichever route it does not match.
+# clusterProfiler's p.adjust is Benjamini-Hochberg (set explicitly, pAdjustMethod="BH").
+# g:Profiler's gost() returns p_value ALREADY corrected, by its default g:SCS
+# (Set Counts and Sizes) method -- a graph-aware correction, not BH. The header is
+# derived from which column the CSV actually carries, so it cannot drift from the route.
+_ORA_PVALUE_HEADERS = {"p.adjust": "p.adjust (BH)", "p_value": "p (g:SCS)"}
+
 
 def _enrich_rows(csv_path: Path, top: int) -> list[dict]:
     if not csv_path.exists():
@@ -447,6 +455,8 @@ def _enrich_block(title: str, csv_path: Path, mode: str, top: int = 10,
     for header, keys, kind in (_GSEA_COLS if mode == "gsea" else _ORA_COLS):
         key = next((k for k in keys if k in rows[0]), None)
         if key is not None:
+            if header == "p.adjust":
+                header = _ORA_PVALUE_HEADERS.get(key, header)
             spec.append((header, key, kind))
     # No recognizable columns -> suppress the block entirely rather than emit an empty table.
     if not spec:
@@ -1162,7 +1172,10 @@ def _study_design_section(run: dict) -> str:
         add("LFC shrinkage", de.get("shrinkage_method") or "enabled")
     # DESeq2 and limma both control the false-discovery rate with Benjamini-Hochberg by default;
     # state it so the multiple-testing method is on the record, not only in the glossary.
-    add("Multiple-testing correction", "Benjamini-Hochberg (FDR)")
+    # Scoped to differential expression on purpose: the enrichment tables are corrected
+    # per route (BH for clusterProfiler, g:SCS for g:Profiler) and say so in their own
+    # column headers, so an unqualified label here would misstate one of them.
+    add("Multiple-testing correction (differential expression)", "Benjamini-Hochberg (FDR)")
     if not is_micro:
         fc = run.get("featurecounts", {}) or {}
         if fc.get("strandedness") is not None:

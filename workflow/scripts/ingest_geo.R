@@ -28,7 +28,11 @@ options(timeout = 600)
 gse <- snakemake@params[["gse"]]
 platform <- snakemake@params[["platform"]]
 source_kind <- snakemake@params[["source"]]      # geo_series_matrix | affy_cel
-norm_kind <- snakemake@params[["normalization"]] # auto | rma | none
+# auto | rma | none (GUI: microarray.normalization). Only checked for consistency below
+# (see "normalization setting sanity check") -- there is exactly one implemented
+# normalization codepath (affy::rma() on raw CEL, step 1 below), so this cannot branch
+# any actual processing; it is validated against source_kind instead of silently ignored.
+norm_kind <- snakemake@params[["normalization"]]
 log2_opt <- snakemake@params[["log2_transform"]] # auto | yes | no
 samples_file <- snakemake@input[["samples"]]
 out_expr <- snakemake@output[["expression"]]
@@ -163,7 +167,32 @@ norm_messages <- list(list(status = "PASS",
                     n_probes, ncol(exprs_mat), norm_method,
                     if (applied_log2) "applied" else (if (already_log2) "already (RMA)" else "not needed"),
                     log2_reason)))
-write_check(out_norm_check, "11_normalization_qc", "PASS", norm_messages)
+
+# ---- normalization setting sanity check --------------------------------------
+# microarray.normalization (auto | rma | none) is exposed in the GUI, but there is exactly
+# one implemented normalization method: affy::rma() on raw CEL files (step 1, source ==
+# affy_cel). geo_series_matrix and local_matrix carry no probe-level intensities to
+# renormalize -- they always use the source's own values as-is, which IS what "auto"/"none"
+# already mean here. There is no second codepath for "rma" to switch on for those sources
+# (that would mean re-deriving RMA from summary-only GEO intensities, not a valid operation).
+# So the setting is honoured where it can be (affy_cel always runs RMA) and made explicitly
+# inert with a WARNING otherwise, instead of silently doing nothing.
+norm_mismatch <- NULL
+if (identical(source_kind, "affy_cel")) {
+  if (!identical(norm_kind, "rma")) {
+    norm_mismatch <- sprintf(
+      "microarray.normalization='%s' was requested, but raw-CEL ingestion always runs affy::rma() (the only implemented CEL normalization); the setting had no effect.",
+      norm_kind)
+  }
+} else if (identical(norm_kind, "rma")) {
+  norm_mismatch <- sprintf(
+    "microarray.normalization='rma' was requested, but source='%s' provides no raw probe intensities to renormalize; the source's own values are used as-is (equivalent to 'auto'/'none').",
+    source_kind)
+}
+if (!is.null(norm_mismatch)) {
+  norm_messages <- c(norm_messages, list(list(status = "WARNING", message = norm_mismatch)))
+}
+write_check(out_norm_check, "11_normalization_qc", if (is.null(norm_mismatch)) "PASS" else "WARNING", norm_messages)
 
 # ---- 3. Probe -> gene symbol (synonym resolver) -----------------------------
 find_symbol_col <- function(df) {
@@ -252,10 +281,10 @@ out_df <- data.frame(gene_id = rownames(gene_mat), gene_mat, check.names = FALSE
 write.table(out_df, out_expr, sep = "\t", quote = FALSE, row.names = FALSE)
 
 info <- sprintf(paste0('{\n  "gse": "%s",\n  "platform": "%s",\n  "source": "%s",\n',
-                       '  "normalization": "%s",\n  "log2_applied": %s,\n',
+                       '  "normalization": "%s",\n  "normalization_requested": "%s",\n  "log2_applied": %s,\n',
                        '  "n_probes": %d,\n  "n_genes": %d,\n  "n_samples": %d,\n',
                        '  "probe_to_gene": "MaxMean collapse",\n  "symbol_map_rate": %.4f\n}'),
-                gse, platform, source_kind, norm_method,
+                gse, platform, source_kind, norm_method, norm_kind,
                 if (applied_log2 || already_log2) "true" else "false",
                 n_probes, nrow(gene_mat), ncol(gene_mat), map_rate)
 writeLines(info, out_info)

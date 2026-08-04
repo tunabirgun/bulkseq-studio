@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import os
+import platform
 import shlex
 import shutil
 import subprocess
@@ -93,15 +95,73 @@ WSL_TOOLS = {
 # solve can drop, which broke enrichment ~30 min into a run), and STRINGdb backs the PPI network
 # — probing them here catches a broken enrichment/PPI env from Check Environment, before a run.
 # Presence-checked (installed.packages), not load-tested, to stay under the 20s WSL probe timeout.
-R_ANALYSIS_PACKAGES = ("DESeq2", "edgeR", "limma", "GSVA", "clusterProfiler", "GO.db", "DOSE",
-                       "enrichplot", "fgsea", "STRINGdb", "apeglm", "ashr", "GEOquery", "affy",
-                       "metaRNASeq", "metafor", "HTSFilter", "tximport", "gprofiler2",
-                       # CRAN figure/plotting + set-overlap packages hard-loaded by the mandatory
-                       # figures/sample-correlation/set-overlap rules on every run; scales in
-                       # particular is only a transitive dep in the fallback spec, so a solve can
-                       # drop it (like GO.db) and pass every check, then crash the figures rule.
-                       "ggplot2", "ggrepel", "pheatmap", "igraph", "scales", "svglite",
-                       "RColorBrewer", "msigdbr")
+_R_PACKAGES_ALL = ("DESeq2", "edgeR", "limma", "GSVA", "clusterProfiler", "GO.db", "DOSE",
+                   "enrichplot", "fgsea", "STRINGdb", "apeglm", "ashr", "GEOquery", "affy",
+                   "metaRNASeq", "metafor", "HTSFilter", "tximport", "gprofiler2",
+                   # CRAN figure/plotting + set-overlap packages hard-loaded by the mandatory
+                   # figures/sample-correlation/set-overlap rules on every run; scales in
+                   # particular is only a transitive dep in the fallback spec, so a solve can
+                   # drop it (like GO.db) and pass every check, then crash the figures rule.
+                   "ggplot2", "ggrepel", "pheatmap", "igraph", "scales", "svglite",
+                   "RColorBrewer", "msigdbr")
+
+# Packages with no osx-arm64 conda build. bioconductor-gsva has none at any version;
+# bioconductor-affy's affyio dependency has none at r45, and pulling the r44 chain would
+# drag the whole Bioconductor graph back a release (DESeq2 1.50.2 -> 1.46.0) and
+# invalidate the benchmarks. Both are therefore absent from
+# workflow/envs/bulkseq_macos_arm64_r.yaml by design. Probing for them on that platform
+# would report a correct environment as broken, so the expected set is derived from the
+# platform rather than hardcoded. Remove an entry here the moment its arm64 build lands.
+MACOS_ARM64_UNAVAILABLE_R_PACKAGES = ("GSVA", "affy")
+
+
+def unavailable_r_packages() -> tuple[str, ...]:
+    """R packages this platform genuinely cannot provide."""
+    if sys.platform == "darwin" and platform.machine() == "arm64":
+        return MACOS_ARM64_UNAVAILABLE_R_PACKAGES
+    return ()
+
+
+def expected_r_packages() -> tuple[str, ...]:
+    missing = set(unavailable_r_packages())
+    return tuple(p for p in _R_PACKAGES_ALL if p not in missing)
+
+
+# Backwards-compatible name; callers that want the platform-correct set call
+# expected_r_packages() instead.
+R_ANALYSIS_PACKAGES = expected_r_packages()
+
+# Optional-route CLI tools with no osx-arm64 build. fastq_screen is blocked by perl-gd;
+# its output is optional anyway (rules/qc.smk declares only _screen.txt and moves the PNG
+# with `|| true`). SortMeRNA is installed from the upstream GitHub release on this
+# platform rather than from conda, so it is NOT listed here.
+MACOS_ARM64_UNAVAILABLE_TOOLS = ("fastq_screen",)
+
+
+def unavailable_tools() -> tuple[str, ...]:
+    if sys.platform == "darwin" and platform.machine() == "arm64":
+        return MACOS_ARM64_UNAVAILABLE_TOOLS
+    return ()
+
+
+def _env_search_path() -> str:
+    """PATH to probe tools on, including the directories a run will actually use.
+
+    A native run prepends the environment's bin — and on Apple Silicon the shim
+    directory holding Rscript and sortmerna — via
+    snakemake_runner.native_path_prefix(). Probing the launching process's bare PATH
+    instead would report a correctly-installed Mac as missing Rscript and the entire
+    R/Bioconductor stack, because neither is on the GUI's own PATH.
+    """
+    from app.core.snakemake_runner import native_path_prefix  # local: avoids a cycle
+
+    extra = native_path_prefix()
+    current = os.environ.get("PATH", "")
+    return os.pathsep.join([*extra, current]) if extra else current
+
+
+def _which_in_env(command: str) -> str | None:
+    return shutil.which(command, path=_env_search_path())
 
 
 @dataclass(frozen=True)
@@ -128,11 +188,20 @@ def check_readiness() -> list[ReadinessItem]:
         status = "PASS" if shutil.which(command) else ("WARNING" if command == "mamba" else "REVIEW_REQUIRED")
         detail = shutil.which(command) or "not found on PATH"
         items.append(ReadinessItem(command, status, detail, purpose))
+    unavailable = set(unavailable_tools())
     for command, purpose in BIOINFORMATICS_TOOLS.items():
-        status = "PASS" if shutil.which(command) else "REVIEW_REQUIRED"
+        if command in unavailable:
+            # No build exists for this platform; the pipeline gates the route rather than
+            # failing mid-run, so flag it as a known gap instead of a broken install the
+            # user is expected to repair.
+            items.append(ReadinessItem(command, "WARNING",
+                                       "not available on this platform (no build); the route is disabled",
+                                       purpose))
+            continue
+        found = _which_in_env(command)
+        status = "PASS" if found else "REVIEW_REQUIRED"
         not_found = "not found on PATH or inside this Windows session" if is_windows else "not found on PATH"
-        detail = shutil.which(command) or not_found
-        items.append(ReadinessItem(command, status, detail, purpose))
+        items.append(ReadinessItem(command, status, found or not_found, purpose))
     # On Windows the bioinformatics tools live inside WSL; probe it. On Linux the native
     # PATH probes above ARE the environment check, so the WSL probe is skipped.
     if is_windows:
@@ -307,11 +376,16 @@ def _r_packages_item(name: str, out: str, ok: bool) -> ReadinessItem:
 
 
 def _native_r_packages_item() -> ReadinessItem:
-    if shutil.which("Rscript") is None:
+    # Resolve Rscript the way a run will: on Apple Silicon the R/Bioconductor stack is a
+    # SEPARATE micromamba prefix reached through a shim, so bare shutil.which("Rscript")
+    # either finds nothing or finds the tools prefix's bare r-base (which rseqc pulls in
+    # and which has no Bioconductor) — reporting a correct install as broken either way.
+    rscript = _which_in_env("Rscript")
+    if rscript is None:
         return ReadinessItem("R packages", "REVIEW_REQUIRED", "Rscript not on PATH",
                              "DESeq2 / engines / enrichment / GSVA")
     try:
-        rp = subprocess.run(["Rscript", "-e", _r_packages_check_code(R_ANALYSIS_PACKAGES)],
+        rp = subprocess.run([rscript, "-e", _r_packages_check_code(R_ANALYSIS_PACKAGES)],
                             capture_output=True, text=True, timeout=R_PROBE_TIMEOUT_SEC, check=False)
         text = (rp.stdout or rp.stderr or "").strip()
         out = text.splitlines()[-1][:240] if text else ""

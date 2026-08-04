@@ -14,12 +14,25 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QSplashScreen
 from app.constants import APP_NAME, APP_VERSION
 from app.core.paths import app_root
 from app.ui.main_window import MainWindow
-from app.ui.theme import PALETTES, apply_theme
+from app.ui.theme import PALETTES, apply_theme, system_ui_font_family
 
 
 def error_log_path() -> Path:
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-    return Path(base) / APP_NAME / "logs" / "error.log"
+    """Per-user log location, following each platform's convention.
+
+    Windows keeps %LOCALAPPDATA%\\BulkSeq Studio\\logs. Elsewhere the previous
+    fallback was a bare Path.home(), which drops a "BulkSeq Studio" folder straight
+    into the user's home directory — wrong on macOS (~/Library/Application Support)
+    and on Linux ($XDG_DATA_HOME, default ~/.local/share).
+    """
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if local_appdata:
+        return Path(local_appdata) / APP_NAME / "logs" / "error.log"
+    if sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+    return base / APP_NAME / "logs" / "error.log"
 
 
 def _write_error_log(text: str) -> Path | None:
@@ -90,10 +103,10 @@ def _make_splash(mode: str) -> QSplashScreen:
                                        Qt.TransformationMode.SmoothTransformation)
         p.drawPixmap((w - lp.width()) // 2, 38, lp)
     p.setPen(QColor(pal["TEXT"]))
-    p.setFont(QFont("Segoe UI", 17, QFont.Weight.DemiBold))
+    p.setFont(QFont(system_ui_font_family(),17, QFont.Weight.DemiBold))
     p.drawText(QRect(0, 158, w, 32), Qt.AlignmentFlag.AlignHCenter, "BulkSeq Studio")
     p.setPen(QColor(pal["MUTED_TEXT"]))
-    p.setFont(QFont("Segoe UI", 9))
+    p.setFont(QFont(system_ui_font_family(),9))
     p.drawText(QRect(0, 192, w, 20), Qt.AlignmentFlag.AlignHCenter,
                f"Reproducible bulk RNA-seq  ·  v{APP_VERSION}")
     p.end()

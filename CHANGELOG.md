@@ -1,5 +1,95 @@
 # Changelog
 
+## 0.24.0 — 2026-08-04
+
+> **Results may differ from earlier versions.** KEGG over-representation was corrected to
+> test against the expressed-gene background instead of the whole annotation, so a KEGG
+> term list produced by 0.23.x or earlier was computed against a larger universe and will
+> generally contain more significant terms than 0.24.0 produces. Differential-expression
+> results are unaffected. If you have published a KEGG enrichment from an earlier version,
+> re-run it before citing it against this release. See *Changed* below.
+
+### Added
+
+- **macOS support on Apple Silicon.** The GUI and the full pipeline now run natively on
+  Apple Silicon — no Rosetta, no virtual machine, no WSL. The setup script detects the
+  platform and provisions the environment for it. Four features are unavailable on this
+  platform because their conda packages have no `osx-arm64` build (not because of any
+  platform limitation): GSVA pathway activity, Affymetrix raw-CEL/RMA ingest, and the
+  FastQ Screen contamination screen; SortMeRNA is installed from the upstream release at
+  4.4.0+ instead of the conda-pinned 4.3.7. The GEO series-matrix microarray route,
+  RiboDetector rRNA filtering, and everything else work identically to Windows and Linux.
+  See the platform feature matrix in the README. Intel Macs are not supported.
+  **No macOS installer has been published yet** — run from source for now.
+- **A tri-platform CI build workflow** (`.github/workflows/build.yml`) covering Windows,
+  Linux and macOS, with code-signing and notarization steps for the macOS bundle.
+- **Platform provenance in the run summary.** Runs now record the operating system,
+  architecture, and R's BLAS/LAPACK libraries, so a macOS run is distinguishable from a
+  Linux one when comparing results.
+- **Tool versions for every configured route.** The run summary now records the trimmer,
+  rRNA filter and contamination screen actually selected, rather than assuming fastp and
+  SortMeRNA.
+
+### Changed
+
+- **KEGG over-representation now uses the expressed-gene background.** `enrichKEGG` was
+  the only over-representation call in the pipeline that did not pass a `universe`, so it
+  tested against every gene in the KEGG organism while GO and Disease Ontology tested
+  against the genes actually measured. That inflates KEGG enrichment: a pathway absent
+  from the experiment counted as depleted background rather than as untested. KEGG **GSEA**
+  is unaffected — it ranks the full gene list and takes no universe.
+- **g:Profiler results are labelled with their real correction method.** The report showed
+  g:Profiler's `p_value` under a `p.adjust` header and glossed it as Benjamini–Hochberg.
+  g:Profiler corrects by g:SCS, its own graph-aware method. Enrichment tables now
+  distinguish `p.adjust (BH)` from `p (g:SCS)`. No value changed — only the label, which
+  was naming the wrong statistic.
+- **The volcano plot's colours now agree with the gene lists.** Up/Down classification was
+  taken from the shrunken fold change while `upregulated_genes.csv` and the report caption
+  used the raw one, so the number of coloured points disagreed with the caption beneath the
+  figure. Classification now uses the raw fold change, matching the tables; the x-axis
+  still shows the shrunken effect size and now says so.
+- **The realised shrinkage method is reported.** When `apeglm` fails and the run falls back
+  to `ashr`, the summary said `apeglm`. It now records what actually ran, and why.
+- **Status colours meet WCAG-AA contrast in both themes.** Run status, the readiness cards
+  and the reference advisory were painted with light-theme colours regardless of the active
+  theme, so a completed run in dark mode rendered at 3.3:1. Five status colours also failed
+  AA against their own backgrounds and were re-derived.
+- **`WORKFLOW_VERSION` bumped to 0.24.0**, so existing projects re-copy the bundled
+  workflow on open and pick up this release's script corrections — including the KEGG fix.
+
+### Fixed
+
+- **Creating a project over an existing one no longer destroys it.** Re-using a project
+  name in the same working directory silently reset `samples.tsv`, `contrasts.yaml`,
+  `gene_sets.yaml` and `config.yaml` to empty defaults, with no warning and no backup. The
+  one-click *Create Benchmark Project* flow was the likeliest way to hit it, since the
+  project name defaults to the benchmark id. Both paths now stop and ask, naming exactly
+  what would be lost, and default to keeping the existing project.
+- **Sample sheets and matrices exported from Excel now import.** The count-matrix, DESeq2
+  results, microarray-matrix and metadata importers read files as UTF-8 only, so Excel's
+  default CSV export on a non-English Windows locale (cp1252) failed with a raw
+  `UnicodeDecodeError` on the first accented character.
+- **Sample ids differing only in capitalisation are now rejected.** `Sample1` and `sample1`
+  passed validation but resolve to one file on Windows and macOS, so the two samples
+  overwrote each other's intermediates and the run reported whichever wrote last.
+- **Stopping a run now terminates the whole process tree on Linux and macOS.** Stop
+  signalled only the Snakemake process, leaving STAR, featureCounts and Rscript running.
+- **Combo-box arrows, spin-box arrows and checkbox ticks now render.** Styling the
+  drop-down sub-control suppressed the native arrow without supplying a replacement, so
+  every combo box in the application showed an empty square.
+- **Form controls are sized to their content.** Fields and buttons stretched to the window
+  width — a combo box holding a unit abbreviation rendered 756 px wide, and 57 buttons were
+  wider than 400 px.
+- **The GUI uses each platform's system font.** The interface hardcoded Segoe UI, which
+  does not exist on macOS or most Linux installs.
+- **Per-user files follow platform convention.** The error log was written to a folder in
+  the user's home directory on Linux and macOS instead of the platform's application-data
+  location.
+- **A benchmark dataset with single-end reads no longer crashes project creation.**
+- **The microarray normalization setting is no longer silently ignored.** It has one
+  implemented code path (RMA on raw CEL); a configuration it cannot honour now raises a
+  warning in the sanity checks instead of doing nothing.
+
 ## 0.23.1 — 2026-07-21
 
 ### Fixed

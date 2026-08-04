@@ -29,7 +29,7 @@
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.23.1</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.24.0</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
     <nav>
@@ -70,7 +70,7 @@
 <tr><td>B5</td><td>Internal aligner concordance (STAR / HISAT2 / Salmon)</td><td>STAR and HISAT2 near-identical (LFC r 0.985-0.9997); Salmon agrees on fold change (r 0.94-0.996) with expected boundary-DEG differences</td></tr>
 <tr><td>B6</td><td>Input-mode equivalence (count-matrix, bring-your-own DESeq2)</td><td>Both entry points reproduce the FASTQ-path DESeq2 <em>exactly</em> (max abs diff = 0 on all result columns; up/down Jaccard 1.0) across three anchors</td></tr>
 <tr><td>B7</td><td>Microarray (limma) route validation</td><td>vs canonical limma-trend-robust: logFC Pearson 1.0, max abs diff 0, identical DEG sets (440 vs 440), positive control reproduced exactly; cross-platform arm (B7.2) agrees RNA-seq vs microarray (95.7% directional)</td></tr>
-<tr><td>B8</td><td>Multi-organism breadth + non-model enrichment</td><td>Real KEGG ORA and STRING networks for a fungus (FGSG_ locus tags) and a crop (RefSeq LOC route) <em>without</em> a Bioconductor OrgDb; g:Profiler fallback recovers 100% of OrgDb GO (exact-or-parent/child)</td></tr>
+<tr><td>B8</td><td>Multi-organism breadth + non-model enrichment</td><td>KEGG ORA (pending re-validation, see B12) and STRING networks for a fungus (FGSG_ locus tags) and a crop (RefSeq LOC route) <em>without</em> a Bioconductor OrgDb; g:Profiler fallback recovers 100% of OrgDb GO (exact-or-parent/child)</td></tr>
 <tr><td>B9</td><td>Runtime / memory scaling + large-genome rescue</td><td>STAR index RAM scales with genome length (1 to 57.9 GiB) and overflows on wheat; Salmon indexes the same genomes at ~1 GiB, restoring quantification</td></tr>
 <tr><td>B10</td><td>Reproducibility and determinism</td><td>Identical sha256 across reruns and thread counts (4 vs 16 cores), max abs LFC diff 0; databases pinned (Ensembl 111, STRING v12.0)</td></tr>
 </tbody>
@@ -85,7 +85,7 @@
 <figure class="bench"><img src="assets/b7_2_cross_platform_scatter.png" alt="Per-gene log2 fold-change scatter comparing the RNA-seq (DESeq2) and microarray (limma) routes on human liver versus kidney; points follow the identity trend and the tissue markers are labelled"><figcaption>B7.2: cross-platform agreement between the RNA-seq and microarray routes on human liver versus kidney, with the liver and kidney markers labelled.</figcaption></figure>
 
 <h4>B8 — g:Profiler-versus-OrgDb GO concordance</h4>
-<p>The g:Profiler route (the fallback used for non-model organisms) was checked against the gold-standard clusterProfiler + Bioconductor-OrgDb route on one identical gene set, using an organism that has both (the human airway differentially expressed genes). The OrgDb route returned 33 significant GO:BP terms and g:Profiler 69. Exact-term overlap was moderate (Jaccard 0.19), as expected from the different multiple-testing corrections, GO snapshots, and identifier mapping — but every OrgDb term was recovered by g:Profiler at the exact or parent/child level (100%), the two routes ranked the shared terms almost identically (Spearman 0.86), and identifier mapping was high both ways (97% and 99%). The fallback therefore recovers the same GO biology as the OrgDb route, over a somewhat broader term set — support for its use on the non-model organisms that lack an OrgDb.</p>
+<p>The g:Profiler route (the fallback used for non-model organisms) was checked against the gold-standard clusterProfiler + Bioconductor-OrgDb route on one identical gene set, using an organism that has both (the human airway differentially expressed genes). The OrgDb route returned 33 significant GO:BP terms and g:Profiler 69. Exact-term overlap was moderate (Jaccard 0.19), as expected from the different multiple-testing corrections (g:Profiler's g:SCS versus clusterProfiler's Benjamini-Hochberg), GO snapshots, and identifier mapping — but every OrgDb term was recovered by g:Profiler at the exact or parent/child level (100%), the two routes ranked the shared terms almost identically (Spearman 0.86), and identifier mapping was high both ways (97% and 99%). The fallback therefore recovers the same GO biology as the OrgDb route, over a somewhat broader term set — support for its use on the non-model organisms that lack an OrgDb.</p>
 <figure class="bench"><img src="assets/b8_go_concordance_venn.png" alt="Venn diagram of significant GO biological-process terms from the OrgDb route and the g:Profiler route on the same human airway gene set, sharing 16 terms"><figcaption>B8: overlap of significant GO:BP terms between the clusterProfiler + OrgDb route and the g:Profiler fallback on one identical gene set (33 vs 69 terms, 16 shared; 100% recovered at the exact or parent/child level).</figcaption></figure>
 
 <h3>New in 0.15.0 (B11-B13)</h3>
@@ -111,9 +111,9 @@
 <h4>B12 — custom gene-set enrichment (equivalence check)</h4>
 <p>This benchmark is an implementation-equivalence / regression check, not an independent validation of the enrichment statistics. A gene set built from the same KEGG sets the built-in route uses is fed back through the custom enrichment engine, and the output is compared to the built-in KEGG result.</p>
 <ul>
-<li>GSEA reproduces the built-in KEGG GSEA <em>exactly</em> (12 of 12 terms, Jaccard 1.0).</li>
-<li>ORA reproduces the built-in 4 terms exactly when the universe is matched to the KEGG-annotated background (2619 genes).</li>
-<li>With its own default universe (all 8280 tested genes) the custom ORA returns 0 terms — the more conservative, defensible background. This is the genuinely informative result, not a discrepancy.</li>
+<li>GSEA reproduces the built-in KEGG GSEA <em>exactly</em> (12 of 12 terms, Jaccard 1.0). KEGG GSEA (<code>gseKEGG</code>) takes a ranked list with no universe argument, so it is unaffected by the background-universe change below.</li>
+<li>ORA reproduces the built-in 4 terms exactly when the universe is matched to the KEGG-annotated background (2619 genes). This ORA comparison predates the fix that made the built-in <code>enrichKEGG</code> pass the tested-gene background as its universe (matching <code>enrichGO</code>/<code>enrichDO</code>); the built-in ORA term count it was compared against is <strong>pending re-validation</strong> under the new universe.</li>
+<li>With its own default universe (all 8280 tested genes) the custom ORA returns 0 terms — the more conservative, defensible background, and the same universe the built-in route now uses by default. This is the genuinely informative result, not a discrepancy.</li>
 <li>A wrong-namespace input (human symbols against FGSG_ ids, 0 overlap) returns REVIEW_REQUIRED rather than a silent empty result — the namespace-mismatch guard fires.</li>
 </ul>
 

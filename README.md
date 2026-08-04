@@ -1,8 +1,8 @@
 # BulkSeq Studio
 
-A **cross-platform** desktop application (Windows and Linux) for reproducible, reference-based **bulk RNA-seq analysis**, from raw FASTQ/SRA reads to differential expression, functional enrichment, and publication figures, with no command line required.
+A **cross-platform** desktop application (Windows, Linux, and macOS on Apple Silicon) for reproducible, reference-based **bulk RNA-seq analysis**, from raw FASTQ/SRA reads to differential expression, functional enrichment, and publication figures, with no command line required.
 
-BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://snakemake.github.io/) pipeline — inside WSL2 on Windows, or natively in a local environment on Linux. You point it at your data and a reference; it produces a count matrix, DESeq2 results, GO/KEGG enrichment, and figures, and records the exact parameters, tool versions, and environment so a run can be reproduced later. On Linux the same pipeline runs directly (no WSL); see [Running on Linux](#running-on-linux).
+BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://snakemake.github.io/) pipeline — inside WSL2 on Windows, or natively in a local environment on Linux and on Apple Silicon Macs. You point it at your data and a reference; it produces a count matrix, DESeq2 results, GO/KEGG enrichment, and figures, and records the exact parameters, tool versions, and environment so a run can be reproduced later. On Linux and macOS the same pipeline runs directly (no WSL); see [Running on Linux](#running-on-linux) and [Running on macOS](#running-on-macos). macOS support is new: the environment specs are solve-verified on Apple Silicon, but no packaged build has shipped yet — see [Install](#install).
 
 ![BulkSeq Studio workflow: local FASTQ or an SRA/ENA accession, plus count-matrix, microarray, and DESeq2-results shortcut entry points, feeding four stages — QC and trimming, alignment and quantification, differential expression, and downstream outputs (enrichment, STRING network, figures, report) — with an optional multi-study meta-analysis lane](docs/assets/bulkseq-workflow.svg)
 
@@ -29,7 +29,7 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 - **Advanced parameters, exposed.** A collapsible Advanced parameters panel on the Workflow tab surfaces the important knobs of every tool (fastp, Trimmomatic, RiboDetector, FastQ Screen, STAR, featureCounts, DESeq2), with the validated defaults pre-filled so a run reproduces the standard behaviour unless you change them.
 - **Self-contained HTML report + design helper.** One shareable HTML results report serves both a non-specialist and a bioinformatician from a single self-contained file (no external assets): each section opens with a plain-language finding — what was compared, how many genes changed and in which direction, the strongest genes — with the statistics glossed inline and collected in an end glossary, above the full tables and figures with their exact numbers; figures are grouped and lettered (Quality / Differential expression / Function) with a plain caption and a technical caption each. A **Design helper** composes the DESeq2 design formula from your metadata columns without typing R: tick the nuisance variables you want to adjust for (batch, sequencing run, donor, sex, and so on) and it builds an additive formula such as `~ batch + condition`, putting the effect of interest last. Accounting for these known covariates removes their variation from the comparison, so a batch or donor difference is not mistaken for the treatment effect. See [The design helper: adjusting for batch and covariates](#the-design-helper-adjusting-for-batch-and-covariates).
 - **Mitochondrial and chloroplast gene handling.** Organellar transcripts can dominate library size and skew normalization. On the Workflow tab you choose to keep them, discard them before differential expression, or analyse them separately (the main DE runs on nuclear genes only; a separate organellar count subset and a per-sample organellar-fraction table are written). Organellar contigs are detected from the reference (mitochondrion and chloroplast/plastid), so it works for plants and animals without a gene list.
-- **Directional functional enrichment.** GO over-representation and GSEA (clusterProfiler) run separately on the up- and down-regulated sets. Selecting an organism preset auto-configures its enrichment databases and STRING taxon, so KEGG pathway ORA and GSEA run for any organism with a KEGG code (fungi, bacteria, yeast, for example *Fusarium graminearum*, code `fgr`), and GO and Reactome are available without a Bioconductor OrgDb through g:Profiler (`gprofiler2`). Organisms with an installed OrgDb (human, mouse, fly) use clusterProfiler and additionally get disease-ontology terms, so an organism is not skipped for lacking an OrgDb. Enrichment figures (GO and KEGG dotplots, GSEA running-score, ridgeplot, gene-concept and term-similarity networks) use enrichplot / ggplot2. You can also supply your own gene sets — a GMT and/or an id→term annotation table, with an optional background list for the ORA universe — for a custom over-representation + GSEA run alongside GO/KEGG (the gene IDs must match the run's identifier format; a mismatch is flagged).
+- **Directional functional enrichment.** GO over-representation and GSEA (clusterProfiler) run separately on the up- and down-regulated sets. Selecting an organism preset auto-configures its enrichment databases and STRING taxon, so KEGG pathway ORA and GSEA run for any organism with a KEGG code (fungi, bacteria, yeast, for example *Fusarium graminearum*, code `fgr`), and GO and Reactome are available without a Bioconductor OrgDb through g:Profiler (`gprofiler2`). Organisms with an installed OrgDb (human, mouse, fly) use clusterProfiler and additionally get disease-ontology terms, so an organism is not skipped for lacking an OrgDb. Enrichment figures (GO and KEGG dotplots, GSEA running-score, ridgeplot, gene-concept and term-similarity networks) use enrichplot / ggplot2. KEGG over-representation (`enrichKEGG`) is corrected against the tested-gene background, the same universe `enrichGO`/`enrichDO` already use (KEGG GSEA, `gseKEGG`, takes a ranked list and has no universe argument, so it is unaffected). GO/Reactome enrichment run through g:Profiler is corrected by **g:SCS**, not Benjamini–Hochberg; its report table labels that column `p (g:SCS)`, next to clusterProfiler's `p.adjust (BH)` for OrgDb-backed organisms, so the two are never conflated. You can also supply your own gene sets — a GMT and/or an id→term annotation table, with an optional background list for the ORA universe — for a custom over-representation + GSEA run alongside GO/KEGG (the gene IDs must match the run's identifier format; a mismatch is flagged).
 - **Interactive protein-interaction network.** A dedicated PPI Network tab embeds the STRING network in an interactive [cytoscape.js](https://js.cytoscape.org/) view: hover a protein for its symbol, mean expression, log2 fold-change, adjusted p-value, degree, and module; drag, zoom, and re-layout (fcose/cose/circle and others); recolour by fold-change or module; resize by degree, expression, or significance; filter by confidence; and export PNG or SVG (white or transparent background). The network also exports to Cytoscape (GraphML, SIF, cytoscape.js JSON) for external editing.
 - **More statistics.** Sample-to-sample correlation heatmaps (Pearson and Spearman's ρ), a Wilcoxon rank-sum concordance diagnostic, TOST equivalence testing to flag genuinely unchanged genes, MSigDB Hallmark set-overlap, and disease-ontology (DO) enrichment for human and mouse.
 - **Genes of interest.** Supply a gene list to get a focused z-scored heatmap, a per-condition expression panel, and a counts table — and a STRING network for those genes when PPI seeding is set to the list — generated from an existing run without re-analysis. The IDs are matched to the run's genes by locus tag, Ensembl/RefSeq ID, or symbol; any that do not match are flagged with examples of the run's ID format.
@@ -40,7 +40,7 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 - **Downstream exports.** A normalized-expression matrix (VST counts, or log2 intensities for microarray) as CSV, a stat-ranked `.rnk` for preranked GSEA, and the DESeq2/limma results table.
 - **Provenance you can export.** When a run finishes, the Run Monitor lets you save a **tools & references** file (tool and R/Bioconductor package versions, the reference genome and annotation with source URLs and MD5, and the enrichment database codes) and a **study design** file (samples, conditions, layout, design formula, and contrasts) for that specific run.
 - **Low-mapping safeguard.** If a sample aligns poorly (uniquely-mapped rate below a threshold, usually a wrong reference or contamination), the run pauses and asks whether to stop or continue, instead of silently wasting hours.
-- **Reproducibility built in.** Every run records a default-vs-used parameter diff, software versions, an environment lock hash, the reference accession/MD5, and R `sessionInfo`. The conda environment is pinned in `workflow/envs/bulkseq.lock.yaml`.
+- **Reproducibility built in.** Every run records a default-vs-used parameter diff, software versions, an environment lock hash, the reference accession/MD5, and R `sessionInfo`. On Windows and Linux the conda environment is pinned in `workflow/envs/bulkseq.lock.yaml` (a linux-64 snapshot); on macOS it is pinned across the two osx-arm64 specs instead (`workflow/envs/bulkseq_macos_arm64_tools.yaml` and `bulkseq_macos_arm64_r.yaml`), since the lock file does not target that platform.
 - **An accessible desktop UI.** Light and dark themes (WCAG-AA contrast), grouped settings cards with a clear primary action per tab, plain-language controls, empty-state guidance, a resizable Outputs workspace that remembers its size, keyboard shortcuts (Ctrl+O open, F5 dry-run, F9 run), and a recent-projects list.
 
 The three aligner routes (STAR, HISAT2, Salmon), the featureCounts / STAR-gene-counts / Salmon-tximport quantifiers, the three trimmers (fastp / Trim Galore / Trimmomatic), the two rRNA tools (SortMeRNA / RiboDetector) and the optional FastQ Screen contamination report, the three differential-expression engines (DESeq2 / limma-voom / edgeR), the multi-study meta-analysis, single-end and paired-end input, GSVA pathway activity, RSeQC extended QC, custom gene-set enrichment, and the count-matrix, GEO microarray (limma), and DESeq2-results input routes are all implemented and validated (see [Validation](#validation)).
@@ -82,11 +82,17 @@ The interactive PPI Network tab. Hover a protein to read its fold-change, adjust
 
 - A 64-bit Linux distribution with Python 3.10+ and [micromamba](https://mamba.readthedocs.io/) (or conda/mamba). The GUI and the pipeline run natively in your local environment; no WSL is involved.
 
-**Both**
+**macOS (Apple Silicon)**
+
+- An Apple Silicon (M-series) Mac. Intel Macs are out of scope: this project targets macOS 27, which is Apple-Silicon-only (Rosetta 2 support ends after it), so there is no Intel path to support.
+- The packaged app declares a macOS 13.0 floor in its `Info.plist` (`LSMinimumSystemVersion`), matching the minimum of the Qt version actually bundled — a build resolves `PySide6>=6.7` to the current 6.11.x, whose Qt floor is macOS 13. Verification to date has been on macOS 27 / Apple M5 Pro; earlier macOS versions are unverified.
+- [micromamba](https://mamba.readthedocs.io/); the app's setup screen installs it and the bioinformatics environment for you, the same as on Linux. No WSL is involved.
+
+**All platforms**
 
 - About 10 GB free disk for the toolchain and reference indices; 16 GB+ RAM recommended (STAR alignment is the memory-intensive step; for very large genomes use the HISAT2 or Salmon aligner, which need far less).
 
-The bioinformatics tools (Snakemake, STAR, HISAT2, Salmon, featureCounts, samtools, fastp, FastQC, MultiQC, DESeq2, clusterProfiler, and more) install into a pinned micromamba environment — inside WSL2 on Windows, or locally on Linux. The GUI itself is PySide6/Qt and runs on both.
+The bioinformatics tools (Snakemake, STAR, HISAT2, Salmon, featureCounts, samtools, fastp, FastQC, MultiQC, DESeq2, clusterProfiler, and more) install into a pinned micromamba environment — inside WSL2 on Windows, or locally on Linux and macOS. On macOS (Apple Silicon) this is two micromamba prefixes rather than one; see [Running on macOS](#running-on-macos). The GUI itself is PySide6/Qt and runs on all three.
 
 ## Install
 
@@ -94,6 +100,8 @@ Download the latest build from the [**Releases**](https://github.com/tunabirgun/
 
 - **Installer:** `BulkSeqStudio-Setup-<version>.exe`. Per-user install (no administrator rights); launch from the Start Menu.
 - **Portable:** `BulkSeqStudio-Portable-<version>.zip`. Unzip anywhere and double-click `BulkSeq Studio\BulkSeqStudio.exe`. No installation.
+
+**macOS (Apple Silicon):** the [build workflow](.github/workflows/build.yml) builds a `BulkSeq Studio.app` bundle on an Apple-Silicon GitHub Actions runner and, when Apple signing secrets are configured, packages it into a signed `BulkSeqStudio-<version>-macos-arm64.dmg` and submits it for notarization (`codesign` → `create-dmg` → `notarytool submit --wait` → `stapler staple`, in `scripts/build_macos.sh`). As of this writing, neither has produced a released build: no `.app` or `.dmg` has been built or run yet, and the sign-and-notarize path is wired into the script but has never been exercised on real hardware. An unsigned `.app` will not open on a clean Mac without a Gatekeeper override (right-click → Open). Until a signed build ships, run BulkSeq Studio on macOS from source; see [Running on macOS](#running-on-macos).
 
 **Updating:** run a newer installer and it detects the existing install, then offers to update (remove the old version and install the new one) or to uninstall. The portable ZIP has nothing to update — just unzip the new one.
 
@@ -120,7 +128,7 @@ Work top to bottom: click each *Install…* button, press **Re-check** to refres
 > processors=16    # optional: limit WSL2 to 16 logical processors
 > ```
 >
-> See Microsoft's [Advanced settings configuration in WSL](https://learn.microsoft.com/windows/wsl/wsl-config#configuration-setting-for-wslconfig) for the full list of `.wslconfig` options. On Linux there is no cap to configure; the pipeline runs natively with your machine's full RAM.
+> See Microsoft's [Advanced settings configuration in WSL](https://learn.microsoft.com/windows/wsl/wsl-config#configuration-setting-for-wslconfig) for the full list of `.wslconfig` options. On Linux and macOS there is no cap to configure; the pipeline runs natively with your machine's full RAM.
 
 ### Run from source (development)
 
@@ -181,6 +189,45 @@ The full GUI — every tab, the Figure Style editor, and the interactive cytosca
 
 ![BulkSeq Studio running natively on Linux](docs/screenshot-linux.png)
 
+## Running on macOS
+
+BulkSeq Studio runs **natively** on Apple Silicon Macs, the same as on Linux: there is no WSL, and no virtual-machine memory cap to configure. The same PySide6 GUI drives the same Snakemake pipeline directly in local micromamba environments. Intel Macs are out of scope — this project targets macOS 27, which is Apple-Silicon-only (Rosetta 2 support ends after it).
+
+No packaged release build exists for macOS yet (see [Install](#install)), so running BulkSeq Studio on macOS today means running it from source:
+
+1. Create the pipeline environment once. Unlike Windows and Linux, macOS (Apple Silicon) needs **two** micromamba prefixes, `bulkseq` (alignment and QC tools) and `bulkseq-r` (R/Bioconductor), instead of one — the alignment tools pin `libdeflate <1.23` while `r-base` 4.5.2 pins `>=1.24`, and the bioconda repodata patch that reconciles the two on linux-64/osx-64 was never extended to osx-arm64, so a single-prefix solve fails on that constraint. You do not need to manage this split by hand: the same script the app's **Check Environment** window runs on Linux creates both prefixes for you, plus a small `Rscript`/`R` shim (in `$MAMBA_ROOT_PREFIX/shims`, ahead of the tools prefix on `PATH`) that routes R calls to the `bulkseq-r` prefix, so Snakemake finds one working `Rscript`. From a terminal it is one command:
+
+   ```bash
+   bash scripts/setup_wsl_bioenv.sh bulkseq full
+   ```
+
+2. Get the GUI dependencies and launch (from-source is the only path until a packaged build ships):
+
+   ```bash
+   micromamba activate bulkseq
+   pip install PySide6 pandas pydantic pyyaml psutil openpyxl pillow
+   python -m app.main
+   ```
+
+A few tool versions differ from the Windows/Linux conda-pinned set because of missing osx-arm64 conda builds. Most notably, **SortMeRNA** is installed from the upstream GitHub release (4.4.0+, checksum-pinned) instead of the conda-pinned 4.3.7 — no arm64 build of SortMeRNA exists at any version, and the upstream 4.4.0+ binary is verified a drop-in for the rRNA-filtering rule, so this is a version difference rather than a missing feature. RiboDetector, the reference-free rRNA filter, is unaffected (it is a `noarch` conda package). Three other features have no osx-arm64 conda build at all and are genuinely unavailable on this platform for that reason, not a platform limitation; see the platform feature matrix below.
+
+## Platform feature matrix
+
+Everything not listed in this table works identically on Windows, Linux, and macOS (Apple Silicon). The four rows below differ because of missing osx-arm64 conda **builds**, not platform limitations: three are unavailable, and one (SortMeRNA) substitutes a differently-versioned upstream binary. Each is restored the moment its build lands (tracked in `app/core/readiness.py`).
+
+| Feature | Windows | Linux | macOS (Apple Silicon) |
+| --- | --- | --- | --- |
+| GSVA pathway activity | Yes | Yes | No — `bioconductor-gsva` has no osx-arm64 build at any version |
+| Affymetrix raw-CEL / RMA ingest | Yes | Yes | No — `affyio` has no osx-arm64 build at R 4.5; the GEO series-matrix microarray route below is unaffected and works normally |
+| FastQ Screen contamination screen | Yes | Yes | No — the `fastq-screen` conda package cannot be installed on osx-arm64 (blocked transitively by `perl-gd`, which has no osx-arm64 build), so the whole screen is unavailable here, not just its PNG plot |
+| SortMeRNA rRNA filtering | Yes (4.3.7, conda-pinned) | Yes (4.3.7, conda-pinned) | Yes — 4.4.0+ from the upstream GitHub release (checksum-pinned), not the conda-pinned 4.3.7; verified a drop-in |
+| STAR / HISAT2 / Salmon alignment | Yes | Yes | Yes |
+| DESeq2 / limma-voom / edgeR | Yes | Yes | Yes |
+| GO / KEGG enrichment | Yes | Yes | Yes |
+| STRING PPI network | Yes | Yes | Yes |
+| GEO microarray (series-matrix) route | Yes | Yes | Yes |
+| Multi-study meta-analysis | Yes | Yes | Yes |
+
 ## Quick start
 
 1. **Project:** create a project folder (the app scaffolds `config/`, the Snakemake `workflow/`, and a provenance manifest).
@@ -230,15 +277,15 @@ snakemake --cores 8 --resources mem_mb=24000 --configfile config/config.yaml
 
 ## Validation
 
-The pipeline is validated end-to-end on real datasets:
+The pipeline is validated end-to-end on real datasets. **A note on dates:** KEGG over-representation (`enrichKEGG`) was changed to pass the tested-gene background, matching `enrichGO`/`enrichDO` (see [Features](#features)); this narrows the KEGG ORA universe and is expected to reduce the number of significant KEGG pathways. KEGG ORA figures below that were measured before this change are marked **pending re-validation**. KEGG GSEA (`gseKEGG`) takes a ranked gene list with no universe argument, so it is unaffected, as are the DE gene counts, GO enrichment, and PPI network numbers throughout this section — none of those are touched by the KEGG universe fix.
 
 - **Drosophila, pasilla** (Ensembl): 467 DE genes, the *pasilla* gene strongly down-regulated, all sanity checks PASS. The four-sample subset ships as a one-click benchmark project (`examples/benchmarks/pasilla_paired_subset`).
 - **Fusarium graminearum, spore vs mycelium** (SRP039087; PH-1, NCBI RefSeq): PC1 separates the conditions at 98%, 5,734 DE genes at padj < 0.05 (5,201 at |log2FC| > 1: 2,723 up / 2,478 down), top hits at log2FC 11 to 14, consistent with the known conidium-to-mycelium developmental transition.
-- **Oryza sativa (rice), salt stress** (PRJDB38133; super-hybrid CY1000, IRGSP-1.0 NCBI RefSeq): 12,171 DE genes (5,732 up / 6,439 down at padj < 0.05) on the six-sample control vs 5-day salt subset; KEGG ORA/GSEA, g:Profiler GO enrichment, and a 58-node STRING PPI network reproduce the canonical salt-stress response (ROS detoxification and glutathione metabolism, ABA and plant-hormone signalling, ion and amino-acid transport; photosynthesis and primary carbon metabolism down-regulated).
+- **Oryza sativa (rice), salt stress** (PRJDB38133; super-hybrid CY1000, IRGSP-1.0 NCBI RefSeq): 12,171 DE genes (5,732 up / 6,439 down at padj < 0.05) on the six-sample control vs 5-day salt subset; KEGG GSEA, g:Profiler GO enrichment, and a 58-node STRING PPI network reproduce the canonical salt-stress response (ROS detoxification and glutathione metabolism, ABA and plant-hormone signalling, ion and amino-acid transport; photosynthesis and primary carbon metabolism down-regulated). The KEGG ORA pathway list for this run predates the background-universe fix above and is **pending re-validation**; the DE gene counts, GSEA, GO, and PPI results are unaffected.
 
 The pasilla and Fusarium runs reproduce byte-for-byte across pipeline revisions, confirming the analysis is deterministic.
 
-The two alternative aligners are validated against STAR on these datasets. HISAT2 runs pasilla (unstranded) and the reverse-stranded Fusarium set (strandedness auto-detected as 2; 5,812 DE genes, concordant with STAR's 5,836). Salmon (1.10.3) runs pasilla (24,278 genes, 477 DE genes) and the rice crop benchmark (33,844 genes, 12,609 DE genes, KEGG `osa` enrichment, a 56-node PPI). Each route reaches the same enrichment and network outputs.
+The two alternative aligners are validated against STAR on these datasets. HISAT2 runs pasilla (unstranded) and the reverse-stranded Fusarium set (strandedness auto-detected as 2; 5,812 DE genes, concordant with STAR's 5,836). Salmon (1.10.3) runs pasilla (24,278 genes, 477 DE genes) and the rice crop benchmark (33,844 genes, 12,609 DE genes, a 56-node PPI). Each route reaches the same enrichment and network outputs; the KEGG `osa` ORA figure originally reported alongside this Salmon run predates the background-universe fix above and is **pending re-validation**.
 
 The two alternative differential-expression engines are validated against DESeq2 on the same counts. On *Fusarium graminearum* (spore vs mycelium), limma-voom reaches a log2 fold-change Spearman correlation of 0.997 and a top-DEG Jaccard index of 0.94 against DESeq2, and edgeR quasi-likelihood reaches 1.000 and 0.97, both with 100% agreement on the direction of the shared differentially expressed genes. DESeq2 remains the default, and its result on the *Fusarium* set is byte-for-byte unchanged (2,723 up / 2,478 down at |log2FC| > 1), so the alternative engines add a cross-check without perturbing the validated default. The trimmers and rRNA tools were confirmed to run to completion on real reads (including a human airway subset), each producing valid trimmed / filtered output.
 
@@ -365,8 +412,14 @@ namespace so the per-study gene sets intersect; a mismatch is flagged before the
 
 See [`LICENSE`](LICENSE).
 
-## WSL2 on Windows versus native Linux
+## WSL2 on Windows versus native Linux versus native macOS
 
-Both routes run the identical Snakemake pipeline and produce identical results, so the choice is about your environment rather than the science. On Windows the pipeline runs inside WSL2, a lightweight Linux virtual machine. This keeps the desktop experience on Windows, where many wet-lab biologists work, while giving the bioinformatics tools a genuine Linux toolchain. The trade-offs are a one-time WSL2 setup that needs a single administrator step to enable the Windows feature; a memory cap on the WSL2 virtual machine that sits below the host's total RAM, so the very largest genome indices can exceed a limit the host could otherwise satisfy (bread wheat's STAR index needs about 95 GiB, which overflows a typical WSL2 cap, and the HISAT2 or Salmon route is then the fallback); and slower file access when a project lives on a Windows drive (`C:\...`) rather than the WSL filesystem, because every read crosses the Windows–Linux 9P boundary.
+All three routes run the identical Snakemake pipeline and, wherever a tool is available on that platform (see the [platform feature matrix](#platform-feature-matrix) above), produce identical results — the choice is about your environment, not the science.
 
-Native Linux avoids all of this. There is no virtual machine, so no memory cap below the host's RAM and no 9P file-access penalty; there is no WSL setup step; and large-genome indexing and the many-small-file steps (alignment, package installation) are correspondingly faster and simpler. The practical guidance follows from that: on Windows, keep projects on the WSL filesystem and switch to HISAT2 or Salmon for crop genomes that exceed the WSL2 memory cap; on Linux, run natively and use the full host RAM. The graphical interface and every output file are the same on both.
+On Windows the pipeline runs inside WSL2, a lightweight Linux virtual machine. This keeps the desktop experience on Windows, where many wet-lab biologists work, while giving the bioinformatics tools a genuine Linux toolchain. The trade-offs are a one-time WSL2 setup that needs a single administrator step to enable the Windows feature; a memory cap on the WSL2 virtual machine that sits below the host's total RAM, so the very largest genome indices can exceed a limit the host could otherwise satisfy (bread wheat's STAR index needs about 95 GiB, which overflows a typical WSL2 cap, and the HISAT2 or Salmon route is then the fallback); and slower file access when a project lives on a Windows drive (`C:\...`) rather than the WSL filesystem, because every read crosses the Windows–Linux 9P boundary.
+
+Native Linux avoids all of this. There is no virtual machine, so no memory cap below the host's RAM and no 9P file-access penalty; there is no WSL setup step; and large-genome indexing and the many-small-file steps (alignment, package installation) are correspondingly faster and simpler.
+
+Native macOS (Apple Silicon) shares Linux's advantages — no virtual machine, no memory cap, no WSL setup — but has a different environment cost of its own: the pipeline runs from two micromamba prefixes instead of one (see [Running on macOS](#running-on-macos)), created automatically by the same setup flow used on Linux. Three features (GSVA, Affymetrix raw-CEL/RMA ingest, and the FastQ Screen contamination screen) are unavailable pending upstream osx-arm64 conda builds, and SortMeRNA runs a different version (4.4.0+ from upstream, not the conda-pinned 4.3.7) — see the [platform feature matrix](#platform-feature-matrix). No packaged release build exists yet, so running on macOS today means building or running from source.
+
+The practical guidance follows from that: on Windows, keep projects on the WSL filesystem and switch to HISAT2 or Salmon for crop genomes that exceed the WSL2 memory cap; on Linux, run natively and use the full host RAM; on macOS, run natively, let the setup script create both prefixes for you, and check the platform feature matrix before relying on GSVA, raw-CEL microarray ingest, or the FastQ Screen contamination report. The graphical interface and every output file are the same across all three, wherever the underlying tool is available.

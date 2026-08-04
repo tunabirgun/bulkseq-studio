@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
 from string import Template
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QPalette
+import sys
+
+from PySide6.QtCore import QStandardPaths, Qt
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtWidgets import QApplication, QLabel
 
 # Two palettes drive a light and a dark theme. Every token below has an entry in
@@ -136,23 +140,168 @@ WARNING = LIGHT_PALETTE["WARNING"]
 ERROR = LIGHT_PALETTE["ERROR"]
 REVIEW = LIGHT_PALETTE["REVIEW"]
 
-BASE_FONT_FAMILY = "Segoe UI"
+# Concrete per-platform families, used only when Qt cannot answer yet. Qt returns an
+# EMPTY family from systemFont() before a QApplication exists, and this module is
+# imported well before one is constructed — emitting font-family: "" into the style
+# sheet would be worse than the hardcoded name it replaced.
+_FALLBACK_FONT_FAMILY = {
+    "win32": "Segoe UI",
+    "darwin": "Helvetica Neue",
+}
+
+
+def system_ui_font_family() -> str:
+    """The platform's UI font family name.
+
+    Segoe UI does not exist on macOS or on most Linux installs, so hardcoding it made
+    Qt substitute an arbitrary family there. Qt knows the real system UI font per
+    platform, but only once a QApplication exists; call this at style-generation time
+    (apply_theme) to get the true value, and accept the fallback before that.
+    """
+    try:
+        family = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont).family()
+    except Exception:  # pragma: no cover - defensive
+        family = ""
+    return family or _FALLBACK_FONT_FAMILY.get(sys.platform, "DejaVu Sans")
+
+
+# Import-time best effort. apply_theme() re-resolves once the QApplication exists, so
+# the shipped style sheet carries the real system font rather than this fallback.
+BASE_FONT_FAMILY = system_ui_font_family()
 BASE_FONT_POINT_SIZE = 10
 
 # Status string -> accent hex, per mode.
+# Each value clears WCAG-AA (4.5:1) against all three surfaces it can land on:
+# BACKGROUND, SURFACE, and its own pill tint in _STATUS_PILL_BG. The pill tint is
+# the binding constraint in light mode and SURFACE in dark mode. Five of these
+# previously failed on their pill tint (light PASS 4.45, light FAIL 4.42, dark PASS
+# 4.37, dark FAIL 4.07, dark REVIEW_REQUIRED 3.93); they were re-derived by shifting
+# HLS lightness away from the background, preserving hue and saturation, until every
+# pairing cleared 4.7:1 — headroom so rounding cannot drop one back under the line.
+# test_theme.py recomputes the ratios, so a future palette edit that breaks one fails.
 _STATUS_COLORS = {
-    "light": {"PASS": "#2E7D32", "WARNING": "#8B5200", "REVIEW_REQUIRED": "#6A1B9A", "FAIL": "#C0392B"},
-    "dark": {"PASS": "#4CAF50", "WARNING": "#FFA726", "REVIEW_REQUIRED": "#BA68C8", "FAIL": "#EF5350"},
+    "light": {"PASS": "#2C7730", "WARNING": "#8B5200", "REVIEW_REQUIRED": "#6A1B9A", "FAIL": "#B83729"},
+    "dark": {"PASS": "#55B559", "WARNING": "#FFA726", "REVIEW_REQUIRED": "#C37DCF", "FAIL": "#F16A67"},
 }
 
-# Light tint background per status for status pills, per mode.
-_STATUS_PILL_BG = {
+# The palettes' semantic accents ARE the status colours. Deriving them here rather
+# than repeating the literals keeps the environment-check cards (readiness_dialog,
+# which reads PALETTES[mode]["SUCCESS"]) and the status pills on one definition;
+# they previously drifted, so the Environment Check kept the pre-AA values.
+for _mode, _palette in PALETTES.items():
+    _palette["SUCCESS"] = _STATUS_COLORS[_mode]["PASS"]
+    _palette["WARNING"] = _STATUS_COLORS[_mode]["WARNING"]
+    _palette["ERROR"] = _STATUS_COLORS[_mode]["FAIL"]
+    _palette["REVIEW"] = _STATUS_COLORS[_mode]["REVIEW_REQUIRED"]
+
+# Re-derive the backwards-compatible module constants after the sync above.
+SUCCESS = LIGHT_PALETTE["SUCCESS"]
+WARNING = LIGHT_PALETTE["WARNING"]
+ERROR = LIGHT_PALETTE["ERROR"]
+REVIEW = LIGHT_PALETTE["REVIEW"]
+
+# Light tint background per status for status pills, per mode. Public so callers
+# that build their own tinted callouts (e.g. the reference-mode advisory banner)
+# theme them from the same source as the pills instead of a hardcoded hex.
+STATUS_PILL_BG = {
     "light": {"PASS": "#E6F2E6", "WARNING": "#FBEEDA", "REVIEW_REQUIRED": "#F1E5F6", "FAIL": "#F8E3E0"},
     "dark": {"PASS": "#1B3D1B", "WARNING": "#4D3A1A", "REVIEW_REQUIRED": "#3D1F4D", "FAIL": "#4D1A1A"},
 }
 
 # Image-viewer scene background per mode (a QGraphicsScene ignores widget QSS).
 IMAGEVIEWER_BG = {"light": "#ECEFF3", "dark": "#34383F"}
+
+
+# ---- Sub-control glyphs -----------------------------------------------------
+# Styling QComboBox::drop-down / QSpinBox::up-button in a style sheet stops the
+# Fusion style from painting its native arrow into that sub-control, leaving an
+# empty square. Qt does not fall back, so the glyph has to be supplied as an
+# image. The stroke colours come from the active palette rather than being
+# frozen into a checked-in asset, so a palette edit cannot silently desync them.
+
+_GLYPH_PATHS = {
+    "chevron_down": "M2.75 4.6 L6 7.85 L9.25 4.6",
+    "chevron_up": "M2.75 7.4 L6 4.15 L9.25 7.4",
+}
+_CHECK_PATH = "M2.6 6.3 L4.9 8.6 L9.4 3.7"
+
+_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12">'
+        '<path d="{d}" fill="none" stroke="{colour}" stroke-width="{width}" '
+        'stroke-linecap="round" stroke-linejoin="round"/></svg>')
+
+
+def _glyph_dir() -> Path | None:
+    """Writable directory for the generated glyphs, or None if none is available."""
+    base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+    root = Path(base) if base else Path(tempfile.gettempdir()) / "bulkseq-studio"
+    target = root / "glyphs"
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    return target
+
+
+def glyph_paths(mode: str) -> dict[str, str]:
+    """Write the theme's sub-control glyphs and return {token: posix path}.
+
+    Returns an empty mapping if no writable location exists, in which case the
+    caller omits the image rules and Qt renders as it did before — degraded, but
+    never a crash on a locked-down machine.
+    """
+    target = _glyph_dir()
+    if target is None:
+        return {}
+    palette = PALETTES.get(mode, LIGHT_PALETTE)
+    wanted = {
+        "CHEVRON_DOWN": (_GLYPH_PATHS["chevron_down"], palette["MUTED_TEXT"], 1.6),
+        "CHEVRON_DOWN_DISABLED": (_GLYPH_PATHS["chevron_down"], palette["INPUT_TEXT_DISABLED"], 1.6),
+        "CHEVRON_UP": (_GLYPH_PATHS["chevron_up"], palette["MUTED_TEXT"], 1.6),
+        "CHEVRON_UP_DISABLED": (_GLYPH_PATHS["chevron_up"], palette["INPUT_TEXT_DISABLED"], 1.6),
+        "CHECK": (_CHECK_PATH, palette["ON_PRIMARY"], 2.0),
+    }
+    out: dict[str, str] = {}
+    for token, (d, colour, width) in wanted.items():
+        path = target / f"{token.lower()}_{mode}.svg"
+        content = _SVG.format(d=d, colour=colour, width=width)
+        try:
+            # Rewrite only on change so a theme toggle does not churn the disk.
+            if not path.exists() or path.read_text(encoding="utf-8") != content:
+                path.write_text(content, encoding="utf-8")
+        except OSError:
+            return {}
+        out[token] = path.as_posix()
+    return out
+
+
+# Applied only when glyph_paths() succeeded; $TOKENs are absolute file paths.
+_GLYPH_QSS = Template("""
+QComboBox::down-arrow {
+    image: url($CHEVRON_DOWN);
+    width: 12px;
+    height: 12px;
+}
+QComboBox::down-arrow:disabled { image: url($CHEVRON_DOWN_DISABLED); }
+
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+    image: url($CHEVRON_UP);
+    width: 10px;
+    height: 10px;
+}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+    image: url($CHEVRON_DOWN);
+    width: 10px;
+    height: 10px;
+}
+QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:disabled {
+    image: url($CHEVRON_UP_DISABLED);
+}
+QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:disabled {
+    image: url($CHEVRON_DOWN_DISABLED);
+}
+
+QCheckBox::indicator:checked { image: url($CHECK); }
+""")
 
 
 # Complete application style template. Literal { } braces are QSS; $TOKEN markers
@@ -166,7 +315,7 @@ QMainWindow, QDialog {
 
 QWidget {
     color: $TEXT;
-    font-family: "Segoe UI";
+    font-family: "$FONT_FAMILY";
     font-size: 10pt;
 }
 
@@ -183,7 +332,7 @@ QLabel:disabled {
 /* ---- Tabs ---- */
 QTabWidget::pane {
     border: 1px solid $BORDER;
-    border-radius: 6px;
+    border-radius: 10px;
     background-color: $SURFACE;
     top: -1px;
 }
@@ -363,25 +512,37 @@ QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
 /* Spin arrows are left to the Fusion style (set in apply_theme) so they render
    as crisp native triangles rather than CSS-border boxes. */
 
-/* ---- Group boxes (cards) ---- */
+/* ---- Group boxes (cards) ----
+   Containers carry a larger radius than the controls inside them (10 vs 6), so a
+   card reads as a surface holding controls rather than as one more control. */
 QGroupBox {
     background-color: $SURFACE;
     border: 1px solid $BORDER;
-    border-radius: 6px;
-    margin-top: 16px;
-    padding: 16px 8px 8px 8px;
+    border-radius: 10px;
+    margin-top: 18px;
+    padding: 18px 14px 14px 14px;
+    font-size: 10.5pt;
     font-weight: 600;
 }
 
 QGroupBox::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    left: 10px;
-    padding: 2px 6px;
+    left: 12px;
+    padding: 2px 8px;
     color: $TEXT;
     /* Surface background so the card's top border does not strike through the
        title text (clean notch instead of an overlapped line). */
     background-color: $SURFACE;
+}
+
+/* Card contents sit at the body size; only the card title is stepped up. */
+QGroupBox > QWidget { font-size: 10pt; font-weight: 400; }
+
+/* Secondary/explanatory text. Set QLabel.setProperty("hint", True) to use it. */
+QLabel[hint="true"] {
+    color: $MUTED_TEXT;
+    font-size: 9pt;
 }
 
 /* ---- Tables ---- */
@@ -390,7 +551,7 @@ QTableWidget, QTableView {
     alternate-background-color: $TABLE_ALT_BG;
     gridline-color: $TABLE_GRIDLINE;
     border: 1px solid $BORDER;
-    border-radius: 6px;
+    border-radius: 10px;
     selection-background-color: $TABLE_SELECTION_BG;
     selection-color: $TABLE_SELECTION_TEXT;
     outline: none;
@@ -435,7 +596,7 @@ QTableCornerButton::section {
 QListWidget {
     background-color: $SURFACE;
     border: 1px solid $BORDER;
-    border-radius: 6px;
+    border-radius: 10px;
     outline: none;
     padding: 2px;
 }
@@ -580,10 +741,16 @@ QToolTip {
 """)
 
 
-def _generate_qss(palette: dict[str, str]) -> str:
+def _generate_qss(palette: dict[str, str], mode: str = "light") -> str:
     # .substitute (strict) raises KeyError on a missing token, so a typo fails
     # loudly at startup rather than shipping a malformed style sheet.
-    return _QSS_TEMPLATE.substitute(palette)
+    # Resolved live: by the time a style sheet is generated the QApplication exists,
+    # so this is the real system UI font rather than the import-time fallback.
+    qss = _QSS_TEMPLATE.substitute({**palette, "FONT_FAMILY": system_ui_font_family()})
+    glyphs = glyph_paths(mode)
+    if glyphs:
+        qss += _GLYPH_QSS.substitute(glyphs)
+    return qss
 
 
 def build_qpalette(p: dict[str, str]) -> QPalette:
@@ -637,10 +804,10 @@ def apply_theme(app: QApplication, mode: str = "light") -> None:
         app.setStyle("Fusion")
     except Exception:
         pass
-    font = QFont(BASE_FONT_FAMILY, BASE_FONT_POINT_SIZE)
+    font = QFont(system_ui_font_family(), BASE_FONT_POINT_SIZE)
     app.setFont(font)
     app.setPalette(build_qpalette(PALETTES[mode]))
-    app.setStyleSheet(_generate_qss(PALETTES[mode]))
+    app.setStyleSheet(_generate_qss(PALETTES[mode], mode))
 
 
 def status_color(status: str, mode: str = "light") -> str:
@@ -656,7 +823,7 @@ def status_pill(status: str, text: str | None = None, mode: str = "light") -> QL
     label = QLabel(text if text is not None else status)
     label.setAlignment(Qt.AlignCenter)
     fg = status_color(status, mode)
-    bg = _STATUS_PILL_BG.get(mode, _STATUS_PILL_BG["light"]).get(status, "#EDEFF2")
+    bg = STATUS_PILL_BG.get(mode, STATUS_PILL_BG["light"]).get(status, "#EDEFF2")
     label.setStyleSheet(
         "QLabel {"
         f" color: {fg};"

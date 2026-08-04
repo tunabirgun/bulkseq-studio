@@ -25,10 +25,15 @@ def get_benchmark(benchmark_id: str) -> dict[str, Any]:
     raise KeyError(f"Unknown benchmark dataset: {benchmark_id}")
 
 
-def create_benchmark_project(benchmark_id: str, working_directory: Path, project_name: str | None = None) -> Path:
+def create_benchmark_project(benchmark_id: str, working_directory: Path, project_name: str | None = None,
+                             overwrite: bool = False) -> Path:
     benchmark = get_benchmark(benchmark_id)
     manager = ProjectManager()
-    root = manager.create_project(project_name or str(benchmark["id"]), working_directory)
+    # Propagates ProjectExistsError unless the caller confirmed the overwrite: the
+    # benchmark name defaults to the benchmark id, so scaffolding twice targets the
+    # same directory and would otherwise reset an existing project's sample sheet.
+    root = manager.create_project(project_name or str(benchmark["id"]), working_directory,
+                                  overwrite=overwrite)
     samples = _samples_dataframe(benchmark)
     save_metadata(samples, root / "config" / "samples.auto_generated.tsv")
     save_metadata(samples, root / "config" / "samples.tsv")
@@ -122,14 +127,19 @@ def _samples_dataframe(benchmark: dict[str, Any]) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for sample in benchmark["samples"]:
         accession = str(sample["original_accession"])
+        # ENA serves a single-end run as {accession}.fastq.gz — there is no _1/_2 pair —
+        # so branch on layout exactly as sra_metadata.metadata_to_samples() does, and read
+        # the read-2 URL defensively: a single-end catalogue entry has no fastq_2_url and
+        # bracket access would raise KeyError before the project is even scaffolded.
+        paired = str(sample["layout"]).strip().lower() == "paired"
         rows.append(
             {
                 "sample_id": sample["sample_id"],
                 "original_accession": accession,
                 "original_filename": f"{accession}.sra",
                 "layout": sample["layout"],
-                "fastq_1": f"data/raw/{accession}_1.fastq.gz",
-                "fastq_2": f"data/raw/{accession}_2.fastq.gz",
+                "fastq_1": f"data/raw/{accession}_1.fastq.gz" if paired else f"data/raw/{accession}.fastq.gz",
+                "fastq_2": f"data/raw/{accession}_2.fastq.gz" if paired else "",
                 "detected_pair_id": accession,
                 "condition": sample["condition"],
                 "replicate": sample["replicate"],
@@ -142,7 +152,7 @@ def _samples_dataframe(benchmark: dict[str, Any]) -> pd.DataFrame:
                 "read_count": sample.get("read_count", ""),
                 "base_count": sample.get("base_count", ""),
                 "fastq_1_url": sample["fastq_1_url"],
-                "fastq_2_url": sample["fastq_2_url"],
+                "fastq_2_url": sample.get("fastq_2_url", "") if paired else "",
             }
         )
     return pd.DataFrame(rows)
