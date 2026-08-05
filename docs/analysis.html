@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/site.css?v=7">
+<link rel="stylesheet" href="assets/site.css?v=8">
 <script>
 (function(){
   try{var t=localStorage.getItem('bsq-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}
@@ -37,6 +37,7 @@
         <li><a href="index.html">Overview</a></li>
         <li><a href="guide.html">Install &amp; quick start</a></li>
         <li><a class="active" href="analysis.html">Analysis options</a></li>
+        <li><a href="cli.html">Command line &amp; HPC</a></li>
         <li><a href="outputs.html">Outputs</a></li>
         <li><a href="benchmarks.html">Benchmarks</a></li>
         <li><a href="faq.html">FAQ &amp; cite</a></li>
@@ -56,7 +57,7 @@
 
 <figure class="diagram">
   <img src="assets/bulkseq-workflow.svg" alt="BulkSeq Studio workflow diagram: input entry points (local FASTQ, SRA/ENA accession, and the shortcut count-matrix, microarray, and DESeq2-results modes) feeding four stages — QC and trimming, alignment and quantification, differential expression, and downstream outputs — plus an optional multi-study meta-analysis lane, with a legend." loading="lazy">
-  <figcaption>The whole pipeline at a glance, with the choices at each stage. Required steps are solid, optional steps dashed, and a bracketed group (fastp / Trim Galore / Trimmomatic; STAR / HISAT2 / Salmon; DESeq2 / limma-voom / edgeR) means "pick one". The three shortcut entry points on the right skip earlier stages; the meta-analysis lane along the bottom is entered when the sample sheet holds several compatible datasets. The sections below describe each stage in turn. Click to zoom, or <a class="diagram-fullsize" href="assets/bulkseq-workflow.svg" target="_blank" rel="noopener">open it full size ↗</a>.</figcaption>
+  <figcaption>The whole pipeline at a glance, with the choices at each stage. Required steps are solid, optional steps dashed, and a group of inner bars (fastp / Trim Galore / Trimmomatic; STAR / HISAT2 / Salmon; DESeq2 / limma-voom / edgeR) means "pick one". The three shortcut entry points on the right skip earlier stages; the meta-analysis lane along the bottom is entered when Multi-study meta-analysis is ticked and the sample sheet holds several compatible datasets. The sections below describe each stage in turn. Click to zoom, or <a class="diagram-fullsize" href="assets/bulkseq-workflow.svg" target="_blank" rel="noopener">open it full size ↗</a>.</figcaption>
 </figure>
 
 <figure>
@@ -86,7 +87,7 @@
 <ul>
   <li><strong>STAR</strong> (default): the standard splice-aware aligner; the genome index grows with genome size and needs the most RAM. Writes sorted BAM files.</li>
   <li><strong>HISAT2</strong>: a graph aligner with a small index and low memory, for large crop genomes that overflow STAR while you still want BAM files.</li>
-  <li><strong>Salmon</strong>: alignment-free transcriptome quantification, the lowest memory of the three and the fastest. No BAM files; the transcriptome is built automatically from the genome and annotation.</li>
+  <li><strong>Salmon</strong>: mapping-based transcriptome quantification (selective alignment), the lowest memory of the three and the fastest. No BAM files; the transcriptome is built automatically from the genome and annotation.</li>
 </ul>
 <p>Library strandedness is detected automatically on all three routes, so a stranded library is counted correctly without you setting it by hand.</p>
 <p>The quantifier is matched to the aligner. featureCounts is the default counter. With the STAR aligner the Quantifier control becomes a real choice: alongside featureCounts you can pick <strong>STAR gene-counts</strong>, which reads gene counts straight from STAR's own <code>--quantMode GeneCounts</code> output with no extra counting pass. STAR gene-counts is a 0.15.0 option, validated against featureCounts on the same BAMs at Pearson r of about 0.998 (unstranded) to 1.000 (stranded). HISAT2 always pairs with featureCounts and Salmon with tximport, so they cannot be mis-set.</p>
@@ -153,5 +154,6 @@
 })();
 </script>
 <script src="assets/lightbox.js" defer></script>
+<script src="assets/toc.js" defer></script>
 </body>
 </html>

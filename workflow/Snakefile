@@ -339,6 +339,30 @@ def rule_mem_mb(name, default=8):
 
 
 # ---------------------------------------------------------------------------
+# Path-valued settings that gate a rule input, checked BEFORE the includes.
+#
+# Several rules are defined only when a config setting names a file (a gene list, a GMT, a
+# supplied count matrix) and then use that value as a rule input. Snakemake resolves inputs
+# while building the job graph, so a setting naming a file the project does not have aborts the
+# run before any job executes -- including the 00_project_setup check that would otherwise
+# explain it. The user sees a MissingInputException naming a rule and a filename, with nothing
+# to connect it to the setting that caused it. Parse time is the only point early enough to
+# report it properly, so the check runs here and repeats inside validate_project.py for the
+# sanity-check panel.
+# ---------------------------------------------------------------------------
+sys.path.insert(0, os.path.join(workflow.basedir, "scripts"))
+from snakemake.exceptions import WorkflowError  # noqa: E402
+from validate_project import check_gating_paths  # noqa: E402
+
+_PATH_PROBLEMS = check_gating_paths(config)
+if _PATH_PROBLEMS:
+    raise WorkflowError(
+        "Project configuration references files that do not exist:\n\n"
+        + "\n\n".join("  - " + m["message"] for m in _PATH_PROBLEMS)
+    )
+
+
+# ---------------------------------------------------------------------------
 # Rule includes (order matters only for readability; globals already defined)
 # ---------------------------------------------------------------------------
 include: "rules/sra.smk"

@@ -10,8 +10,58 @@ from __future__ import annotations
 import json
 import socket
 import statistics
+from pathlib import Path
 
-from PySide6.QtCore import QSettings
+from app.core.paths import user_data_dir
+
+# QSettings is the store when Qt is present, so an existing GUI user's calibration history
+# survives untouched. It is imported lazily rather than at module scope because app.core is
+# also the CLI's library layer, and a cluster login node has no Qt: a top-level PySide6
+# import here made this module — and anything that reached it — unimportable there.
+# Without Qt the samples go to a JSON file under the same per-user data directory.
+
+
+def _qsettings():
+    try:
+        from PySide6.QtCore import QSettings
+    except ImportError:
+        return None
+    return QSettings()
+
+
+def _fallback_file() -> Path:
+    return user_data_dir() / "runtime_calibration.json"
+
+
+def _read_raw(key: str) -> str:
+    settings = _qsettings()
+    if settings is not None:
+        return str(settings.value(key, "") or "")
+    try:
+        return json.loads(_fallback_file().read_text(encoding="utf-8")).get(key, "")
+    except (OSError, ValueError):
+        return ""
+
+
+def _write_raw(key: str, value: str) -> None:
+    settings = _qsettings()
+    if settings is not None:
+        settings.setValue(key, value)
+        return
+    path = _fallback_file()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            store = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            store = {}
+        store[key] = value
+        path.write_text(json.dumps(store), encoding="utf-8")
+    except OSError:
+        # Calibration is an optimisation, not a result. A read-only home directory must
+        # not fail a run.
+        pass
+
 
 _MAX_SAMPLES = 10       # rolling window of the most recent runs
 _MIN_PREDICT = 0.5      # ignore trivially small predictions (near-instant runs are noise)
@@ -24,7 +74,7 @@ def _key(cores: int) -> str:
 
 
 def load_samples(cores: int) -> list[dict]:
-    raw = QSettings().value(_key(cores), "")
+    raw = _read_raw(_key(cores))
     if not raw:
         return []
     try:
@@ -35,7 +85,7 @@ def load_samples(cores: int) -> list[dict]:
 
 
 def _save_samples(cores: int, samples: list[dict]) -> None:
-    QSettings().setValue(_key(cores), json.dumps(samples[-_MAX_SAMPLES:]))
+    _write_raw(_key(cores), json.dumps(samples[-_MAX_SAMPLES:]))
 
 
 def calibration_factor(cores: int) -> tuple[float, int]:

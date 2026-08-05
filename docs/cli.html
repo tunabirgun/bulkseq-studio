@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BulkSeq Studio — Command line &amp; HPC</title>
+<meta name="description" content="The bulkseq command line: project setup, validated configuration, and running the pipeline on a laptop, a Slurm cluster, or Kubernetes. Profile reference, site notes for TRUBA, UHEM and NRP, and what is verified versus what is not.">
+<link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/site.css?v=8">
+<script>
+(function(){
+  try{var t=localStorage.getItem('bsq-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}
+  window.addEventListener('DOMContentLoaded',function(){
+    var side=document.querySelector('.sidebar');if(!side)return;
+    var b=document.createElement('button');b.type='button';b.className='theme-toggle';b.setAttribute('aria-label','Toggle dark mode');
+    function u(){var d=document.documentElement.getAttribute('data-theme')==='dark';b.textContent=d?'Light mode':'Dark mode';b.setAttribute('aria-pressed',String(d));}
+    u();
+    b.addEventListener('click',function(){var d=document.documentElement.getAttribute('data-theme')==='dark';if(d){document.documentElement.removeAttribute('data-theme');}else{document.documentElement.setAttribute('data-theme','dark');}try{localStorage.setItem('bsq-theme',d?'light':'dark');}catch(e){}u();});
+    side.appendChild(b);
+  });
+})();
+</script>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="index.html">
+      <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
+      <span><b>BulkSeq Studio</b><span class="ver">v0.24.0</span></span>
+    </a>
+    <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
+    <nav>
+      <ul class="nav">
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="guide.html">Install &amp; quick start</a></li>
+        <li><a href="analysis.html">Analysis options</a></li>
+        <li><a class="active" href="cli.html">Command line &amp; HPC</a></li>
+        <li><a href="outputs.html">Outputs</a></li>
+        <li><a href="benchmarks.html">Benchmarks</a></li>
+        <li><a href="faq.html">FAQ &amp; cite</a></li>
+      </ul>
+      <div class="ext">
+        <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
+        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download latest release ↗</a>
+        <a href="https://doi.org/10.5281/zenodo.20955660" target="_blank" rel="noopener">Benchmark archive (Zenodo) ↗</a>
+      </div>
+    </nav>
+  </aside>
+
+  <main class="content">
+<section id="cli"><p class="kicker">Beyond the interface</p>
+<h2>Command line</h2>
+<p class="lead">The <code>bulkseq</code> command runs the same pipeline without the graphical interface: for scripting a study, for a machine with no display, and for handing jobs to a cluster scheduler.</p>
+
+<p>Both front ends build their Snakemake invocation with one function, <code>build_snakemake_command()</code>. A command-line run and a graphical run of the same project therefore issue the same command, and a test compares the two argument vectors in every mode rather than leaving the equivalence to convention. This matters more than convenience: two front ends that assemble their own arguments drift, and the drift appears as results that differ between them for the same input.</p>
+
+<h3>Getting it</h3>
+<p>The command ships with the application. From a source checkout:</p>
+<pre><code>pip install -e .
+bulkseq --help</code></pre>
+<p>The interface itself is an optional extra (<code>pip install -e ".[gui]"</code>), so a login node does not have to pull Qt and its X11 and OpenGL libraries to get a working command line.</p>
+
+<figure>
+  <img src="assets/cli/cli-help.svg" alt="Terminal window showing the output of bulkseq --help: the ASCII logo followed by the available commands.">
+  <figcaption>The command surface. The logo prints to standard error and only when standard error is a terminal, so redirecting a run to a log file produces a clean log with no flag needed.</figcaption>
+</figure>
+
+<h3>A session</h3>
+<p>Creating a project, pointing it at data and checking it before anything long starts:</p>
+<figure>
+  <img src="assets/cli/cli-project.svg" alt="Terminal window: bulkseq project create followed by bulkseq project info, which prints the project root, input type, sample count, aligner, design formula and organism.">
+  <figcaption>Every figure on this page is generated by running the commands and capturing what they printed (<code>scripts/capture_cli_screenshots.py</code>), so they cannot drift from the program.</figcaption>
+</figure>
+
+<h3>Configuration</h3>
+<p>Settings are read and written by key rather than by editing YAML. Each write is validated against the same model the interface uses, and the file is only rewritten once validation passes — a rejected value leaves <code>config.yaml</code> exactly as it was.</p>
+<figure>
+  <img src="assets/cli/cli-config.svg" alt="Terminal window: reading deseq2.alpha, setting it to 0.01, then a rejected attempt to set it to 1.5 with the validation error explaining alpha must be between 0 and 1.">
+  <figcaption>An out-of-range significance threshold is refused with the model's own message. A mistyped key is refused too, rather than silently creating a setting nothing reads.</figcaption>
+</figure>
+
+<div class="note"><span class="t">Before a long run.</span> <code>bulkseq check</code> validates the sample sheet and design, and <code>bulkseq print-command</code> prints the exact Snakemake invocation without executing it. On a cluster, reading that line before submitting is the cheapest way to catch a wrong profile or a missing partition.</div>
+</section>
+
+<section id="hpc"><p class="kicker">Clusters</p>
+<h2>Running on HPC</h2>
+<p class="lead">One project definition, several places to run it. The pipeline does not change; only the execution profile does.</p>
+
+<figure>
+  <img src="assets/cli/cli-exec-profiles.svg" alt="Terminal window comparing the generated Snakemake command for the local, slurm and kubernetes execution profiles.">
+  <figcaption>The same project under three targets. The local command is wrapped for WSL2 and carries machine-sized scheduling limits; the cluster commands carry neither, and point at a profile instead.</figcaption>
+</figure>
+
+<h3>Choosing a target</h3>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Profile</th><th>Executor</th><th>What it does</th><th>You must supply</th></tr></thead>
+  <tbody>
+    <tr><td><code>local</code></td><td>—</td><td>Runs on this machine: inside WSL2 on Windows, natively on Linux. Jobs are packed into the cores and memory configured for the project.</td><td>Nothing.</td></tr>
+    <tr><td><code>slurm</code></td><td><code>slurm</code></td><td>Submits one <code>sbatch</code> job per rule. Each rule's own declared resources become its allocation.</td><td>A partition, and an account if your site bills to one.</td></tr>
+    <tr><td><code>kubernetes</code></td><td><code>kubernetes</code></td><td>Submits one pod per rule.</td><td>A container image and shared storage.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Why the cluster profiles do not set a memory limit</h3>
+<p>A local run passes Snakemake a global pool — <code>--cores</code> and <code>--resources mem_mb=…</code> — sized to the machine, and Snakemake packs jobs so their combined demand stays inside it. That is correct locally and wrong on a cluster.</p>
+<p>Given a global pool smaller than a rule asks for, Snakemake <strong>clamps the rule's request down</strong> rather than refusing. Under a cluster executor that clamped number is not a scheduling hint: it is the allocation the scheduler is asked for. A project configured for a 8&nbsp;GB laptop would submit <code>star_align</code> — which declares 24&nbsp;GB — requesting 8&nbsp;GB, and the job would be killed for exceeding its memory some hours into alignment.</p>
+<p>So the cluster profiles pass no global memory pool at all, and each rule's declared resources reach the scheduler untouched. For the same reason no shipped profile sets <code>set-resources</code> for <code>mem_mb</code> or <code>threads</code>: those override what a rule declares, which would make the recorded run parameters disagree with what was actually requested.</p>
+
+<div class="note warn"><span class="t">Thread ceiling.</span> With a cluster executor and no <code>cores</code> setting, Snakemake reuses <code>jobs</code> as the per-rule thread limit — so <code>jobs: 4</code> silently caps every alignment at four threads regardless of what the rule declares. Six rules in this pipeline declare eight threads, so the shipped profiles set <code>cores: 16</code>. A test reads the real maximum from the rule sources and fails if a profile drops below it.</div>
+
+<h3>Slurm</h3>
+<p>Edit <code>workflow/profiles/site/slurm/config.yaml</code> inside your project. Every key becomes a command-line argument, so <code>executor: slurm</code> is <code>--executor slurm</code>.</p>
+<pre><code>executor: slurm
+jobs: 16
+cores: 16
+
+default-resources:
+  - runtime=240              # minutes
+  - slurm_partition=short    # required at most sites
+  # - slurm_account=""       # if your site bills to an account
+
+retries: 1
+keep-going: true</code></pre>
+<p>Find your partition with <code>sinfo -s</code> and your account with <code>sacctmgr show assoc user=$USER</code>, or ask your support desk. Then:</p>
+<pre><code>bulkseq print-command --exec-profile slurm   # read it before submitting
+snakemake --profile workflow/profiles/site/slurm --configfile config/config.yaml</code></pre>
+<p><code>print-command</code> emits the invocation and stops there; it does not submit anything. Read it, then run it yourself &mdash; from a login node, or inside whatever wrapper your site expects. Keeping the two steps apart is deliberate: a command that queues 16 jobs against an account with a fair-share budget is worth looking at before it runs.</p>
+
+<h4>Site notes</h4>
+<ul>
+  <li><strong>TRUBA</strong> and <strong>İTÜ UHEM</strong> are Slurm sites with a shared filesystem, which is the arrangement this profile suits: install the environment once, and every compute node sees it. Partition names, walltime ceilings and account requirements differ between them and change over time — take them from the site's own documentation rather than from here.</li>
+  <li><strong>Compute nodes frequently have no outbound network.</strong> If the project fetches FASTQ files from ENA or SRA, download them on the login node first, then submit; otherwise the download rule fails on a node that cannot reach the internet.</li>
+  <li><strong>Walltime.</strong> <code>runtime</code> is in minutes and applies to any rule that does not declare its own. Alignment on a large genome can exceed a short queue's limit; check the ceiling before submitting a study.</li>
+</ul>
+
+<h3>Kubernetes</h3>
+<div class="note warn"><span class="t">This needs a container image.</span> No rule in the pipeline declares a <code>conda:</code> directive — the workflow assumes it is already inside an activated environment. On Slurm that holds, because compute nodes share a filesystem. A Kubernetes pod does not: it starts from an image, and nothing in the repository is inside it. Setting <code>executor: kubernetes</code> alone will not work.</div>
+
+<p>One of two things has to be true first:</p>
+<ol>
+  <li>An image exists carrying the full <code>workflow/envs/bulkseq.lock.yaml</code> tool stack — STAR, HISAT2, Salmon, samtools, subread, and the R and Bioconductor stack — published where the cluster can pull it, and named as <code>container-image</code> in the profile. It is a multi-gigabyte image.</li>
+  <li>Every rule gains a <code>conda:</code> directive and the run uses <code>--software-deployment-method conda</code>, so each pod provisions its own environment. That is slow, repeated per pod, and changes what the pinned lock guarantees.</li>
+</ol>
+<p>Pods also do not share a filesystem by default. Snakemake needs a storage plugin, or a persistent volume that supports many simultaneous writers mounted at the same path in every pod. On the <strong>National Research Platform</strong> this is usually the question to settle first.</p>
+
+<div class="note"><span class="t">A passing dry run proves less than it looks.</span> <code>--dry-run</code> with a cluster executor exits successfully without contacting a scheduler or pulling an image. It confirms the workflow graph is valid and the profile parses. It says nothing about whether a rule can execute on that cluster.</div>
+
+<h3>What is verified, and what is not</h3>
+<p>Stated plainly, because the distinction matters when planning a study:</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Verified</th><th>Not verified</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>The generated command line for every profile and mode, compared against the interface's.</td>
+      <td>Submission to a real Slurm scheduler.</td>
+    </tr>
+    <tr>
+      <td>That cluster profiles pass no global memory pool and no <code>--cores</code>.</td>
+      <td>Any Kubernetes execution; no container image exists.</td>
+    </tr>
+    <tr>
+      <td>That profile <code>cores</code> covers the widest rule, derived from the rule sources.</td>
+      <td>Partition, account and walltime values at any specific site.</td>
+    </tr>
+    <tr>
+      <td>That the profile path stays relative, so it resolves identically on Windows and Linux.</td>
+      <td>Whether compute nodes at a given site can reach ENA or SRA.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+<p>Before committing a study to an unfamiliar cluster, run the bundled <em>pasilla</em> benchmark project through it first. It is four samples on a small genome, and it exercises download, alignment, counting, differential expression, enrichment and reporting — the whole pipeline, at a size where a failure costs minutes rather than a night.</p>
+</section>
+
+<div class="footer">
+  <p>BulkSeq Studio is free software. Source, releases and issue tracker on <a href="https://github.com/tunabirgun/bulkseq-studio">GitHub</a>.</p>
+</div>
+  </main>
+</div>
+<script src="assets/lightbox.js" defer></script>
+<script src="assets/toc.js" defer></script>
+<script>
+(function(){
+  var t=document.querySelector('.menu-toggle'),n=document.querySelector('.nav');
+  if(!t||!n)return;
+  t.addEventListener('click',function(){var o=n.classList.toggle('open');t.setAttribute('aria-expanded',String(o));});
+})();
+</script>
+</body>
+</html>

@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/site.css?v=7">
+<link rel="stylesheet" href="assets/site.css?v=8">
 <script>
 (function(){
   try{var t=localStorage.getItem('bsq-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}
@@ -37,6 +37,7 @@
         <li><a href="index.html">Overview</a></li>
         <li><a class="active" href="guide.html">Install &amp; quick start</a></li>
         <li><a href="analysis.html">Analysis options</a></li>
+        <li><a href="cli.html">Command line &amp; HPC</a></li>
         <li><a href="outputs.html">Outputs</a></li>
         <li><a href="benchmarks.html">Benchmarks</a></li>
         <li><a href="faq.html">FAQ &amp; cite</a></li>
@@ -171,7 +172,7 @@ processors=16    # optional: limit WSL2 to 16 logical processors</code></pre>
 </ol>
 
 <h3>Try it now: a one-click example run</h3>
-<p>The fastest way to see a full analysis end to end is a bundled benchmark — no data to find and no reference to configure. On the <strong>Project</strong> tab, click <strong>Create Benchmark Project</strong> and choose <em>Pasilla paired-end subset</em>, a four-sample <em>Drosophila</em> knockdown study. The app scaffolds a ready-to-run project with the samples, the treated-versus-untreated contrast, and the Ensembl reference already filled in. Go straight to <strong>Run Monitor</strong> and click <strong>Start Run</strong>; in a few minutes the <strong>Outputs</strong> tab shows the count matrix, the DESeq2 table (about 467 differentially expressed genes, with the <em>pasilla</em> gene itself strongly down-regulated), and the figures, and <code>results_report.html</code> opens as one shareable summary. Two more one-click datasets — a yeast and a rice example — sit in the same menu. Once a benchmark run makes sense, repeat the six steps above with your own study.</p>
+<p>The fastest way to see a full analysis end to end is a bundled benchmark — no data to find and no reference to configure. On the <strong>Project</strong> tab, click <strong>Create Benchmark Project</strong> and choose <em>Pasilla paired-end subset</em>, a four-sample <em>Drosophila</em> knockdown study. The app scaffolds a ready-to-run project with the samples, the treated-versus-untreated contrast, and the Ensembl reference already filled in. Go straight to <strong>Run Monitor</strong> and click <strong>Start Run</strong>; in a few minutes the <strong>Outputs</strong> tab shows the count matrix, the DESeq2 table (about 467 differentially expressed genes under the shipped organellar default, which keeps them, with the <em>pasilla</em> gene itself strongly down-regulated), and the figures, and <code>results_report.html</code> opens as one shareable summary. Two more one-click datasets — a yeast and a rice example — sit in the same menu. Once a benchmark run makes sense, repeat the six steps above with your own study.</p>
 
 <div class="note"><span class="t">Tip</span> Not sure the configuration is right? Use <strong>Dry Run</strong> before <strong>Start Run</strong>. A dry run validates the configuration and reports exactly which steps would execute, without downloading or computing anything.</div>
 
@@ -259,5 +260,6 @@ processors=16    # optional: limit WSL2 to 16 logical processors</code></pre>
 })();
 </script>
 <script src="assets/lightbox.js" defer></script>
+<script src="assets/toc.js" defer></script>
 </body>
 </html>

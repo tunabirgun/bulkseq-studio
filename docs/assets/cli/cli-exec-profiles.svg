@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="859" height="330" viewBox="0 0 859 330" role="img" aria-label="One project, three execution targets">
+  <rect width="859" height="330" rx="10" fill="#15162a"/>
+  <rect width="859" height="34" rx="10" fill="#1d1f38"/>
+  <rect y="24" width="859" height="10" fill="#1d1f38"/>
+  <circle cx="18" cy="17" r="5.5" fill="#ff5f57"/><circle cx="36" cy="17" r="5.5" fill="#febc2e"/><circle cx="54" cy="17" r="5.5" fill="#28c840"/>
+  <text x="430" y="22" fill="#9aa1b2" font-size="12" text-anchor="middle"
+        font-family="ui-monospace, 'IBM Plex Mono', monospace">One project, three execution targets</text>
+  <g font-family="ui-monospace, 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace"
+     font-size="13.5">
+    <text x="18.0" y="68.0" xml:space="preserve"><tspan fill="#7ee2b8">$ </tspan><tspan fill="#e8e8f5">bulkseq print-command --exec-profile local</tspan></text>
+    <text x="18.0" y="88.0" fill="#9aa1b2" xml:space="preserve">wsl -- bash -lc &quot;cd ~/pasilla_demo &amp;&amp; export MAMBA_ROOT_PREFIX=\&quot;$HOME/micromamba\&quot; &amp;&amp;    \</text>
+    <text x="18.0" y="108.0" fill="#9aa1b2" xml:space="preserve">  export PATH=\&quot;$HOME/micromamba/envs/bulkseq/bin:${PATH}\&quot; &amp;&amp; export LC_NUMERIC=C &amp;&amp;    \</text>
+    <text x="18.0" y="128.0" fill="#9aa1b2" xml:space="preserve">  \&quot;$HOME/.local/bin/micromamba\&quot; run -n bulkseq snakemake --snakefile workflow/Snakefile    \</text>
+    <text x="18.0" y="148.0" fill="#9aa1b2" xml:space="preserve">  --cores 4 --resources mem_mb=8000 downloads=3 --configfile config/config.yaml&quot;</text>
+    <text x="18.0" y="168.0" fill="#9aa1b2" xml:space="preserve"></text>
+    <text x="18.0" y="188.0" xml:space="preserve"><tspan fill="#7ee2b8">$ </tspan><tspan fill="#e8e8f5">bulkseq print-command --exec-profile slurm</tspan></text>
+    <text x="18.0" y="208.0" fill="#9aa1b2" xml:space="preserve">snakemake --snakefile workflow/Snakefile --profile workflow/profiles/site/slurm --resources    \</text>
+    <text x="18.0" y="228.0" fill="#9aa1b2" xml:space="preserve">  downloads=3 --configfile config/config.yaml</text>
+    <text x="18.0" y="248.0" fill="#9aa1b2" xml:space="preserve"></text>
+    <text x="18.0" y="268.0" xml:space="preserve"><tspan fill="#7ee2b8">$ </tspan><tspan fill="#e8e8f5">bulkseq print-command --exec-profile kubernetes</tspan></text>
+    <text x="18.0" y="288.0" fill="#9aa1b2" xml:space="preserve">snakemake --snakefile workflow/Snakefile --profile workflow/profiles/site/kubernetes    \</text>
+    <text x="18.0" y="308.0" fill="#9aa1b2" xml:space="preserve">  --resources downloads=3 --configfile config/config.yaml</text>
+  </g>
+</svg>

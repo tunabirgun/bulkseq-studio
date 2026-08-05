@@ -11,6 +11,69 @@ from pathlib import Path
 import yaml
 
 
+# Path-valued config settings that are used as a rule INPUT, with the feature each enables.
+#
+# Snakemake resolves rule inputs while BUILDING THE DAG, before the first job runs and
+# therefore before the 00_project_setup check this script writes. A path that does not exist
+# aborts the run with a MissingInputException that names the rule and the file but never the
+# setting that introduced it, nor that clearing that setting is all it takes to proceed. That
+# is reachable without doing anything unusual: copying a colleague's config.yaml into a fresh
+# project, or restoring a config without the auxiliary files that sat beside it.
+#
+# The Snakefile calls check_gating_paths() at parse time, which is the only point early enough
+# to beat DAG construction; main() calls it as well, so the same message reaches the sanity-check
+# panel the application already shows on runs that do build.
+#
+# Explicit rather than derived: which settings gate a rule is a property of the rule files, not
+# of anything in the config, and statically parsing Snakemake includes to recover it would be
+# markedly more fragile than this table. tests/test_config_paths.py re-derives the list from the
+# rule files and fails if the two disagree, so a new gated input cannot be added silently.
+GATING_PATHS: tuple[tuple[str, str, str], ...] = (
+    ("gene_sets", "custom_gene_list",
+     "the genes-of-interest heatmap and per-gene expression figures"),
+    ("gene_sets", "custom_gene_sets",
+     "custom gene-set over-representation and gene-set enrichment"),
+    ("gene_sets", "functional_annotation_table",
+     "custom gene-set over-representation from an identifier-to-term table"),
+    ("gene_sets", "background_gene_list",
+     "the custom-enrichment background gene list"),
+    ("input", "count_matrix", "count-matrix input mode"),
+    ("input", "deseq2_results", "DESeq2-results input mode"),
+    ("microarray", "expression_matrix", "the local-matrix microarray route"),
+)
+
+
+def check_gating_paths(config: dict, base: Path | None = None) -> list[dict[str, str]]:
+    """One FAIL per path-valued setting that names a file the project does not have.
+
+    `base` resolves relative paths against the project root; Snakemake runs with the project
+    root as the working directory, so the default of None (resolve against the cwd) is correct
+    in the workflow and the parameter exists for tests.
+    """
+    msgs: list[dict[str, str]] = []
+    micro_source = str((config.get("microarray") or {}).get("source", "") or "")
+    for section, key, effect in GATING_PATHS:
+        # The local-matrix path is only wired into a rule on that source; on a GEO series the
+        # setting is inert and a stale value must not block the run.
+        if (section, key) == ("microarray", "expression_matrix") and micro_source != "local_matrix":
+            continue
+        value = str(((config.get(section) or {}).get(key) or "")).strip()
+        if not value:
+            continue
+        path = Path(value)
+        if base is not None and not path.is_absolute():
+            path = Path(base) / path
+        if path.exists():
+            continue
+        msgs.append({"status": "FAIL", "message": (
+            f"{section}.{key} points at a file that does not exist: {value}. "
+            f"That setting enables {effect}; clear it to run without that feature, or put the "
+            f"file at that path. Left as it is, the run stops while building the job graph with "
+            f"a MissingInputException that names only the file."
+        )})
+    return msgs
+
+
 def check_design(config: dict, samples_path: Path) -> list[dict[str, str]]:
     """Fail fast when the DE design references a factor level that does not exist in the
     sample sheet. Without this the run only crashes at the DESeq2 step ("'ref' must be an
@@ -172,6 +235,9 @@ def main() -> int:
                 messages.append({"status": "WARNING", "message": "Contamination screening is enabled but no FastQ Screen config (contamination.conf) is set; the screen will be skipped. Set a fastq_screen.conf under Advanced parameters to run it."})
             elif not Path(conf).exists():
                 messages.append({"status": "WARNING", "message": f"FastQ Screen config not found: {conf}; the contamination screen will fail until the path is fixed or the screen is disabled."})
+        # Path-valued settings that gate a rule input. The Snakefile checks these at parse time
+        # too; repeating it here puts the same message in the sanity-check panel.
+        messages.extend(check_gating_paths(payload))
     if not samples_path.exists():
         messages.append({"status": "FAIL", "message": f"Missing samples table: {samples_path}"})
     messages.extend(check_design(payload, samples_path))

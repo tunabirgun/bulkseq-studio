@@ -1,0 +1,56 @@
+# Kubernetes execution profile (National Research Platform, or any Kubernetes cluster).
+#
+#   snakemake --profile workflow/profiles/site/kubernetes ...
+#   bulkseq print-command --exec-profile kubernetes   # prints it; does not submit
+#
+# ---------------------------------------------------------------------------
+# READ THIS BEFORE USING IT: Kubernetes needs a container image
+# ---------------------------------------------------------------------------
+# On Slurm every job runs on a node that can see the shared filesystem, so the micromamba
+# environment installed once is visible everywhere. Kubernetes has no such thing: each job
+# is a pod started from a container IMAGE, and nothing in this repository is installed
+# inside it.
+#
+# No rule in workflow/ declares a `conda:` or `container:` directive — the whole pipeline
+# assumes it is already inside an activated environment. So Kubernetes will NOT work by
+# setting `executor: kubernetes` alone. One of these has to be true first:
+#
+#   (a) An image exists carrying the full workflow/envs/bulkseq.lock.yaml tool stack
+#       (STAR, HISAT2, Salmon, samtools, subread, R + Bioconductor, ...) and is named in
+#       `container-image` below. This is a multi-GB image and it must be built and pushed
+#       somewhere the cluster can pull from.
+#   (b) Every rule gains a `conda:` directive and the run uses
+#       `--software-deployment-method conda`, which makes each pod solve and install its
+#       own environment — slow, repeated per pod, and it changes what the lock guarantees.
+#
+# A `--dry-run` with this profile exits 0 without ever pulling an image, so a green dry-run
+# proves the DAG is valid and NOTHING about whether a rule can actually execute.
+#
+# ---------------------------------------------------------------------------
+# STORAGE
+# ---------------------------------------------------------------------------
+# Pods do not share a filesystem by default. Snakemake needs a storage plugin, or a
+# ReadWriteMany persistent volume mounted at the same path in every pod. Check what your
+# cluster offers before planning a run — this is usually the blocking question on NRP.
+
+executor: kubernetes
+
+jobs: 16
+
+# Per-rule thread ceiling; see the equivalent note in the slurm profile. Six rules declare
+# 8 threads, so this must not drop below 8 or alignment silently under-threads.
+cores: 16
+
+# REQUIRED: the image every pod runs. There is no default that could work — leaving this
+# empty is intended to fail loudly rather than start a run that cannot succeed.
+# container-image: "ghcr.io/<owner>/bulkseq-studio:<version>"
+
+default-resources:
+  - runtime=240
+
+resources:
+  - downloads=3
+
+retries: 1
+keep-going: true
+printshellcmds: true

@@ -32,6 +32,24 @@ def workflow_root() -> Path:
     return app_root() / "workflow"
 
 
+def user_data_dir() -> Path:
+    """Per-user writable directory for app state (logs, calibration, caches).
+
+    Follows each platform's convention rather than dropping a folder in $HOME:
+    %LOCALAPPDATA% on Windows, $XDG_DATA_HOME (default ~/.local/share) elsewhere.
+    Deliberately Qt-free — the command-line entry points run on machines with no Qt
+    installed, so this cannot depend on QStandardPaths.
+    """
+    from app.constants import APP_NAME
+
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if local_appdata:
+        base = Path(local_appdata)
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+    return base / APP_NAME
+
+
 def normalize_path(path: str | Path) -> Path:
     return Path(path).expanduser().resolve()
 

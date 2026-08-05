@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/site.css?v=7">
+<link rel="stylesheet" href="assets/site.css?v=8">
 <script>
 (function(){
   try{var t=localStorage.getItem('bsq-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}
@@ -37,6 +37,7 @@
         <li><a href="index.html">Overview</a></li>
         <li><a href="guide.html">Install &amp; quick start</a></li>
         <li><a href="analysis.html">Analysis options</a></li>
+        <li><a href="cli.html">Command line &amp; HPC</a></li>
         <li><a href="outputs.html">Outputs</a></li>
         <li><a href="benchmarks.html">Benchmarks</a></li>
         <li><a class="active" href="faq.html">FAQ &amp; cite</a></li>
@@ -109,11 +110,11 @@
 <p class="lead">BulkSeq Studio is free and open-source software released under the MIT License. You can install it, use it, study the code, and share it at no cost. The accompanying manuscript is in preparation for submission to a peer-reviewed journal.</p>
 
 <h3>How to cite</h3>
-<p>If you use BulkSeq Studio or its benchmark archive in your work, please cite the software and the reproduction archive deposited on Zenodo. The archive (DOI <a href="https://doi.org/10.5281/zenodo.20955660">10.5281/zenodo.20955660</a>) holds the benchmark scripts, the pinned scoring environment, the per-benchmark result tables and figures, and a step-by-step reproduction guide for the validation suite.</p>
+<p>If you use BulkSeq Studio or its benchmark archive in your work, please cite the software and the reproduction archive deposited on Zenodo. The archive (version 0.24.0, DOI <a href="https://doi.org/10.5281/zenodo.21807799">10.5281/zenodo.21807799</a>; the concept DOI <a href="https://doi.org/10.5281/zenodo.20955660">10.5281/zenodo.20955660</a> always resolves to the latest version) holds the benchmark scripts, the pinned scoring environment, the per-benchmark result tables and figures, and a step-by-step reproduction guide for the validation suite.</p>
 
 <pre><code>Birgün, Tuna (2026). BulkSeq Studio: benchmark apparatus and
-  reproduction archive. Version 0.21.0. Zenodo.
-  https://doi.org/10.5281/zenodo.20955660</code></pre>
+  reproduction archive. Version 0.24.0. Zenodo.
+  https://doi.org/10.5281/zenodo.21807799</code></pre>
 
 <div class="note"><span class="t">BibTeX</span> The repository ships a <code>CITATION.cff</code> file. GitHub renders a ready-to-copy citation from it, and most reference managers can import the same file directly.</div>
 
@@ -121,10 +122,10 @@
   author  = {Birg{\"u}n, Tuna},
   title   = {BulkSeq Studio: benchmark apparatus and
              reproduction archive},
-  version = {0.21.0},
+  version = {0.24.0},
   year    = {2026},
-  doi     = {10.5281/zenodo.20955660},
-  url     = {https://doi.org/10.5281/zenodo.20955660},
+  doi     = {10.5281/zenodo.21807799},
+  url     = {https://doi.org/10.5281/zenodo.21807799},
   license = {MIT}
 }</code></pre>
 
@@ -161,5 +162,6 @@
 })();
 </script>
 <script src="assets/lightbox.js" defer></script>
+<script src="assets/toc.js" defer></script>
 </body>
 </html>

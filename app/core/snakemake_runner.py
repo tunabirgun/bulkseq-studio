@@ -95,25 +95,57 @@ def snakemake_run_state(project_root: Path | None) -> dict[str, bool]:
     return {"resumable": locked or incomplete, "locked": locked, "incomplete": incomplete}
 
 
+# Execution targets. "local" runs everything on this machine (or inside WSL2 on Windows);
+# the others hand each job to a scheduler through a Snakemake executor plugin, configured
+# by the matching profile under workflow/profiles/site/.
+EXEC_PROFILES = ("local", "slurm", "kubernetes")
+
+
+def site_profile_dir(exec_profile: str) -> str:
+    """Profile path, deliberately RELATIVE to the project root.
+
+    Snakemake resolves --profile against the launching process's working directory, and
+    SnakemakeRunner sets cwd=project_root. Keeping it relative therefore both resolves
+    correctly and keeps any absolute Windows path out of the `bash -lc` string that WSL
+    runs, which is what lets one code path serve both platforms.
+    """
+    return f"workflow/profiles/site/{exec_profile}"
+
+
 def build_snakemake_args(
-    config: AppConfig, mode: str = "run", project_root: Path | None = None
+    config: AppConfig, mode: str = "run", project_root: Path | None = None,
+    exec_profile: str = "local",
 ) -> list[str]:
     """Snakemake argument vector, independent of how it is launched."""
     args = [
         "snakemake",
         "--snakefile",
         "workflow/Snakefile",
-        "--cores",
-        str(config.resources.total_threads),
-        "--resources",
-        f"mem_mb={config.resources.total_memory_gb * 1000}",
-        # Cap concurrent FASTQ downloads (each opens a few connections); more than a handful
-        # at once makes ENA refuse connections under load. The download_fastq rule consumes
-        # downloads=1, so at most 3 run in parallel.
-        "downloads=3",
-        "--configfile",
-        "config/config.yaml",
     ]
+    if exec_profile == "local":
+        # Local scheduling pools sized to this machine: Snakemake packs jobs so their
+        # summed threads/mem stay inside them.
+        args += [
+            "--cores",
+            str(config.resources.total_threads),
+            "--resources",
+            f"mem_mb={config.resources.total_memory_gb * 1000}",
+            # Cap concurrent FASTQ downloads (each opens a few connections); more than a
+            # handful at once makes ENA refuse connections under load. The download_fastq
+            # rule consumes downloads=1, so at most 3 run in parallel.
+            "downloads=3",
+        ]
+    else:
+        # A cluster executor turns each rule's own `resources:` into the scheduler's
+        # allocation (sbatch --mem, a pod resource request). A global `--resources
+        # mem_mb=N` must NOT be passed here: Snakemake CLAMPS every rule's request down to
+        # the pool rather than refusing, so a laptop-sized default (8 GB) would submit
+        # star_align — which declares 24 GB — with 8 GB and have it OOM-killed hours in.
+        # Job count and the thread ceiling come from the profile instead (see
+        # workflow/profiles/site/*/config.yaml), because `--jobs` alone silently doubles as
+        # the thread cap when `--cores` is absent.
+        args += ["--profile", site_profile_dir(exec_profile), "--resources", "downloads=3"]
+    args += ["--configfile", "config/config.yaml"]
     if mode == "dry-run":
         args.insert(1, "-n")
     elif mode == "resume":
@@ -254,6 +286,7 @@ def build_snakemake_command(
     use_wsl: bool = False,
     distro: str | None = None,
     run_tag: str | None = None,
+    exec_profile: str = "local",
 ) -> SnakemakeCommand:
     """Build the launch command.
 
@@ -267,7 +300,7 @@ def build_snakemake_command(
     process tree (which survives killing the Windows wsl.exe relay) can be found
     and terminated by :func:`build_wsl_kill_command`.
     """
-    args = build_snakemake_args(config, mode, project_root)
+    args = build_snakemake_args(config, mode, project_root, exec_profile=exec_profile)
     if use_wsl:
         wsl_root = windows_to_wsl_path(project_root)
         inner = _wrap_wsl(args, wsl_root, run_tag)

@@ -1,11 +1,100 @@
 # Changelog
 
+## 0.25.0 — 2026-08-06
+
+### Added
+
+- **A `bulkseq` command line.** A headless front end for the parts of the tool that do not
+  need a window: `bulkseq project create` scaffolds a project, `project info` summarises one,
+  `config show/get/set` reads and edits the configuration, `samples show` prints the sample
+  sheet, `check` validates a project before committing a cluster allocation to it, and
+  `print-command` emits the exact Snakemake invocation the graphical application would run.
+  It shares `app.core` with the interface rather than reimplementing it — the same project
+  scaffolding, configuration model, sample-sheet validation and, critically, the same
+  `build_snakemake_command()`, so the two front ends cannot drift into running subtly
+  different analyses. Output discipline is deliberate: stdout carries only what a command was
+  asked to produce and the banner, progress and warnings go to stderr, so
+  `bulkseq config show --json > c.json` is always a clean file. Documented at `docs/cli.html`.
+
+- **Execution profiles for Slurm and Kubernetes.** `bulkseq print-command --exec-profile slurm`
+  (or `kubernetes`) emits an invocation that hands each job to a scheduler through the matching
+  Snakemake executor plugin instead of running everything on one machine, using the site
+  profiles under `workflow/profiles/site/`. It prints the command and stops; submitting is left
+  to you, because a command that queues sixteen jobs against a fair-share budget is worth
+  reading first. Both profiles set a per-rule thread ceiling explicitly, because
+  Snakemake otherwise reuses `jobs` as that ceiling and `--jobs 2` would silently cap every
+  alignment at two threads; `tests/test_exec_profiles.py` derives the real maximum from the
+  rule sources and fails if the profile drops below it. Neither profile overrides `mem_mb` or
+  per-rule threads, so the run summary cannot report one allocation while the scheduler was
+  told another. Partition, account and walltime have no defensible default and are left for
+  the site to fill in. The Kubernetes profile carries an explicit warning that it cannot work
+  from `executor: kubernetes` alone: no rule declares a `conda:` or `container:` directive, so
+  a container image carrying the full tool stack must be supplied first, and a green
+  `--dry-run` proves the job graph is valid and nothing about whether a rule can execute.
+
+### Changed
+
+- **Benchmark archive re-deposited (Zenodo).** The validation suite now covers eighteen
+  families and is deposited as version 0.24.0, DOI
+  [10.5281/zenodo.21807799](https://doi.org/10.5281/zenodo.21807799). The concept DOI
+  10.5281/zenodo.20955660 is unchanged and continues to resolve to the latest version. The
+  archive is built by `article/scripts/build_zenodo_package.py`, which derives its version
+  from `app/constants.py`, and now ships `REGENERABILITY.md` stating per family how many of
+  its scripts are runnable code: 34 of 85 are implemented, so several families are deposited
+  as data only. Publishing that inventory keeps `REPRODUCE.md` from being read as a promise
+  the archive cannot keep.
+
+### Fixed
+
+- **A config naming a file the project does not have now fails with a message that names the
+  setting.** Several rules are defined only when a setting names a file — `custom_gene_list`,
+  `custom_gene_sets`, `functional_annotation_table`, `background_gene_list`, the count-matrix
+  and DESeq2-results input tables, and the local microarray matrix — and then use that value
+  as a rule input. Snakemake resolves inputs while building the job graph, so a path that is
+  not there stopped the run before any job executed, with a `MissingInputException` naming a
+  rule and a filename and nothing that connected it to the setting responsible. Copying a
+  colleague's `config.yaml` into a fresh project was enough to hit it. The paths are now
+  checked as the workflow is parsed, which is the only point early enough to precede the job
+  graph, and the error names the setting, the missing path, the feature it enables, and that
+  clearing the setting is a valid way to proceed. The same check runs inside
+  `validate_project.py`, so the message also reaches the sanity-check panel on runs that do
+  build.
+
+- **Workflow diagram: twelve factually wrong labels.** An audit of all 168 text claims in
+  `docs/assets/bulkseq-workflow.svg` against the 0.24.0 source found twelve wrong or
+  misleading. Salmon was described as "alignment-free" when `salmon quant` runs with
+  `--validateMappings` (selective alignment); rRNA removal was marked an "additive" step
+  although it re-routes the aligner input and so changes the counts; the Affymetrix log2
+  badge sat on the one branch where the setting is inert; the multi-study lane omitted that
+  an explicit opt-in switch is required. The same "alignment-free" error was present in the
+  README, two documentation pages and the manuscript, and is corrected throughout. The
+  diagram is the source of the manuscript's Figure 1, which is now derived from it rather
+  than maintained separately.
+- **`scripts/check_svg_layout.py` reported fabricated overlaps.** The checker read `x`/`y`
+  from the `<text>` element only, so a figure carrying them on child `<tspan>`s collapsed
+  every box to the origin and produced thousands of spurious findings instead of admitting
+  it could not measure the file. It now positions per baseline, accepts single-quoted
+  attributes and unit-suffixed root dimensions, and reports SKIP with a reason when its
+  monospace width model does not apply.
+- **`article/scripts/seeds.yaml` contradicted its own data.** Three of four entries
+  disagreed with the results they govern: polyester recorded five seeds against six result
+  directories, B2 twenty against five, and B10 listed thread counts the determinism run never
+  used. It now records what each family ran, cites the deposited file each value came from,
+  and covers B3, B17 and B18.
+- **`b7_limma_validate.R` rounded a floating-point residual to zero.** `round(maxd, 4)`
+  printed the maximum absolute log2 fold-change difference as 0, a value it cannot take, so
+  the manuscript contradicted its own deposited table. It now uses `signif(maxd, 3)` and
+  reports 1.25e-14.
+
 ## 0.24.0 — 2026-08-04
 
 > **Results may differ from earlier versions.** KEGG over-representation was corrected to
 > test against the expressed-gene background instead of the whole annotation, so a KEGG
-> term list produced by 0.23.x or earlier was computed against a larger universe and will
-> generally contain more significant terms than 0.24.0 produces. Differential-expression
+> term list produced by 0.23.x or earlier was computed against a larger universe.
+> The direction depends on the dataset: measured on four archived runs, the correction
+> removed all four *Fusarium* pathways, left pasilla with none under either background,
+> added two net on a rice STAR run and removed two net on a rice Salmon run. Eight
+> previously significant pathways are absent from the corrected lists. Differential-expression
 > results are unaffected. If you have published a KEGG enrichment from an earlier version,
 > re-run it before citing it against this release. See *Changed* below.
 

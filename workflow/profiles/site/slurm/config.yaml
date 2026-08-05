@@ -1,0 +1,63 @@
+# Slurm execution profile (TRUBA, İTÜ UHEM, or any Slurm cluster).
+#
+#   snakemake --profile workflow/profiles/site/slurm ...
+#   bulkseq print-command --exec-profile slurm   # prints it; does not submit
+#
+# Each key below becomes a command-line argument: `executor: slurm` -> `--executor slurm`.
+#
+# ---------------------------------------------------------------------------
+# WHY cores IS SET, AND WHY IT MUST STAY >= 8
+# ---------------------------------------------------------------------------
+# With a cluster executor and no `cores`, Snakemake silently reuses `jobs` as the per-rule
+# thread ceiling: `--jobs 2` caps every rule at 2 threads no matter what the rule declares.
+# star_align, hisat2_align, salmon_quant and the three index rules all declare 8 threads
+# (workflow/rules/alignment.smk), so `cores` must be at least 8 or every alignment silently
+# runs single-digit-threaded and the run takes far longer than the estimate promised.
+# tests/test_exec_profiles.py derives the real maximum from the rule sources and fails if
+# this value drops below it.
+#
+# ---------------------------------------------------------------------------
+# WHAT IS DELIBERATELY ABSENT
+# ---------------------------------------------------------------------------
+# No `resources: mem_mb=...` and no `set-resources:` overriding mem_mb or threads. Both
+# would override what each rule declares for itself, so the run summary would report the
+# rule's declared resources while the scheduler was told something else. Per-rule values
+# live with the rules; this file only says HOW to submit them.
+#
+# ---------------------------------------------------------------------------
+# WHAT YOU MUST SET FOR YOUR SITE
+# ---------------------------------------------------------------------------
+# Partition, account and walltime are site-specific and there is no sane default. Copy this
+# file and fill in the commented keys, or pass them per run. Ask your support desk, or read
+# `sinfo -s` (partitions) and `sacctmgr show assoc user=$USER` (accounts).
+
+executor: slurm
+
+# Maximum jobs queued at once. Raise it if your fair-share allows; each job is one sbatch.
+jobs: 16
+
+# Per-rule thread ceiling. See the note above: do not drop this below 8.
+cores: 16
+
+# Fallback allocation for any rule that declares no runtime. Rules that DO declare
+# resources keep their own values — default-resources only fills gaps, unlike set-resources.
+default-resources:
+  - runtime=240          # minutes
+  - slurm_partition=""   # e.g. short, defq, mid1 — REQUIRED on most clusters
+  # - slurm_account=""   # uncomment and set if your site bills to an account
+
+# Concurrent ENA/SRA downloads. Kept here rather than on the command line so a cluster run
+# does not open more connections than ENA tolerates. Compute nodes on many clusters have no
+# outbound internet at all — download the FASTQ files on the login node first if so.
+resources:
+  - downloads=3
+
+# Re-submit a job once if the scheduler kills it (pre-emption, a node failure). It does NOT
+# retry a genuine tool error: those fail the same way twice and stop the run.
+retries: 1
+
+# Keep going with independent jobs when one fails, so one bad sample does not idle the
+# whole allocation.
+keep-going: true
+
+printshellcmds: true

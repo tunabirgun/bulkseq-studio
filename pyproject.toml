@@ -1,6 +1,6 @@
 [project]
 name = "bulkseq-studio"
-version = "0.24.0"
+version = "0.25.0"
 description = "Cross-platform (Windows + Linux) GUI project manager for reproducible bulk RNA-seq Snakemake workflows"
 readme = "README.md"
 license = { text = "MIT" }
@@ -16,6 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
+bulkseq = "app.cli:main"
 bulkseq-studio = "app.main:main"
 bulkseq-benchmark = "app.benchmark_cli:main"
 
