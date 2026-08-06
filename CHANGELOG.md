@@ -1,5 +1,90 @@
 # Changelog
 
+## 0.26.6 — 2026-08-07
+
+### Fixed
+
+- **The multi-study meta-analysis corrected for multiplicity over the wrong family.**
+  `run_meta_analysis.R` adjusted the combined p-values across every gene and then removed
+  direction-discordant genes from the called set, so the reported meta-DEGs were a
+  Benjamini–Hochberg rejection set minus a subset chosen after the threshold was fixed. The
+  guarantee does not transfer to such a subset, and the filter is not independent of the
+  p-values: a gene with strong opposing per-study effects has both a small combined p-value and a
+  high chance of being discordant, so discordant genes crowded the low tail, raised the cutoff and
+  admitted null genes that then survived the filter. Measured in B19's discordance arm, which
+  plants only discordant genes and therefore contains no true positive, the combination reported
+  **58 meta-DEGs across five runs, every one a false positive**, at approximately α × (discordant
+  rejections) per run. The correction restricts the family to concordant genes before adjusting;
+  discordant genes keep their row and raw combined p-value but carry no adjusted value, because
+  they are not being tested. Re-run, the arm reports **1** gene across five runs, and the power
+  arm improves slightly because the tested family is smaller. Anyone who has run a meta-analysis
+  should re-run it: the differentially expressed gene set changes.
+- **The meta-volcano would have drawn discordant genes as the most significant points.** With
+  discordant genes carrying no adjusted p-value, `NA <= 0 | !is.finite(NA)` evaluates to TRUE, so
+  the fit-all branch placed every one of them at the capped ceiling. The volcano now excludes
+  genes with no adjusted p-value and states how many in its subtitle.
+- **B19's acceptance criteria missed the defect they existed to catch.** Criterion C asked only
+  whether discordant genes were kept out of the called set, never what the called set contained.
+  A new criterion F bounds the discordance arm's false-positive count; scored against the pre-fix
+  data it fails at 5 of 5 runs with a lower confidence limit of 0.478.
+- **Five release gates could not fail.** `check_typography.py` returned 0 unconditionally and, run
+  from outside the repository root, read no files while reporting "0 issues across 2 file(s)";
+  `build_main_tables.py` returned 0 regardless of its own checks, so deleting a table body
+  propagated silently into every deliverable; an early return made the article-wide placeholder
+  sweep unreachable; `check_b19` verified only the study-count stratum that decides the verdict,
+  which let a wrong three-study count stand in the manuscript; and `extract()` scanned forward
+  with no stop condition, so a missing table body made it return a different table's rows. Each is
+  now demonstrated to fail on an injected defect.
+- **B19 was not regenerable from the deposit.** Its simulator sources
+  `workflow/scripts/run_meta_analysis.R`, which lives outside `article/` and was never staged. The
+  archive builder now derives its external dependencies from what the deposited scripts actually
+  source.
+
+### Added
+
+- **`scripts/preflight.py`** runs every release gate in one command and reports which could not
+  run. The manuscript and benchmark gates cannot run in CI because `article/` is gitignored, so
+  they only ever run when someone runs them; a gate that cannot run is reported as a failure
+  rather than a pass.
+
+## 0.26.5 — 2026-08-06
+
+### Fixed
+
+- **B19 simulated from a defective dispersion estimate, and its central result changed when that
+  was corrected.** `make_sim_params.R` took `mcols(dds)$dispGeneEst`, the unshrunken gene-wise
+  maximum-likelihood estimate. That estimator collapses to the optimiser's lower boundary for any
+  gene whose observed variance sits at or below the Poisson expectation, which at six samples is
+  common: 4,203 of 10,303 genes (40.8%) carried dispersion 10⁻⁸, including 1,133 with a base mean
+  above 100, so two fifths of the simulation was very nearly Poisson. Using the maximum-a-posteriori
+  dispersions a DESeq2 analysis actually tests with puts 0.0% at the boundary. Re-simulated, the
+  complete-null rejection falls from 5 of 10 runs to 2 of 10, and the null-calibration criterion is
+  met — weakly, since at ten runs a true rate of 0.20 escapes the criterion 68% of the time, which
+  the manuscript now states rather than reporting the pass as a demonstration of control.
+- **B19's source count matrix was unnamed and unreproducible.** The manuscript said only "a real
+  count matrix"; no matrix available reproduced the deposited parameter file's row count. The
+  source is the pasilla count matrix, now named in the script, recorded in the output table, and
+  printed in the run log.
+- **B19 ran at one replicate count only.** Five replicates per group was hardcoded in four places,
+  so every conclusion was scoped to that design. The count is now `--reps`, and a ten-replicate arm
+  is deposited alongside. The power criterion passes at five replicates (+11 to +33 true positives
+  over the best single study) and **fails** at ten (−16 to +14, four runs of ten below the best
+  single study), while the combination's observed false-discovery rate stays at about half the best
+  single study's at both. Combining buys sensitivity when the constituent studies are individually
+  underpowered and specificity when they are not.
+- **The exact binomial interval was wrong for n ≥ 60.** `clopper_pearson` in `score_b19.py` returned
+  (1.0, 1.0) because the continued fraction for the regularised incomplete beta diverges above
+  x = (a+1)/(a+b+2) without the reflection identity. No reported interval was affected — B19 scores
+  ten runs and B17's 200-draw intervals come from R's `binom.test` — but the helper ships in the
+  archive. Fixed, and guarded by `score_b19.py --self-test` against values from `binom.test`.
+- **The B9 bread-wheat index was reported as two different measurements as though it were one.**
+  There are two Salmon indexes: 221,398 transcripts at 1.14 GB for the resource-scaling row and
+  216,567 at 1.18 GB for the end-to-end quantification. The Results quoted the first index's
+  transcript count and the second run's expressed-transcript count, and the two were labelled GiB
+  and GB, which do not reconcile. Both statements now name their index and use one unit.
+- **The deposited B17 figure was a superseded version** carrying the pre-correction rejection rates
+  and KEGG counts, contradicting the published Figure B17 and the B17 tables beside it.
+
 ## 0.26.4 — 2026-08-06
 
 ### Fixed

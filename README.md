@@ -10,6 +10,17 @@ BulkSeq Studio is a PySide6 GUI that drives a transparent [Snakemake](https://sn
 
 ![BulkSeq Studio, from data to results](docs/screenshot-overview-light.png)
 
+## Notice for multi-study meta-analysis users (0.26.6)
+
+Releases before 0.26.6 applied the Benjamini–Hochberg correction across every gene and then
+removed direction-discordant genes from the called set. The correction therefore covered a
+different family of hypotheses than the one reported, and genes with strong opposing per-study
+effects raised the significance threshold for everything else. In the benchmark arm built to
+expose this — where every planted gene is discordant, so any call is a false positive — the
+combination reported 58 genes across five runs; the corrected code reports one. **If you produced
+a meta-analysis result with 0.26.5 or earlier, re-run it.** Single-study differential expression,
+enrichment and network output are unaffected; only the multi-study meta-analysis changes.
+
 ## Features
 
 - **End-to-end pipeline.** ENA/SRA FASTQ download, FastQC/MultiQC, adapter/quality trimming (fastp, Trim Galore, or Trimmomatic), optional rRNA filtering (SortMeRNA or RiboDetector) and contamination screening (FastQ Screen), alignment (STAR, HISAT2, or Salmon), gene counting (featureCounts, STAR gene counts, or Salmon tximport), differential expression (DESeq2, limma-voom, or edgeR), GO/KEGG and custom-gene-set enrichment, optional GSVA pathway activity, and publication figures, orchestrated by Snakemake. Paired-end and single-end reads are both supported.
@@ -307,7 +318,7 @@ The multi-study meta-analysis is validated on simulated data with known ground t
 
 **Bundled benchmark projects.** Five one-click datasets are available from *Create Benchmark Project* on the Project tab — three RNA-seq and two microarray. The RNA-seq set: the Drosophila pasilla subset above, a *Saccharomyces cerevisiae* wild-type vs *ume6Δ* subset (PRJNA630199 / SRP260000; R64-1-1, Ensembl), a small, fast genome on a different organism that exercises the g:Profiler and KEGG enrichment route, and an *Oryza sativa* (rice) super-hybrid CY1000 control vs 5-day salt-stress subset (PRJDB38133; IRGSP-1.0 NCBI RefSeq) that exercises the crop route (KEGG `osa` via the NCBI-RefSeq `LOC<GeneID>` strip, g:Profiler `osativa`, STRING taxid 39947). Each scaffolds an SRA-mode project (samples, contrast, reference) that downloads its reads and runs the full pipeline.
 
-**Benchmark archive (Zenodo).** The full quantitative validation suite behind the BulkSeq Studio paper (correctness against simulated ground truth, false-discovery and null calibration, accuracy curves, concordance with [nf-core/rnaseq](https://nf-co.re/rnaseq), cross-aligner agreement, input-mode and microarray-route equivalence, multi-organism breadth, runtime/memory scaling, and determinism, plus STAR gene-counts quantifier concordance, custom gene-set enrichment, ribosomal RNA filtering, differential-expression engine concordance, and human-dataset applicability, plus re-validation on the current release, enrichment negative controls, and the null-calibration decomposition — families B1–B20) is archived on Zenodo, together with the simulation and scoring code, the pinned scoring environment, the per-benchmark result tables and figures, and a reproduction guide, together with an inventory of which families can be recomputed from the deposited code: **DOI [10.5281/zenodo.21825754](https://doi.org/10.5281/zenodo.21825754)** (version 0.26.4; the concept DOI [10.5281/zenodo.20955660](https://doi.org/10.5281/zenodo.20955660) always resolves to the latest deposited version).
+**Benchmark archive (Zenodo).** The full quantitative validation suite behind the BulkSeq Studio paper (correctness against simulated ground truth, false-discovery and null calibration, accuracy curves, concordance with [nf-core/rnaseq](https://nf-co.re/rnaseq), cross-aligner agreement, input-mode and microarray-route equivalence, multi-organism breadth, runtime/memory scaling, and determinism, plus STAR gene-counts quantifier concordance, custom gene-set enrichment, ribosomal RNA filtering, differential-expression engine concordance, and human-dataset applicability, plus re-validation on the current release, enrichment negative controls, and the null-calibration decomposition — families B1–B20) is archived on Zenodo, together with the simulation and scoring code, the pinned scoring environment, the per-benchmark result tables and figures, and a reproduction guide, together with an inventory of which families can be recomputed from the deposited code: **DOI [10.5281/zenodo.20955660](https://doi.org/10.5281/zenodo.20955660)** (version 0.26.6; the concept DOI [10.5281/zenodo.20955660](https://doi.org/10.5281/zenodo.20955660) always resolves to the latest deposited version).
 
 ## Bring your own DESeq2 results
 

@@ -89,7 +89,16 @@ z_axis <- isTRUE(as.logical(getp("meta_volcano_z_axis", FALSE))) &&
   "combined_z" %in% colnames(res) && any(is.finite(res$combined_z))
 emit(out[["volcano_png"]], out[["volcano_svg"]], {
   if (!has_rows) stop("no meta result")
-  d <- res; d$neglog <- -log10(pmax(d$combined_padj, .Machine$double.xmin))
+  # Genes whose per-study directions disagree are not members of the tested family, so they carry
+  # no adjusted p-value (see run_meta_analysis.R). They cannot be placed on an FDR axis, and
+  # letting the NA flow through is actively misleading: in fit-all mode `NA <= 0 | !is.finite(NA)`
+  # evaluates to TRUE, which would draw every discordant gene at the capped ceiling as though it
+  # were the most significant result on the plot. Drop them here and report how many, rather than
+  # plotting them wrongly or dropping them silently.
+  n_nofdr <- sum(is.na(res$combined_padj))
+  d <- res[!is.na(res$combined_padj), , drop = FALSE]
+  if (!nrow(d)) stop("no meta result with an adjusted p-value (every gene is direction-discordant)")
+  d$neglog <- -log10(pmax(d$combined_padj, .Machine$double.xmin))
   d$dir <- factor(d$common_direction, levels = names(DIR_COL))
   d$x <- ifelse(is.na(d$rem_log2FC), 0, d$rem_log2FC)
   if (z_axis) {
@@ -139,7 +148,12 @@ emit(out[["volcano_png"]], out[["volcano_svg"]], {
     scale_colour_manual(values = DIR_COL, drop = FALSE, name = "cross-study\ndirection") +
     scale_shape_manual(values = c(`FALSE` = 16, `TRUE` = 17), guide = "none") +
     scale_y_continuous(expand = expansion(mult = c(0.02, 0.20))) +
-    labs(x = "pooled log2 fold change (random/fixed-effect)", y = ylab, subtitle = ysub) +
+    labs(x = "pooled log2 fold change (random/fixed-effect)", y = ylab,
+         # Disclose direction-discordant genes omitted from the FDR axis; they are not in the
+         # tested family and so have no adjusted p-value to plot.
+         subtitle = paste(c(ysub, if (n_nofdr > 0) sprintf(
+           "%d direction-discordant gene%s omitted (no adjusted p: not in the tested family)",
+           n_nofdr, if (n_nofdr == 1) "" else "s")), collapse = "; ")) +
     style_theme()
 }, "Meta-volcano unavailable\n(no shared genes / meta not run)")
 

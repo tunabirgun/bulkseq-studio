@@ -71,6 +71,26 @@ combine_meta <- function(per_study, nrep, alpha = 0.05) {
   signs <- sign(lmat)
   commonsgn <- ifelse(abs(rowSums(signs)) == k, sign(rowSums(signs)), 0L)  # 0 = discordant
 
+  # Multiplicity correction over the family actually reported.
+  #
+  # invnorm above adjusts across EVERY gene, and the direction filter below then removes the
+  # discordant ones. That order makes the reported set a Benjamini-Hochberg rejection set minus a
+  # subset chosen after the threshold was fixed, and BH's guarantee does not transfer to such a
+  # subset. The filter is not independent of the p-values either: a gene with strong opposing
+  # per-study effects has both a small combined p-value and a high chance of being discordant, so
+  # discordant genes crowd the low tail, raise the cutoff, and admit null genes that then survive
+  # the filter. B19's discordance arm plants only discordant genes and reported 58 meta-DEGs
+  # across five runs, every one a false positive from the null background, at approximately
+  # alpha x (number of discordant rejections) per run.
+  #
+  # Concordance is decided from effect signs alone, without reference to the combined p-value, so
+  # restricting the family first is legitimate: the discordant genes are not being tested. They
+  # keep their row and their raw combined p-value, so nothing becomes unsearchable, but they carry
+  # no adjusted value because they are not members of the tested family.
+  conc <- commonsgn != 0L
+  adj <- rep(NA_real_, length(common))
+  if (any(conc)) adj[conc] <- stats::p.adjust(fc$rawpval[conc], method = "BH")
+
   # Effect-size companion: DerSimonian-Laird random effects (k>=3) or fixed effect (k=2).
   method <- if (k >= 3) "DL" else "FE"
   rc <- c("beta", "ci.lb", "ci.ub", "pval", "tau2", "I2", "QEp")
@@ -100,7 +120,7 @@ combine_meta <- function(per_study, nrep, alpha = 0.05) {
   out <- data.frame(
     gene_id          = common,
     combined_pvalue  = fc$rawpval,
-    combined_padj    = fc$adjpval,
+    combined_padj    = adj,
     combined_z       = cz,
     combined_z_offscale = cz_off,
     common_direction = ifelse(commonsgn > 0, "up", ifelse(commonsgn < 0, "down", "discordant")),
@@ -110,6 +130,8 @@ combine_meta <- function(per_study, nrep, alpha = 0.05) {
     stringsAsFactors = FALSE)
   # A meta-DEG = significant combined FDR AND concordant direction. Discordant genes keep their
   # row (searchable) but are never called significant.
+  # Discordant genes carry NA adjusted p by construction, so the direction test here is now
+  # redundant; it is kept so the invariant is visible at the point the call is made.
   out$meta_sig <- !is.na(out$combined_padj) & out$combined_padj < alpha & out$common_direction != "discordant"
   for (s in studies) {
     out[[paste0("study_", s, "_log2FC")]] <- lmat[, s]
