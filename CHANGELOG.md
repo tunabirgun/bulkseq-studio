@@ -1,5 +1,141 @@
 # Changelog
 
+## 0.26.4 — 2026-08-06
+
+### Fixed
+
+- **B2's complete-null conclusion was scored on the wrong quantity, and the paper argues so
+  itself.** B17 and B19 both state that under a complete null every rejection is false, so the
+  Benjamini-Hochberg guarantee reduces to the probability that a run rejects at all, and B19's
+  correction of record says a count "made the arm incapable of failing". B2 nonetheless concluded
+  from a mean false-positive count that its null was well calibrated at ten replicates. Scored on
+  the run-level rate, B2 rejects in 5 of 5 null runs at n=5 and 2 of 5 at n=10, both exact
+  intervals lying above 0.05, and B18's own deposited per-seed table records 5 of 5 seeds
+  rejecting at the nominally identical design. Table 1, the B2 summary and B18's opening premise
+  are corrected.
+- **B15's marker claim was not supported and its evidence was not deposited.** The manuscript
+  named six canonical targets as "the most strongly up-regulated genes"; in the run's own DESeq2
+  table *FKBP5* ranks third by adjusted p and ninth by fold change among 125 up-regulated genes.
+  The panel is pre-specified, not top-ranked, and is now described that way. The per-gene table
+  and a marker panel are deposited, and the panel ships as Table B15b.
+- **B19's realism justification omitted a limitation of its own parameters.** 4,203 of 10,313
+  resampled rows carry the gene-wise dispersion estimator's lower boundary of 10⁻⁸, so about 41%
+  of simulated genes are near-Poisson and the absolute true-positive counts in the power arm are
+  optimistic. Disclosed.
+- **The documentation site contradicted the deposit on B19**, claiming 96% sensitivity, an
+  empirical false-discovery rate "about 1%", and that the null design showed type-I control. The
+  deposit records a true-positive rate of 0.65 to 0.72 and a failed null-calibration criterion.
+- **`manifest.sha256` was written with CRLF terminators**, so `sha256sum -c`, the command the
+  archive itself documents, failed on every line under GNU coreutils 8.32 and earlier.
+- **`REGENERABILITY.md` labelled a family "partly" regenerable with nothing regenerable.** The
+  verdict counted implemented scripts alone; it now accounts for whether the family deposits any
+  result, and a new "driver only" category separates code-without-output from the rest.
+- **Three accessions used to produce reported results were missing from the availability
+  statement** (SRA000299, GSE11045, DRR003149), and every image reference in the preprint
+  resolved from the wrong directory, so no figure rendered without an explicit resource path.
+- **Four table legends promised columns their tables did not carry.** B14 and B17.1 now deliver
+  the enumerated columns from their deposited sources; B20's legend describes the table as
+  delivered and points to the deposited files holding the per-sample split and the Salmon
+  cross-check.
+
+### Added
+
+- **Supplementary tables ship as a single workbook**, `Supplementary_Tables.xlsx`, one sheet per
+  table grouped by theme with a contents sheet, alongside the per-table CSV and DOCX. All three
+  forms are generated from the manuscript by the same script.
+- **`check_consistency.py` gained four gates**: every accession used in the text must appear in
+  the availability statement; the supplementary set must agree across CSV, DOCX, workbook and the
+  manuscript's own declaration; no deposited table may leave a ground-truth basis unresolved; and
+  the documentation site's version badge must match the application.
+
+## 0.26.3 — 2026-08-06
+
+### Changed
+
+- **Released as 0.26.3, aligning the application with the deposited benchmark archive.** Versions
+  0.26.0, 0.26.1 and 0.26.2 were never released: 0.26.0 and 0.26.1 carried benchmark, manuscript
+  and packaging work under version-string bumps, and 0.26.1 and 0.26.2 were archive builds each
+  superseded by review before deposit — 0.26.1 over an unsatisfiable form of the B19 null
+  criterion, 0.26.2 over six deposited tables that left a ground-truth basis unresolved. Their
+  entries below are kept as the record. The analysis path is unchanged across all of them:
+  `git diff v0.25.0..HEAD -- workflow app` is empty, so every benchmark reported against 0.26.x
+  ran against the same analysis code this release ships.
+- **Benchmark archive deposited (Zenodo)** as version 0.26.3, [10.5281/zenodo.21825754](https://doi.org/10.5281/zenodo.21825754), under the concept DOI [10.5281/zenodo.20955660](https://doi.org/10.5281/zenodo.20955660), which resolves to the latest version. Versions 0.26.1 and 0.26.2 were built but never deposited: each was superseded by review before it went out, 0.26.1 over an unsatisfiable form of the B19 null criterion and 0.26.2 over six deposited tables that left a ground-truth basis unresolved. The published chain therefore runs 0.26.0 to 0.26.3.
+
+### Added
+
+- **Two generators replace hand-maintained deliverables.** `article/scripts/build_main_tables.py`
+  derives Table 1, Table 2 and all nineteen supplementary tables from the manuscript; the
+  standalone Table 1 had stopped at B13 while the manuscript ran to B20, and three supplementary
+  tables carried values the manuscript contradicted. `article/scripts/check_consistency.py`
+  derives every checkable claim from the deposited tables and verifies it across the manuscripts,
+  README, documentation site and `CITATION.cff`, including that the archive description agrees
+  with the deposited acceptance table.
+
+### Fixed
+
+- **The documentation site advertised v0.24.0 on all seven pages** while the application was at
+  0.26.x, and the FAQ's citation examples named version 0.24.0 under a superseded archive title.
+- **`build_b_tables.sh` is superseded and now refuses to run.** Its table bodies were hardcoded
+  heredocs that had drifted from the manuscript, and its final line invoked a build whose input
+  does not exist, killing the script after it had already rewritten `main.docx`.
+
+## 0.26.1 — 2026-08-06
+
+### Fixed
+
+- **B19's null-calibration criterion bounded a quantity that cannot fail, and the correct quantity fails.** The criterion compared the proportion of genes called under the complete null to 0.05. A Benjamini-Hochberg procedure at q = 0.05 can never call more than that fraction under the null, so the test passed trivially and concealed the result; B17 states the correct principle explicitly for the same situation, and B19 did the opposite. Measured as the run-level rejection rate, which is what Benjamini-Hochberg bounds when every rejection is false, the arm fails: 5 of 10 runs reject at least once, 4 of 5 at two studies, against a bound of 0.05. The combination is still a large improvement on its inputs, but the comparison that first appeared here was withdrawn: it set the combination's run-level rejection RATE against a mean of 19.4 false-positive COUNTS from B2, a different simulation at a different gene count and dispersion model. Measured on one quantity within one simulation, all 15 distinct constituent single studies reject in every null run against 5 of 10 for the combination. A two-study combination at that replicate count still does not control the family-wise error rate, and the manuscript says so.
+- **The second study in B19's real-data arm was unidentified.** It was described only as "kidney podocytes", with no accession, citation or design, so the arm could not be reproduced. It is Jiang et al. 2016 (GEO GSE80651, SRA SRP073810): three conditionally immortalised human podocyte lines from independent donors, 0.1 µM dexamethasone or vehicle for 24 hours. Now cited, referenced and listed under availability of data.
+- **B19's real-data arm reported only the panel that passed.** The scoring defines an induced and a suppressed marker panel and deposits both; the manuscript reported the induced panel and omitted the suppressed one, in which one gene is discordant between studies and two are not significant. Both are now reported, with the reason the negative panel is weak.
+- **Table 1 listed the airway libraries as B20 data.** They carry no strandedness call: they were quantified through the Salmon route and produced no alignment for either inference mechanism to read. Their actual role, as the best-documented library against which the independent cross-tool check was itself validated, is now stated.
+- **B19 and B20 rendered as subsections of "Availability and requirements".** They were inserted before the Discussion without accounting for that heading sitting between, and are now inside Results.
+- **The Discussion still declared the meta-analysis and strandedness detection unvalidated**, thirty lines after the two families that measure them.
+- **Figure 1 did not render in the built submission document.** Pandoc emits an SVG as a bare `<a:blip>` with no `r:embed`, so Word had no image part to draw. The DOCX build now substitutes the raster on a copy, leaving the markdown vector-first for every other output.
+- **Both tables in the built document had no borders or header styling**, because pandoc writes a `tblStyle` the reference template does not define. The existing `fix_docx_tables.py` is now wired into the build.
+- **Six of twenty figures shipped as vector only.** The rasterisation loop hardcoded fourteen filenames from an earlier revision; it now derives the list from disk and cross-checks it against the figure legends in the manuscript.
+- **The read-level determinism comparison was reported but not deposited.** `b10_readlevel_rerun.csv` now carries both re-runs: the rice STAR route against an earlier local run of the same accessions (identical gene set, Jaccard 1.0, maximum absolute log2 fold-change difference 0) and the rice Salmon route against the deposited results table (Jaccard 1.0, maximum difference 0.0894, the expected signature of its expectation-maximisation step).
+
+### Changed
+
+
+## 0.26.0 — 2026-08-06
+
+### Added
+
+- **Two benchmark families, both previously shipped but unmeasured.** **B19** benchmarks the
+  multi-study meta-analysis: four simulation arms driving the shipped combination directly
+  (null calibration, power against the best single study, direction concordance, between-study
+  heterogeneity), a real-data arm combining two independent human glucocorticoid experiments of
+  deliberately unequal power, and a gate arm confirming that designs which cannot support the
+  contrast are refused. **B20** benchmarks automatic library-strandedness detection across
+  documented, independently inferred and constructed libraries, scoring both inference
+  mechanisms separately and reporting the margin from each observed ratio to its decision
+  boundary. Acceptance criteria for both were fixed before the measurements were taken, and
+  both families are fully regenerable from the deposited code.
+
+### Changed
+
+- **Benchmark archive re-deposited (Zenodo).** The validation suite now covers twenty families
+  and is deposited as version 0.26.0, DOI
+  [10.5281/zenodo.21819488](https://doi.org/10.5281/zenodo.21819488). The concept DOI
+  10.5281/zenodo.20955660 is unchanged and continues to resolve to the latest version. The
+  archive holds 430 files with 281 released tables and figures under `manifest.sha256`, and
+  `REGENERABILITY.md` now records 52 of 103 scripts as implemented.
+
+### Fixed
+
+- **The KEGG background-correction result was measured on the wrong gene list.** The B17
+  scoring selected differentially expressed genes on adjusted p-value alone, while the pipeline
+  thresholds on adjusted p-value *and* raw fold change and submits the resulting up- and
+  down-regulated files. The earlier measurement therefore described a query the software never
+  issues, and it reported the correction as uniformly raising the significant-pathway count.
+  Rescored on the real query it reproduces the pipeline's own output exactly, and the direction
+  is dataset-dependent: it removes all four *Fusarium* pathways, leaves pasilla with none under
+  either background, adds two net on a rice STAR run and removes two net on a rice Salmon run.
+  The B17 null-control draws were sized on the same wrong list and were re-run; all three arms
+  still straddle the nominal 0.05 and the power arm still fails to separate, so both
+  conclusions of that family survive.
+
 ## 0.25.0 — 2026-08-06
 
 ### Added

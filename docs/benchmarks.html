@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BulkSeq Studio — Benchmarks</title>
-<meta name="description" content="The B1–B18 validation suite behind BulkSeq Studio: correctness against simulated ground truth, concordance with established tools, cross-aligner and cross-engine agreement, non-model breadth, and a human-dataset applicability check. Archived on Zenodo.">
+<meta name="description" content="The B1–B20 validation suite behind BulkSeq Studio: correctness against simulated ground truth, concordance with established tools, cross-aligner and cross-engine agreement, non-model breadth, and a human-dataset applicability check. Archived on Zenodo.">
 <link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -29,7 +29,7 @@
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.24.0</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.26.4</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
     <nav>
@@ -53,8 +53,8 @@
   <main class="content">
     <section id="benchmarks" class="wide"><p class="kicker">Validation</p>
 <h2>Benchmarks</h2>
-<p class="lead">BulkSeq Studio is validated by a benchmark suite (B1–B18) that tests the pipeline against simulated ground truth, established tools, and itself across input modes, aligners, differential-expression engines, and organisms. The full benchmark snapshot — tables, figures, and pinned environments — is deposited on Zenodo, and the accompanying manuscript is in preparation for submission to a peer-reviewed journal.</p>
-<p>Every number below traces to a checksummed result table in the deposited archive. Cite the snapshot as <a href="https://doi.org/10.5281/zenodo.21807799">10.5281/zenodo.21807799</a> (version 0.24.0).</p>
+<p class="lead">BulkSeq Studio is validated by a benchmark suite (B1–B20) that tests the pipeline against simulated ground truth, established tools, and itself across input modes, aligners, differential-expression engines, and organisms. The full benchmark snapshot — tables, figures, and pinned environments — is deposited on Zenodo, and the accompanying manuscript is in preparation for submission to a peer-reviewed journal.</p>
+<p>Every number below traces to a checksummed result table in the deposited archive. Cite the snapshot as <a href="https://doi.org/10.5281/zenodo.21825754">10.5281/zenodo.21825754</a> (version 0.26.4); the concept DOI <a href="https://doi.org/10.5281/zenodo.20955660">10.5281/zenodo.20955660</a> resolves to the latest deposited version.</p>
 
 <h3>B1–B10: the core validation</h3>
 <p>Ten benchmark families, each probing one part of the default analysis (STAR to featureCounts to DESeq2 to clusterProfiler enrichment). Headline results:</p>
@@ -162,8 +162,8 @@
 <p>Under that constraint the pipeline recovered the canonical glucocorticoid-response programme: the most strongly up-regulated genes were the expected dexamethasone targets <em>FKBP5</em> (adjusted p ~5 × 10⁻²⁴), <em>ZBTB16</em>, <em>KLF15</em>, <em>SPARCL1</em>, and <em>STEAP4</em>, while the pro-inflammatory adhesion molecule <em>VCAM1</em> was down-regulated, consistent with the known anti-inflammatory action of glucocorticoids. The enrichment step returned GO and KEGG terms and the STRING network built to 117 nodes, so the human path delivers the same enrichment and network outputs as the non-human organisms and confirms the human GRCh38 / Salmon / <code>org.Hs.eg.db</code> route end to end.</p>
 <figure class="bench"><img src="assets/b15_human_airway_volcano.png" alt="Volcano plot of the human airway dexamethasone contrast with canonical glucocorticoid-response genes labelled: FKBP5, ZBTB16, KLF15, SPARCL1, STEAP4 up and VCAM1 down"><figcaption>B15: volcano of the human airway dexamethasone contrast; the canonical glucocorticoid-response signature is recovered (FKBP5, ZBTB16, KLF15, SPARCL1 up; VCAM1 down).</figcaption></figure>
 
-<h3>New in 0.24.0 (B16-B18)</h3>
-<p>Three families were added when the suite was re-run on the current release. B16 re-measures earlier comparisons on 0.24.0; B17 and B18 are new analyses that answer questions the earlier families raised but could not settle.</p>
+<h3>Later families (B16&ndash;B20)</h3>
+<p>Five families complete the suite. B16 re-measures earlier comparisons on the current release; B17 and B18 are new analyses that answer questions the earlier families raised but could not settle.</p>
 
 <h4>B16 &mdash; re-validation, and a configuration sensitivity</h4>
 <p>An archived pasilla benchmark was regenerated on 0.24.0 under its own configuration. It reproduces exactly, eight minor releases later: 7,523 genes tested, 473 differentially expressed, and a maximum absolute difference of zero on base mean, log2 fold change, its standard error, p-value and adjusted p-value, with identical missing-value patterns. The FASTQ and count-matrix routes likewise agree to zero difference on identical counts.</p>
@@ -193,11 +193,11 @@
 <figure class="bench"><img src="assets/b18_null_tail_calibration.png" alt="Left panel: null p-values observed divided by expected against the p-value threshold for six simulated conditions, with Poisson confidence intervals that widen sharply at the tightest thresholds and a shaded band marking where Benjamini-Hochberg rejects. Right panel: observed false-discovery rate against its Benjamini-Hochberg bound at 2, 10 and 30 percent truly differential."><figcaption>B18: the null is calibrated in the bulk and heavy-tailed where Benjamini-Hochberg operates. Intervals are exact Poisson intervals on the pooled event count; at the tightest thresholds they rest on a handful of events, so the magnitude there is poorly determined even though every lower bound exceeds one.</figcaption></figure>
 
 <h3>Multi-study meta-analysis validation</h3>
-<p class="note">The meta-analysis result tables are not yet in the deposited Zenodo snapshot (which is the B1&ndash;B18 archive); they will be added in the next archive revision. The figures below trace to the meta-analysis runs described here, not to the current DOI.</p>
+<p class="note">The meta-analysis result tables are deposited in the archive as benchmark family B19, together with the simulation parameters they were generated from and the two-study real-data arm scored against the published glucocorticoid programme. The figures below trace to the meta-analysis runs described here, not to the current DOI.</p>
 <p>The multi-study meta-analysis is validated two ways: on simulated data with a known ground truth, and on a pair of genuinely independent human studies.</p>
 
 <h4>Simulated controls</h4>
-<p>Against simulated truth the combination, the sign-concordance guard, and the <code>metafor</code> effect-size branch are each checked separately. A planted shared signal is recovered at 96% sensitivity with the empirical false-discovery rate held at about 1%; a pure-null design produces essentially no meta-DEGs across many seeds (type-I control); planted opposite-direction genes are flagged discordant and never called (99%); and a three-study design with real between-study effect-size heterogeneity recovers the correct high/low I² and pooled estimates. These are the clean power and specificity evidence for the method.</p>
+<p>Against simulated truth the combination, the sign-concordance guard, and the <code>metafor</code> effect-size branch are each checked separately. A planted shared signal is recovered at a true-positive rate of 0.65 to 0.72 across ten runs, at an observed false-discovery rate of 0.9 to 4.4 per cent, and the combination calls 4 to 21 more true positives than the best single study in every run. Planted opposite-direction genes are flagged discordant and never called: all 1,342 observably discordant genes are flagged and none is called, at a sign-recovery rate of 0.997 to 1.000. A three-study design with real between-study effect-size heterogeneity recovers the expected high and low I² and pooled estimates. The null-calibration arm does not pass, and is reported as a failure: under a complete null across studies the combination still rejects in 5 of 10 runs, 4 of 5 at two studies, whose exact 95 per cent interval lies above the nominal 0.05 bound. Combining roughly halves the rejection rate relative to the single studies it combines, all 15 of which reject in every null run, but a two-study combination at five replicates per group should not be read as controlling the family-wise error rate.</p>
 
 <h4>Two independent human dexamethasone studies</h4>
 <p>On real data, two genuinely independent glucocorticoid RNA-seq studies were combined: airway smooth muscle (Himes 2014) and kidney podocytes (Jiang 2016), obtained as uniformly processed count matrices. The meta-analysis recovers the conserved glucocorticoid-response core convergently — <em>FKBP5</em>, <em>TSC22D3</em>/GILZ, <em>PER1</em>, <em>DUSP1</em>, and <em>CRISPLD2</em> are up in both — on top of the expected large tissue-specific divergence, which is correctly flagged discordant rather than fused. The two studies are of unequal strength (the airway study is the stronger of the pair and dominates the pooled estimate), so this arm is a cross-tissue corroboration and a check that discordant genes are handled correctly, not a demonstration of dramatic power gain; the simulated controls above carry the power and specificity claims.</p>
@@ -205,7 +205,7 @@
 <div class="note"><span class="t">Default pipeline unchanged</span> The 0.13-0.17 features are additive, so B1-B10 carry over without re-running. The core scripts (DESeq2, enrichment, limma, salmon/tximport, count ingest, strandedness inference) are unchanged, the environment lock changed by addition only (no package removed or downgraded), and the F. graminearum baseline of 2723 up / 2478 down reproduces exactly.</div>
 
 <h3>Bundled microarray example datasets (0.17.0)</h3>
-<p>Separate from the archived validation suite above, the app now ships two one-click microarray example datasets that exercise the limma and Affymetrix CEL &rarr; RMA route on non-model organisms, alongside the existing bundled RNA-seq examples (Drosophila pasilla, yeast <em>ume6</em>, rice CY1000): an <em>Arabidopsis thaliana</em> <em>hub2-3</em> mutant versus Col-0 set on the Affymetrix ATH1 array (GSE30735, platform GPL198), and a <em>Saccharomyces cerevisiae</em> <em>cbc2</em> deletion versus wild-type set on the Yeast Genome S98 (YG-S98) array (GSE6705, platform GPL90). Each is a six-sample perturbation-versus-control contrast that GEOquery ingests and limma tests, giving a fast end-to-end check of the microarray path on a plant and a fungus. These are demonstration datasets bundled with the app, not part of the B1–B18 Zenodo validation snapshot.</p></section>
+<p>Separate from the archived validation suite above, the app now ships two one-click microarray example datasets that exercise the limma and Affymetrix CEL &rarr; RMA route on non-model organisms, alongside the existing bundled RNA-seq examples (Drosophila pasilla, yeast <em>ume6</em>, rice CY1000): an <em>Arabidopsis thaliana</em> <em>hub2-3</em> mutant versus Col-0 set on the Affymetrix ATH1 array (GSE30735, platform GPL198), and a <em>Saccharomyces cerevisiae</em> <em>cbc2</em> deletion versus wild-type set on the Yeast Genome S98 (YG-S98) array (GSE6705, platform GPL90). Each is a six-sample perturbation-versus-control contrast that GEOquery ingests and limma tests, giving a fast end-to-end check of the microarray path on a plant and a fungus. These are demonstration datasets bundled with the app, not part of the B1–B20 Zenodo validation snapshot.</p></section>
     <div class="footer" style="max-width:70ch;margin:0 auto;">
       <p>Free and open-source under the MIT License · <a href="https://github.com/tunabirgun" target="_blank" rel="noopener">tunabirgun</a></p>
     </div>
