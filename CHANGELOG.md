@@ -40,6 +40,10 @@
   archive builder now derives its external dependencies from what the deposited scripts actually
   source.
 
+### Changed
+
+- **Benchmark archive deposited (Zenodo)** as version 0.26.6, [10.5281/zenodo.21833538](https://doi.org/10.5281/zenodo.21833538), under the concept DOI [10.5281/zenodo.20955660](https://doi.org/10.5281/zenodo.20955660), which resolves to it. This is the first deposit carrying the corrected meta-analysis; 0.26.4 and 0.26.5 were built but never deposited, and every earlier deposit describes software with the defect.
+
 ### Added
 
 - **`scripts/preflight.py`** runs every release gate in one command and reports which could not
