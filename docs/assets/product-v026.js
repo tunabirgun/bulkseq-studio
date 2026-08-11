@@ -1,4 +1,4 @@
-/* Shared interaction layer for the v0.28 documentation shell. */
+/* Shared interaction layer for the documentation shell. */
 (function () {
   "use strict";
 

@@ -176,7 +176,12 @@ class ProjectManager:
         source = workflow_root()
         target = project_root / "workflow"
         if source.exists():
-            shutil.copytree(source, target, dirs_exist_ok=True)
+            shutil.copytree(
+                source,
+                target,
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+            )
         self._write_yaml(
             project_root / "workflow" / "workflow_metadata.yaml",
             {"workflow_version": WORKFLOW_VERSION,
@@ -193,7 +198,13 @@ class ProjectManager:
         if not source.exists():
             return ""
         h = hashlib.sha256()
-        for path in sorted(p for p in source.rglob("*") if p.is_file()):
+        for path in sorted(
+            p
+            for p in source.rglob("*")
+            if p.is_file()
+            and "__pycache__" not in p.relative_to(source).parts
+            and p.suffix.casefold() not in {".pyc", ".pyo"}
+        ):
             if path.name == "workflow_metadata.yaml":
                 continue
             h.update(path.relative_to(source).as_posix().encode("utf-8"))

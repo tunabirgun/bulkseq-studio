@@ -7,7 +7,7 @@
 <meta name="description" content="Frequently asked questions and troubleshooting for BulkSeq Studio, plus how to cite the software and its benchmark archive, and the MIT license.">
 <link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
 <link rel="stylesheet" href="assets/site.css?v=8">
-<link rel="stylesheet" href="assets/product-v028.css?v=2">
+<link rel="stylesheet" href="assets/product-v026.css?v=2">
 <script>
 try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (error) {}
 </script>
@@ -18,7 +18,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.28.0 source candidate</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.26.6</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu</button>
     <nav aria-label="Documentation">
@@ -41,8 +41,8 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
     <h1 class="visually-hidden">BulkSeq Studio: FAQ, citation, and license</h1>
     <section id="faq"><p class="kicker">Help</p>
 <h2>FAQ & troubleshooting</h2>
-<p class="lead">Short answers to the questions that come up most often. Page names follow the four-stage task navigator in the local 0.28.0 source candidate.</p>
-<div class="note"><span class="t">Release status</span> Version 0.28.0 is being validated from source; no 0.28.0 Windows or Linux package has been built or accepted yet. GitHub Releases and the deposited Zenodo benchmark snapshot remain version 0.26.6.</div>
+<p class="lead">Short answers to the questions that come up most often.</p>
+<div class="note"><span class="t">Release status</span> Version 0.26.6 is the current public release. Use only the checksummed packages published on GitHub Releases.</div>
 
 <h3>Do I need to know how to code?</h3>
 <p>No. The whole pipeline runs from a guided graphical interface. Project and data, Analysis setup, Validate and run, and Explore results group the same tasks into four stages; wide windows use a stage rail and compact windows use stage and page selectors. No command line is required.</p>
@@ -60,7 +60,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 <p>Yes. On Linux the same GUI drives the same Snakemake pipeline natively in a local micromamba environment, with no WSL involved, and produces identical results. There is no WSL setup step and no memory cap below the host's RAM.</p>
 
 <h3>How do I update to a new version?</h3>
-<p>Use only an approved artifact. The current public release is 0.26.6; version 0.28.0 is still a local source candidate and has no accepted package. On Windows, a newer approved installer detects the existing install and offers to update or uninstall first; a portable ZIP is replaced by unpacking the new archive. On Linux, after a newer version is publicly released, download its AppImage or use <a href="https://github.com/AppImageCommunity/AppImageUpdate">AppImageUpdate</a> with the published companion zsync information.</p>
+<p>Use only an approved artifact. The current public release is 0.26.6. On Windows, a newer approved installer detects the existing install and offers to update or uninstall first; a portable ZIP is replaced by unpacking the new archive. On Linux, after a newer version is publicly released, download its AppImage or use <a href="https://github.com/AppImageCommunity/AppImageUpdate">AppImageUpdate</a> with the published companion zsync information.</p>
 
 <h3>Which trimmer, rRNA tool, and DE engine should I use?</h3>
 <p>The defaults are chosen to work for a standard study: fastp for trimming, SortMeRNA if you turn on rRNA removal, and DESeq2 for differential expression. Change them only when you have a reason. Prefer Trim Galore or Trimmomatic if your lab standardizes on one; use RiboDetector when no rRNA reference is available for your organism; and run limma-voom or edgeR quasi-likelihood as a cross-check, especially on larger designs. All the alternatives produce the same tables and figures, so downstream steps do not change.</p>
@@ -102,7 +102,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 <p class="lead">BulkSeq Studio is free and open-source software released under the MIT License. You can install it, use it, study the code, and share it at no cost. The accompanying manuscript is in preparation for submission to a peer-reviewed journal.</p>
 
 <h3>How to cite</h3>
-<p>If you use BulkSeq Studio or its benchmark archive in your work, please cite the software and the reproduction archive deposited on Zenodo. The archive (version 0.26.6, DOI <a href="https://doi.org/10.5281/zenodo.21833538">10.5281/zenodo.21833538</a>; the concept DOI <a href="https://doi.org/10.5281/zenodo.20955660">10.5281/zenodo.20955660</a> always resolves to the latest deposited version) holds the benchmark scripts, the pinned scoring environment, the per-benchmark result tables and figures, and a reproduction guide for the validation suite. The local 0.28.0 source candidate has no Zenodo snapshot.</p>
+<p>If you use BulkSeq Studio or its validation archive in your work, please cite the software and the reproduction archive deposited on Zenodo. The archive (version 0.26.6, DOI <a href="https://doi.org/10.5281/zenodo.21833538">10.5281/zenodo.21833538</a>; the concept DOI <a href="https://doi.org/10.5281/zenodo.20955660">10.5281/zenodo.20955660</a> always resolves to the latest deposited version) holds the validation scripts, the pinned scoring environment, the result tables and figures, and a reproduction guide.</p>
 
 <pre><code>Birgün, Tuna (2026). BulkSeq Studio: validation benchmark archive. Version 0.26.6. Zenodo.
   https://doi.org/10.5281/zenodo.21833538</code></pre>
@@ -134,7 +134,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   </main>
 </div>
 
-<script src="assets/product-v028.js" defer></script>
+<script src="assets/product-v026.js" defer></script>
 <script src="assets/lightbox.js" defer></script>
 <script src="assets/toc.js" defer></script>
 </body>

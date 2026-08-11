@@ -7,7 +7,7 @@
 <meta name="description" content="Install BulkSeq Studio on Windows or Linux, let the first-run setup install the tools, and run your first bulk RNA-seq or microarray analysis. Covers all five input modes.">
 <link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
 <link rel="stylesheet" href="assets/site.css?v=8">
-<link rel="stylesheet" href="assets/product-v028.css?v=2">
+<link rel="stylesheet" href="assets/product-v026.css?v=2">
 <script>
 try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (error) {}
 </script>
@@ -18,7 +18,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.28.0 source candidate</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.26.6</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu</button>
     <nav aria-label="Documentation">
@@ -42,27 +42,27 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
     <section id="install"><p class="kicker">Get started</p>
 <h2>Install & setup</h2>
 <p class="lead">BulkSeq Studio is free and runs on Windows and Linux. You download one file, launch it, and let the app set up the bioinformatics tools for you the first time — no coding, and on Windows no administrator account for the install itself.</p>
-<div class="note release-status"><span class="t">0.28.0 is a source candidate</span> Validation is running against the local 0.28.0 source tree. No 0.28.0 Windows or Linux package has been built or accepted yet. The public GitHub release and deposited Zenodo benchmark snapshot remain version 0.26.6.</div>
+<div class="note release-status"><span class="t">Current public release: 0.26.6</span> Use only the checksummed packages published on GitHub Releases. The matching validation archive is deposited on Zenodo.</div>
 
 <div class="grid">
   <div class="card feature">
     <h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>Windows</h3>
-    <p>Use the approved public 0.26.6 release while 0.28.0 remains a source candidate:</p>
+    <p>Download version 0.26.6 from the public Releases page:</p>
     <ul>
       <li><strong>Installer</strong> — choose the approved Windows installer from the public Releases page. A per-user install needs no administrator rights; afterwards you launch it from the Start Menu.</li>
       <li><strong>Portable archive</strong> — choose the approved Windows portable ZIP, unpack it, and launch <code>BulkSeqStudio.exe</code>. Nothing is installed.</li>
     </ul>
-    <p class="muted">No 0.28.0 Windows binary is currently an accepted download. Use the public <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">0.26.6 release</a>; running a newer approved installer in the future will detect an existing install and offer to update or uninstall first.</p>
+    <p class="muted">Use the public <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">0.26.6 release</a>. A later approved installer will detect an existing install and offer to update or uninstall first.</p>
   </div>
   <div class="card feature">
     <h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>Linux</h3>
-    <p>Use the approved public 0.26.6 release while native-Linux package validation for 0.28.0 remains pending:</p>
+    <p>Download version 0.26.6 from the public Releases page:</p>
     <ul>
       <li><strong>AppImage</strong> — select the approved AppImage from the public Releases page and make it executable before launch.</li>
       <li><strong>Portable tarball</strong> — select the approved Linux portable archive, extract it, and run its bundled launcher.</li>
       <li><strong>Updates</strong> — AppImageUpdate can use an approved AppImage's companion zsync file after that file has been published.</li>
     </ul>
-    <p class="muted">No 0.28.0 AppImage, zsync file, or Linux portable tarball is currently presented as built or accepted.</p>
+    <p class="muted">Use only the AppImage, companion zsync file, or portable tarball attached to the approved public release.</p>
   </div>
 </div>
 
@@ -74,7 +74,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 <ol class="steps">
   <li>
     <h4>Download and open the app</h4>
-    <p>Download version 0.26.6 from the public Releases page and select its approved package for your platform. Version 0.28.0 is currently a source candidate, not an installable release, and an older package must not be relabelled as 0.28.0 evidence.</p>
+    <p>Download version 0.26.6 from the public Releases page and select its approved package for your platform.</p>
   </li>
   <li>
     <h4>Let the Environment setup screen check your machine</h4>
@@ -112,8 +112,6 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 memory=48GB      # cap the VM at 48 GB (default is ~50% of host RAM)
 processors=16    # optional: limit WSL2 to 16 logical processors</code></pre>
 <p class="muted">See Microsoft's <a href="https://learn.microsoft.com/windows/wsl/wsl-config#configuration-setting-for-wslconfig" target="_blank" rel="noopener">Advanced settings configuration in WSL ↗</a> for every <code>.wslconfig</code> option. On Linux there is no cap to configure — the pipeline runs natively with your machine's full RAM.</p>
-
-<div class="note"><span class="t">Native-Linux package evidence pending</span> A 0.28.0 Linux screenshot will be added only after a genuine 0.28.0 package is built and exercised on native Linux. The earlier 0.27.0 capture is not presented as evidence for this source candidate.</div>
 
 </section>
 
@@ -158,20 +156,6 @@ processors=16    # optional: limit WSL2 to 16 logical processors</code></pre>
     <p>When the run finishes, <strong>Figures and tables</strong> lets you browse the count matrix and differential-expression table and view the applicable figures; toggle <em>Vector (SVG)</em> for a crisp preview at any zoom. Open <strong>Protein network</strong> to explore STRING interactions by pointer or keyboard, and use <strong>Reports</strong> or the Run monitor actions for the HTML results and MultiQC reports. Exported tools/references and study-design records describe only the route that ran and include platform details; an imported-results project records its source file integrity, source direction, and upstream method metadata without claiming a local DE model.</p>
   </li>
 </ol>
-
-<h3>Try it now: a one-click example run</h3>
-<p>The source catalog provides five canonical one-click presets. They scaffold the samples, contrast, input route, and organism settings needed for a reproducible demonstration; they are separate from the deposited B1–B20 suite and do not establish package acceptance.</p>
-<div class="table-wrap"><table>
-  <thead><tr><th>Preset</th><th>Route and contrast</th></tr></thead>
-  <tbody>
-    <tr><td><strong>Pasilla paired-end subset</strong></td><td>Four-sample <em>Drosophila melanogaster</em> paired-end RNA-seq; CG8144 RNAi versus untreated.</td></tr>
-    <tr><td><strong>Yeast rpd3-delta Ume6 delta2-508 paired-end subset</strong></td><td>Four-sample paired-end RNA-seq; an N-terminal Ume6 truncation in an <em>rpd3</em>-delta background versus the <em>rpd3</em>-delta control. This is not a complete <em>UME6</em> gene deletion.</td></tr>
-    <tr><td><strong>Rice CY1000 salt-stress paired-end subset</strong></td><td>Six-sample paired-end RNA-seq; salt stress versus control in the CY1000 genotype.</td></tr>
-    <tr><td><strong>Arabidopsis hub2-3 mutant vs Col-0 (ATH1 microarray)</strong></td><td>Six-sample submitter-normalized ATH1 microarray; <em>hub2-3</em> versus Col-0.</td></tr>
-    <tr><td><strong>Yeast cbc2-delta vs wild-type (YG-S98 microarray)</strong></td><td>Six-sample submitter-normalized YG-S98 microarray; <em>cbc2</em>-delta versus wild type.</td></tr>
-  </tbody>
-</table></div>
-<p>For a short RNA-seq example, choose <strong>Pasilla paired-end subset</strong>, open <strong>Run monitor</strong>, and start the run. In the definitive 0.28.0 source run, 467 genes met adjusted <em>p</em> &lt; 0.05; within that FDR-selected set, 61 were up-regulated and 85 were down-regulated at raw |log2 fold change| ≥ 1. These direction counts use the raw differential-expression fold change, not its shrunken counterpart. Once the example makes sense, repeat the six steps above with your own study.</p>
 
 <div class="note"><span class="t">Tip</span> Not sure the configuration is right? Use <strong>Dry Run</strong> before <strong>Start Run</strong>. A dry run validates the configuration and reports exactly which steps would execute, without downloading or computing anything.</div>
 
@@ -245,7 +229,7 @@ processors=16    # optional: limit WSL2 to 16 logical processors</code></pre>
   </main>
 </div>
 
-<script src="assets/product-v028.js" defer></script>
+<script src="assets/product-v026.js" defer></script>
 <script src="assets/lightbox.js" defer></script>
 <script src="assets/toc.js" defer></script>
 </body>
