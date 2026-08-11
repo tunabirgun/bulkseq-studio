@@ -550,7 +550,7 @@ treated/untreated.)
 
 ### Sync workflow + run (targets first, then greedy flags)
 ```bash
-REPO=/mnt/c/Users/tunabirgun/Desktop/"BulkSeq Studio"
+REPO=/mnt/c/Users/YOUR_USERNAME/Desktop/"BulkSeq Studio"
 P=~/bsq_deseq2res
 cp -r "$REPO/workflow/scripts" "$P/workflow/"
 cp -r "$REPO/workflow/rules"   "$P/workflow/"

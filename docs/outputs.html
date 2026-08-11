@@ -6,54 +6,42 @@
 <title>BulkSeq Studio — Outputs</title>
 <meta name="description" content="What a finished BulkSeq Studio run leaves behind: result tables, publication figures, a MultiQC quality report, enrichment and STRING network files, a self-contained HTML report, and full run provenance.">
 <link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/site.css?v=8">
+<link rel="stylesheet" href="assets/product-v028.css?v=2">
 <script>
-(function(){
-  try{var t=localStorage.getItem('bsq-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}
-  window.addEventListener('DOMContentLoaded',function(){
-    var side=document.querySelector('.sidebar');if(!side)return;
-    var b=document.createElement('button');b.type='button';b.className='theme-toggle';b.setAttribute('aria-label','Toggle dark mode');
-    function u(){var d=document.documentElement.getAttribute('data-theme')==='dark';b.textContent=d?'Light mode':'Dark mode';b.setAttribute('aria-pressed',String(d));}
-    u();
-    b.addEventListener('click',function(){var d=document.documentElement.getAttribute('data-theme')==='dark';if(d){document.documentElement.removeAttribute('data-theme');}else{document.documentElement.setAttribute('data-theme','dark');}try{localStorage.setItem('bsq-theme',d?'light':'dark');}catch(e){}u();});
-    side.appendChild(b);
-  });
-})();
+try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (error) {}
 </script>
 </head>
 <body>
+<a class="skip-link" href="#main-content">Skip to content</a>
 <div class="layout">
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.26.6</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.28.0 source candidate</span></span>
     </a>
-    <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
-    <nav>
+    <button class="menu-toggle" aria-expanded="false">Menu</button>
+    <nav aria-label="Documentation">
       <ul class="nav">
         <li><a href="index.html">Overview</a></li>
         <li><a href="guide.html">Install &amp; quick start</a></li>
         <li><a href="analysis.html">Analysis options</a></li>
         <li><a href="cli.html">Command line &amp; HPC</a></li>
-        <li><a class="active" href="outputs.html">Outputs</a></li>
-        <li><a href="benchmarks.html">Benchmarks</a></li>
+        <li><a class="active" aria-current="page" href="outputs.html">Outputs</a></li>
         <li><a href="faq.html">FAQ &amp; cite</a></li>
       </ul>
       <div class="ext">
         <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
-        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download latest release ↗</a>
-        <a href="https://doi.org/10.5281/zenodo.20955660" target="_blank" rel="noopener">Benchmark archive (Zenodo) ↗</a>
+        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.26.6 ↗</a>
       </div>
     </nav>
   </aside>
 
-  <main class="content">
+  <main class="content" id="main-content">
+    <h1 class="visually-hidden">BulkSeq Studio: Outputs and provenance</h1>
     <section id="outputs"><p class="kicker">What you get</p>
 <h2>Outputs</h2>
-<p class="lead">A finished run leaves a project folder of result tables, publication figures, a quality report, enrichment and network files, and a record of exactly how it was produced. You browse all of it inside the Outputs tab; every file is a plain CSV, PNG, SVG, or standard network format you can open or share.</p>
+<p class="lead">A finished run leaves a project folder of result tables, publication figures, a quality report, enrichment and network files, and a record of exactly how it was produced. The Explore results stage separates Figures and tables, Reports, and Protein network; every file is a plain CSV, PNG, SVG, HTML, text, or standard network format you can open or share.</p>
 
 <h3>Result tables</h3>
 <p>The differential-expression results come out as tab-friendly text files you can open in Excel or R:</p>
@@ -62,7 +50,7 @@
   <li><strong>Up- and down-regulated gene lists</strong> — the significant genes split by direction, using your <code>alpha</code> and <code>|log2FC|</code> thresholds.</li>
   <li><strong>Normalized expression matrix</strong> — DESeq2 normalized counts (or log2 intensities for microarray) as a gene-by-sample CSV.</li>
   <li><strong>Unchanged / equivalence list</strong> — genes flagged as genuinely unchanged by the TOST equivalence test, separate from "not significant".</li>
-  <li><strong>Preranked <code>.rnk</code></strong> — a stat-ranked gene list for running GSEA elsewhere.</li>
+  <li><strong>Preranked <code>.rnk</code></strong> — locally fitted models use their signed test statistic; imported-results projects use the confirmed <code>log2FoldChange</code> because an upstream statistic may use an undocumented scale.</li>
 </ul>
 
 <h3>Figures</h3>
@@ -108,46 +96,34 @@
 <ul>
   <li><strong>Enrichment tables</strong> — the GO, KEGG, and custom gene-set over-representation and GSEA results as CSV, run separately on the up- and down-regulated sets.</li>
   <li><strong>STRING network files</strong> — the protein-interaction network exported as GraphML, SIF, and cytoscape.js JSON (cyjs) for editing in Cytoscape.</li>
-  <li><strong>Interactive PPI Network tab</strong> — the same network rendered live in the app (see below).</li>
+  <li><strong>Protein network page</strong> — the same network rendered live in the app with pointer and keyboard node navigation (see below).</li>
 </ul>
 
 <h3>Genes of interest</h3>
 <p>Supply a gene list and the app generates a focused z-scored heatmap, a per-condition expression panel, and a counts table from the existing run, plus a STRING network for those genes when PPI seeding is set to the list. No re-analysis is needed. Two more outputs come from the same slice: <strong><code>goi_deseq2_results.csv</code></strong>, the full DESeq2 statistics (fold change, p-value, adjusted p-value, base mean) filtered down to just the listed genes; and <strong>goi_log2fc</strong>, a per-gene log2 fold-change plot with its 95% confidence interval, coloured by direction.</p>
 
 <h3>Enrichment term genes</h3>
-<p>The <strong>Enrichment Terms</strong> tab turns any enriched GO term or KEGG pathway into concrete genes. Pick a term and its member genes appear in a sortable table with their full DESeq2 statistics (fold change, adjusted p, base mean) — instantly, from the finished run. A second button builds a focused z-scored heatmap and per-condition expression panel for just those genes, with no re-alignment or re-analysis. Terms are resolved across routes (GO symbols and KEGG NCBI gene ids); a g:Profiler run records no per-term gene lists, and a DESeq2-results upload has no expression matrix, so in those cases the table is offered without the heatmap.</p>
+<p>The <strong>Enrichment Terms</strong> view turns any enriched GO term or KEGG pathway into concrete genes. Pick a term and its member genes appear in a sortable table with their full differential-expression statistics — instantly, from the finished run. A second button builds a focused z-scored heatmap and per-condition expression panel when an expression matrix exists, with no re-alignment or re-analysis. Terms are resolved across routes (GO symbols and KEGG NCBI gene IDs); a g:Profiler run records no per-term gene lists, and an imported-results project has no expression matrix, so in those cases only the applicable table is offered.</p>
 
 <h3>Run provenance</h3>
-<p>When a run finishes, the Run Monitor lets you save two records of how it was produced:</p>
+<p>When a run finishes, Run monitor lets you save two route-aware records of how it was produced:</p>
 <ul>
-  <li><strong>Tools & references</strong> — the tool and R/Bioconductor package versions, the reference genome and annotation with source URLs and MD5 (or, for a GEO-fetched microarray run, the GEO platform GPL id and series accession; for a locally uploaded matrix, its input source instead), and the enrichment database codes.</li>
-  <li><strong>Study design</strong> — the samples, conditions, layout, design formula, and contrasts.</li>
+  <li><strong>Tools & references</strong> — only the tools and packages active for the route, the operating system and architecture, recorded R/BLAS/LAPACK details, the reference and databases for locally fitted runs, or the source basename, import time, project-copy SHA-256 and schema, confirmed direction, and supplied upstream-method metadata for imported results.</li>
+  <li><strong>Study design</strong> — the configured sample sheet, samples, conditions, layout, design formula, and contrasts for a locally fitted run; imported-results projects instead state that no local model was fit and reproduce the source-direction record.</li>
 </ul>
-<div class="note"><span class="t">Reproducible</span> Each run also records a default-vs-used parameter diff, an environment lock hash, the reference accession/MD5, and R <code>sessionInfo</code>, so a run can be reproduced later.</div>
+<div class="note"><span class="t">Bound to validated inputs</span> A successful pre-run check records a content fingerprint for the configuration, configured sample sheet, local inputs, reference locks, and index files. Launch and resume revalidate that fingerprint, so a changed or missing file cannot inherit an earlier pass. Each run also records a default-vs-used parameter diff, an environment lock hash, reference provenance where applicable, and R <code>sessionInfo</code>.</div>
 
 <figure>
-  <img src="assets/screenshot-ppi-interactive.png" alt="The interactive PPI Network tab showing an 82-protein, 158-interaction STRING network with a node hover tooltip and layout, colour, size, confidence, and export controls">
-  <figcaption>The interactive PPI Network tab. Hover any protein for its symbol, mean expression, log2 fold-change, adjusted p-value, and degree; recolour by fold-change or module, resize by topology, and filter the view by confidence. Click a protein to focus on it and its interactors (the rest of the network's labels are hidden); gene symbols show in italic. Rebuild the network at a chosen STRING confidence with the score control beside the Rebuild button, then export the view as PNG, SVG, or Cytoscape files (GraphML / SIF / cyjs).</figcaption>
+  <img src="assets/screenshot-ppi-interactive.png" alt="The interactive Protein network page showing a STRING graph with accessible node details and layout, colour, size, confidence, and export controls">
+  <figcaption>The interactive Protein network page. Hover or keyboard-focus a protein for its symbol, mean expression, log2 fold-change, adjusted p-value, and degree; recolour by fold-change or module, resize by topology, filter by confidence, and focus a protein and its interactors. Rebuild at a chosen STRING confidence, then export PNG, SVG, or Cytoscape files (GraphML / SIF / cyjs).</figcaption>
 </figure></section>
-    <div class="footer" style="max-width:70ch;margin:0 auto;">
+    <div class="footer">
       <p>Free and open-source under the MIT License · <a href="https://github.com/tunabirgun" target="_blank" rel="noopener">tunabirgun</a></p>
     </div>
   </main>
 </div>
 
-<script>
-// Mobile menu toggle (nav is cross-page, so no scroll-spy is needed).
-(function () {
-  var btn = document.querySelector('.menu-toggle');
-  var nav = document.querySelector('.nav');
-  if (btn && nav) {
-    btn.addEventListener('click', function () {
-      var open = nav.classList.toggle('open');
-      btn.setAttribute('aria-expanded', String(open));
-    });
-  }
-})();
-</script>
+<script src="assets/product-v028.js" defer></script>
 <script src="assets/lightbox.js" defer></script>
 <script src="assets/toc.js" defer></script>
 </body>

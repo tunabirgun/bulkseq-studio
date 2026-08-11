@@ -4,56 +4,44 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BulkSeq Studio — Analysis options</title>
-<meta name="description" content="Every choice on the Workflow Settings tab: trimmer, rRNA tool, contamination screen, aligners and quantifiers, three differential-expression engines, the design helper, GSVA, RSeQC, and functional enrichment.">
+<meta name="description" content="Every choice on the Analysis settings page: trimmer, rRNA tool, contamination screen, aligners and quantifiers, three differential-expression engines, the design helper, GSVA, RSeQC, and functional enrichment.">
 <link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/site.css?v=8">
+<link rel="stylesheet" href="assets/product-v028.css?v=2">
 <script>
-(function(){
-  try{var t=localStorage.getItem('bsq-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}
-  window.addEventListener('DOMContentLoaded',function(){
-    var side=document.querySelector('.sidebar');if(!side)return;
-    var b=document.createElement('button');b.type='button';b.className='theme-toggle';b.setAttribute('aria-label','Toggle dark mode');
-    function u(){var d=document.documentElement.getAttribute('data-theme')==='dark';b.textContent=d?'Light mode':'Dark mode';b.setAttribute('aria-pressed',String(d));}
-    u();
-    b.addEventListener('click',function(){var d=document.documentElement.getAttribute('data-theme')==='dark';if(d){document.documentElement.removeAttribute('data-theme');}else{document.documentElement.setAttribute('data-theme','dark');}try{localStorage.setItem('bsq-theme',d?'light':'dark');}catch(e){}u();});
-    side.appendChild(b);
-  });
-})();
+try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (error) {}
 </script>
 </head>
 <body>
+<a class="skip-link" href="#main-content">Skip to content</a>
 <div class="layout">
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.26.6</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.28.0 source candidate</span></span>
     </a>
-    <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
-    <nav>
+    <button class="menu-toggle" aria-expanded="false">Menu</button>
+    <nav aria-label="Documentation">
       <ul class="nav">
         <li><a href="index.html">Overview</a></li>
         <li><a href="guide.html">Install &amp; quick start</a></li>
-        <li><a class="active" href="analysis.html">Analysis options</a></li>
+        <li><a class="active" aria-current="page" href="analysis.html">Analysis options</a></li>
         <li><a href="cli.html">Command line &amp; HPC</a></li>
         <li><a href="outputs.html">Outputs</a></li>
-        <li><a href="benchmarks.html">Benchmarks</a></li>
         <li><a href="faq.html">FAQ &amp; cite</a></li>
       </ul>
       <div class="ext">
         <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
-        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download latest release ↗</a>
-        <a href="https://doi.org/10.5281/zenodo.20955660" target="_blank" rel="noopener">Benchmark archive (Zenodo) ↗</a>
+        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.26.6 ↗</a>
       </div>
     </nav>
   </aside>
 
-  <main class="content">
+  <main class="content" id="main-content">
+    <h1 class="visually-hidden">BulkSeq Studio: Analysis options</h1>
     <section id="analysis"><p class="kicker">What the pipeline does</p>
 <h2>Analysis options</h2>
-<p class="lead">BulkSeq Studio runs a fixed, transparent sequence of steps from reads to results. Each stage exposes a small set of choices on the Workflow Settings tab. The defaults are set for a standard study, so a typical run only needs an organism, a contrast, and the data.</p>
+<p class="lead">BulkSeq Studio runs a fixed, transparent sequence of steps from reads to results. The guided interface separates Project and data, Analysis setup, Validate and run, and Explore results; the Analysis settings page then groups its choices into focused subsections. The defaults are set for a standard study, so a typical run only needs an organism, a contrast, and the data.</p>
 
 <figure class="diagram">
   <img src="assets/bulkseq-workflow.svg" alt="BulkSeq Studio workflow diagram: input entry points (local FASTQ, SRA/ENA accession, and the shortcut count-matrix, microarray, and DESeq2-results modes) feeding four stages — QC and trimming, alignment and quantification, differential expression, and downstream outputs — plus an optional multi-study meta-analysis lane, with a legend." loading="lazy">
@@ -61,11 +49,11 @@
 </figure>
 
 <figure>
-  <img src="assets/screenshot-workflow-settings.png" alt="The Workflow Settings tab gathering every pipeline choice: aligner and quantifier, trimmer, rRNA tool and contamination screen, differential-expression engine, the design formula with the Design helper, significance thresholds, organellar handling, GSVA and RSeQC toggles, and a custom-gene-set panel">
-  <figcaption>The Workflow Settings tab is the single place all pipeline choices live: the aligner and quantifier, the trimmer, the rRNA tool and contamination screen, the differential-expression engine, the design formula and its Design helper, the significance thresholds, organellar-gene handling, the optional GSVA and RSeQC outputs, and the custom gene-set panel.</figcaption>
+  <img src="assets/screenshot-workflow-settings.png" alt="The Analysis settings page with focused sections for read processing, alignment, differential-expression design, and downstream analysis">
+  <figcaption>The Analysis settings page keeps the standard controls visible and reveals advanced tool parameters and optional custom gene sets only when requested.</figcaption>
 </figure>
 
-<div class="note"><span class="t">Mode-aware settings</span> The controls track the input mode. For a microarray, count-matrix, or uploaded DESeq2-results run, the settings that do not apply — the aligner and quantifier, read trimming, rRNA filtering, the contamination screen, RSeQC, and organellar-gene handling, the differential-expression engine for the microarray (fixed to limma) and results-upload (which skips DE) modes, plus GSVA for the results-upload mode — are greyed out. This is a display change only: those steps were already skipped in these modes, so no run behaves differently; the tab just stops implying an aligner or trimmer is used for intensity data.</div>
+<div class="note"><span class="t">Mode-aware settings</span> The controls track the input mode. For a microarray, count-matrix, or imported-results run, settings that cannot apply — including read processing, alignment, and a local differential-expression engine for results-only input — are disabled. The page therefore describes the active route rather than implying that configured but inactive defaults ran.</div>
 
 <h3>Quality control and trimming</h3>
 <p>Every FASTQ or SRA run starts with FastQC on the raw reads, then adapter and quality trimming, then FastQC again on the trimmed reads. The per-sample reports are collected into a single MultiQC summary you can open from the Run Monitor.</p>
@@ -99,13 +87,14 @@
 <h3>Differential expression</h3>
 <p>The differential-expression engine follows the input mode. RNA-seq and count-matrix runs use <strong>DESeq2</strong> by default (with apeglm shrinkage and VST); GEO microarray runs use <strong>limma</strong> and produce a DESeq2-shaped results table, so the figures and downstream steps are the same. A microarray run takes its intensities from the submitter-normalized GEO series matrix by default, or optionally re-normalizes raw Affymetrix CEL files with RMA, with a log2-transform choice (auto-detect, force, or off); the GEO platform (GPL) is recorded in the outputs. Instead of fetching a GEO series, you can upload a local microarray matrix — your own gene-by-sample table of already-normalized log2 intensities (first column gene IDs or symbols, one column per sample, TSV or CSV) — which runs the same limma path with no GEO accession or download. You configure the design formula and the contrast (numerator, denominator, reference level), the significance threshold <code>alpha</code>, and the absolute log2 fold-change cutoff, which together split the genes into up- and down-regulated lists. A TOST equivalence test is also run to flag genes that are statistically unchanged, the complement of the significance call.</p>
 <p>Two alternative engines are available for RNA-seq counts as a cross-check, best suited to larger designs: <strong>limma-voom</strong> and <strong>edgeR quasi-likelihood</strong>. All three engines emit the same result tables and figures, so everything downstream is identical whichever you run. DESeq2 remains the default and its result is unchanged. On <em>Fusarium graminearum</em> (spore vs mycelium) the alternatives track DESeq2 closely: limma-voom reaches a log2 fold-change Spearman correlation of 0.997 and a top-DEG Jaccard index of 0.94, edgeR quasi-likelihood reaches 1.000 and 0.97, and the shared differentially expressed genes agree on direction 100% of the time (benchmark B14).</p>
+<div class="note"><span class="t">Imported results are a separate route</span> An uploaded differential-expression table is not treated as a local DESeq2 run. The complete CSV/TSV is validated before import, its copied bytes and schema are recorded, and you must confirm which source group is the numerator and denominator for positive log2 fold change. Reports name the upstream method, shrinkage, and p-adjustment only when you provide them; local contrast settings never reinterpret the source direction, and an unknown adjustment method is not labelled Benjamini&ndash;Hochberg. The imported-results preranked export uses the confirmed log2 fold change rather than an upstream statistic of undocumented scale.</div>
 
 <h3>The design helper: adjusting for batch and covariates</h3>
 <p>Differential expression compares gene expression between conditions, but other differences between samples can distort that comparison. If your controls were sequenced in one batch and your treated samples in another, or the samples come from different donors, sexes, or time points, that unwanted variation can be mistaken for a treatment effect (or can hide a real one). The standard fix is to tell the statistical model about those nuisance variables so it holds them constant while it measures the effect of interest. In the DESeq2 <strong>design formula</strong>, <code>~ condition</code> compares conditions only, while <code>~ batch + condition</code> first removes the batch differences and then compares conditions.</p>
-<p>The <strong>Design helper</strong> (on the Workflow Settings tab, next to the design formula) builds this formula for you from your metadata columns, so you do not have to write R. It lists the extra columns in your sample table — anything that is not the sample ID, file paths, or the condition — and you tick the ones to adjust for (batch, sequencing run, donor, sex, time, and so on). It then writes an additive formula with the effect of interest last, for example <code>~ batch + condition</code>. Adjusting for a known covariate removes its variation from the comparison, so a batch or donor difference is not counted as the treatment effect. Only additive adjustment is offered here, which covers the common case; genuine interaction terms (such as <code>genotype:treatment</code>) can still be typed directly into the formula field. Add the relevant columns on the Metadata tab first so the helper can see them. Adjust for a variable only if you know it differs systematically between your groups and could affect expression; adding irrelevant covariates costs statistical power.</p>
+<p>The <strong>Design helper</strong> (on the Analysis settings page, next to the design formula) builds this formula from the columns on the Samples page, so you do not have to write R. It lists the extra columns in your sample table — anything that is not the sample ID, file paths, or the condition — and you tick the ones to adjust for (batch, sequencing run, donor, sex, time, and so on). It then writes an additive formula with the effect of interest last, for example <code>~ batch + condition</code>. Adjusting for a known covariate removes its variation from the comparison, so a batch or donor difference is not counted as the treatment effect. Only additive adjustment is offered here, which covers the common case; genuine interaction terms (such as <code>genotype:treatment</code>) can still be typed directly into the formula field. Adjust for a variable only if you know it differs systematically between your groups and could affect expression; adding irrelevant covariates costs statistical power.</p>
 
 <h3>Multi-study meta-analysis</h3>
-<p>When the sample sheet carries a <code>dataset</code> column (the study of origin) with more than one study and <strong>Multi-study meta-analysis</strong> is ticked on the Workflow Settings tab, the pipeline combines two or more independent studies of the same contrast — the same treatment-versus-control comparison run in different labs, tissues, or years — and asks which genes respond consistently across all of them. Each study is analysed on its own with DESeq2 first, so a difference in platform, library preparation, sequencing depth, or read length stays inside that study instead of leaking across the comparison. The per-study statistics are then combined two ways: the p-values with <code>metaRNASeq</code>'s replicate-weighted inverse-normal method, and the unshrunken log2 fold changes with a <code>metafor</code> effect-size model (fixed-effect for two studies, DerSimonian–Laird random-effect for three or more).</p>
+<p>When the sample sheet carries a <code>dataset</code> column (the study of origin) with more than one study and <strong>Multi-study meta-analysis</strong> is enabled on the Analysis settings page, the pipeline combines two or more independent studies of the same contrast — the same treatment-versus-control comparison run in different labs, tissues, or years — and asks which genes respond consistently across all of them. Each study is analysed on its own with DESeq2 first, so a difference in platform, library preparation, sequencing depth, or read length stays inside that study instead of leaking across the comparison. The per-study statistics are then combined two ways: the p-values with <code>metaRNASeq</code>'s replicate-weighted inverse-normal method, and the unshrunken log2 fold changes with a <code>metafor</code> effect-size model (fixed-effect for two studies, DerSimonian–Laird random-effect for three or more).</p>
 <p>The inverse-normal p-value is directionless, so a gene up in one study and down in another could otherwise be fused into a spuriously significant result. To prevent that, the sign of every study's fold change is checked, and a gene whose direction disagrees across studies is <strong>flagged as discordant and never called a meta-DEG</strong> — it stays in the table, searchable, but it is not presented as a cross-study hit. A convergent meta-DEG is therefore a gene that is both significant on the combined FDR and consistent in direction in every study. The joint DESeq2 that runs alongside the meta-analysis models study-of-origin as a covariate, so a default <code>~ condition</code> design becomes <code>~ dataset + condition</code> and its pooled result is not confounded by the studies.</p>
 <div class="note warn"><span class="t">Confounding gate</span> A meta-analysis is only meaningful when at least one study contains both compared groups. When the groups are perfectly aliased with study — every study holds only one of the two arms — the biological difference and the study effect are the same axis and no method can separate them, so a <strong>hard sanity gate blocks the run</strong>. Studies must also share one organism and one gene-identifier namespace so the per-study gene sets intersect; a mismatch is flagged before the run.</div>
 
@@ -118,41 +107,29 @@
 <p>An optional <strong>GSVA</strong> module scores gene-set activity per sample from your own custom gene sets, drawn as a sample-by-set heatmap. Because it uses only the gene sets you supply, it is organism-safe and valid for non-model organisms. GSVA produces descriptive per-sample activity scores, not a significance test, so read the heatmap as a view of how each set's activity varies across samples rather than as a formal enrichment result.</p>
 
 <h3>Protein-interaction networks</h3>
-<p>BulkSeq Studio builds a STRING protein-protein interaction network for the significant genes and seeds it by symbol or, for symbol-less annotations like the <code>FGSG_</code> locus tags of <em>Fusarium graminearum</em>, by gene ID. The network exports to Cytoscape as GraphML, SIF, and cytoscape.js JSON for external editing. A dedicated PPI Network tab embeds the same network in an interactive view.</p>
+<p>BulkSeq Studio builds a STRING protein-protein interaction network for the significant genes and seeds it by symbol or, for symbol-less annotations like the <code>FGSG_</code> locus tags of <em>Fusarium graminearum</em>, by gene ID. The network exports to Cytoscape as GraphML, SIF, and cytoscape.js JSON for external editing. The Protein network page embeds the same network in an interactive view with pointer and keyboard node navigation.</p>
 
 <figure>
-  <img src="assets/screenshot-ppi-interactive.png" alt="The PPI Network tab: an interactive STRING network of 82 proteins and 158 interactions with Fusarium FGSG_ ids, layout/colour/size/confidence controls, export buttons, and a node hover tooltip">
-  <figcaption>The interactive PPI tab. Hover a protein for its fold-change, adjusted p-value, mean expression, and degree; recolour by log2 fold change, resize by node degree, filter by confidence, re-layout, and export PNG/SVG or the Cytoscape files.</figcaption>
+  <img src="assets/screenshot-ppi-interactive.png" alt="The Protein network page: an interactive STRING network with layout, colour, size, confidence, export, and accessible node-detail controls">
+  <figcaption>The interactive Protein network page. Hover or keyboard-focus a protein for its fold-change, adjusted p-value, mean expression, and degree; recolour by log2 fold change, resize by node degree, filter by confidence, re-layout, and export PNG/SVG or Cytoscape files.</figcaption>
 </figure>
 
 <h3>Extra statistics</h3>
 <p>Beyond the differential test, the pipeline writes a set of diagnostics: sample-to-sample correlation heatmaps (Pearson and Spearman), a Wilcoxon rank-sum concordance check, the TOST equivalence call described above, and an MSigDB Hallmark set-overlap.</p>
 
 <h3>Advanced parameters</h3>
-<p>A collapsible <strong>Advanced parameters</strong> panel on the Workflow Settings tab surfaces the important knobs of each tool (fastp, Trimmomatic, RiboDetector, FastQ Screen, STAR, featureCounts, DESeq2, and the rest), with the validated defaults pre-filled. Leave it collapsed for a standard run; open it only when you need to change a specific parameter. Because the defaults reproduce the standard behaviour, a run is unchanged unless you edit a value.</p>
+<p>Collapsible <strong>Advanced parameters</strong> sections on the Analysis settings page surface the important knobs of each tool (fastp, Trimmomatic, RiboDetector, FastQ Screen, STAR, featureCounts, DESeq2, and the rest), with the validated defaults pre-filled. Leave them collapsed for a standard run; open one only when you need to change a specific parameter. Because the defaults reproduce the standard behaviour, a run is unchanged unless you edit a value.</p>
 
 <h3>Non-model organisms</h3>
 <p>The reference catalog ships 46 organism presets: human and mouse, model animals (rat, chicken, pig, cattle), crops (including grape, cotton, <em>Medicago truncatula</em>, and tobacco), fungal and plant pathogens (<em>Zymoseptoria tritici</em>, <em>Ustilago maydis</em>, <em>Sclerotinia sclerotiorum</em>, <em>Aspergillus niger</em>), bacteria (<em>Pseudomonas aeruginosa</em>, <em>Mycobacterium tuberculosis</em>, <em>Staphylococcus aureus</em>), and the malaria parasite <em>Plasmodium falciparum</em>. Each preset's genome and annotation URLs were checked to resolve, and its KEGG code, STRING taxon, and Bioconductor OrgDb (where one exists) verified, before inclusion.</p>
 <p>Crops and fungi that have no Bioconductor OrgDb are not left without downstream analysis. As long as the organism has a KEGG code and a STRING taxon, KEGG enrichment and the STRING network still run, and g:Profiler supplies GO where it is available. This is how rice, the other crop presets, and <em>Fusarium graminearum</em> reach full enrichment and network outputs.</p></section>
-    <div class="footer" style="max-width:70ch;margin:0 auto;">
+    <div class="footer">
       <p>Free and open-source under the MIT License · <a href="https://github.com/tunabirgun" target="_blank" rel="noopener">tunabirgun</a></p>
     </div>
   </main>
 </div>
 
-<script>
-// Mobile menu toggle (nav is cross-page, so no scroll-spy is needed).
-(function () {
-  var btn = document.querySelector('.menu-toggle');
-  var nav = document.querySelector('.nav');
-  if (btn && nav) {
-    btn.addEventListener('click', function () {
-      var open = nav.classList.toggle('open');
-      btn.setAttribute('aria-expanded', String(open));
-    });
-  }
-})();
-</script>
+<script src="assets/product-v028.js" defer></script>
 <script src="assets/lightbox.js" defer></script>
 <script src="assets/toc.js" defer></script>
 </body>

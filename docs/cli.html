@@ -6,51 +6,39 @@
 <title>BulkSeq Studio — Command line &amp; HPC</title>
 <meta name="description" content="The bulkseq command line: project setup, validated configuration, and running the pipeline on a laptop, a Slurm cluster, or Kubernetes. Profile reference, site notes for TRUBA, UHEM and NRP, and what is verified versus what is not.">
 <link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/site.css?v=8">
+<link rel="stylesheet" href="assets/product-v028.css?v=2">
 <script>
-(function(){
-  try{var t=localStorage.getItem('bsq-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}
-  window.addEventListener('DOMContentLoaded',function(){
-    var side=document.querySelector('.sidebar');if(!side)return;
-    var b=document.createElement('button');b.type='button';b.className='theme-toggle';b.setAttribute('aria-label','Toggle dark mode');
-    function u(){var d=document.documentElement.getAttribute('data-theme')==='dark';b.textContent=d?'Light mode':'Dark mode';b.setAttribute('aria-pressed',String(d));}
-    u();
-    b.addEventListener('click',function(){var d=document.documentElement.getAttribute('data-theme')==='dark';if(d){document.documentElement.removeAttribute('data-theme');}else{document.documentElement.setAttribute('data-theme','dark');}try{localStorage.setItem('bsq-theme',d?'light':'dark');}catch(e){}u();});
-    side.appendChild(b);
-  });
-})();
+try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (error) {}
 </script>
 </head>
 <body>
+<a class="skip-link" href="#main-content">Skip to content</a>
 <div class="layout">
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.26.6</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.28.0 source candidate</span></span>
     </a>
-    <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
-    <nav>
+    <button class="menu-toggle" aria-expanded="false">Menu</button>
+    <nav aria-label="Documentation">
       <ul class="nav">
         <li><a href="index.html">Overview</a></li>
         <li><a href="guide.html">Install &amp; quick start</a></li>
         <li><a href="analysis.html">Analysis options</a></li>
-        <li><a class="active" href="cli.html">Command line &amp; HPC</a></li>
+        <li><a class="active" aria-current="page" href="cli.html">Command line &amp; HPC</a></li>
         <li><a href="outputs.html">Outputs</a></li>
-        <li><a href="benchmarks.html">Benchmarks</a></li>
         <li><a href="faq.html">FAQ &amp; cite</a></li>
       </ul>
       <div class="ext">
         <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
-        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download latest release ↗</a>
-        <a href="https://doi.org/10.5281/zenodo.20955660" target="_blank" rel="noopener">Benchmark archive (Zenodo) ↗</a>
+        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.26.6 ↗</a>
       </div>
     </nav>
   </aside>
 
-  <main class="content">
+  <main class="content" id="main-content">
+<h1 class="visually-hidden">BulkSeq Studio: Command line and HPC</h1>
 <section id="cli"><p class="kicker">Beyond the interface</p>
 <h2>Command line</h2>
 <p class="lead">The <code>bulkseq</code> command runs the same pipeline without the graphical interface: for scripting a study, for a machine with no display, and for handing jobs to a cluster scheduler.</p>
@@ -95,7 +83,7 @@ bulkseq --help</code></pre>
 </figure>
 
 <h3>Choosing a target</h3>
-<div class="tablewrap">
+<div class="tablewrap" tabindex="0" role="region" aria-label="Execution profiles table; scroll horizontally on small screens">
 <table>
   <thead><tr><th>Profile</th><th>Executor</th><th>What it does</th><th>You must supply</th></tr></thead>
   <tbody>
@@ -152,7 +140,7 @@ snakemake --profile workflow/profiles/site/slurm --configfile config/config.yaml
 
 <h3>What is verified, and what is not</h3>
 <p>Stated plainly, because the distinction matters when planning a study:</p>
-<div class="tablewrap">
+<div class="tablewrap" tabindex="0" role="region" aria-label="Verified and unverified command-line capabilities table; scroll horizontally on small screens">
 <table>
   <thead><tr><th>Verified</th><th>Not verified</th></tr></thead>
   <tbody>
@@ -178,19 +166,13 @@ snakemake --profile workflow/profiles/site/slurm --configfile config/config.yaml
 <p>Before committing a study to an unfamiliar cluster, run the bundled <em>pasilla</em> benchmark project through it first. It is four samples on a small genome, and it exercises download, alignment, counting, differential expression, enrichment and reporting — the whole pipeline, at a size where a failure costs minutes rather than a night.</p>
 </section>
 
-<div class="footer">
-  <p>BulkSeq Studio is free software. Source, releases and issue tracker on <a href="https://github.com/tunabirgun/bulkseq-studio">GitHub</a>.</p>
-</div>
+    <div class="footer">
+      <p>Free and open-source under the MIT License · <a href="https://github.com/tunabirgun" target="_blank" rel="noopener">tunabirgun</a></p>
+    </div>
   </main>
 </div>
+<script src="assets/product-v028.js" defer></script>
 <script src="assets/lightbox.js" defer></script>
 <script src="assets/toc.js" defer></script>
-<script>
-(function(){
-  var t=document.querySelector('.menu-toggle'),n=document.querySelector('.nav');
-  if(!t||!n)return;
-  t.addEventListener('click',function(){var o=n.classList.toggle('open');t.setAttribute('aria-expanded',String(o));});
-})();
-</script>
 </body>
 </html>

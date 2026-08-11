@@ -6,53 +6,39 @@
 <title>BulkSeq Studio — no-code bulk RNA-seq & microarray analysis</title>
 <meta name="description" content="BulkSeq Studio is a free, open-source desktop app that runs a complete bulk RNA-seq or microarray differential-expression analysis on your own computer, no coding required.">
 <link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;450;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/site.css?v=8">
+<link rel="stylesheet" href="assets/product-v028.css?v=2">
 <script>
-(function(){
-  try{var t=localStorage.getItem('bsq-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}
-  window.addEventListener('DOMContentLoaded',function(){
-    var side=document.querySelector('.sidebar');if(!side)return;
-    var b=document.createElement('button');b.type='button';b.className='theme-toggle';b.setAttribute('aria-label','Toggle dark mode');
-    function u(){var d=document.documentElement.getAttribute('data-theme')==='dark';b.textContent=d?'Light mode':'Dark mode';b.setAttribute('aria-pressed',String(d));}
-    u();
-    b.addEventListener('click',function(){var d=document.documentElement.getAttribute('data-theme')==='dark';if(d){document.documentElement.removeAttribute('data-theme');}else{document.documentElement.setAttribute('data-theme','dark');}try{localStorage.setItem('bsq-theme',d?'light':'dark');}catch(e){}u();});
-    side.appendChild(b);
-  });
-})();
+try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (error) {}
 </script>
 </head>
 <body>
+<a class="skip-link" href="#main-content">Skip to content</a>
 <div class="layout">
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span><b>BulkSeq Studio</b><span class="ver">v0.26.6</span></span>
+      <span><b>BulkSeq Studio</b><span class="ver">v0.28.0 source candidate</span></span>
     </a>
-    <button class="menu-toggle" aria-expanded="false">Menu ▾</button>
-    <nav>
+    <button class="menu-toggle" aria-expanded="false">Menu</button>
+    <nav aria-label="Documentation">
       <ul class="nav">
-        <li><a class="active" href="index.html">Overview</a></li>
+        <li><a class="active" aria-current="page" href="index.html">Overview</a></li>
         <li><a href="guide.html">Install &amp; quick start</a></li>
         <li><a href="analysis.html">Analysis options</a></li>
         <li><a href="cli.html">Command line &amp; HPC</a></li>
         <li><a href="outputs.html">Outputs</a></li>
-        <li><a href="benchmarks.html">Benchmarks</a></li>
         <li><a href="faq.html">FAQ &amp; cite</a></li>
       </ul>
       <div class="ext">
         <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
-        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download latest release ↗</a>
-        <a href="https://doi.org/10.5281/zenodo.20955660" target="_blank" rel="noopener">Benchmark archive (Zenodo) ↗</a>
+        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.26.6 ↗</a>
       </div>
     </nav>
   </aside>
 
-  <main class="content">
+  <main class="content" id="main-content">
     <section id="overview">
-<div class="note"><span class="t">Notice for meta-analysis users (0.26.6)</span> Releases before 0.26.6 applied the Benjamini&ndash;Hochberg correction across every gene and then removed direction-discordant genes from the called set, so the correction covered a different family than the one reported. In the benchmark arm built to expose this the combination reported 58 false positives across five runs; the corrected code reports one. If you produced a meta-analysis result with 0.26.5 or earlier, re-run it. Single-study differential expression, enrichment and network output are unaffected.</div>
 <p class="kicker">Bulk RNA-seq & microarray, no code</p>
 
 <div class="hero">
@@ -66,90 +52,82 @@
     <span class="badge">Open source</span>
   </div>
   <div class="btn-row">
-    <a class="btn btn-primary" href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">Download</a>
+    <a class="btn btn-primary" href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">Download public v0.26.6</a>
     <a class="btn btn-ghost" href="https://github.com/tunabirgun/bulkseq-studio">View on GitHub</a>
   </div>
 </div>
 
-<p class="lead">BulkSeq Studio is for biologists who want to analyse their own bulk RNA-seq or microarray data without learning the command line. You point a tabbed graphical interface at your data and a reference genome; it runs a transparent <a href="https://snakemake.github.io/">Snakemake</a> pipeline and produces a count matrix, a DESeq2 (or limma) results table, GO/KEGG enrichment, a STRING interaction network, and figures. Everything runs locally on your own machine: on Windows the pipeline runs inside WSL2, and on Linux it runs natively; the results are identical either way, and every parameter, tool version, and reference is recorded so a run can be reproduced later.</p>
+<div class="note release-status"><span class="t">0.28.0 source-candidate status</span> Version 0.28.0 is being validated from the local source tree. No 0.28.0 Windows or Linux package has been built or accepted yet, so the GitHub Releases page and the latest deposited Zenodo benchmark snapshot remain version 0.26.6.</div>
+
+<p class="lead">BulkSeq Studio is for biologists who want to analyse their own bulk RNA-seq or microarray data without learning the command line. A guided navigator groups the application into Project and data, Analysis setup, Validate and run, and Explore results; it runs a transparent <a href="https://snakemake.github.io/">Snakemake</a> pipeline and produces a count matrix, a differential-expression results table, GO/KEGG enrichment, a STRING interaction network, and figures. Everything runs locally: on Windows the pipeline runs inside WSL2, and on Linux it runs natively. Each run records the active parameters, tools, platform, reference, and input provenance needed to interpret what actually ran.</p>
+
+<div class="note warn"><span class="t">Notice for meta-analysis users (0.26.6)</span> Releases before 0.26.6 applied the Benjamini&ndash;Hochberg correction across every gene and then removed direction-discordant genes from the called set, so the correction covered a different family than the one reported. In the benchmark arm built to expose this the combination reported 58 false positives across five runs; the corrected code reports one. If you produced a meta-analysis result with 0.26.5 or earlier, re-run it. Single-study differential expression, enrichment and network output are unaffected.</div>
 
 <figure class="diagram">
   <img src="assets/bulkseq-workflow.svg" alt="BulkSeq Studio workflow diagram: input entry points (local FASTQ, SRA/ENA accession, and the shortcut count-matrix, microarray, and DESeq2-results modes) feeding four stages — QC and trimming, alignment and quantification, differential expression, and downstream outputs — plus an optional multi-study meta-analysis lane, with a legend." loading="lazy">
-  <figcaption>The full analysis flow. Two read inputs (local FASTQ or an auto-downloaded SRA/ENA accession) and three shortcut entry points (a count matrix, a microarray series, or a pre-computed DESeq2 table) feed four stages: <b>1</b> QC and trimming (fastp, Trim Galore, or Trimmomatic; optional rRNA depletion and contamination screening), <b>2</b> alignment and quantification (STAR, HISAT2, or Salmon), <b>3</b> differential expression (DESeq2, limma-voom, or edgeR; limma for microarrays), and <b>4</b> downstream outputs — functional enrichment, a STRING protein network, figures, and a reproducible report. An optional multi-study meta-analysis lane runs alongside when the box is ticked on the Workflow Settings tab and the sample sheet holds several compatible datasets. Click to zoom, or <a class="diagram-fullsize" href="assets/bulkseq-workflow.svg" target="_blank" rel="noopener">open it full size ↗</a>.</figcaption>
+  <figcaption>The full analysis flow. Two read inputs (local FASTQ or an auto-downloaded SRA/ENA accession) and three shortcut entry points (a count matrix, a microarray series, or a pre-computed differential-expression table) feed four computational stages: <b>1</b> QC and trimming (fastp, Trim Galore, or Trimmomatic; optional rRNA depletion and contamination screening), <b>2</b> alignment and quantification (STAR, HISAT2, or Salmon), <b>3</b> differential expression (DESeq2, limma-voom, or edgeR; limma for microarrays), and <b>4</b> downstream outputs — functional enrichment, a STRING protein network, figures, and a reproducible report. An optional multi-study meta-analysis lane runs alongside when enabled on the Analysis settings page and the sample sheet holds several compatible datasets. Click to zoom, or <a class="diagram-fullsize" href="assets/bulkseq-workflow.svg" target="_blank" rel="noopener">open it full size ↗</a>.</figcaption>
 </figure>
 
 <figure>
-  <img src="assets/screenshot-overview-light.png" alt="BulkSeq Studio main window: Workflow Settings populated with an aligner, quantifier, QC and trimming options, a DESeq2 design and enrichment toggles, shown beside a volcano plot and a STRING PPI network">
-  <figcaption>From data to results in one window: configure the run on the left, browse a volcano plot and the interactive protein network on the right.</figcaption>
+  <img src="assets/screenshot-overview-light.png" alt="BulkSeq Studio main window with the four-stage task navigator and a populated analysis page">
+  <figcaption>The four-stage navigator keeps project setup, analysis choices, validation and execution, and result exploration in one responsive window.</figcaption>
 </figure>
 
-<h3>What you get</h3>
+<h2>What you get</h2>
 
 <div class="grid">
   <div class="card feature">
-    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>Start from anything</h4>
+    <h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>Start from anything</h3>
     <p>Paste SRR/SRP/PRJ accessions and the app fetches the FASTQ files and builds the sample sheet, or point it at local FASTQ files (single-end or paired-end). Already have counts? Upload a gene-by-sample table to skip alignment. Already have a results table, a GEO microarray series (GSE), or your own microarray matrix? Those go straight to figures and enrichment too.</p>
   </div>
   <div class="card feature">
-    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg>QC, trimming & alignment</h4>
+    <h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg>QC, trimming & alignment</h3>
     <p>FastQC and MultiQC report quality; trim with fastp, Trim Galore, or Trimmomatic; and choose the aligner: STAR (the default), HISAT2 (low memory, for large crop genomes), or Salmon (mapping-based, lightest of all). Optional rRNA depletion (SortMeRNA or the reference-free RiboDetector), a FastQ Screen contamination check, and RSeQC extended QC are built in. Both paired-end and single-end reads run through all three routes, which feed the same count matrix.</p>
   </div>
   <div class="card feature">
-    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="6" rx="1"/><rect x="12" y="7" width="3" height="10" rx="1"/><rect x="17" y="13" width="3" height="4" rx="1"/></svg>Differential expression</h4>
+    <h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="6" rx="1"/><rect x="12" y="7" width="3" height="10" rx="1"/><rect x="17" y="13" width="3" height="4" rx="1"/></svg>Differential expression</h3>
     <p>RNA-seq runs through DESeq2 (default) with apeglm shrinkage, VST normalization, and configurable significance thresholds, with optional limma-voom and edgeR quasi-likelihood engines as cross-checks; microarray intensities run through limma. A design helper builds the formula and contrast from your metadata columns, and you get separate up- and down-regulated gene lists plus an optional GSVA pathway-activity heatmap. Two or more independent studies of the same contrast can be combined in one multi-study meta-analysis to find the genes that respond consistently across all of them.</p>
   </div>
   <div class="card feature">
-    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2v6a2 2 0 0 0 .245.96l5.51 10.08A2 2 0 0 1 18 22H6a2 2 0 0 1-1.755-2.96l5.51-10.08A2 2 0 0 0 10 8V2"/><path d="M6.5 15h11"/><path d="M9 2h6"/></svg>Functional enrichment</h4>
+    <h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2v6a2 2 0 0 0 .245.96l5.51 10.08A2 2 0 0 1 18 22H6a2 2 0 0 1-1.755-2.96l5.51-10.08A2 2 0 0 0 10 8V2"/><path d="M6.5 15h11"/><path d="M9 2h6"/></svg>Functional enrichment</h3>
     <p>GO over-representation and GSEA run separately on the up- and down-regulated sets, with KEGG pathway analysis for any organism that has a KEGG code, GO through g:Profiler, and disease-ontology terms for human and mouse. You can also supply your own gene sets for a custom ORA and GSEA run.</p>
   </div>
   <div class="card feature">
-    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" x2="15.4" y1="13.5" y2="17.5"/><line x1="15.4" x2="8.6" y1="6.5" y2="10.5"/></svg>Protein networks</h4>
-    <p>A dedicated tab embeds the STRING protein-interaction network in an interactive <a href="https://js.cytoscape.org/">cytoscape.js</a> view: hover a protein for its fold-change and degree, re-layout, recolour by fold-change, resize by degree, filter by confidence, and export PNG, SVG, or Cytoscape files.</p>
+    <h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" x2="15.4" y1="13.5" y2="17.5"/><line x1="15.4" x2="8.6" y1="6.5" y2="10.5"/></svg>Protein networks</h3>
+    <p>The Protein network page embeds the STRING protein-interaction network in an interactive <a href="https://js.cytoscape.org/">cytoscape.js</a> view: hover or keyboard-focus a protein for its fold-change and degree, re-layout, recolour by fold-change, resize by degree, filter by confidence, and export PNG, SVG, or Cytoscape files.</p>
   </div>
   <div class="card feature">
-    <h4><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 20h10"/><path d="M10 20c5.5-2.5.8-6.4 3-10"/><path d="M9.5 9.4c1.1.8 1.8 2.2 2.3 3.7-2 .4-3.5.4-4.8-.3-1.2-.6-2.3-1.9-3-4.2 2.8-.5 4.4 0 5.5.8z"/><path d="M14.1 6a7 7 0 0 0-1.1 4c1.9-.1 3.3-.6 4.3-1.4 1-1 1.6-2.3 1.7-4.6-2.7.1-4 1-4.9 2z"/></svg>Built for non-model organisms</h4>
+    <h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 20h10"/><path d="M10 20c5.5-2.5.8-6.4 3-10"/><path d="M9.5 9.4c1.1.8 1.8 2.2 2.3 3.7-2 .4-3.5.4-4.8-.3-1.2-.6-2.3-1.9-3-4.2 2.8-.5 4.4 0 5.5.8z"/><path d="M14.1 6a7 7 0 0 0-1.1 4c1.9-.1 3.3-.6 4.3-1.4 1-1 1.6-2.3 1.7-4.6-2.7.1-4 1-4.9 2z"/></svg>Built for non-model organisms</h3>
     <p>Crops and fungi are first-class. The reference catalog ships 46 organism presets, spanning model animals, crops, fungal and plant pathogens, bacteria, and a malaria parasite. KEGG enrichment runs for any organism with a KEGG code, and GO terms come through g:Profiler without needing a Bioconductor OrgDb, so an organism is never skipped just for lacking one. Validated on rice, <em>Fusarium graminearum</em>, Drosophila, and a human dataset.</p>
   </div>
 </div>
 
-<h3>Where to next</h3>
+<h2>Where to next</h2>
 <div class="grid cols-2">
   <div class="card feature">
-    <h4>Install &amp; quick start</h4>
+    <h3>Install &amp; quick start</h3>
     <p>Download the app, let the first-run setup install the tools, and run your first analysis from a public accession to differential expression and a protein network. Covers the five input modes too. <a href="guide.html">Open the guide →</a></p>
   </div>
   <div class="card feature">
-    <h4>Analysis options</h4>
-    <p>Every choice on the Workflow Settings tab: trimmer, rRNA tool, contamination screen, the three aligners and quantifiers, the three DE engines, the design helper, GSVA, RSeQC, and enrichment. <a href="analysis.html">See the options →</a></p>
+    <h3>Analysis options</h3>
+    <p>Every choice on the Analysis settings page: trimmer, rRNA tool, contamination screen, the three aligners and quantifiers, the three DE engines, the design helper, GSVA, RSeQC, and enrichment. <a href="analysis.html">See the options →</a></p>
   </div>
   <div class="card feature">
-    <h4>Outputs</h4>
+    <h3>Outputs</h3>
     <p>The result tables, publication figures, MultiQC report, enrichment and network files, the self-contained HTML report, and the provenance a finished run leaves behind. <a href="outputs.html">See what you get →</a></p>
   </div>
   <div class="card feature">
-    <h4>Benchmarks</h4>
-    <p>The B1–B20 validation suite: correctness against simulated truth, concordance with established tools, cross-aligner and cross-engine agreement, a human-dataset applicability check, re-validation on the current release, enrichment negative controls, and a false-discovery decomposition. <a href="benchmarks.html">Read the validation →</a></p>
+    <h3>FAQ &amp; citation</h3>
+    <p>Find concise answers about supported systems, local processing, interpretation boundaries, and how to cite the software and archived validation materials. <a href="faq.html">Open the FAQ →</a></p>
   </div>
 </div></section>
-    <div class="footer" style="max-width:70ch;margin:0 auto;">
+    <div class="footer">
       <p>Free and open-source under the MIT License · <a href="https://github.com/tunabirgun" target="_blank" rel="noopener">tunabirgun</a></p>
     </div>
   </main>
 </div>
 
-<script>
-// Mobile menu toggle (nav is cross-page, so no scroll-spy is needed).
-(function () {
-  var btn = document.querySelector('.menu-toggle');
-  var nav = document.querySelector('.nav');
-  if (btn && nav) {
-    btn.addEventListener('click', function () {
-      var open = nav.classList.toggle('open');
-      btn.setAttribute('aria-expanded', String(open));
-    });
-  }
-})();
-</script>
+<script src="assets/product-v028.js" defer></script>
 <script src="assets/lightbox.js" defer></script>
 <script src="assets/toc.js" defer></script>
 </body>
