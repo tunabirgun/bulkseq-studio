@@ -7,7 +7,7 @@
 <meta name="description" content="What a finished BulkSeq Studio run leaves behind: result tables, publication figures, a MultiQC quality report, enrichment and STRING network files, a self-contained HTML report, and full run provenance.">
 <link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
 <link rel="stylesheet" href="assets/site.css?v=9">
-<link rel="stylesheet" href="assets/product-v028.css?v=2">
+<link rel="stylesheet" href="assets/product-v028.css?v=3">
 <script>
 try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (error) {}
 </script>
@@ -17,7 +17,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 <div class="layout">
   <aside class="sidebar">
     <a class="brand" href="index.html">
-      <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
+      <img src="assets/bulkseq_logo.svg" alt="">
       <span class="brand-copy"><span class="brand-title">BulkSeq Studio</span><span class="ver">v0.28.0</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu</button>
@@ -33,17 +33,21 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
       <div class="ext">
         <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
         <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.28.0 ↗</a>
+        <a href="faq.html#cite">Citation</a>
       </div>
     </nav>
   </aside>
 
   <main class="content" id="main-content">
-    <h1 class="visually-hidden">BulkSeq Studio: Outputs and provenance</h1>
     <section id="outputs"><p class="kicker">What you get</p>
-<h2>Outputs</h2>
+<h1>Outputs</h1>
 <p class="lead">A finished run leaves a project folder of result tables, publication figures, a quality report, enrichment and network files, and a record of exactly how it was produced. The Explore results stage separates Figures and tables, Reports, and Protein network; every file is a plain CSV, PNG, SVG, HTML, text, or standard network format you can open or share.</p>
 
-<h3>Result tables</h3>
+<div class="tablewrap" tabindex="0" role="region" aria-label="Project output folders; scroll horizontally on small screens">
+<table><thead><tr><th>Folder</th><th>Contents</th></tr></thead><tbody><tr><td><code>results/counts/</code></td><td>Count matrix and feature-assignment summaries.</td></tr><tr><td><code>results/deseq2/</code></td><td>Differential-expression, direction-split, normalized-expression, and equivalence tables.</td></tr><tr><td><code>results/enrichment/</code></td><td>GO, KEGG, GSEA, and configured custom-gene-set tables.</td></tr><tr><td><code>results/figures/</code></td><td>PNG and SVG figures.</td></tr><tr><td><code>results/reports/</code></td><td>Self-contained results report, summaries, and route-aware provenance exports.</td></tr><tr><td><code>checks/</code></td><td>Machine-readable phase checks and aggregate sanity status.</td></tr><tr><td><code>config/</code></td><td>Saved project configuration, samples, contrasts, and manifests.</td></tr><tr><td><code>logs/</code></td><td>Rule logs and execution detail.</td></tr></tbody></table>
+</div>
+
+<h2>Result tables</h2>
 <p>The differential-expression results come out as tab-friendly text files you can open in Excel or R:</p>
 <ul>
   <li><strong>DESeq2 / limma results table</strong> — every gene with its log2 fold-change, p-value, adjusted p-value, gene symbol, and biotype.</li>
@@ -53,7 +57,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   <li><strong>Preranked <code>.rnk</code></strong> — locally fitted models use their signed test statistic; imported-results projects use the confirmed <code>log2FoldChange</code> because an upstream statistic may use an undocumented scale.</li>
 </ul>
 
-<h3>Figures</h3>
+<h2>Figures</h2>
 <p>Each figure is written in two forms: a raster <span class="pill">PNG</span> for documents and slides, and a vector <span class="pill">SVG</span> that stays crisp at any zoom (toggle <em>Vector (SVG)</em> in the viewer to preview it). The Figure Style editor restyles and regenerates them without re-running alignment or DESeq2.</p>
 <ul>
   <li>Volcano and MA plots. The volcano <strong>y-axis scale</strong> has three modes in the Figure Style editor: <em>cap the tail</em> (default) squishes hyper-significant genes to a cap line marked with off-scale hollow triangles so the bulk of the plot stays readable; <em>show all at full height</em> plots every gene at its true &minus;log10(adjusted p) so a marginal gene with an extreme p-value is visible; and <em>compress (sqrt)</em> uses a square-root axis to shrink the tall tail while keeping all data. The y-cap value applies only in cap mode.</li>
@@ -68,13 +72,13 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   <figcaption>The Figure Style editor. The <strong>Volcano y-axis</strong> scale control and the <strong>Show per-sample labels</strong> toggle sit near the bottom; every change re-renders the figures with <strong>Regenerate figures</strong>, without re-running alignment or DESeq2.</figcaption>
 </figure>
 
-<h3>Quality report</h3>
+<h2>Quality report</h2>
 <p>The <strong>MultiQC report</strong> gathers FastQC, trimming, alignment, and (when enabled) FastQ Screen contamination and RSeQC read-distribution / gene-body-coverage statistics for every sample into one HTML page. Open it from the <em>Open MultiQC Report</em> button on the Run Monitor.</p>
 
-<h3>Self-contained HTML report (Read-Along)</h3>
+<h2>Self-contained HTML report (Read-Along)</h2>
 <p>Every run also writes a single-file <strong><code>results_report.html</code></strong>, built as a dual-track <em>Read-Along</em> report that serves a non-specialist and a bioinformatician from the same document. Each section opens with a plain-language key finding — what was compared, how many genes changed and in which direction, and the strongest genes — with the statistics glossed inline and collected in an end glossary, above the full sortable tables with their exact numbers. The overview is a compact row of headline stat chips plus the run cards; the figures are grouped and lettered (Quality, Differential expression, Function), each with a plain caption and a technical caption, and the click-to-open, zoomable figure gallery is preserved. Everything is embedded with no external assets, so you can email it, drop it in a shared folder, or archive it and it still renders on its own — a way to hand the result to a collaborator without shipping the whole project folder. It also prints and saves to PDF cleanly — every collapsible section opens, wide tables wrap instead of clipping, and the figures and direction colours are kept — for a lab notebook or a manuscript supplement, and the sortable tables and the figure viewer are operable by keyboard and screen reader.</p>
 
-<h3>Cross-study meta-analysis report</h3>
+<h2>Cross-study meta-analysis report</h2>
 <p>A multi-study meta-analysis run (a <code>dataset</code> column with more than one study, with <strong>Multi-study meta-analysis</strong> ticked) writes a second self-contained report, <strong><code>meta_analysis_report.html</code></strong>, alongside the standard one. It opens with a convergence/divergence summary — how many genes agree in direction across the studies, how many are flagged discordant, and the direction-concordance rate — above the comparative figures and the convergent-gene table. The supporting tables land in <code>results/meta/</code>:</p>
 <ul>
   <li><strong><code>meta_convergent_genes.csv</code></strong> — the convergent meta-DEGs (significant combined FDR and consistent in direction across every study), with the pooled effect and per-study fold changes.</li>
@@ -83,7 +87,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 </ul>
 <p>The comparative figures are written to <code>results/figures/</code> with the rest: a <strong>meta-volcano</strong> (pooled effect versus combined FDR, coloured by cross-study direction), per-gene <strong>forest plots</strong> of the top convergent genes, a <strong>cross-study log2FC concordance scatter</strong> with its rank correlation, a <strong>convergent-gene heatmap</strong> of per-study fold changes, a <strong>between-study heterogeneity</strong> plot, a <strong>combined p-value histogram</strong>, an <strong>integration-gain</strong> plot, and a <strong>cross-study enrichment dotplot</strong>. They restyle with the Figure Style editor and <strong>Regenerate figures</strong> like the other figures.</p>
 
-<h3>Per-study meta-analysis outputs</h3>
+<h2>Per-study meta-analysis outputs</h2>
 <p>A multi-study meta-analysis run also writes a single-study breakdown for every study it includes, under <strong><code>results/meta/per_study/&lt;STUDY&gt;/</code></strong>:</p>
 <ul>
   <li><strong>figures/</strong> — volcano, MA plot, p-value histogram, PCA, and a top-DEG heatmap, each as PNG and SVG.</li>
@@ -92,20 +96,20 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 </ul>
 <p>A top-level <strong><code>manifest.json</code></strong> lists every study with its tested/up/down gene counts. Because each study gets its own figures, a duplicate or re-deposited dataset stands out immediately — its volcano, PCA, and heatmap will visibly match another study's rather than showing independent biology. An opt-in <strong>per-study enrichment</strong> toggle additionally runs GO over-representation analysis on each study's up/down gene lists, recorded in an <code>enrichment_manifest.json</code>; it is off by default because it repeats a clusterProfiler run once per study.</p>
 
-<h3>Enrichment tables and networks</h3>
+<h2>Enrichment tables and networks</h2>
 <ul>
   <li><strong>Enrichment tables</strong> — the GO, KEGG, and custom gene-set over-representation and GSEA results as CSV, run separately on the up- and down-regulated sets.</li>
   <li><strong>STRING network files</strong> — the protein-interaction network exported as GraphML, SIF, and cytoscape.js JSON (cyjs) for editing in Cytoscape.</li>
   <li><strong>Protein network page</strong> — the same network rendered live in the app with pointer and keyboard node navigation (see below).</li>
 </ul>
 
-<h3>Genes of interest</h3>
+<h2>Genes of interest</h2>
 <p>Supply a gene list and the app generates a focused z-scored heatmap, a per-condition expression panel, and a counts table from the existing run, plus a STRING network for those genes when PPI seeding is set to the list. No re-analysis is needed. Two more outputs come from the same slice: <strong><code>goi_deseq2_results.csv</code></strong>, the full DESeq2 statistics (fold change, p-value, adjusted p-value, base mean) filtered down to just the listed genes; and <strong>goi_log2fc</strong>, a per-gene log2 fold-change plot with its 95% confidence interval, coloured by direction.</p>
 
-<h3>Enrichment term genes</h3>
+<h2>Enrichment term genes</h2>
 <p>The <strong>Enrichment Terms</strong> view turns any enriched GO term or KEGG pathway into concrete genes. Pick a term and its member genes appear in a sortable table with their full differential-expression statistics — instantly, from the finished run. A second button builds a focused z-scored heatmap and per-condition expression panel when an expression matrix exists, with no re-alignment or re-analysis. Terms are resolved across routes (GO symbols and KEGG NCBI gene IDs); a g:Profiler run records no per-term gene lists, and an imported-results project has no expression matrix, so in those cases only the applicable table is offered.</p>
 
-<h3>Run provenance</h3>
+<h2>Run provenance</h2>
 <p>When a run finishes, Run monitor lets you save two route-aware records of how it was produced:</p>
 <ul>
   <li><strong>Tools & references</strong> — only the tools and packages active for the route, the operating system and architecture, recorded R/BLAS/LAPACK details, the reference and databases for locally fitted runs, or the source basename, import time, project-copy SHA-256 and schema, confirmed direction, and supplied upstream-method metadata for imported results.</li>
@@ -117,13 +121,13 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   <img src="assets/screenshot-ppi-interactive.png" alt="The interactive Protein network page showing a STRING graph with accessible node details and layout, colour, size, confidence, and export controls">
   <figcaption>The interactive Protein network page. Hover or keyboard-focus a protein for its symbol, mean expression, log2 fold-change, adjusted p-value, and degree; recolour by fold-change or module, resize by topology, filter by confidence, and focus a protein and its interactors. Rebuild at a chosen STRING confidence, then export PNG, SVG, or Cytoscape files (GraphML / SIF / cyjs).</figcaption>
 </figure></section>
-    <div class="footer">
+    <footer class="footer">
       <p>Free and open-source under the MIT License · <a href="https://github.com/tunabirgun" target="_blank" rel="noopener">tunabirgun</a></p>
-    </div>
+    </footer>
   </main>
 </div>
 
-<script src="assets/product-v028.js" defer></script>
+<script src="assets/product-v028.js?v=3" defer></script>
 <script src="assets/lightbox.js" defer></script>
 <script src="assets/toc.js" defer></script>
 </body>

@@ -7,7 +7,7 @@
 <meta name="description" content="Install BulkSeq Studio on Windows or Linux, let the first-run setup install the tools, and run your first bulk RNA-seq or microarray analysis. Covers all five input modes.">
 <link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
 <link rel="stylesheet" href="assets/site.css?v=9">
-<link rel="stylesheet" href="assets/product-v028.css?v=2">
+<link rel="stylesheet" href="assets/product-v028.css?v=3">
 <script>
 try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (error) {}
 </script>
@@ -17,7 +17,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 <div class="layout">
   <aside class="sidebar">
     <a class="brand" href="index.html">
-      <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
+      <img src="assets/bulkseq_logo.svg" alt="">
       <span class="brand-copy"><span class="brand-title">BulkSeq Studio</span><span class="ver">v0.28.0</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu</button>
@@ -33,59 +33,50 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
       <div class="ext">
         <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
         <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.28.0 ↗</a>
+        <a href="faq.html#cite">Citation</a>
       </div>
     </nav>
   </aside>
 
   <main class="content" id="main-content">
-    <h1 class="visually-hidden">BulkSeq Studio: Installation and quick start</h1>
     <section id="install"><p class="kicker">Get started</p>
-<h2>Install & setup</h2>
+<h1>Install &amp; setup</h1>
 <p class="lead">BulkSeq Studio is free and runs on Windows and Linux. You download one file, launch it, and let the app set up the bioinformatics tools for you the first time — no coding, and on Windows no administrator account for the install itself.</p>
 <div class="note release-status"><span class="t">Current public release: 0.28.0</span> Use only the checksummed packages published on GitHub Releases. The B1–B20 validation archive is separately versioned as 0.26.6 on Zenodo.</div>
 
-<div class="grid">
-  <div class="card feature">
-    <h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>Windows</h3>
-    <p>Download version 0.28.0 from the public Releases page:</p>
-    <ul>
-      <li><strong>Installer</strong> — choose the approved Windows installer from the public Releases page. A per-user install needs no administrator rights; afterwards you launch it from the Start Menu.</li>
-      <li><strong>Portable archive</strong> — choose the approved Windows portable ZIP, unpack it, and launch <code>BulkSeqStudio.exe</code>. Nothing is installed.</li>
-    </ul>
-    <p class="muted">Use the public <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">0.28.0 release</a>. The installer detects an existing install and offers to update or uninstall first.</p>
-  </div>
-  <div class="card feature">
-    <h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>Linux</h3>
-    <p>Download version 0.28.0 from the public Releases page:</p>
-    <ul>
-      <li><strong>AppImage</strong> — select the approved AppImage from the public Releases page and make it executable before launch.</li>
-      <li><strong>Portable tarball</strong> — select the approved Linux portable archive, extract it, and run its bundled launcher.</li>
-      <li><strong>Updates</strong> — AppImageUpdate can use an approved AppImage's companion zsync file after that file has been published.</li>
-    </ul>
-    <p class="muted">Use only the AppImage, companion zsync file, or portable tarball attached to the approved public release.</p>
-  </div>
+<div class="tablewrap" tabindex="0" role="region" aria-label="Windows and Linux release packages; scroll horizontally on small screens">
+<table>
+  <thead><tr><th>Platform</th><th>Package</th><th>Use</th><th>Launch</th></tr></thead>
+  <tbody>
+    <tr><td>Windows</td><td><code>BulkSeqStudio-Setup-0.28.0.exe</code></td><td>Per-user installation and Start Menu entry.</td><td>Open the installer; the application install itself does not require an administrator account.</td></tr>
+    <tr><td>Windows</td><td><code>BulkSeqStudio-Portable-0.28.0.zip</code></td><td>No installation.</td><td>Extract the ZIP and open <code>BulkSeqStudio.exe</code>.</td></tr>
+    <tr><td>Linux</td><td><code>BulkSeqStudio-0.28.0-x86_64.AppImage</code></td><td>Single-file desktop application.</td><td><code>chmod +x BulkSeqStudio-0.28.0-x86_64.AppImage</code>, then run it.</td></tr>
+    <tr><td>Linux</td><td><code>BulkSeqStudio-Portable-0.28.0-linux-x86_64.tar.gz</code></td><td>Portable directory.</td><td>Extract it and run <code>BulkSeq Studio/BulkSeqStudio</code>.</td></tr>
+  </tbody>
+</table>
 </div>
+<p>Download these files only from the <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">public v0.28.0 release</a>. Verify them against the attached <code>SHA256SUMS.txt</code>: on Windows use <code>Get-FileHash FILE -Algorithm SHA256</code>; on Linux use <code>grep '  FILENAME$' SHA256SUMS.txt | sha256sum -c -</code>, replacing <code>FILENAME</code> with the one package you downloaded.</p>
 
-<h3>What is WSL2, and why does Windows need it?</h3>
+<h2>What is WSL2, and why does Windows need it?</h2>
 <p>The bioinformatics tools that do the analysis (alignment, counting, DESeq2, enrichment) are Linux programs. On Windows, BulkSeq Studio runs them inside <strong>WSL2</strong> — the Windows Subsystem for Linux, a lightweight Linux that Windows runs quietly in the background. You never open a Linux terminal yourself. The window you see is only the graphical interface; the actual computation happens in a managed <em>micromamba</em> environment inside WSL2. The app can enable WSL2 and install that environment for you from its setup screen, so you do not configure anything by hand.</p>
 <p class="muted">On Linux there is no WSL: the same interface runs the same pipeline directly in a local micromamba environment, and the results are identical.</p>
 
-<h3>Install and first run, step by step</h3>
+<h2>Install and first run, step by step</h2>
 <ol class="steps">
   <li>
-    <h4>Download and open the app</h4>
+    <h3>Download and open the app</h3>
     <p>Download version 0.28.0 from the public Releases page and select its approved package for your platform.</p>
   </li>
   <li>
-    <h4>Let the Environment setup screen check your machine</h4>
+    <h3>Let the Environment setup screen check your machine</h3>
     <p>On the first launch after install, the app opens this readiness screen automatically, once, so a missing tool (such as the R/DESeq2 stack) is caught up front rather than mid-run; you can reopen it any time from <strong>Check Environment</strong> on the Project page. It checks the pieces it needs and shows each one as <em>Ready</em> or <em>Action needed</em>, with an install button when something is missing.</p>
   </li>
   <li>
-    <h4>Install anything marked "Action needed"</h4>
+    <h3>Install anything marked "Action needed"</h3>
     <p>Work top to bottom: click each <em>Install…</em> button, then press <strong>Re-check</strong> to refresh the statuses. The downloads run inside your own WSL user account with no sudo password. <em>Show details / log</em> expands the full setup log if a step needs attention.</p>
   </li>
   <li>
-    <h4>Click Continue when the header reads "4 of 4 ready"</h4>
+    <h3>Click Continue when the header reads "4 of 4 ready"</h3>
     <p>Once every row is <em>Ready</em>, the screen is done. You can already create projects, edit metadata, and build configs while the tools finish installing; only starting a pipeline run needs them.</p>
   </li>
 </ol>
@@ -95,7 +86,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   <figcaption>The first-run Environment setup screen on Windows. Each row has a status and, when needed, a one-click install.</figcaption>
 </figure>
 
-<h4>The four readiness rows (Windows first run)</h4>
+<h3>The four readiness rows (Windows first run)</h3>
 <ul>
   <li><strong>Python GUI / core packages</strong> — the libraries the interface itself needs.</li>
   <li><strong>WSL2</strong> — the lightweight Linux the pipeline runs inside, plus the micromamba package manager. If WSL2 is not yet enabled, this single step opens an Administrator PowerShell window once (Windows requires elevation only to turn the feature on), and you may be asked to reboot.</li>
@@ -106,7 +97,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 
 <div class="note"><span class="t">Disk space</span> Set aside about 10 GB of free disk for the toolchain and reference indices, and 16 GB or more of RAM is recommended (STAR alignment is the memory-heavy step; for very large genomes the HISAT2 or Salmon aligner needs far less). The one-time environment setup downloads several packages, so the first run is slower than later ones — give it time and a stable internet connection.</div>
 
-<h3>Raising the WSL2 memory limit (Windows)</h3>
+<h2>Raising the WSL2 memory limit (Windows)</h2>
 <p>On Windows the pipeline runs inside WSL2, which by default may use only about half of your host RAM. That VM cap — not the Windows total — is what memory-heavy steps run against (STAR indexing and alignment on large genomes, or DESeq2 on big count matrices). The easiest way to raise it is the <strong>Edit WSL2 memory / CPU limits…</strong> button on the Compute resources page, which writes the caps and can restart WSL to apply them. To do it by hand instead, create or edit <code>%UserProfile%\.wslconfig</code> (a plain text file in your user folder), add a <code>[wsl2]</code> section, then apply it with <code>wsl --shutdown</code> in PowerShell before reopening the app:</p>
 <pre><code>[wsl2]
 memory=48GB      # cap the VM at 48 GB (default is ~50% of host RAM)
@@ -180,6 +171,10 @@ processors=16    # optional: limit WSL2 to 16 logical processors</code></pre>
 <h2>Input modes</h2>
 <p class="lead">BulkSeq Studio meets your data wherever it already is. You can start from raw reads, from public accessions, from a count table, from a finished differential-expression table, or from a GEO microarray series. The mode you choose decides which steps run and which outputs you get; everything downstream of the entry point is shared, so the figures and enrichment look the same no matter how you got there.</p>
 
+<div class="tablewrap" tabindex="0" role="region" aria-label="Input route comparison; scroll horizontally on small screens">
+<table><thead><tr><th>What you have</th><th>Choose this input</th><th>Steps skipped</th><th>Main limitation</th></tr></thead><tbody><tr><td>Public SRA/ENA accessions</td><td>Accessions</td><td>None; reads are downloaded first.</td><td>Requires network access and enough read-storage space.</td></tr><tr><td>Local FASTQ files</td><td>Local FASTQ</td><td>Download only.</td><td>All samples in one run must share one read layout.</td></tr><tr><td>Raw gene counts</td><td>Count matrix</td><td>Download, QC, trimming, alignment, and counting.</td><td>No read-level or alignment QC.</td></tr><tr><td>Finished differential-expression table</td><td>DESeq2 results</td><td>All upstream modelling.</td><td>No local count model or expression heatmaps without an expression matrix.</td></tr><tr><td>GEO or local microarray intensities</td><td>Microarray</td><td>Read processing and RNA-seq counting.</td><td>Uses limma and route-specific array QC.</td></tr></tbody></table>
+</div>
+
 <div class="grid cols-2">
   <div class="card feature">
     <h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 13v8"/><path d="m8 17 4 4 4-4"/><path d="M20 16.5A4.5 4.5 0 0 0 17.5 8h-1.8A7 7 0 1 0 4 14.9"/></svg>1. SRA / ENA accessions</h3>
@@ -223,13 +218,13 @@ processors=16    # optional: limit WSL2 to 16 logical processors</code></pre>
 <div class="note warn"><span class="t">One layout per run</span> Single-end and paired-end reads both run the full alignment route, but a single run must use one layout. A mixed-layout sample sheet is rejected with guidance so the two are not counted together by accident.</div>
 
 <div class="note warn"><span class="t">Match your gene IDs</span> For modes that skip alignment (count matrix, local microarray matrix, imported differential-expression results), the IDs in your table must match the key type of the organism you select on the Reference page, or enrichment, KEGG, and STRING will not map. Pick the preset for your organism so the gene-ID namespace lines up. A fetched GEO microarray series maps its probes to gene symbols for you, so this applies to the uploaded tables.</div></section>
-    <div class="footer">
+    <footer class="footer">
       <p>Free and open-source under the MIT License · <a href="https://github.com/tunabirgun" target="_blank" rel="noopener">tunabirgun</a></p>
-    </div>
+    </footer>
   </main>
 </div>
 
-<script src="assets/product-v028.js" defer></script>
+<script src="assets/product-v028.js?v=3" defer></script>
 <script src="assets/lightbox.js" defer></script>
 <script src="assets/toc.js" defer></script>
 </body>

@@ -121,10 +121,24 @@
     }
   }
 
+  function improveSemantics() {
+    var logo = document.querySelector(".brand img");
+    if (logo) logo.alt = "";
+    var footer = document.querySelector("div.footer");
+    if (footer) {
+      var semantic = document.createElement("footer");
+      semantic.className = footer.className;
+      while (footer.firstChild) semantic.appendChild(footer.firstChild);
+      footer.replaceWith(semantic);
+    }
+    var headers = document.querySelectorAll("table thead th");
+    for (var i = 0; i < headers.length; i++) headers[i].scope = "col";
+  }
+
   function buildFaqAccordions() {
     var faq = document.querySelector("#faq");
     if (!faq) return;
-    var questions = Array.prototype.slice.call(faq.querySelectorAll(":scope > h3, :scope > h4"));
+    var questions = Array.prototype.slice.call(faq.querySelectorAll(":scope > h2, :scope > h3, :scope > h4"));
     for (var i = 0; i < questions.length; i++) {
       var heading = questions[i];
       var parent = heading.parentNode;
@@ -161,6 +175,7 @@
       initMenu(shell);
     }
     markCurrentPage();
+    improveSemantics();
     prepareFigures();
     buildFaqAccordions();
   }

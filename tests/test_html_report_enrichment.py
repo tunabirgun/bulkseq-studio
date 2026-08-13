@@ -481,7 +481,7 @@ def test_real_browser_compact_geometry_focus_and_zoom(mhr, tmp_path) -> None:
     result = json.loads(completed.stdout.strip().splitlines()[-1])
     assert [item["width"] for item in result["geometry"]] == [1440, 800, 768, 560, 360]
     for item in result["geometry"]:
-        assert item["layout"]["documentScrollWidth"] <= item["layout"]["viewport"] + 1
+        assert item["layout"]["documentScrollWidth"] <= item["layout"]["viewport"] + 1, json.dumps(item)
         assert item["layout"]["heroFits"]
         assert item["layout"]["sanityWrapperFits"] and item["layout"]["sanityWrapped"]
         assert item["start"]["open"] and item["start"]["zoomed"]

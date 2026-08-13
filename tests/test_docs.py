@@ -22,9 +22,9 @@ def _product_stem(version: str) -> str:
 
 
 PRODUCT_STEM = _product_stem(PUBLIC_VERSION)
-EXPECTED_FOOTER = """    <div class="footer">
+EXPECTED_FOOTER = """    <footer class="footer">
       <p>Free and open-source under the MIT License · <a href="https://github.com/tunabirgun" target="_blank" rel="noopener">tunabirgun</a></p>
-    </div>"""
+    </footer>"""
 
 
 class _PageParser(HTMLParser):
@@ -33,6 +33,7 @@ class _PageParser(HTMLParser):
         self.ids: list[str] = []
         self.references: list[tuple[str, str, str]] = []
         self.images: list[dict[str, str]] = []
+        self.heading_levels: list[int] = []
         self.footer_count = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -46,6 +47,8 @@ class _PageParser(HTMLParser):
                 self.references.append((tag, attribute, values[attribute]))
         if tag == "img":
             self.images.append(values)
+        if re.fullmatch(r"h[1-6]", tag):
+            self.heading_levels.append(int(tag[1]))
 
 
 def _page_sources(overrides: dict[str, str] | None = None) -> dict[str, str]:
@@ -87,8 +90,8 @@ def _validation_errors(
     readme = readme_override if readme_override is not None else README_PATH.read_text(encoding="utf-8")
     errors: list[str] = []
     parsed = {name: _parser_for(source) for name, source in pages.items()}
-    expected_css = f"assets/{PRODUCT_STEM}.css?v=2"
-    expected_js = f"assets/{PRODUCT_STEM}.js"
+    expected_css = f"assets/{PRODUCT_STEM}.css?v=3"
+    expected_js = f"assets/{PRODUCT_STEM}.js?v=3"
     expected_version_label = f'v{PUBLIC_VERSION}'
 
     for name, source in pages.items():
@@ -122,10 +125,14 @@ def _validation_errors(
                 line = source[: paragraph.start()].count("\n") + 1
                 errors.append(f"{name}:{line}: published paragraph is not one physical line")
         for image in parser.images:
-            if not image.get("alt", "").strip():
+            decorative_brand = image.get("src", "").endswith("bulkseq_logo.svg") and "alt" in image
+            if not decorative_brand and not image.get("alt", "").strip():
                 errors.append(f"{name}: image {image.get('src', '<missing src>')} has no alt text")
             if image.get("src", "").endswith("screenshot-linux.png") and PUBLIC_VERSION in image.get("alt", ""):
                 errors.append(f"{name}: relabels the earlier Linux screenshot as {PUBLIC_VERSION} evidence")
+        for previous, current in zip(parser.heading_levels, parser.heading_levels[1:]):
+            if current > previous + 1:
+                errors.append(f"{name}: heading hierarchy skips from h{previous} to h{current}")
 
     docs_resolved = DOCS_ROOT.resolve()
     for name, parser in parsed.items():
@@ -166,6 +173,24 @@ def _validation_errors(
             elif not target.is_file():
                 errors.append(f"assets/{css_name}: missing CSS reference {reference}")
 
+    product_css = (DOCS_ROOT / "assets" / f"{PRODUCT_STEM}.css").read_text(encoding="utf-8")
+    app_theme = (ROOT / "app" / "ui" / "theme.py").read_text(encoding="utf-8")
+    required_theme_tokens = ("#F5F7FA", "#FFFFFF", "#D7DEE6", "#7D8996", "#1F2933", "#4F5A67", "#2C6FB6", "#1A1D23", "#242A33", "#3D4450", "#E8EAED", "#9CA3AF", "#5BA3E0")
+    for token in required_theme_tokens:
+        if token not in product_css or token not in app_theme:
+            errors.append(f"assets/{PRODUCT_STEM}.css: missing app theme token {token}")
+    rejected_design_patterns = ("Iowan Old Style", "Palatino Linotype", "LOCAL-FIRST / REPRODUCIBLE", "transform: translateY(-2px)", "APPLICATION CAPTURE", "#f1efe8", "#17231f", "#b84624")
+    for pattern in rejected_design_patterns:
+        if pattern.casefold() in product_css.casefold():
+            errors.append(f"assets/{PRODUCT_STEM}.css: retired decorative pattern remains: {pattern}")
+    if ".content a:not(.btn):not(.pill)" not in product_css or "text-decoration: underline" not in product_css:
+        errors.append(f"assets/{PRODUCT_STEM}.css: content links are not persistently underlined")
+    product_js = (DOCS_ROOT / "assets" / f"{PRODUCT_STEM}.js").read_text(encoding="utf-8")
+    faq_section = pages["faq.html"].split('<section id="faq">', 1)[1].split("</section>", 1)[0]
+    question_headings = re.findall(r"<h2>([^<]+\?)</h2>", faq_section)
+    if len(question_headings) != 17 or ":scope > h2" not in product_js:
+        errors.append("faq.html: all 17 question headings must be accordion-enabled h2 siblings")
+
     release_sources = {
         "README.md": readme,
         "index.html": pages["index.html"],
@@ -205,12 +230,13 @@ def _replace_once(source: str, old: str, new: str) -> str:
 @pytest.mark.parametrize(
     ("target", "old", "new", "expected_error"),
     [
-        ("index.html", f"assets/{PRODUCT_STEM}.css?v=2", "assets/product-v027.css?v=2", "product shell"),
+        ("index.html", f"assets/{PRODUCT_STEM}.css?v=3", "assets/product-v027.css?v=3", "product shell"),
         ("index.html", EXPECTED_FOOTER, EXPECTED_FOOTER + "\n" + EXPECTED_FOOTER, "normalized footer"),
         ("index.html", "assets/bulkseq_logo.svg", "assets/does-not-exist.svg", "missing local reference"),
         ("index.html", '<li><a href="faq.html">FAQ &amp; cite</a></li>', '<li><a href="benchmarks.html">Benchmarks</a></li>', "retired benchmark page"),
         ("index.html", "<p class=\"lead\">BulkSeq Studio is for biologists", "<p class=\"lead\">BulkSeq Studio is for\nbiologists", "one physical line"),
         ("guide.html", "</section>", f'<img src="assets/screenshot-linux.png" alt="BulkSeq Studio {PUBLIC_VERSION} AppImage">\n</section>', "relabels the earlier Linux screenshot"),
+        ("guide.html", "<h2>What is WSL2, and why does Windows need it?</h2>", "<h3>What is WSL2, and why does Windows need it?</h3>", "heading hierarchy skips"),
         ("README.md", "Version 0.28.0 is the current public release.", "Version 0.28.0 is a source candidate.", "source-candidate claim"),
     ],
     ids=(
@@ -220,6 +246,7 @@ def _replace_once(source: str, old: str, new: str) -> str:
         "retired-benchmark-link",
         "hard-wrapped-prose",
         "fake-linux-screenshot",
+        "heading-level-skip",
         "unpublished-source-candidate",
     ),
 )

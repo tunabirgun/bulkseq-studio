@@ -1301,6 +1301,7 @@ header.top::before{content:"";display:block;height:3px;background:var(--spectrum
 .brand .rmeta{font-family:var(--sans);text-align:right;font-size:.8rem;color:var(--muted);line-height:1.35}
 .brand .rmeta b{color:var(--text);font-weight:600}
 main{max-width:1080px;margin:0 auto;padding:8px clamp(16px,5vw,40px) 8px}
+main,section,.cards,.panels,.vgrid,.de-split,.tablewrap{min-width:0}
 .hero{padding:26px 0 4px}
 .hero .kicker{font-family:var(--sans);text-transform:uppercase;letter-spacing:.12em;font-size:.7rem;
   font-weight:700;color:var(--brand-blue)}

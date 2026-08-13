@@ -3144,7 +3144,10 @@ class MainWindow(QMainWindow):
         # of a leading glyph (notably the capital V on Windows). Reserve a
         # font-scaled guard instead of relying on a display-specific pixel fix.
         glyph_guard = max(2, (run.fontMetrics().horizontalAdvance(" ") + 1) // 2)
-        run.setMinimumWidth(run.sizeHint().width() + glyph_guard)
+        # Some platform styles add a final pixel to sizeHint() after a minimum is
+        # assigned. Two derived guards preserve at least one complete guard after
+        # that recalculation without relying on a display-specific pixel constant.
+        run.setMinimumWidth(run.sizeHint().width() + (2 * glyph_guard))
         run.setToolTip(
             "Persist the current settings, then validate the active input route, sample sheet, "
             "comparison direction, reference requirement and enrichment configuration.")

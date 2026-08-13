@@ -7,7 +7,7 @@
 <meta name="description" content="BulkSeq Studio is a free, open-source desktop app that runs a complete bulk RNA-seq or microarray differential-expression analysis on your own computer, no coding required.">
 <link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
 <link rel="stylesheet" href="assets/site.css?v=9">
-<link rel="stylesheet" href="assets/product-v028.css?v=2">
+<link rel="stylesheet" href="assets/product-v028.css?v=3">
 <script>
 try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (error) {}
 </script>
@@ -17,7 +17,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 <div class="layout">
   <aside class="sidebar">
     <a class="brand" href="index.html">
-      <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
+      <img src="assets/bulkseq_logo.svg" alt="">
       <span class="brand-copy"><span class="brand-title">BulkSeq Studio</span><span class="ver">v0.28.0</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu</button>
@@ -33,6 +33,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
       <div class="ext">
         <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
         <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.28.0 ↗</a>
+        <a href="faq.html#cite">Citation</a>
       </div>
     </nav>
   </aside>
@@ -44,13 +45,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 <div class="hero">
   <h1>BulkSeq Studio</h1>
   <p>A free desktop app that takes you from raw reads or a count table to differential expression, functional enrichment, protein-interaction networks, and publication figures, without writing a single line of code.</p>
-  <div class="badges">
-    <span class="badge">Windows · Linux</span>
-    <span class="badge">No coding required</span>
-    <span class="badge">DESeq2 · limma-voom · edgeR</span>
-    <span class="badge">STAR · HISAT2 · Salmon</span>
-    <span class="badge">Open source</span>
-  </div>
+  <p class="support-line">Windows and Linux &middot; local processing &middot; open source</p>
   <div class="btn-row">
     <a class="btn btn-primary" href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">Download public v0.28.0</a>
     <a class="btn btn-ghost" href="https://github.com/tunabirgun/bulkseq-studio">View on GitHub</a>
@@ -97,7 +92,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
     <p>The Protein network page embeds the STRING protein-interaction network in an interactive <a href="https://js.cytoscape.org/">cytoscape.js</a> view: hover or keyboard-focus a protein for its fold-change and degree, re-layout, recolour by fold-change, resize by degree, filter by confidence, and export PNG, SVG, or Cytoscape files.</p>
   </div>
   <div class="card feature">
-    <h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 20h10"/><path d="M10 20c5.5-2.5.8-6.4 3-10"/><path d="M9.5 9.4c1.1.8 1.8 2.2 2.3 3.7-2 .4-3.5.4-4.8-.3-1.2-.6-2.3-1.9-3-4.2 2.8-.5 4.4 0 5.5.8z"/><path d="M14.1 6a7 7 0 0 0-1.1 4c1.9-.1 3.3-.6 4.3-1.4 1-1 1.6-2.3 1.7-4.6-2.7.1-4 1-4.9 2z"/></svg>Built for non-model organisms</h3>
+    <h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 20h10"/><path d="M10 20c5.5-2.5.8-6.4 3-10"/><path d="M9.5 9.4c1.1.8 1.8 2.2 2.3 3.7-2 .4-3.5.4-4.8-.3-1.2-.6-2.3-1.9-3-4.2 2.8-.5 4.4 0 5.5.8z"/><path d="M14.1 6a7 7 0 0 0-1.1 4c1.9-.1 3.3-.6 4.3-1.4 1-1 1.6-2.3 1.7-4.6-2.7.1-4 1-4.9 2z"/></svg>Broad organism support</h3>
     <p>Crops and fungi are first-class. The reference catalog ships 46 organism presets, spanning model animals, crops, fungal and plant pathogens, bacteria, and a malaria parasite. KEGG enrichment runs for any organism with a KEGG code, and GO terms come through g:Profiler without needing a Bioconductor OrgDb, so an organism is never skipped just for lacking one. Validated on rice, <em>Fusarium graminearum</em>, Drosophila, and a human dataset.</p>
   </div>
 </div>
@@ -121,13 +116,13 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
     <p>Find concise answers about supported systems, local processing, interpretation boundaries, and how to cite the software and archived validation materials. <a href="faq.html">Open the FAQ →</a></p>
   </div>
 </div></section>
-    <div class="footer">
+    <footer class="footer">
       <p>Free and open-source under the MIT License · <a href="https://github.com/tunabirgun" target="_blank" rel="noopener">tunabirgun</a></p>
-    </div>
+    </footer>
   </main>
 </div>
 
-<script src="assets/product-v028.js" defer></script>
+<script src="assets/product-v028.js?v=3" defer></script>
 <script src="assets/lightbox.js" defer></script>
 <script src="assets/toc.js" defer></script>
 </body>

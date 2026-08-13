@@ -17,7 +17,17 @@ SCRIPT = Path(__file__).resolve().parents[1] / "workflow" / "scripts" / "run_enr
 def _r_runtime(script: Path) -> tuple[list[str], str, Callable[[Path], str]]:
     rscript = shutil.which("Rscript")
     if rscript:
-        return [rscript, "--vanilla"], script.as_posix(), lambda path: str(path)
+        probe = subprocess.run(
+            [rscript, "--vanilla", "-e",
+             'quit(status=if (requireNamespace("clusterProfiler", quietly=TRUE) && '
+             'requireNamespace("org.Sc.sgd.db", quietly=TRUE)) 0 else 1)'],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if probe.returncode == 0:
+            return [rscript, "--vanilla"], script.as_posix(), lambda path: str(path)
     wsl = shutil.which("wsl.exe")
     if os.name == "nt" and wsl:
         prefix = subprocess.run(

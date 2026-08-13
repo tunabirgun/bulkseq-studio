@@ -7,7 +7,7 @@
 <meta name="description" content="Every choice on the Analysis settings page: trimmer, rRNA tool, contamination screen, aligners and quantifiers, three differential-expression engines, the design helper, GSVA, RSeQC, and functional enrichment.">
 <link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
 <link rel="stylesheet" href="assets/site.css?v=9">
-<link rel="stylesheet" href="assets/product-v028.css?v=2">
+<link rel="stylesheet" href="assets/product-v028.css?v=3">
 <script>
 try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (error) {}
 </script>
@@ -17,7 +17,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 <div class="layout">
   <aside class="sidebar">
     <a class="brand" href="index.html">
-      <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
+      <img src="assets/bulkseq_logo.svg" alt="">
       <span class="brand-copy"><span class="brand-title">BulkSeq Studio</span><span class="ver">v0.28.0</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu</button>
@@ -33,14 +33,14 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
       <div class="ext">
         <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
         <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.28.0 ↗</a>
+        <a href="faq.html#cite">Citation</a>
       </div>
     </nav>
   </aside>
 
   <main class="content" id="main-content">
-    <h1 class="visually-hidden">BulkSeq Studio: Analysis options</h1>
     <section id="analysis"><p class="kicker">What the pipeline does</p>
-<h2>Analysis options</h2>
+<h1>Analysis options</h1>
 <p class="lead">BulkSeq Studio runs a fixed, transparent sequence of steps from reads to results. The guided interface separates Project and data, Analysis setup, Validate and run, and Explore results; the Analysis settings page then groups its choices into focused subsections. The defaults are set for a standard study, so a typical run only needs an organism, a contrast, and the data.</p>
 
 <figure class="diagram">
@@ -55,11 +55,11 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 
 <div class="note"><span class="t">Mode-aware settings</span> The controls track the input mode. For a microarray, count-matrix, or imported-results run, settings that cannot apply — including read processing, alignment, and a local differential-expression engine for results-only input — are disabled. The page therefore describes the active route rather than implying that configured but inactive defaults ran.</div>
 
-<h3>Quality control and trimming</h3>
+<h2>Quality control and trimming</h2>
 <p>Every FASTQ or SRA run starts with FastQC on the raw reads, then adapter and quality trimming, then FastQC again on the trimmed reads. The per-sample reports are collected into a single MultiQC summary you can open from the Run Monitor.</p>
 <p>The trimmer is selectable. <strong>fastp</strong> is the default; you can also pick <strong>Trim Galore</strong> or <strong>Trimmomatic</strong>. Whichever you choose, the before/after FastQC steps and the MultiQC inputs follow along. Trimming is on by default; if your reads are already trimmed, uncheck it and the raw reads go straight to the aligner.</p>
 
-<h3>Optional ribosomal RNA removal</h3>
+<h2>Optional ribosomal RNA removal</h2>
 <p>You can filter ribosomal RNA out of the reads before alignment, with a choice of two tools:</p>
 <ul>
   <li><strong>SortMeRNA</strong> (default): reference-based. Trimmed reads are matched against an rRNA database and only the non-rRNA reads continue to the aligner. The database is downloaded and indexed once, each sample is filtered in its own working directory, and the per-sample rRNA percentage is added to the MultiQC report. The default reference is <code>smr_v4.3_default_db</code>; you can point <code>sortmerna.database</code> at a local FASTA, a FASTA URL, or a database tarball instead.</li>
@@ -67,10 +67,10 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 </ul>
 <p>Either tool runs on all three aligner routes and leaves the default (SortMeRNA) results unchanged.</p>
 
-<h3>Contamination screening (FastQ Screen)</h3>
+<h2>Contamination screening (FastQ Screen)</h2>
 <p>An optional <strong>FastQ Screen</strong> pass maps a subset of each sample's reads against a panel of reference genomes and reports the fraction that matches each one, a quick check for cross-species contamination or unexpected sources. The result lands in the MultiQC report alongside the other QC modules. Point it at a FastQ Screen config file (Advanced parameters &rarr; Contamination: FastQ Screen config) that lists the bowtie2 genome indexes to screen against; it does not download a genome panel. If the screen is enabled without a config, it is skipped and the sanity check notes it.</p>
 
-<h3>Alignment and quantification</h3>
+<h2>Alignment and quantification</h2>
 <p>Three aligners are available, all validated end to end. They feed a gene-level count matrix in the same format, so everything after counting (differential expression, enrichment, the network, every figure) runs identically whichever you pick. Both single-end and paired-end reads run through all three routes.</p>
 <ul>
   <li><strong>STAR</strong> (default): the standard splice-aware aligner; the genome index grows with genome size and needs the most RAM. Writes sorted BAM files.</li>
@@ -81,32 +81,32 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 <p>The quantifier is matched to the aligner. featureCounts is the default counter. With the STAR aligner the Quantifier control becomes a real choice: alongside featureCounts you can pick <strong>STAR gene-counts</strong>, which reads gene counts straight from STAR's own <code>--quantMode GeneCounts</code> output with no extra counting pass. STAR gene-counts is a 0.15.0 option, validated against featureCounts on the same BAMs at Pearson r of about 0.998 (unstranded) to 1.000 (stranded). HISAT2 always pairs with featureCounts and Salmon with tximport, so they cannot be mis-set.</p>
 <div class="note"><span class="t">Sane defaults</span> Leave the aligner on STAR and the quantifier on featureCounts unless STAR will not fit in memory; the app estimates the index size and warns before a run. Strandedness is auto-detected, fastp trimming is on, and the quantifier is paired to the aligner. The one quantifier you actively choose is STAR gene-counts versus featureCounts on the STAR route.</div>
 
-<h3>Extended alignment QC (RSeQC)</h3>
+<h2>Extended alignment QC (RSeQC)</h2>
 <p>An optional <strong>RSeQC</strong> pass adds two extra views to the MultiQC report: the genomic-context read distribution (how reads split across exon, intron, and intergenic regions) and the 5′→3′ gene-body coverage. Because it works from the alignment, RSeQC runs only on the genome-BAM routes (STAR and HISAT2), not on Salmon, which produces no BAM files.</p>
 
-<h3>Differential expression</h3>
+<h2>Differential expression</h2>
 <p>The differential-expression engine follows the input mode. RNA-seq and count-matrix runs use <strong>DESeq2</strong> by default (with apeglm shrinkage and VST); GEO microarray runs use <strong>limma</strong> and produce a DESeq2-shaped results table, so the figures and downstream steps are the same. A microarray run takes its intensities from the submitter-normalized GEO series matrix by default, or optionally re-normalizes raw Affymetrix CEL files with RMA, with a log2-transform choice (auto-detect, force, or off); the GEO platform (GPL) is recorded in the outputs. Instead of fetching a GEO series, you can upload a local microarray matrix — your own gene-by-sample table of already-normalized log2 intensities (first column gene IDs or symbols, one column per sample, TSV or CSV) — which runs the same limma path with no GEO accession or download. You configure the design formula and the contrast (numerator, denominator, reference level), the significance threshold <code>alpha</code>, and the absolute log2 fold-change cutoff, which together split the genes into up- and down-regulated lists. A TOST equivalence test is also run to flag genes that are statistically unchanged, the complement of the significance call.</p>
 <p>Two alternative engines are available for RNA-seq counts as a cross-check, best suited to larger designs: <strong>limma-voom</strong> and <strong>edgeR quasi-likelihood</strong>. All three engines emit the same result tables and figures, so everything downstream is identical whichever you run. DESeq2 remains the default and its result is unchanged. On <em>Fusarium graminearum</em> (spore vs mycelium) the alternatives track DESeq2 closely: limma-voom reaches a log2 fold-change Spearman correlation of 0.997 and a top-DEG Jaccard index of 0.94, edgeR quasi-likelihood reaches 1.000 and 0.97, and the shared differentially expressed genes agree on direction 100% of the time (benchmark B14).</p>
 <div class="note"><span class="t">Imported results are a separate route</span> An uploaded differential-expression table is not treated as a local DESeq2 run. The complete CSV/TSV is validated before import, its copied bytes and schema are recorded, and you must confirm which source group is the numerator and denominator for positive log2 fold change. Reports name the upstream method, shrinkage, and p-adjustment only when you provide them; local contrast settings never reinterpret the source direction, and an unknown adjustment method is not labelled Benjamini&ndash;Hochberg. The imported-results preranked export uses the confirmed log2 fold change rather than an upstream statistic of undocumented scale.</div>
 
-<h3>The design helper: adjusting for batch and covariates</h3>
+<h2>The design helper: adjusting for batch and covariates</h2>
 <p>Differential expression compares gene expression between conditions, but other differences between samples can distort that comparison. If your controls were sequenced in one batch and your treated samples in another, or the samples come from different donors, sexes, or time points, that unwanted variation can be mistaken for a treatment effect (or can hide a real one). The standard fix is to tell the statistical model about those nuisance variables so it holds them constant while it measures the effect of interest. In the DESeq2 <strong>design formula</strong>, <code>~ condition</code> compares conditions only, while <code>~ batch + condition</code> first removes the batch differences and then compares conditions.</p>
 <p>The <strong>Design helper</strong> (on the Analysis settings page, next to the design formula) builds this formula from the columns on the Samples page, so you do not have to write R. It lists the extra columns in your sample table — anything that is not the sample ID, file paths, or the condition — and you tick the ones to adjust for (batch, sequencing run, donor, sex, time, and so on). It then writes an additive formula with the effect of interest last, for example <code>~ batch + condition</code>. Adjusting for a known covariate removes its variation from the comparison, so a batch or donor difference is not counted as the treatment effect. Only additive adjustment is offered here, which covers the common case; genuine interaction terms (such as <code>genotype:treatment</code>) can still be typed directly into the formula field. Adjust for a variable only if you know it differs systematically between your groups and could affect expression; adding irrelevant covariates costs statistical power.</p>
 
-<h3>Multi-study meta-analysis</h3>
+<h2>Multi-study meta-analysis</h2>
 <p>When the sample sheet carries a <code>dataset</code> column (the study of origin) with more than one study and <strong>Multi-study meta-analysis</strong> is enabled on the Analysis settings page, the pipeline combines two or more independent studies of the same contrast — the same treatment-versus-control comparison run in different labs, tissues, or years — and asks which genes respond consistently across all of them. Each study is analysed on its own with DESeq2 first, so a difference in platform, library preparation, sequencing depth, or read length stays inside that study instead of leaking across the comparison. The per-study statistics are then combined two ways: the p-values with <code>metaRNASeq</code>'s replicate-weighted inverse-normal method, and the unshrunken log2 fold changes with a <code>metafor</code> effect-size model (fixed-effect for two studies, DerSimonian–Laird random-effect for three or more).</p>
 <p>The inverse-normal p-value is directionless, so a gene up in one study and down in another could otherwise be fused into a spuriously significant result. To prevent that, the sign of every study's fold change is checked, and a gene whose direction disagrees across studies is <strong>flagged as discordant and never called a meta-DEG</strong> — it stays in the table, searchable, but it is not presented as a cross-study hit. A convergent meta-DEG is therefore a gene that is both significant on the combined FDR and consistent in direction in every study. The joint DESeq2 that runs alongside the meta-analysis models study-of-origin as a covariate, so a default <code>~ condition</code> design becomes <code>~ dataset + condition</code> and its pooled result is not confounded by the studies.</p>
 <div class="note warn"><span class="t">Confounding gate</span> A meta-analysis is only meaningful when at least one study contains both compared groups. When the groups are perfectly aliased with study — every study holds only one of the two arms — the biological difference and the study effect are the same axis and no method can separate them, so a <strong>hard sanity gate blocks the run</strong>. Studies must also share one organism and one gene-identifier namespace so the per-study gene sets intersect; a mismatch is flagged before the run.</div>
 
-<h3>Functional enrichment</h3>
+<h2>Functional enrichment</h2>
 <p>Enrichment runs separately on the up- and down-regulated sets. GO over-representation and GSEA come from clusterProfiler when a Bioconductor OrgDb is installed for the organism (human, mouse, fly, and others); for human and mouse it also adds disease-ontology terms. Organisms without an OrgDb fall back to g:Profiler for GO. <strong>KEGG pathway ORA and GSEA run for any organism that has a KEGG code, even without an OrgDb</strong>, so fungi, bacteria, and other non-model organisms are not skipped. Selecting an organism preset auto-configures its enrichment databases and STRING taxon.</p>
 <p>You can also supply your own gene sets: a GMT file and/or an id-to-term annotation table, with an optional background list for the over-representation universe. This runs a clusterProfiler ORA and GSEA alongside the built-in GO and KEGG and is organism-agnostic, so it works where the built-in GO route is skipped. Custom gene-set enrichment is a 0.15.0 option. The gene IDs must use the run's identifier format; a namespace mismatch is flagged as <code>REVIEW_REQUIRED</code> rather than returned as a silent empty result.</p>
 <p>For a focused look, a genes-of-interest list produces its own z-scored heatmap, per-condition expression panel, and counts table from an existing run without re-analysis. The IDs you paste are matched to the run's genes by locus tag, Ensembl/RefSeq ID, or symbol; when few or none match, the report leads with a warning and shows examples of the run's actual ID format so you can correct the list.</p>
 
-<h3>GSVA pathway activity</h3>
+<h2>GSVA pathway activity</h2>
 <p>An optional <strong>GSVA</strong> module scores gene-set activity per sample from your own custom gene sets, drawn as a sample-by-set heatmap. Because it uses only the gene sets you supply, it is organism-safe and valid for non-model organisms. GSVA produces descriptive per-sample activity scores, not a significance test, so read the heatmap as a view of how each set's activity varies across samples rather than as a formal enrichment result.</p>
 
-<h3>Protein-interaction networks</h3>
+<h2>Protein-interaction networks</h2>
 <p>BulkSeq Studio builds a STRING protein-protein interaction network for the significant genes and seeds it by symbol or, for symbol-less annotations like the <code>FGSG_</code> locus tags of <em>Fusarium graminearum</em>, by gene ID. The network exports to Cytoscape as GraphML, SIF, and cytoscape.js JSON for external editing. The Protein network page embeds the same network in an interactive view with pointer and keyboard node navigation.</p>
 
 <figure>
@@ -114,22 +114,22 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   <figcaption>The interactive Protein network page. Hover or keyboard-focus a protein for its fold-change, adjusted p-value, mean expression, and degree; recolour by log2 fold change, resize by node degree, filter by confidence, re-layout, and export PNG/SVG or Cytoscape files.</figcaption>
 </figure>
 
-<h3>Extra statistics</h3>
+<h2>Extra statistics</h2>
 <p>Beyond the differential test, the pipeline writes a set of diagnostics: sample-to-sample correlation heatmaps (Pearson and Spearman), a Wilcoxon rank-sum concordance check, the TOST equivalence call described above, and an MSigDB Hallmark set-overlap.</p>
 
-<h3>Advanced parameters</h3>
+<h2>Advanced parameters</h2>
 <p>Collapsible <strong>Advanced parameters</strong> sections on the Analysis settings page surface the important knobs of each tool (fastp, Trimmomatic, RiboDetector, FastQ Screen, STAR, featureCounts, DESeq2, and the rest), with the validated defaults pre-filled. Leave them collapsed for a standard run; open one only when you need to change a specific parameter. Because the defaults reproduce the standard behaviour, a run is unchanged unless you edit a value.</p>
 
-<h3>Non-model organisms</h3>
+<h2>Non-model organisms</h2>
 <p>The reference catalog ships 46 organism presets: human and mouse, model animals (rat, chicken, pig, cattle), crops (including grape, cotton, <em>Medicago truncatula</em>, and tobacco), fungal and plant pathogens (<em>Zymoseptoria tritici</em>, <em>Ustilago maydis</em>, <em>Sclerotinia sclerotiorum</em>, <em>Aspergillus niger</em>), bacteria (<em>Pseudomonas aeruginosa</em>, <em>Mycobacterium tuberculosis</em>, <em>Staphylococcus aureus</em>), and the malaria parasite <em>Plasmodium falciparum</em>. Each preset's genome and annotation URLs were checked to resolve, and its KEGG code, STRING taxon, and Bioconductor OrgDb (where one exists) verified, before inclusion.</p>
 <p>Crops and fungi that have no Bioconductor OrgDb are not left without downstream analysis. As long as the organism has a KEGG code and a STRING taxon, KEGG enrichment and the STRING network still run, and g:Profiler supplies GO where it is available. This is how rice, the other crop presets, and <em>Fusarium graminearum</em> reach full enrichment and network outputs.</p></section>
-    <div class="footer">
+    <footer class="footer">
       <p>Free and open-source under the MIT License · <a href="https://github.com/tunabirgun" target="_blank" rel="noopener">tunabirgun</a></p>
-    </div>
+    </footer>
   </main>
 </div>
 
-<script src="assets/product-v028.js" defer></script>
+<script src="assets/product-v028.js?v=3" defer></script>
 <script src="assets/lightbox.js" defer></script>
 <script src="assets/toc.js" defer></script>
 </body>

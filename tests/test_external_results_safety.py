@@ -109,7 +109,16 @@ def test_external_ingest_has_a_validation_dependency_chain() -> None:
 def _r_runtime(harness: Path) -> tuple[list[str], Callable[[Path], str]]:
     native = shutil.which("Rscript")
     if native:
-        return [native, "--vanilla", str(harness)], lambda path: str(path)
+        probe = subprocess.run(
+            [native, "--vanilla", "-e",
+             'quit(status=if (requireNamespace("jsonlite", quietly=TRUE)) 0 else 1)'],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if probe.returncode == 0:
+            return [native, "--vanilla", str(harness)], lambda path: str(path)
 
     wsl = shutil.which("wsl.exe")
     if not wsl:

@@ -15,6 +15,7 @@
   var scale = 1, tx = 0, ty = 0;      // current transform state
   var trigger = null;                  // element that opened the overlay
   var reduceMotion = false;
+  var inerted = [];
 
   // active pointers for pan + pinch
   var pointers = {};                   // id -> {x,y}
@@ -28,6 +29,7 @@
     overlay.className = "lb-overlay";
     overlay.setAttribute("role", "dialog");
     overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", "Image viewer");
     overlay.setAttribute("aria-hidden", "true");
     overlay.hidden = true;
 
@@ -102,7 +104,7 @@
 
   function updateHint() {
     hintEl.textContent = Math.round(scale * 100) + "%" +
-      (scale > 1.01 ? " · drag to pan" : " · scroll or double-click to zoom");
+      (scale > 1.01 ? " · drag or use arrow keys to pan" : " · scroll or double-click to zoom");
   }
 
   // Zoom around a client point, keeping that point fixed under the cursor.
@@ -120,6 +122,29 @@
   }
 
   function resetView() { scale = 1; tx = 0; ty = 0; apply(); }
+
+  function panBy(dx, dy) {
+    if (scale <= 1.01) return;
+    tx += dx;
+    ty += dy;
+    apply();
+  }
+
+  function setBackgroundInert(inert) {
+    if (inert) {
+      inerted = [];
+      var children = Array.prototype.slice.call(document.body.children);
+      for (var i = 0; i < children.length; i++) {
+        var child = children[i];
+        if (child === overlay || child.inert) continue;
+        child.inert = true;
+        inerted.push(child);
+      }
+    } else {
+      for (var j = 0; j < inerted.length; j++) inerted[j].inert = false;
+      inerted = [];
+    }
+  }
 
   function onWheel(e) {
     e.preventDefault();
@@ -200,6 +225,7 @@
 
     overlay.hidden = false;
     overlay.setAttribute("aria-hidden", "false");
+    setBackgroundInert(true);
     // next frame so the CSS open transition runs
     requestAnimationFrame(function () { overlay.classList.add("lb-open"); });
 
@@ -222,6 +248,7 @@
     var finish = function () {
       overlay.hidden = true;
       overlay.setAttribute("aria-hidden", "true");
+      setBackgroundInert(false);
       imgEl.removeAttribute("src");
       if (trigger && typeof trigger.focus === "function") trigger.focus();
       trigger = null;
@@ -232,10 +259,22 @@
 
   function onKey(e) {
     if (overlay.hidden) return;
-    if (e.key === "Escape") { e.preventDefault(); close(); }
+    if (e.key === "Tab") {
+      var focusable = Array.prototype.slice.call(overlay.querySelectorAll("button:not([disabled]), [tabindex]:not([tabindex='-1'])"));
+      if (!focusable.length) return;
+      var current = focusable.indexOf(document.activeElement);
+      var next = e.shiftKey ? (current <= 0 ? focusable.length - 1 : current - 1) : (current < 0 || current === focusable.length - 1 ? 0 : current + 1);
+      e.preventDefault();
+      focusable[next].focus();
+    }
+    else if (e.key === "Escape") { e.preventDefault(); close(); }
     else if (e.key === "+" || e.key === "=") { e.preventDefault(); zoomAt(window.innerWidth / 2, window.innerHeight / 2, STEP); }
     else if (e.key === "-" || e.key === "_") { e.preventDefault(); zoomAt(window.innerWidth / 2, window.innerHeight / 2, 1 / STEP); }
     else if (e.key === "0") { e.preventDefault(); resetView(); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); panBy(40, 0); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); panBy(-40, 0); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); panBy(0, 40); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); panBy(0, -40); }
   }
 
   function activate(source) {
