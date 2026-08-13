@@ -1351,7 +1351,8 @@ main,section,.cards,.panels,.vgrid,.de-split,.tablewrap{min-width:0}
 .dirbar .up{background:var(--up)} .dirbar .down{background:var(--down)}
 .status-line{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap;
   font-family:var(--sans);font-size:.86rem;color:var(--muted)}
-@media(max-width:560px){.chipnav{display:none}.brand .rmeta{display:none}}
+@media(max-width:800px){.brand .rmeta{display:none}}
+@media(max-width:560px){.chipnav{display:none}}
 .cards{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin:22px 0 6px}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;
   box-shadow:0 1px 2px rgba(17,24,39,.04)}
@@ -1477,7 +1478,7 @@ details.steps{margin-top:1rem} details.steps summary{cursor:pointer;font-family:
 footer{max-width:1080px;margin:8px auto 0;padding:22px clamp(16px,5vw,40px) 40px;
   font-family:var(--sans);color:var(--muted);font-size:.82rem;border-top:1px solid var(--border)}
 footer .flinks{display:flex;flex-wrap:wrap;gap:16px;margin-bottom:8px}
-@media(max-width:560px){.barrow{grid-template-columns:100px 1fr 64px}.brand .rmeta{display:none}}
+@media(max-width:560px){.barrow{grid-template-columns:100px 1fr 64px}}
 /* Print / Save-as-PDF: scientists attach the report to lab notebooks and manuscripts. Open every
    disclosure, let table cells wrap instead of clipping in the overflow box, keep figures with their
    captions, preserve the direction/status colours, and drop the on-screen chrome. */

@@ -102,6 +102,7 @@ def _assert_compact_report_and_modal_contract(source: str) -> None:
     assert "<div class='tablewrap'><table class='checks'>" in source
     assert "table.checks{border-collapse:collapse;width:100%;table-layout:fixed}" in source
     assert ".chk-msgs li{margin:.15rem 0;overflow-wrap:anywhere}" in source
+    assert "@media(max-width:800px){.brand .rmeta{display:none}}" in source
     assert '<dialog id="bsq-lb" class="lb" aria-label="Figure viewer">' in source
     assert '<button id="bsq-lb-close" class="lb-close" type="button" autofocus ' in source
     assert "lb.showModal()" in source
@@ -251,6 +252,8 @@ def test_compact_report_uses_wrapping_sanity_scroller_and_native_dialog(mhr) -> 
         ("<div class='tablewrap'><table class='checks'>", "<table class='checks'>"),
         ("table.checks{border-collapse:collapse;width:100%;table-layout:fixed}",
          "table.checks{border-collapse:collapse;width:100%}"),
+        ("@media(max-width:800px){.brand .rmeta{display:none}}",
+         "@media(max-width:560px){.brand .rmeta{display:none}}"),
         ('<dialog id="bsq-lb"', '<div id="bsq-lb"'),
         ("lb.showModal()", "lb.setAttribute('open','')"),
         (".lb[open]{display:block}", ".lb[open]{display:flex;place-content:center}"),

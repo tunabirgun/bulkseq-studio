@@ -230,11 +230,34 @@ def test_real_webengine_keyboard_traversal_updates_accessible_state():
         web_focus = viewer.view.focusProxy() or app.focusWidget()
         assert web_focus is not None
         assert web_focus.hasFocus()
-        QTest.qWait(80)
+
+        def js_value(expression):
+            values = []
+            wait = QEventLoop()
+            viewer.view.page().runJavaScript(expression, lambda value: (values.append(value), wait.quit()))
+            QTimer.singleShot(1000, wait.quit)
+            wait.exec()
+            assert values, expression
+            return values[0]
+
+        def wait_js(expression, timeout_ms=3000):
+            elapsed = 0
+            while elapsed < timeout_ms:
+                if js_value(expression):
+                    return
+                QTest.qWait(40)
+                elapsed += 40
+            raise AssertionError(expression)
+
+        # The Chromium render process receives focus asynchronously after Qt's
+        # outer QWebEngineView. Wait for the actual canvas before sending real
+        # key events so runner load cannot turn the accessibility gate into a
+        # fixed-sleep race.
+        wait_js("document.activeElement === document.getElementById('cy')")
         QTest.keyClick(web_focus, Qt.Key.Key_Right, delay=25)
-        QTest.qWait(60)
+        wait_js("document.getElementById('cy').getAttribute('aria-activedescendant') === 'ppi-node-0'")
         QTest.keyClick(web_focus, Qt.Key.Key_Return, delay=25)
-        QTest.qWait(80)
+        wait_js("document.querySelectorAll('#node-list [aria-selected=true]').length === 1")
         app.processEvents()
         result = []
         viewer.view.page().runJavaScript(
