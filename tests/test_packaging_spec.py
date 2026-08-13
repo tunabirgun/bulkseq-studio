@@ -3,7 +3,12 @@ from __future__ import annotations
 import ast
 import os
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 import tomllib
+
+import pytest
 
 
 def test_python_distribution_discovers_only_the_application_package() -> None:
@@ -102,3 +107,57 @@ def test_linux_package_build_requires_all_three_verified_artifacts() -> None:
     assert "SHA256SUMS.txt" in release
     assert "Get-FileHash -LiteralPath $f -Algorithm SHA256" in release
     assert "$recorded.Count -ne $packageAssets.Count" in release
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
+def test_release_script_creates_release_after_expected_missing_release_probe(tmp_path: Path) -> None:
+    repo = Path(__file__).resolve().parents[1]
+    root = tmp_path / "release-root"
+    (root / "scripts").mkdir(parents=True)
+    (root / "app").mkdir()
+    output = root / "installer_output"
+    output.mkdir()
+    shutil.copy2(repo / "scripts" / "release.ps1", root / "scripts" / "release.ps1")
+    (root / "app" / "constants.py").write_text('APP_VERSION = "0.28.0"\n', encoding="utf-8")
+    for name in (
+        "BulkSeqStudio-Setup-0.28.0.exe",
+        "BulkSeqStudio-Portable-0.28.0.zip",
+        "BulkSeqStudio-0.28.0-x86_64.AppImage",
+        "BulkSeqStudio-0.28.0-x86_64.AppImage.zsync",
+        "BulkSeqStudio-Portable-0.28.0-linux-x86_64.tar.gz",
+    ):
+        (output / name).write_bytes(name.encode("ascii"))
+
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    log = tmp_path / "gh.log"
+    (fake_bin / "gh.cmd").write_text(
+        "@echo off\r\n"
+        "echo %*>>\"%FAKE_GH_LOG%\"\r\n"
+        "if \"%1 %2\"==\"release view\" (1>&2 echo release not found& exit /b 1)\r\n"
+        "if \"%1 %2\"==\"release create\" exit /b 0\r\n"
+        "exit /b 2\r\n",
+        encoding="ascii",
+    )
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    env["FAKE_GH_LOG"] = str(log)
+    completed = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(root / "scripts" / "release.ps1"),
+        ],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    calls = log.read_text(encoding="utf-8")
+    assert "release view v0.28.0" in calls
+    assert "release create v0.28.0" in calls

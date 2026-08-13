@@ -45,8 +45,15 @@ if (-not $gh) { $gh = "C:\Program Files\GitHub CLI\gh.exe" }
 if (-not (Test-Path $gh)) { throw "GitHub CLI (gh) not found. Install it and run 'gh auth login'." }
 
 Write-Host "Publishing $tag ..."
-& $gh release view $tag *> $null
-if ($LASTEXITCODE -ne 0) {
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "SilentlyContinue"
+try {
+    & $gh release view $tag *> $null
+    $releaseViewExit = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+if ($releaseViewExit -ne 0) {
     # New release: tag the current commit and attach every supported package.
     & $gh release create $tag @assets `
         --title "BulkSeq Studio $tag" `
