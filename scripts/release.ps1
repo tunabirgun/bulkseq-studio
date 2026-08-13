@@ -3,9 +3,19 @@
 # The tag/version is read from app\constants.py (APP_VERSION).
 # Requires the GitHub CLI (gh) authenticated: gh auth login.
 $ErrorActionPreference = "Stop"
-Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+
+function Get-Sha256Hex([string] $path) {
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($path)
+    try {
+        return ([System.BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $stream.Dispose()
+        $algorithm.Dispose()
+    }
+}
 
 $version = ((Select-String -Path "app\constants.py" -Pattern 'APP_VERSION\s*=\s*"([^"]+)"').Matches.Groups[1].Value)
 $tag = "v$version"
@@ -24,7 +34,7 @@ foreach ($f in $packageAssets) {
 # back and independently recompute every digest before any tag or upload is made.
 $checksumManifest = Join-Path $root "installer_output\SHA256SUMS.txt"
 $checksumLines = foreach ($f in $packageAssets) {
-    $hash = (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash.ToLowerInvariant()
+    $hash = Get-Sha256Hex $f
     "$hash  $(Split-Path -Leaf $f)"
 }
 Set-Content -LiteralPath $checksumManifest -Value $checksumLines -Encoding ascii
@@ -35,7 +45,7 @@ foreach ($f in $packageAssets) {
     $expectedLine = $recorded | Where-Object { $_ -match "^[0-9a-f]{64}  $([regex]::Escape($name))$" }
     if (@($expectedLine).Count -ne 1) { throw "Missing or duplicate checksum for $name" }
     $expected = ($expectedLine -split "  ", 2)[0]
-    $actual = (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actual = Get-Sha256Hex $f
     if ($actual -ne $expected) { throw "Checksum mismatch for $name" }
 }
 $assets = @($packageAssets) + @($checksumManifest)

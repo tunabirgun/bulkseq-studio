@@ -105,8 +105,13 @@ def test_linux_package_build_requires_all_three_verified_artifacts() -> None:
     assert 'BulkSeqStudio-Portable-$version-linux-x86_64.tar.gz' in release
     assert "$packageAssets = @($installer, $portable, $appImage, $zsync, $linuxPortable)" in release
     assert "SHA256SUMS.txt" in release
-    assert "Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop" in release
-    assert "Get-FileHash -LiteralPath $f -Algorithm SHA256" in release
+    assert "function Get-Sha256Hex" in release
+    assert "[System.Security.Cryptography.SHA256]::Create()" in release
+    assert "[System.IO.File]::OpenRead($path)" in release
+    assert "$stream.Dispose()" in release
+    assert "$algorithm.Dispose()" in release
+    assert "$hash = Get-Sha256Hex $f" in release
+    assert "$actual = Get-Sha256Hex $f" in release
     assert "$recorded.Count -ne $packageAssets.Count" in release
 
 
