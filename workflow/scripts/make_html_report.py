@@ -1455,11 +1455,11 @@ code{font-family:var(--mono);font-size:.85em;background:#eef1fb;color:var(--acce
 .badge.ok{color:var(--ok);background:var(--ok-bg)} .badge.warn{color:var(--warn);background:var(--warn-bg)}
 .badge.fail{color:var(--fail);background:var(--fail-bg)} .badge.review{color:var(--review);background:var(--review-bg)}
 .badge.muted{color:var(--muted);background:#eef0f5}
-table.checks{border-collapse:collapse;width:100%}
+table.checks{border-collapse:collapse;width:100%;table-layout:fixed}
 table.checks td{padding:10px 8px;border-bottom:1px solid var(--border);vertical-align:top}
 table.checks td.chk-status{width:96px} .chk-name{font-family:var(--sans);font-weight:600;font-size:.9rem}
 .chk-msgs{margin:.3rem 0 0;padding-left:1.1rem;font-family:var(--sans);font-size:.83rem;color:var(--muted)}
-.chk-msgs li{margin:.15rem 0}
+.chk-msgs li{margin:.15rem 0;overflow-wrap:anywhere}
 .stats{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
 .stat{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;text-align:center}
 .stat-v{font-family:var(--sans);font-weight:700;font-size:1.25rem}
