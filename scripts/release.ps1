@@ -3,6 +3,7 @@
 # The tag/version is read from app\constants.py (APP_VERSION).
 # Requires the GitHub CLI (gh) authenticated: gh auth login.
 $ErrorActionPreference = "Stop"
+Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
