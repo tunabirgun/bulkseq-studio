@@ -11,8 +11,7 @@ import pandas as pd
 import yaml
 from PySide6.QtCore import (
     QByteArray,
-    QEasingCurve,
-    QPropertyAnimation,
+    QEvent,
     QSettings,
     QThread,
     QTimer,
@@ -27,9 +26,9 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
+    QFrame,
     QFormLayout,
     QGridLayout,
-    QGraphicsOpacityEffect,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
@@ -45,20 +44,42 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QSplitter,
+    QStatusBar,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
     QTextEdit,
     QToolButton,
+    QStackedLayout,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtGui import QDesktopServices, QFontDatabase, QKeySequence, QPixmap, QShortcut
+from PySide6.QtGui import (
+    QDesktopServices,
+    QFontDatabase,
+    QKeySequence,
+    QPainter,
+    QPalette,
+    QPixmap,
+    QShortcut,
+)
 from PySide6.QtCore import Qt, QUrl
 
 from app.constants import APP_NAME, APP_VERSION, MIN_UNIQUE_MAPPED_WARN_PCT
 from app.core.benchmark_datasets import create_benchmark_project, load_benchmark_catalog
-from app.core.config_models import AppConfig
+from app.core.config_models import (
+    AppConfig,
+    Deseq2ResultsDirectionProvenance,
+    Deseq2ResultsFileProvenance,
+)
+from app.core.de_results import (
+    DETableValidationError,
+    ExternalDEImportDetails,
+    provenance_payload,
+    validate_de_results_table,
+    validate_recorded_project_copy,
+)
 from app.core.input_detection import detect_fastq_inputs
 from app.core.metadata import (
     dataframe_from_rows,
@@ -75,8 +96,12 @@ from app.core.project import (
     validate_working_directory,
 )
 from app.core.provenance import write_run_summary
+from app.core.preflight import (
+    validate_current_preflight,
+    write_input_validation_with_fingerprint,
+)
 from app.core.reference_manager import catalog_entry_for_organism, load_reference_catalog, md5sum, validate_reference
-from app.core.resources import detect_system, recommend_profile
+from app.core.resources import detect_system, recommend_profile, recommend_rule_threads
 from app.core.sra_metadata import fetch_ena_metadata, metadata_to_samples
 from app.core.geo_metadata import fetch_geo_series
 from app.core.runtime_calibration import calibration_factor, record_run
@@ -92,6 +117,7 @@ from app.core.timing import write_timing_summary
 from app.core.paths import (
     data_path,
     is_wsl_unc_path,
+    project_configured_path,
     windows_to_wsl_path,
     wsl_recommended_workdir,
     wsl_unc_distro,
@@ -100,6 +126,7 @@ from app.core.paths import (
 from app.ui.image_viewer import SVG_AVAILABLE, ImageViewer
 from app.ui.metadata_editor import MetadataTable
 from app.ui.readiness_dialog import ReadinessDialog
+from app.ui.task_navigator import TaskNavigator
 from app.ui.theme import IMAGEVIEWER_BG, PALETTES, STATUS_PILL_BG, apply_theme, status_color
 
 
@@ -160,6 +187,117 @@ class _SortableItem(QTableWidgetItem):
             return self.text().casefold() < other.text().casefold()
 
 
+class _PlainTextLabel(QLabel):
+    """Selectable status copy with the small QTextEdit-compatible API we use."""
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setWordWrap(True)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+    def setPlainText(self, text: str) -> None:
+        self.setText(text)
+
+    def toPlainText(self) -> str:
+        return self.text()
+
+    def append(self, text: str) -> None:
+        current = self.text()
+        self.setText(f"{current}\n{text}" if current else text)
+
+
+class _InsetStatusBar(QStatusBar):
+    """Status bar whose transient message respects the application's edge grid.
+
+    Qt paints ``showMessage`` text outside the status bar's child layout, so
+    layout margins and stylesheet padding do not move it.  This keeps the same
+    public API while painting the message inside ``contentsRect``.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._message = ""
+        self._clear_timer = QTimer(self)
+        self._clear_timer.setSingleShot(True)
+        self._clear_timer.timeout.connect(self.clearMessage)
+        self.setAccessibleName("Application status")
+
+    def showMessage(self, message: str, timeout: int = 0) -> None:  # noqa: N802 - Qt API
+        message = str(message)
+        changed = message != self._message
+        self._message = message
+        self._clear_timer.stop()
+        if timeout > 0:
+            self._clear_timer.start(timeout)
+        if changed:
+            self.messageChanged.emit(message)
+        self.update()
+
+    def clearMessage(self) -> None:  # noqa: N802 - Qt API
+        self._clear_timer.stop()
+        if not self._message:
+            return
+        self._message = ""
+        self.messageChanged.emit("")
+        self.update()
+
+    def currentMessage(self) -> str:  # noqa: N802 - Qt API
+        return self._message
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt virtual name
+        super().paintEvent(event)
+        if not self._message:
+            return
+        painter = QPainter(self)
+        # This is persistent application status, not placeholder copy.  The
+        # PlaceholderText role can be intentionally faint and made completed-run
+        # guidance fail normal-text contrast; use the ordinary text role.
+        painter.setPen(self.palette().color(QPalette.ColorRole.Text))
+        text_rect = self.contentsRect()
+        # Leave the native resize grip clear without moving the left edge.
+        text_rect.adjust(0, 0, -24, 0)
+        text = self.fontMetrics().elidedText(
+            self._message, Qt.TextElideMode.ElideRight, max(1, text_rect.width()))
+        painter.drawText(
+            text_rect,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            text,
+        )
+
+
+class _InspectorTabs(QTabWidget):
+    """Compact, clearly navigational tabs for a narrow results inspector.
+
+    The previous QToolBox treatment left inactive section headers at the bottom
+    of a tall panel.  Against the input palette those headers looked like empty
+    text fields.  A single tab row keeps the same one-panel-at-a-time behaviour
+    while making the navigation role explicit.
+
+    The small ``item*`` aliases preserve the former QToolBox call sites and test
+    helpers while the UI uses QTabWidget semantics.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setProperty("uiRole", "inspectorTabs")
+        self.setDocumentMode(True)
+        self.tabBar().setExpanding(True)
+        self.tabBar().setUsesScrollButtons(False)
+        self.setElideMode(Qt.TextElideMode.ElideRight)
+
+    def addItem(self, widget: QWidget, label: str) -> int:
+        return self.addTab(widget, label)
+
+    def itemText(self, index: int) -> str:
+        return self.tabText(index)
+
+    def setItemToolTip(self, index: int, text: str) -> None:
+        self.setTabToolTip(index, text)
+
+    def itemToolTip(self, index: int) -> str:
+        return self.tabToolTip(index)
+
+
 class MainWindow(QMainWindow):
     FONT_DEFAULT_LABEL = "(ggplot default)"
 
@@ -180,18 +318,19 @@ class MainWindow(QMainWindow):
         self._mapping_checked: set[str] = set()
         self._mapping_halt_decided = False
         self._closing = False
+        self._launch_preflight_worker: BackgroundWorker | None = None
+        self._phase_refresh_worker: BackgroundWorker | None = None
+        self._launch_preflight_ui_state: dict[str, object] | None = None
         self.run_action_buttons: dict[str, QPushButton] = {}
         self.stop_button: QPushButton | None = None
+        self._workflow_height_update_pending = False
 
-        self.tabs = QTabWidget()
-        # At narrow window widths the 12 tabs would overflow to scroll arrows that hide the last
-        # tab (PPI Network); elide the labels instead so every tab stays visible and reachable.
-        self.tabs.setElideMode(Qt.TextElideMode.ElideRight)
-        self.tabs.tabBar().setUsesScrollButtons(False)
+        self.tabs = TaskNavigator()
         self.setCentralWidget(self.tabs)
+        self.setStatusBar(_InsetStatusBar(self))
         # The window owns its minimum so the size contract holds even under direct
         # construction (tests), and the restore-geometry size guard has a real bound.
-        self.setMinimumSize(900, 640)
+        self.setMinimumSize(900, 600)
         # Light/dark mode toggle: a labelled button in the top-right corner. It is
         # wrapped in a container with margins so it isn't flush against (and visually
         # clipped by) the window edge; the container is the corner widget, so the
@@ -222,24 +361,23 @@ class MainWindow(QMainWindow):
         self._build_ppi_tab()
         # Every tab exists now, so the form-width pass can see all of them at once.
         self._tune_form_widths()
-        self._install_tab_transition()
         # A small status bar at the bottom for transient feedback (e.g. resource
         # detection), so blocking actions show progress instead of looking frozen.
         # The environment check is on-demand (the 'Check Environment' button) so the
         # window opens instantly instead of blocking on WSL/conda probes at startup.
+        self.statusBar().setContentsMargins(10, 2, 10, 3)
         if not sys.platform.startswith("win"):
             self.statusBar().showMessage(
-                "Ready — the pipeline runs natively in the local environment. Click 'Check "
-                "Environment' on the Project tab to verify the bioinformatics tools are installed."
+                "Ready — create or open a project. Before the first run, use Check Environment "
+                "to verify the bioinformatics tools."
             )
         elif shutil.which("wsl") is None:
             self.statusBar().showMessage(
-                "WSL2 was not detected. Click 'Check Environment' on the Project tab to "
-                "enable WSL2 and install the bioinformatics environment before running."
+                "WSL2 was not detected. Open Project and select Check Environment before running."
             )
         else:
             self.statusBar().showMessage(
-                "Ready — on the Project tab, click 'Check Environment' to verify your WSL setup."
+                "Ready — create or open a project. Use Check Environment before the first run."
             )
         self._install_shortcuts()
         # Prefer the WSL-native filesystem by default (resolved in the background so
@@ -284,10 +422,21 @@ class MainWindow(QMainWindow):
 
     def _toggle_theme(self) -> None:
         new_mode = "dark" if self._current_theme_mode() == "light" else "light"
+        # Persist first: every widget-level repaint below resolves the current mode
+        # through QSettings.  Applying the palette before this write repainted those
+        # widgets with the old theme and made a switch look half-finished.
+        QSettings().setValue("theme_mode", new_mode)
         app = QApplication.instance()
         if app is not None:
             apply_theme(app, mode=new_mode)
-        QSettings().setValue("theme_mode", new_mode)
+        # ReadinessDialog owns a few semantic card/pill styles that cannot inherit
+        # the application palette. Repaint an already-open dialog in place so the
+        # mode switch is complete without restarting or losing check state.
+        try:
+            if self.readiness_dialog is not None and self.readiness_dialog.isVisible():
+                self.readiness_dialog.apply_theme(new_mode)
+        except RuntimeError:
+            self.readiness_dialog = None
         self._sync_theme_toggle(new_mode)
         # A QGraphicsScene ignores widget QSS, so repaint the viewer background.
         if hasattr(self, "figure_viewer"):
@@ -297,7 +446,7 @@ class MainWindow(QMainWindow):
             self.ppi_viewer.update_theme(self._ppi_theme_palette())
         # Widget-level stylesheets are not regenerated by apply_theme; repaint the
         # ones that carry a palette colour so they do not keep the old theme's hex.
-        self._repaint_themed_labels()
+        self._repaint_themed_labels(new_mode)
 
     def _sync_theme_toggle(self, mode: str) -> None:
         # The button is labelled with the mode it switches TO.
@@ -316,7 +465,7 @@ class MainWindow(QMainWindow):
         for key in ("_outputs_main_splitter", "_outputs_results_splitter"):
             sp = getattr(self, key, None)
             if sp is not None:
-                s.setValue(f"outputs/{key}", sp.saveState())
+                s.setValue(f"outputs/v3/{key}", sp.saveState())
 
     def _restore_geometry_state(self) -> None:
         s = QSettings()
@@ -338,10 +487,15 @@ class MainWindow(QMainWindow):
         # destroyed by Qt crashes, and the WSL process tree would be orphaned.
         if self.runner is not None and self.runner.is_running():
             self._stop_run(announce=False)
+        for attr in ("_sanity_worker", "_phase_refresh_worker", "_launch_preflight_worker"):
+            worker = getattr(self, attr, None)
+            if worker is not None and worker.isRunning():
+                worker.requestInterruption()
         # Let short-lived background probes finish so QThread isn't destroyed while
         # running (which would crash). These are bounded WSL/resource queries.
         for attr in ("_wsl_autodetect_worker", "_wsl_workdir_worker", "_detect_worker",
-                     "_geo_worker", "_sra_worker", "_reports_worker"):
+                     "_geo_worker", "_sra_worker", "_reports_worker", "_estimate_worker",
+                     "_sanity_worker", "_phase_refresh_worker", "_launch_preflight_worker"):
             worker = getattr(self, attr, None)
             if worker is not None and worker.isRunning():
                 worker.wait(3000)
@@ -353,7 +507,7 @@ class MainWindow(QMainWindow):
     # cards stretch to the window edge, so a combo holding "STAR" renders ~1350px wide
     # on a 1600px display. Left-aligned rather than centred: a form is read from the
     # left margin, and centring strands it between two dead bands on a wide window.
-    CONTENT_MAX_WIDTH = 1100
+    CONTENT_MAX_WIDTH = 1240
     FIELD_MAX_WIDTH = 460
 
     def _scrollable(self, page: QWidget) -> QScrollArea:
@@ -379,40 +533,152 @@ class MainWindow(QMainWindow):
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         return scroll
 
-    def _install_tab_transition(self) -> None:
-        """Fade a tab in when it becomes current.
+    def _inspector_scrollable(self, page: QWidget) -> QScrollArea:
+        """Wrap a narrow inspector without inheriting a desktop form's minimum width.
 
-        Qt style sheets have no `transition` property — a CSS-style rule would parse
-        and do nothing — so the motion is a QPropertyAnimation driving the opacity of
-        a QGraphicsOpacityEffect. Short and OutCubic so it reads as a settle rather
-        than a delay; the widget is interactive throughout.
+        Inspectors sit beside a preview, so their labels must wrap inside the
+        available column. A generic holder retained the form's size hint and could
+        clip controls behind the inspector even while both scrollbars reported zero.
         """
-        self._tab_fade: QPropertyAnimation | None = None
-        self.tabs.currentChanged.connect(self._fade_current_tab)
+        page.setMinimumWidth(0)
+        page.setMaximumWidth(16777215)
+        page.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        for combo in page.findChildren(QComboBox):
+            combo.setMinimumWidth(0)
+            combo.setSizePolicy(QSizePolicy.Policy.Ignored, combo.sizePolicy().verticalPolicy())
+        for checkbox in page.findChildren(QCheckBox):
+            checkbox.setMinimumWidth(0)
+            checkbox.setSizePolicy(QSizePolicy.Policy.Ignored, checkbox.sizePolicy().verticalPolicy())
+        scroll = QScrollArea()
+        scroll.setWidget(page)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Reserve the QTabWidget frame overlap so focus/ensureWidgetVisible never
+        # leaves the final control partly hidden behind the inspector's action row.
+        scroll.setViewportMargins(0, 0, 0, 14)
+        scroll.setMinimumWidth(0)
+        scroll.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        return scroll
 
-    def _fade_current_tab(self, index: int) -> None:
-        page = self.tabs.widget(index)
-        if page is None:
-            return
-        # A QGraphicsEffect on a QWebEngineView forces it through a software raster
-        # path, which blanks the PPI canvas; leave that tab unanimated.
-        viewer = getattr(self, "ppi_viewer", None)
-        if viewer is not None and page.isAncestorOf(viewer):
-            return
-        if self._tab_fade is not None:
-            self._tab_fade.stop()
-        effect = QGraphicsOpacityEffect(page)
-        page.setGraphicsEffect(effect)
-        anim = QPropertyAnimation(effect, b"opacity", page)
-        anim.setDuration(140)
-        anim.setStartValue(0.0)
-        anim.setEndValue(1.0)
-        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        # Drop the effect when finished: a live QGraphicsEffect keeps the page on an
-        # offscreen surface, which costs a repaint on every scroll.
-        anim.finished.connect(lambda: page.setGraphicsEffect(None))
-        self._tab_fade = anim
-        anim.start()
+    def _page_intro(self, title: str, purpose: str) -> QFrame:
+        """Build the single, restrained heading treatment used by every task page."""
+        card = QFrame()
+        card.setObjectName("pageIntro")
+        card.setProperty("uiRole", "pageIntro")
+        card.setAccessibleName(title)
+        intro_layout = QVBoxLayout(card)
+        intro_layout.setContentsMargins(12, 8, 12, 8)
+        intro_layout.setSpacing(2)
+        heading = QLabel(title)
+        heading.setObjectName("pageTitleText")
+        heading.setProperty("uiRole", "pageTitle")
+        body = QLabel(purpose)
+        body.setObjectName("pagePurposeText")
+        body.setProperty("uiRole", "pagePurpose")
+        body.setWordWrap(True)
+        intro_layout.addWidget(heading)
+        intro_layout.addWidget(body)
+        return card
+
+    def _empty_state_panel(
+        self,
+        title: str,
+        body: str,
+        action_text: str | None = None,
+        action=None,
+    ) -> tuple[QWidget, QLabel, QLabel, QPushButton | None]:
+        """Create a bounded empty state instead of leaving instructions loose on a canvas."""
+        wrapper = QWidget()
+        outer = QVBoxLayout(wrapper)
+        outer.setContentsMargins(12, 12, 12, 12)
+        outer.addStretch(1)
+        card = QFrame()
+        card.setProperty("uiRole", "emptyState")
+        card.setMinimumWidth(380)
+        card.setMaximumWidth(560)
+        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(20, 18, 20, 18)
+        card_layout.setSpacing(8)
+        heading = QLabel(title)
+        heading.setProperty("uiRole", "emptyTitle")
+        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        text = QLabel(body)
+        text.setProperty("uiRole", "emptyBody")
+        text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        text.setWordWrap(True)
+        # QLabel's size hint underestimates wrapped copy until the card has its
+        # final width.  Reserve two text lines so longer empty-state guidance is
+        # never compressed underneath the action button at compact sizes.
+        if action_text:
+            text.setMinimumHeight(40)
+        card_layout.addWidget(heading)
+        card_layout.addWidget(text)
+        button: QPushButton | None = None
+        if action_text:
+            button = QPushButton(action_text)
+            if action is not None:
+                button.clicked.connect(action)
+            action_row = QHBoxLayout()
+            action_row.addStretch(1)
+            action_row.addWidget(button)
+            action_row.addStretch(1)
+            card_layout.addLayout(action_row)
+        outer.addWidget(card, 0, Qt.AlignmentFlag.AlignHCenter)
+        outer.addStretch(1)
+        return wrapper, heading, text, button
+
+    def _section_panel(
+        self,
+        title: str,
+        hint: str | None = None,
+    ) -> tuple[QFrame, QVBoxLayout]:
+        """Build a content-sized section without a fieldset title notch."""
+        section = QFrame()
+        section.setProperty("uiRole", "section")
+        section.setAccessibleName(title)
+        section.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(8, 8, 8, 10)
+        section_layout.setSpacing(7)
+        heading = QLabel(title)
+        heading.setProperty("uiRole", "sectionTitle")
+        section_layout.addWidget(heading)
+        if hint:
+            description = QLabel(hint)
+            description.setProperty("uiRole", "sectionHint")
+            description.setWordWrap(True)
+            section_layout.addWidget(description)
+        return section, section_layout
+
+    def _disclosure(
+        self,
+        title: str,
+        *,
+        expanded: bool = False,
+    ) -> tuple[QToolButton, QWidget]:
+        """Create a keyboard-accessible native disclosure and its content pane."""
+        toggle = QToolButton()
+        toggle.setText(title)
+        toggle.setAccessibleName(title)
+        toggle.setProperty("uiRole", "disclosure")
+        toggle.setCheckable(True)
+        toggle.setChecked(expanded)
+        toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        toggle.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        content = QWidget()
+        content.setProperty("uiRole", "disclosureContent")
+        content.setVisible(expanded)
+
+        def update_disclosure(checked: bool) -> None:
+            toggle.setArrowType(
+                Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
+            content.setVisible(checked)
+
+        toggle.toggled.connect(update_disclosure)
+        return toggle, content
 
     def _tune_form_widths(self) -> None:
         """Stop form fields from stretching to the window edge.
@@ -427,8 +693,18 @@ class MainWindow(QMainWindow):
         # individual controls whose content is short and bounded, so a combo holding
         # "STAR" no longer occupies the row a file path needs.
         for form in self.findChildren(QFormLayout):
-            form.setHorizontalSpacing(16)
-            form.setVerticalSpacing(10)
+            if form.property("narrowInspector"):
+                form.setHorizontalSpacing(10)
+                form.setVerticalSpacing(6)
+                form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+            elif form.property("compactColumns"):
+                form.setHorizontalSpacing(12)
+                form.setVerticalSpacing(6)
+                form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
+            else:
+                form.setHorizontalSpacing(16)
+                form.setVerticalSpacing(10)
+                form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
 
         for combo in self.findChildren(QComboBox):
             # Size to the widest entry the combo can actually show, not to the row.
@@ -445,7 +721,15 @@ class MainWindow(QMainWindow):
 
     def _build_project_tab(self) -> None:
         page = QWidget()
-        layout = QFormLayout(page)
+        layout = QVBoxLayout(page)
+        layout.setSpacing(10)
+        layout.addWidget(self._page_intro(
+            "Start or open a project",
+            "A project keeps the sample sheet, workflow settings, checks and results together. "
+            "Create a new project, open an existing one, or start from the public benchmark."))
+
+        setup_group = QGroupBox("Project location")
+        setup_form = QFormLayout(setup_group)
         self.project_name = QLineEdit("example_project")
         self._default_workdir = str(Path.home() / "BulkSeqProjects")
         self.workdir = QLineEdit(self._default_workdir)
@@ -472,6 +756,12 @@ class MainWindow(QMainWindow):
                 "The project folder and the pipeline run in the local filesystem and environment."
             )
         workdir_hint.setWordWrap(True)
+        workdir_hint.setProperty("hint", True)
+        setup_form.addRow("Project name", self.project_name)
+        setup_form.addRow("Working directory", workdir_row)
+        setup_form.addRow("", workdir_hint)
+        layout.addWidget(setup_group)
+
         create = QPushButton("New Project")
         create.setProperty("primary", True)
         create.setToolTip("Scaffold a new project folder: a default config.yaml and an empty samples.tsv.")
@@ -483,24 +773,42 @@ class MainWindow(QMainWindow):
         open_existing.clicked.connect(self._open_project)
         readiness = QPushButton("Check Environment")
         readiness.clicked.connect(self.show_readiness_dialog)
+        primary_actions = QGridLayout()
+        primary_actions.setHorizontalSpacing(8)
+        primary_actions.setVerticalSpacing(6)
+        primary_actions.addWidget(create, 0, 0)
+        primary_actions.addWidget(open_existing, 0, 1)
+        primary_actions.addWidget(benchmark, 1, 0)
+        primary_actions.addWidget(readiness, 1, 1)
+        primary_actions.setColumnStretch(2, 1)
+        layout.addLayout(primary_actions)
+
+        recent_group = QGroupBox("Recent projects")
+        recent_layout = QHBoxLayout(recent_group)
         self.recent_pick = QComboBox()
         self.recent_pick.setToolTip("Projects you have opened before.")
-        recent_open = QPushButton("Open recent")
-        recent_open.clicked.connect(self._open_recent_project)
-        recent_row = QHBoxLayout()
-        recent_row.addWidget(self.recent_pick, 1)
-        recent_row.addWidget(recent_open)
-        self.project_status = QTextEdit()
-        self.project_status.setReadOnly(True)
-        self.project_status.setPlaceholderText(
+        self.recent_open = QPushButton("Open recent")
+        self.recent_open.clicked.connect(self._open_recent_project)
+        self.recent_empty_label = QLabel("No recent projects yet.")
+        self.recent_empty_label.setProperty("hint", True)
+        recent_layout.addWidget(self.recent_pick)
+        recent_layout.addWidget(self.recent_open)
+        recent_layout.addWidget(self.recent_empty_label)
+        recent_layout.addStretch(1)
+        layout.addWidget(recent_group)
+
+        status_group = QGroupBox("Project status and next step")
+        status_layout = QVBoxLayout(status_group)
+        status_banner = QFrame()
+        status_banner.setProperty("uiRole", "statusBanner")
+        status_banner_layout = QVBoxLayout(status_banner)
+        status_banner_layout.setContentsMargins(12, 8, 12, 8)
+        self.project_status = _PlainTextLabel(
             "Create a new project or open an existing one. Status and next steps appear here.")
-        layout.addRow("Project name", self.project_name)
-        layout.addRow("Working directory", workdir_row)
-        layout.addRow("", workdir_hint)
-        layout.addRow(create, open_existing)
-        layout.addRow(benchmark, readiness)
-        layout.addRow("Recent projects", recent_row)
-        layout.addRow("Status", self.project_status)
+        status_banner_layout.addWidget(self.project_status)
+        status_layout.addWidget(status_banner)
+        layout.addWidget(status_group)
+        layout.addStretch(1)
         self._refresh_recent_projects()
         self.tabs.addTab(self._scrollable(page), "Project")
 
@@ -515,7 +823,10 @@ class MainWindow(QMainWindow):
         self.recent_pick.clear()
         self.recent_pick.addItems([str(p) for p in recent])
         self.recent_pick.blockSignals(False)
-        self.recent_pick.setEnabled(bool(recent))
+        has_recent = bool(recent)
+        self.recent_pick.setVisible(has_recent)
+        self.recent_open.setVisible(has_recent)
+        self.recent_empty_label.setVisible(not has_recent)
 
     def _open_recent_project(self) -> None:
         path = self.recent_pick.currentText().strip() if hasattr(self, "recent_pick") else ""
@@ -525,76 +836,138 @@ class MainWindow(QMainWindow):
     def _build_input_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setSpacing(10)
+        layout.addWidget(self._page_intro(
+            "Choose an input route",
+            "Start from public sequencing accessions, local FASTQ files, processed RNA-seq tables, "
+            "or a microarray dataset. Each route keeps only the controls relevant to that input."))
+
+        routes = QTabWidget()
+        routes.setObjectName("inputRouteTabs")
+        routes.setMinimumHeight(250)
+        routes.setMaximumHeight(360)
+        routes.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.input_route_tabs = routes
+
+        # Public sequencing accessions (SRA / ENA).
+        public_page = QWidget()
+        public_layout = QVBoxLayout(public_page)
+        public_layout.setContentsMargins(10, 10, 10, 10)
+        public_hint = QLabel(
+            "Paste run or study accessions. Metadata is fetched from ENA; suggested condition "
+            "groups must still be reviewed on the Metadata page before differential expression.")
+        public_hint.setWordWrap(True)
+        public_layout.addWidget(public_hint)
         self.sra_box = QTextEdit()
         # Paste as plain text: strip any source formatting (fonts/colours/links) so pasted
         # accessions come in clean.
         self.sra_box.setAcceptRichText(False)
         self.sra_box.setPlaceholderText("Paste SRR/ERR/DRR runs, or an SRP/PRJNA/GSE study accession, one per line")
-        buttons = QHBoxLayout()
+        self.sra_box.setMinimumHeight(105)
+        self.sra_box.setMaximumHeight(150)
+        public_layout.addWidget(self.sra_box)
+        public_actions = QHBoxLayout()
         fetch_meta = QPushButton("Fetch metadata && build samples")
+        fetch_meta.setProperty("primary", True)
         fetch_meta.clicked.connect(self._fetch_sra_metadata)
         save_sra = QPushButton("Save accessions only")
         save_sra.clicked.connect(self._save_sra)
+        public_actions.addWidget(fetch_meta)
+        public_actions.addWidget(save_sra)
+        public_actions.addStretch(1)
+        public_layout.addLayout(public_actions)
+        public_layout.addStretch(1)
+        routes.addTab(public_page, "Public accessions")
+
+        # Local raw sequencing files.
+        fastq_page = QWidget()
+        fastq_layout = QVBoxLayout(fastq_page)
+        fastq_layout.setContentsMargins(10, 10, 10, 10)
+        fastq_hint = QLabel(
+            "Select local single-end or paired-end FASTQ files. BulkSeq Studio detects sample "
+            "names and pairing, then creates the sample sheet for review.")
+        fastq_hint.setWordWrap(True)
         pick_fastq = QPushButton("Select FASTQ Files")
+        pick_fastq.setProperty("primary", True)
         pick_fastq.clicked.connect(self._select_fastqs)
-        for b in (fetch_meta, save_sra, pick_fastq):
-            buttons.addWidget(b)
-        self.input_preview = QTextEdit()
-        self.input_preview.setReadOnly(True)
-        self.input_preview.setPlaceholderText(
-            "Pick an input mode above. A summary of the imported samples and the next steps appears here.")
-        layout.addWidget(QLabel("SRA / ENA accessions"))
-        layout.addWidget(self.sra_box)
-        layout.addLayout(buttons)
-        _ena_hint = QLabel("Fetched from the ENA Portal API: layout, FASTQ URLs, read counts. A condition grouping is suggested from the sample titles (or GEO characteristics) where possible; always review and correct it in the Metadata tab before running — it sets the differential-expression contrast.")
-        _ena_hint.setWordWrap(True)  # long hint must wrap, not force width / clip on narrow windows
-        layout.addWidget(_ena_hint)
-        layout.addWidget(self.input_preview)
-        cm_row = QHBoxLayout()
-        cm_btn = QPushButton("Use a Count Matrix (skip alignment)")
+        fastq_action = QHBoxLayout()
+        fastq_action.addWidget(pick_fastq)
+        fastq_action.addStretch(1)
+        fastq_layout.addWidget(fastq_hint)
+        fastq_layout.addLayout(fastq_action)
+        fastq_layout.addStretch(1)
+        routes.addTab(fastq_page, "Local FASTQ")
+
+        # Processed RNA-seq starting points.
+        processed_page = QWidget()
+        processed_layout = QVBoxLayout(processed_page)
+        processed_layout.setContentsMargins(10, 10, 10, 10)
+        processed_layout.setSpacing(10)
+
+        cm_group = QGroupBox("Raw count matrix")
+        cm_layout = QVBoxLayout(cm_group)
+        cm_btn = QPushButton("Import count matrix")
         cm_btn.setToolTip("Start from a gene x sample counts table (TSV/CSV or featureCounts output). "
                           "The pipeline skips download/QC/alignment and runs DESeq2 -> figures -> enrichment.")
         cm_btn.clicked.connect(self._import_count_matrix)
-        cm_row.addWidget(QLabel("Already have counts?"))
-        cm_row.addWidget(cm_btn)
-        cm_row.addStretch(1)
-        layout.addLayout(cm_row)
-        dr_row = QHBoxLayout()
-        dr_btn = QPushButton("Upload DESeq2 Results (skip to enrichment/PPI)")
-        dr_btn.setToolTip("Start from a ready DESeq2 results table (CSV/TSV with at least gene_id, "
+        cm_description = QLabel(
+            "Gene × sample raw counts. Skips download, read QC and alignment; retains DESeq2, figures and enrichment.")
+        cm_description.setWordWrap(True)
+        cm_layout.addWidget(cm_description)
+        cm_layout.addWidget(cm_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        processed_layout.addWidget(cm_group)
+
+        dr_group = QGroupBox("Completed DE table")
+        dr_layout = QVBoxLayout(dr_group)
+        dr_btn = QPushButton("Import differential-expression results")
+        dr_btn.setToolTip("Start from an external differential-expression table (CSV/TSV with at least gene_id, "
                           "log2FoldChange and padj). The pipeline skips alignment/counts/DESeq2 and runs "
                           "enrichment, the volcano/MA/p-value figures and the STRING PPI network. PCA, "
                           "sample heatmaps, sample correlation and genes-of-interest need counts and are skipped.")
         dr_btn.clicked.connect(self._import_deseq2_results)
-        dr_row.addWidget(QLabel("Already have DE results?"))
-        dr_row.addWidget(dr_btn)
-        dr_row.addStretch(1)
-        layout.addLayout(dr_row)
-        geo_row = QHBoxLayout()
+        dr_description = QLabel(
+            "Completed differential-expression table. Skips sample-level analysis; retains compatible figures, enrichment and PPI.")
+        dr_description.setWordWrap(True)
+        dr_layout.addWidget(dr_description)
+        dr_layout.addWidget(dr_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        processed_layout.addWidget(dr_group)
+        processed_layout.addStretch(1)
+        routes.addTab(processed_page, "Count / DE tables")
+
+        # Microarray routes and processing options.
+        micro_page = QWidget()
+        micro_layout = QVBoxLayout(micro_page)
+        micro_layout.setContentsMargins(10, 10, 10, 10)
+        micro_hint = QLabel(
+            "Fetch a GEO Series microarray or import an already-normalized expression matrix. "
+            "RNA-seq GSE records are redirected to the public-accession route.")
+        micro_hint.setWordWrap(True)
+        micro_layout.addWidget(micro_hint)
         self.gse_box = QLineEdit()
         self.gse_box.setPlaceholderText("GSE accession, e.g. GSE5583")
-        self.gse_box.setMaximumWidth(220)
         self.gse_box.setToolTip(
             "GEO Series (GSE) microarray accessions only. For RNA-seq, enter SRA/ENA run "
             "accessions in the other box instead.")
-        geo_btn = QPushButton("Fetch a GEO microarray series (GSE)")
+        geo_btn = QPushButton("Fetch GEO series")
         geo_btn.setToolTip("Load a GEO/GSE microarray dataset. The pipeline ingests the normalized "
                            "intensities (GEOquery/affy), runs limma differential expression, then the "
                            "same figures and enrichment. RNA-seq GSEs are redirected to the SRA box.")
         geo_btn.clicked.connect(self._fetch_geo_series)
-        micro_upload_btn = QPushButton("Upload a local microarray matrix")
+        micro_upload_btn = QPushButton("Import microarray matrix")
         micro_upload_btn.setToolTip(
             "Load your own microarray data without a GEO accession: a gene x sample expression "
             "matrix (first column gene ids or symbols, one column per sample; already-normalized "
             "log2 intensities). Runs limma differential expression, figures, and enrichment just "
             "like a fetched GEO series — no download.")
         micro_upload_btn.clicked.connect(self._import_microarray_matrix)
-        geo_row.addWidget(QLabel("Microarray?"))
-        geo_row.addWidget(self.gse_box)
+        geo_row = QHBoxLayout()
+        geo_row.addWidget(self.gse_box, 1)
         geo_row.addWidget(geo_btn)
-        geo_row.addWidget(micro_upload_btn)
-        geo_row.addStretch(1)
-        layout.addLayout(geo_row)
+        micro_layout.addLayout(geo_row)
+        upload_row = QHBoxLayout()
+        upload_row.addWidget(micro_upload_btn)
+        upload_row.addStretch(1)
+        micro_layout.addLayout(upload_row)
         # Microarray processing options (consumed by ingest_geo.R for a loaded GEO series).
         # Shown only in microarray mode (toggled in _apply_input_mode_ui).
         self.micro_source = QComboBox()
@@ -619,7 +992,26 @@ class MainWindow(QMainWindow):
         micro_form.addRow("Source", self.micro_source)
         micro_form.addRow("log2 transform", self.micro_log2)
         self.micro_group.setVisible(False)
-        layout.addWidget(self.micro_group)
+        micro_layout.addWidget(self.micro_group)
+        micro_layout.addStretch(1)
+        routes.addTab(micro_page, "Microarray")
+
+        layout.addWidget(routes)
+        preview_heading = QLabel("Import summary and next step")
+        preview_heading.setProperty("uiRole", "sectionTitle")
+        preview_frame = QFrame()
+        preview_frame.setProperty("uiRole", "statusBanner")
+        preview_layout = QVBoxLayout(preview_frame)
+        preview_layout.setContentsMargins(12, 8, 12, 8)
+        self.input_preview = _PlainTextLabel()
+        self.input_preview.setAccessibleName("Input route summary and next step")
+        self.input_preview.setPlainText(
+            "Choose a route above. Imported samples, detected layout and the next required step appear here.")
+        preview_layout.addWidget(self.input_preview)
+        layout.addWidget(preview_heading)
+        layout.addWidget(preview_frame)
+        self.input_preview_frame = preview_frame
+        layout.addStretch(1)
         self.tabs.addTab(self._scrollable(page), "Input Data")
 
     def _fetch_geo_series(self) -> None:
@@ -657,7 +1049,7 @@ class MainWindow(QMainWindow):
                 "not a microarray. Use the SRA/ENA accessions box above for RNA-seq studies.")
             return
         samples = info["samples"]
-        save_metadata(samples, self.project_root / "config" / "samples.tsv")
+        save_metadata(samples, self._configured_samples_path())
         self.metadata_table.load_dataframe(samples)
         organism = str(info.get("organism", "")).strip()
         platform = str(info.get("platform", "")).strip()
@@ -678,6 +1070,7 @@ class MainWindow(QMainWindow):
                 self.config.enrichment.orgdb = entry.get("orgdb") or None
                 self.config.enrichment.kegg_organism = entry.get("kegg_organism") or None
                 self.config.enrichment.gprofiler_organism = entry.get("gprofiler_organism") or None
+                self.config.enrichment.taxon_id = entry.get("taxon_id")
                 self.config.ppi.taxon = entry.get("string_taxon")
         # GPL annotation maps probes to gene symbols, so enrichment uses SYMBOL.
         self.config.enrichment.keytype = "SYMBOL"
@@ -705,10 +1098,31 @@ class MainWindow(QMainWindow):
         # microarray ingest re-sets it; clear it for every other mode here (central guard — the per-import
         # clears in the count-matrix / deseq2-results handlers are now redundant but harmless). Persist
         # only on the rare transition that actually clears it.
-        if (mode != "microarray" and self.project_root is not None
-                and self.config.enrichment.keytype == "SYMBOL"):
+        config_changed = False
+        if mode != "microarray" and self.config.enrichment.keytype == "SYMBOL":
             self.config.enrichment.keytype = None
+            config_changed = True
+        direction = self.config.input.deseq2_results_direction
+        file_provenance = self.config.input.deseq2_results_provenance
+        if mode != "deseq2_results" and (
+            any((direction.numerator, direction.denominator, direction.confirmed, direction.confirmed_at))
+            or file_provenance != Deseq2ResultsFileProvenance()
+        ):
+            self.config.input.deseq2_results_direction = Deseq2ResultsDirectionProvenance()
+            self.config.input.deseq2_results_provenance = Deseq2ResultsFileProvenance()
+            config_changed = True
+        if config_changed and self.project_root is not None:
             self.manager.save_config(self.project_root, self.config)
+        if hasattr(self, "input_route_tabs"):
+            route_index = {
+                "sra": 0,
+                "fastq": 1,
+                "mixed": 1,
+                "count_matrix": 2,
+                "deseq2_results": 2,
+                "microarray": 3,
+            }.get(mode, 0)
+            self.input_route_tabs.setCurrentIndex(route_index)
         if getattr(self, "reference_mode_banner", None) is not None:
             if mode == "microarray":
                 self.reference_mode_banner.setText(
@@ -725,7 +1139,7 @@ class MainWindow(QMainWindow):
                 self.reference_mode_banner.setVisible(True)
             elif mode == "deseq2_results":
                 self.reference_mode_banner.setText(
-                    "DESeq2-results mode: alignment and a genome reference are skipped. Select your "
+                    "External-results mode: alignment and a genome reference are skipped. Select your "
                     "organism below — it enables GO/KEGG enrichment and the STRING PPI network. PCA, "
                     "sample heatmaps, sample correlation and genes-of-interest need per-sample counts "
                     "and are not produced in this mode.")
@@ -783,6 +1197,77 @@ class MainWindow(QMainWindow):
         if getattr(self, "de_engine", None) is not None:
             # microarray forces limma-trend; deseq2-results bypasses the DE step entirely.
             self.de_engine.setEnabled(mode not in ("microarray", "deseq2_results"))
+        external_results = mode == "deseq2_results"
+        if getattr(self, "workflow_de_form", None) is not None:
+            # An uploaded DE table already carries its model and signed contrast. Hide the
+            # local-model rows so users cannot edit settings that this route must ignore;
+            # downstream FDR and fold-change decision thresholds stay available.
+            self.workflow_de_form.setRowVisible(self.de_engine, not external_results)
+            for row_widget in self.workflow_local_comparison_rows:
+                self.workflow_de_form.setRowVisible(row_widget, not external_results)
+                row_widget.setEnabled(not external_results)
+            # This optional note has no row when a project has only one contrast. Do not
+            # resurrect its empty form row while restoring ordinary input modes.
+            self.workflow_de_form.setRowVisible(
+                self.contrast_info,
+                not external_results and bool(self.contrast_info.text().strip()),
+            )
+            self.contrast_info.setEnabled(not external_results)
+        if getattr(self, "external_de_direction_banner", None) is not None:
+            direction = self.config.input.deseq2_results_direction
+            if external_results and direction.confirmed and direction.numerator and direction.denominator:
+                self.external_de_direction_banner.setText(
+                    "Positive log2FC means higher expression in "
+                    f"{direction.numerator} than in {direction.denominator}. To change this "
+                    "interpretation, use Project and data > Add data and re-import the table."
+                )
+            elif external_results:
+                self.external_de_direction_banner.setText(
+                    "Imported result direction is not confirmed. Re-import the results table on "
+                    "Input data and confirm what positive log2 fold change means; pre-run validation "
+                    "will block analysis until then."
+                )
+            self.external_de_direction_banner.setVisible(external_results)
+        if getattr(self, "alpha_threshold_info", None) is not None:
+            recorded_method = str(
+                self.config.input.deseq2_results_provenance.p_adjustment_method or ""
+            ).strip()
+            method_key = recorded_method.casefold().replace("-", " ")
+            bh_confirmed = (
+                "benjamini" in method_key and "hochberg" in method_key
+            ) or method_key.strip() in {"bh", "bh fdr"}
+            if external_results and not bh_confirmed:
+                method_note = (
+                    f" The recorded upstream adjustment method is {recorded_method}."
+                    if recorded_method and method_key not in {"unknown", "unspecified", "not reported"}
+                    else " The upstream adjustment method was not reported."
+                )
+                threshold_title = "Adjusted p-value"
+                threshold_help = (
+                    "Threshold applied directly to the adjusted p-values supplied in the imported "
+                    f"differential-expression table.{method_note}"
+                )
+            else:
+                threshold_title = "BH FDR"
+                threshold_help = (
+                    "Significance threshold on Benjamini-Hochberg adjusted p-values. Default 0.05."
+                )
+            self._set_info_label(self.alpha_threshold_info, threshold_title, threshold_help)
+            self.alpha.setAccessibleName(threshold_title)
+            self.alpha.setToolTip(threshold_help)
+        if getattr(self, "workflow_design_toggle", None) is not None:
+            self.workflow_design_toggle.setVisible(not external_results)
+            self.workflow_design_toggle.setEnabled(not external_results)
+            if external_results:
+                self.workflow_design_toggle.setChecked(False)
+        if getattr(self, "workflow_design_options", None) is not None:
+            self.workflow_design_options.setVisible(
+                not external_results and self.workflow_design_toggle.isChecked())
+            self.workflow_design_options.setEnabled(not external_results)
+        for model_control_name in ("de_min_count", "de_shrink"):
+            model_control = getattr(self, model_control_name, None)
+            if model_control is not None:
+                model_control.setEnabled(not external_results)
         if getattr(self, "organellar", None) is not None:
             self.organellar.setEnabled(alignment_active)  # needs a genome + GTF
         if getattr(self, "rseqc", None) is not None:
@@ -798,59 +1283,233 @@ class MainWindow(QMainWindow):
             # Only meaningful when meta-analysis is both available (mode) and enabled.
             self.per_study_enrichment.setEnabled(
                 self.meta_analysis.isEnabled() and self.meta_analysis.isChecked())
+        if hasattr(self, "trim_poly_g"):
+            self._sync_trimmer_controls()
+        if hasattr(self, "workflow_summary"):
+            self._update_workflow_summary()
+        self._update_workflow_section_height()
+
+    def _update_workflow_section_height(self, *_args) -> None:
+        """Fit the active settings section before resorting to inner scrolling."""
+        tabs = getattr(self, "workflow_section_tabs", None)
+        if tabs is None:
+            return
+        current = tabs.currentWidget()
+        if current is None:
+            return
+        external_comparison = (
+            self.config is not None
+            and self.config.input.type == "deseq2_results"
+            and tabs.currentIndex() == 0
+        )
+
+        content_height = current.sizeHint().height()
+        if isinstance(current, QScrollArea) and current.widget() is not None:
+            holder = current.widget()
+            holder_layout = holder.layout()
+            section = (
+                holder_layout.itemAt(0).widget()
+                if holder_layout is not None and holder_layout.count() else None
+            )
+            section_layout = section.layout() if section is not None else None
+            if section_layout is not None:
+                section_layout.activate()
+                margins = section_layout.contentsMargins()
+                content_height = margins.top() + margins.bottom()
+                content_width = max(
+                    1,
+                    current.viewport().width() - margins.left() - margins.right(),
+                )
+                for index in range(section_layout.count()):
+                    item = section_layout.itemAt(index)
+                    widget = item.widget()
+                    if widget is not None:
+                        if widget.isHidden():
+                            continue
+                        if widget.layout() is not None:
+                            widget.layout().activate()
+                        if widget.hasHeightForWidth():
+                            content_height += widget.heightForWidth(content_width)
+                        elif widget.layout() is not None and widget.layout().hasHeightForWidth():
+                            content_height += widget.layout().heightForWidth(content_width)
+                        else:
+                            content_height += widget.sizeHint().height()
+                        continue
+                    spacer = item.spacerItem()
+                    if spacer is not None:
+                        content_height += spacer.sizeHint().height()
+        # QTabWidget is not a QFrame, so derive its small pane allowance rather
+        # than relying on a frameWidth API it does not expose.
+        chrome_height = tabs.tabBar().sizeHint().height() + 4
+        natural_height = content_height + chrome_height
+
+        # The tab bar and one control row are the true minimum. Short collapsed
+        # sections should not inherit a large arbitrary blank surface.
+        minimum_height = max(
+            tabs.minimumSizeHint().height(), tabs.tabBar().sizeHint().height() + 44)
+        desired_height = max(minimum_height, natural_height)
+        if external_comparison:
+            # The external-results comparison contains only immutable direction
+            # provenance and two thresholds; keep that deliberately short.
+            desired_height = min(desired_height, 230)
+
+        page = getattr(self, "workflow_page", None)
+        page_layout = getattr(self, "workflow_page_layout", None)
+        intro = getattr(self, "workflow_intro", None)
+        save_bar = getattr(self, "workflow_save_bar", None)
+        if (
+            page is not None
+            and page_layout is not None
+            and intro is not None
+            and save_bar is not None
+            and page.isVisible()
+            and page.height() > 0
+        ):
+            margins = page_layout.contentsMargins()
+            intro_height = intro.height() if intro.height() > 0 else intro.sizeHint().height()
+            save_height = save_bar.height() if save_bar.height() > 0 else save_bar.sizeHint().height()
+            available_height = (
+                page.height()
+                - margins.top()
+                - margins.bottom()
+                - intro_height
+                - save_height
+                - page_layout.spacing() * 2
+            )
+            desired_height = min(desired_height, max(minimum_height, available_height))
+
+        target_height = max(minimum_height, int(desired_height))
+        tabs.setFixedHeight(target_height)
+        tabs.updateGeometry()
+
+    def _schedule_workflow_section_height_update(self, *_args) -> None:
+        """Coalesce disclosure, navigation and resize updates after Qt relayouts."""
+        if self._workflow_height_update_pending:
+            return
+        self._workflow_height_update_pending = True
+
+        def apply_update() -> None:
+            self._workflow_height_update_pending = False
+            self._update_workflow_section_height()
+            # A window resize can deliver before the page layout receives its
+            # final height. Re-evaluate once after that geometry settles.
+            QTimer.singleShot(0, self._update_workflow_section_height)
+
+        QTimer.singleShot(0, apply_update)
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt virtual name
+        # MainWindow.resizeEvent can run before TaskNavigator assigns the final
+        # content geometry. Refit from the Workflow page's own Resize event so
+        # expanded sections never overshoot the space above the persistent save
+        # row during compact/wide transitions.
+        if (
+            watched is getattr(self, "workflow_page", None)
+            and event.type() == QEvent.Type.Resize
+            and hasattr(self, "workflow_section_tabs")
+        ):
+            self._update_workflow_section_height()
+        return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "workflow_section_tabs"):
+            self._schedule_workflow_section_height_update()
 
     def _import_deseq2_results(self) -> None:
         if not self._require_project() or self.config is None:
             return
         assert self.project_root is not None
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select a DESeq2 results table", "", "DESeq2 results (*.csv *.tsv *.txt)")
+            self, "Select a differential-expression results table", "",
+            "Differential-expression results (*.csv *.tsv *.txt)")
         if not path:
             return
         src = Path(path)
-        sep = "," if src.suffix.lower() == ".csv" else "\t"
-        self.statusBar().showMessage("Importing DESeq2 results table...")
+        self.statusBar().showMessage("Validating the complete differential-expression table...")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            try:
-                df = read_user_table(src, sep=sep, comment="#", dtype=str, nrows=5)
-            except Exception as exc:
-                QMessageBox.warning(self, APP_NAME, f"Could not read the table: {exc}")
-                return
-            cols = {str(c).strip().lower() for c in df.columns}
-            def _has(*names: str) -> bool:
-                return any(n.lower() in cols for n in names)
-            missing = []
-            if not _has("gene_id", "gene", "geneid", "id"):
-                missing.append("gene_id")
-            if not _has("log2FoldChange", "log2fc", "logfc"):
-                missing.append("log2FoldChange")
-            if not _has("padj", "adj.P.Val", "FDR", "qvalue"):
-                missing.append("padj")
-            if missing:
-                QMessageBox.warning(
-                    self, APP_NAME,
-                    "The results table is missing required column(s): " + ", ".join(missing) +
-                    ".\n\nRequired: gene_id, log2FoldChange, padj (common synonyms accepted; see the README).")
-                return
-            # Copy verbatim; the ingest step detects CSV vs TSV and normalizes headers.
-            dest = self.project_root / "config" / "deseq2_results.csv"
-            shutil.copyfile(src, dest)
+            validated_source = validate_de_results_table(src)
+        except DETableValidationError as exc:
+            QMessageBox.warning(
+                self, APP_NAME,
+                "The table cannot be imported:\n\n" + "\n".join(f"• {error}" for error in exc.errors),
+            )
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        direction = self._ask_de_results_direction()
+        if direction is None:
+            self.statusBar().showMessage(
+                "Import cancelled — log2FC direction was not confirmed.", 6000)
+            return
+        try:
+            details = self._coerce_external_de_details(direction)
+            confirmed_at = datetime.now().astimezone().isoformat(timespec="seconds")
+            direction_record = Deseq2ResultsDirectionProvenance(
+                numerator=details.numerator,
+                denominator=details.denominator,
+                confirmed=True,
+                confirmed_at=confirmed_at,
+            )
+            method_record = Deseq2ResultsFileProvenance(
+                upstream_method=details.upstream_method,
+                lfc_shrinkage=details.lfc_shrinkage,
+                p_adjustment_method=details.p_adjustment_method,
+            )
+        except (TypeError, ValueError) as exc:
+            QMessageBox.warning(self, APP_NAME, f"The import provenance is invalid: {exc}")
+            return
+
+        # Preserve the source bytes exactly, including a TSV delimiter, but validate
+        # the copied bytes before atomically replacing an earlier project copy.
+        project_copy = "config/deseq2_results.csv"
+        dest = self.project_root / project_copy
+        temp_dest = dest.with_name(dest.name + ".importing")
+        self.statusBar().showMessage("Copying and verifying the differential-expression table...")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            shutil.copyfile(src, temp_dest)
+            validated_copy = validate_de_results_table(temp_dest)
+            if validated_copy.sha256 != validated_source.sha256:
+                raise OSError("the source changed while it was being imported")
+            imported_at = datetime.now().astimezone().isoformat(timespec="seconds")
+            file_record = Deseq2ResultsFileProvenance.model_validate(provenance_payload(
+                validated_copy,
+                original_basename=src.name,
+                imported_at=imported_at,
+                project_copy=project_copy,
+                upstream_method=method_record.upstream_method,
+                lfc_shrinkage=method_record.lfc_shrinkage,
+                p_adjustment_method=method_record.p_adjustment_method,
+            ))
+            temp_dest.replace(dest)
             self.config.input.type = "deseq2_results"
-            self.config.input.deseq2_results = "config/deseq2_results.csv"
+            self.config.input.deseq2_results = project_copy
+            self.config.input.deseq2_results_direction = direction_record
+            self.config.input.deseq2_results_provenance = file_record
             self.config.input.count_matrix = None
             self.config.microarray.gse_accession = None
             # A microarray-only SYMBOL keytype must not carry over; fall back to the
             # organism mapping (or the LOC/ENSEMBL handling in the enrichment step).
             if self.config.enrichment.keytype == "SYMBOL":
                 self.config.enrichment.keytype = None
-            samples = dataframe_from_rows([
-                {"sample_id": "uploaded", "condition": "unknown", "layout": "n/a", "fastq_1": ""}
-            ])
-            save_metadata(samples, self.project_root / "config" / "samples.tsv")
+            # A results-only route has no sample-level matrix. Keep a valid header
+            # without inventing a sample that would imply nonexistent metadata.
+            samples = pd.DataFrame(columns=["sample_id", "condition", "layout", "fastq_1"])
+            save_metadata(samples, self._configured_samples_path())
             self.metadata_table.load_dataframe(samples)
+            if self.config.deseq2.contrasts:
+                contrast = self.config.deseq2.contrasts[0]
+                contrast.numerator = direction_record.numerator or ""
+                contrast.denominator = direction_record.denominator or ""
+                contrast.name = f"{direction_record.numerator}_vs_{direction_record.denominator}"
             self.manager.save_config(self.project_root, self.config)
+        except (DETableValidationError, OSError, ValueError) as exc:
+            QMessageBox.warning(self, APP_NAME, f"Could not create a verified project copy: {exc}")
+            return
         finally:
+            temp_dest.unlink(missing_ok=True)
             QApplication.restoreOverrideCursor()
         if hasattr(self, "gse_box"):
             self.gse_box.clear()
@@ -863,14 +1522,137 @@ class MainWindow(QMainWindow):
             "\n\nNo organism selected yet — pick your organism on the Reference Manager tab so GO/KEGG "
             "enrichment and the STRING PPI network can run.")
         self.input_preview.setPlainText(
-            f"DESeq2-results mode: imported {src.name}.\n\n"
-            "The pipeline skips alignment, counts and DESeq2, and runs enrichment (GO/KEGG/GSEA), the "
+            f"External-results mode: imported {src.name} as the verified project copy.\n\n"
+            "The pipeline skips alignment, counts and local differential-expression modelling, and runs "
+            "enrichment (GO/KEGG/GSEA), the "
             "volcano / MA / p-value figures, and the STRING PPI network directly from your table. PCA, "
             "sample-distance and expression heatmaps, sample correlation, the Wilcoxon diagnostic and "
             "genes-of-interest need per-sample counts and are skipped." + org_note +
-            "\n\nNext: select your organism (Reference Manager), optionally set the contrast factor/levels "
-            "on Workflow Settings to name the comparison, then Start Run.")
-        self.statusBar().showMessage(f"Imported DESeq2 results: {src.name}", 8000)
+            f"\n\nDirection recorded: positive log2FoldChange means higher in {direction_record.numerator} "
+            f"than {direction_record.denominator}."
+            f"\nSource method: {file_record.upstream_method}; LFC shrinkage: {file_record.lfc_shrinkage}; "
+            f"adjusted-p method: {file_record.p_adjustment_method}."
+            "\n\nNext: select the organism annotation needed for enrichment/STRING, review validation, then run.")
+        self.statusBar().showMessage(
+            f"Imported and verified {validated_source.row_count:,} differential-expression rows", 8000)
+
+    @staticmethod
+    def _coerce_external_de_details(
+        value: ExternalDEImportDetails | tuple[str, str],
+    ) -> ExternalDEImportDetails:
+        # Keep extensions written against the earlier two-value direction prompt
+        # compatible; new callers receive the complete record.
+        if isinstance(value, ExternalDEImportDetails):
+            return value
+        if isinstance(value, tuple) and len(value) == 2:
+            return ExternalDEImportDetails(value[0], value[1])
+        raise TypeError("Expected confirmed external-results import details.")
+
+    def _ask_de_results_direction(self) -> ExternalDEImportDetails | None:
+        """Require sign meaning and collect optional upstream-method provenance."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Confirm external-results provenance")
+        dialog.setMinimumWidth(560)
+        dialog_layout = QVBoxLayout(dialog)
+        dialog_layout.addWidget(self._page_intro(
+            "Define the imported comparison",
+            "BulkSeq Studio keeps the supplied signs unchanged. Record exactly what a positive "
+            "log2FoldChange means in the source analysis."))
+        form_group = QGroupBox("Direction provenance")
+        form = QFormLayout(form_group)
+        existing = self.config.input.deseq2_results_direction if self.config is not None else None
+        numerator = QLineEdit(existing.numerator if existing and existing.numerator else "")
+        denominator = QLineEdit(existing.denominator if existing and existing.denominator else "")
+        numerator.setObjectName("externalDENumerator")
+        denominator.setObjectName("externalDEDenominator")
+        numerator.setPlaceholderText("group with positive change, e.g. treated")
+        denominator.setPlaceholderText("reference group, e.g. control")
+        form.addRow("Numerator group", numerator)
+        form.addRow("Denominator group", denominator)
+        summary = QLabel()
+        summary.setWordWrap(True)
+        summary.setProperty("hint", True)
+        form.addRow(summary)
+        confirmation = QCheckBox(
+            "I confirm the direction and any method details entered match the source analysis."
+        )
+        confirmation.setObjectName("externalDEConfirmation")
+        form.addRow(confirmation)
+        dialog_layout.addWidget(form_group)
+
+        method_group = QGroupBox("Source analysis details (optional)")
+        method_form = QFormLayout(method_group)
+        upstream_method = QLineEdit()
+        upstream_method.setObjectName("externalDEUpstreamMethod")
+        upstream_method.setToolTip("For example: DESeq2, edgeR, limma, or another upstream method.")
+        shrinkage = QComboBox()
+        shrinkage.setObjectName("externalDELfcShrinkage")
+        shrinkage.addItem("Unknown / not recorded", "unknown")
+        shrinkage.addItem("Applied", "applied")
+        shrinkage.addItem("Not applied", "not_applied")
+        p_adjustment = QLineEdit()
+        p_adjustment.setObjectName("externalDEPAdjustmentMethod")
+        p_adjustment.setToolTip("For example: Benjamini-Hochberg (BH), Storey q value, or Bonferroni.")
+        method_form.addRow("Upstream DE method", upstream_method)
+        method_form.addRow("LFC shrinkage", shrinkage)
+        method_form.addRow("Adjusted-p method", p_adjustment)
+        method_hint = QLabel(
+            "Leave method fields blank when they are not documented; the project records them as unknown."
+        )
+        method_hint.setWordWrap(True)
+        method_hint.setProperty("hint", True)
+        method_form.addRow(method_hint)
+        dialog_layout.addWidget(method_group)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        ok_button.setText("Confirm and import")
+        ok_button.setProperty("primary", True)
+
+        def update_state() -> None:
+            num = numerator.text().strip()
+            den = denominator.text().strip()
+            try:
+                Deseq2ResultsDirectionProvenance(
+                    numerator=num,
+                    denominator=den,
+                    confirmed=True,
+                    confirmed_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+                )
+                Deseq2ResultsFileProvenance(
+                    upstream_method=upstream_method.text(),
+                    p_adjustment_method=p_adjustment.text(),
+                )
+                valid = True
+            except ValueError:
+                valid = False
+            ok_button.setEnabled(valid and confirmation.isChecked())
+            if num and den:
+                summary.setText(
+                    f"Recorded interpretation: positive log2FoldChange = higher in {num} than {den}."
+                    if valid else "Use two different, single-line group labels and concise method names.")
+            else:
+                summary.setText("Enter both group labels to make the sign unambiguous.")
+
+        numerator.textChanged.connect(update_state)
+        denominator.textChanged.connect(update_state)
+        upstream_method.textChanged.connect(update_state)
+        p_adjustment.textChanged.connect(update_state)
+        confirmation.toggled.connect(update_state)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        dialog_layout.addWidget(buttons)
+        update_state()
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return ExternalDEImportDetails(
+            numerator=numerator.text().strip(),
+            denominator=denominator.text().strip(),
+            upstream_method=upstream_method.text().strip() or "unknown",
+            lfc_shrinkage=str(shrinkage.currentData()),
+            p_adjustment_method=p_adjustment.text().strip() or "unknown",
+        )
 
     def _import_count_matrix(self) -> None:
         if not self._require_project() or self.config is None:
@@ -945,7 +1727,7 @@ class MainWindow(QMainWindow):
                 {"sample_id": sid, "condition": "unknown", "layout": "n/a", "fastq_1": ""}
                 for sid in sample_ids
             ])
-            save_metadata(samples, self.project_root / "config" / "samples.tsv")
+            save_metadata(samples, self._configured_samples_path())
             self.metadata_table.load_dataframe(samples)
             self.config.input.type = "count_matrix"
             self.config.input.count_matrix = "config/counts_matrix.txt"
@@ -1010,7 +1792,7 @@ class MainWindow(QMainWindow):
                 {"sample_id": sid, "condition": "unknown", "layout": "n/a", "fastq_1": ""}
                 for sid in sample_ids
             ])
-            save_metadata(samples, self.project_root / "config" / "samples.tsv")
+            save_metadata(samples, self._configured_samples_path())
             self.metadata_table.load_dataframe(samples)
             self.config.input.type = "microarray"
             self.config.input.count_matrix = None
@@ -1077,7 +1859,7 @@ class MainWindow(QMainWindow):
             self.input_preview.setPlainText("No runs found for those accessions.")
             return
         save_metadata(samples, self.project_root / "config" / "samples.auto_generated.tsv")
-        save_metadata(samples, self.project_root / "config" / "samples.tsv")
+        save_metadata(samples, self._configured_samples_path())
         (self.project_root / "config" / "sra_accessions.txt").write_text("\n".join(accessions) + "\n", encoding="utf-8")
         self.metadata_table.load_dataframe(samples)
         if self.config is not None:
@@ -1086,7 +1868,7 @@ class MainWindow(QMainWindow):
             self.config.input.layout = layouts.pop() if len(layouts) == 1 else "mixed"  # type: ignore[assignment]
             self.manager.save_config(self.project_root, self.config)
             self._apply_input_mode_ui()
-        self.tabs.setCurrentIndex(self.tabs.indexOf(self.metadata_table.parentWidget()))
+        self.tabs.setCurrentIndex(self.metadata_tab_index)
         self.input_preview.setPlainText(
             f"Built {len(samples)} sample(s). Set conditions in the Metadata tab, then run.\n\n"
             + samples[["sample_id", "layout", "read_count", "organism"]].to_string(index=False)
@@ -1106,79 +1888,139 @@ class MainWindow(QMainWindow):
     def _build_metadata_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+        layout.addWidget(self._page_intro(
+            "Review samples",
+            "Review sample identifiers, conditions, read layout and file/accession assignments. "
+            "This step is required for sample-level analysis; imported differential-expression "
+            "results can be explored without a sample sheet."))
 
-        # Group the actions so each button keeps its natural width and reads
-        # clearly, instead of 13 buttons cramped into one shrinking row.
-        groups = [
-            ("Rows", [
-                ("Add row", self.metadata_add_row),
-                ("Delete rows", self.metadata_delete_rows),
-                ("Duplicate rows", self.metadata_duplicate_rows),
-            ]),
-            ("Columns", [
-                ("Add column", self._add_column),
-                ("Rename column", self._rename_column),
-                ("Remove column", self._remove_column),
-            ]),
-            ("Data", [
-                ("Assign condition", self._assign_condition),
-                ("Autofill replicates", self.metadata_autofill),
-                ("Paste", self._paste_metadata),
-            ]),
-        ]
-        top_row = QHBoxLayout()
+        # Keep the four most frequent edits visible. Structural and file actions
+        # remain one disclosure away instead of competing as twelve peer buttons.
         tooltips = {
             "Paste": "Paste clipboard cells (e.g. copied from Excel) at the selected cell. "
                      "A single copied value fills every selected cell. Ctrl+V works too "
                      "(if a cell is in edit mode, press Esc first).",
+            "Restore generated": "Replace the edited table with the last sample sheet generated from imported accessions or files.",
         }
-        for title, specs in groups:
-            box = QGroupBox(title)
-            box_layout = QHBoxLayout(box)
-            for text, slot in specs:
-                btn = QPushButton(text)
-                btn.clicked.connect(slot)
-                if text in tooltips:
-                    btn.setToolTip(tooltips[text])
-                box_layout.addWidget(btn)
-            top_row.addWidget(box)
-        top_row.addStretch(1)
-        layout.addLayout(top_row)
-
-        bottom_row = QHBoxLayout()
-        files_box = QGroupBox("File Operations")
-        files_layout = QHBoxLayout(files_box)
-        for text, slot in [
-            ("Import TSV/CSV/XLSX", self._import_metadata),
-            ("Export TSV", self._export_metadata),
-            ("Restore auto-generated", self._restore_auto_metadata),
-        ]:
+        common_box = QGroupBox("Common edits")
+        common_row = QHBoxLayout(common_box)
+        common_row.setSpacing(6)
+        for text, slot in (
+            ("Add row", self.metadata_add_row),
+            ("Delete rows", self.metadata_delete_rows),
+            ("Assign condition", self._assign_condition),
+            ("Paste", self._paste_metadata),
+        ):
             btn = QPushButton(text)
             btn.clicked.connect(slot)
-            files_layout.addWidget(btn)
-        bottom_row.addWidget(files_box)
-        bottom_row.addStretch(1)
+            if text in tooltips:
+                btn.setToolTip(tooltips[text])
+            common_row.addWidget(btn)
+        common_row.addStretch(1)
+        layout.addWidget(common_box)
+
+        more_toggle = QToolButton()
+        more_toggle.setText("More table tools")
+        more_toggle.setCheckable(True)
+        more_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        more_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        more_toggle.setAccessibleName("Show more sample-table tools")
+        layout.addWidget(more_toggle)
+        more_box = QWidget()
+        more_box.setProperty("uiRole", "disclosureContent")
+        action_rows = QVBoxLayout(more_box)
+        action_rows.setContentsMargins(8, 4, 0, 8)
+        action_rows.setSpacing(7)
+        groups = (
+            ("Rows", (
+                ("Duplicate selected", "Duplicate selected metadata rows", self.metadata_duplicate_rows),
+                ("Autofill replicates", "Autofill replicate numbers by condition", self.metadata_autofill),
+            )),
+            ("Columns", (
+                ("Add", "Add metadata column", self._add_column),
+                ("Rename", "Rename selected metadata column", self._rename_column),
+                ("Remove", "Remove selected metadata column", self._remove_column),
+            )),
+            ("Files", (
+                ("Import table…", "Import sample metadata from TSV, CSV, or XLSX", self._import_metadata),
+                ("Export TSV…", "Export sample metadata as TSV", self._export_metadata),
+                ("Restore generated", "Restore the last generated sample sheet", self._restore_auto_metadata),
+            )),
+        )
+        row_labels: list[QLabel] = []
+        self.metadata_advanced_buttons: list[QPushButton] = []
+        for group_title, specs in groups:
+            command_row = QHBoxLayout()
+            command_row.setContentsMargins(0, 0, 0, 0)
+            command_row.setSpacing(6)
+            group_label = QLabel(group_title)
+            group_label.setProperty("uiRole", "sectionLabel")
+            row_labels.append(group_label)
+            command_row.addWidget(group_label, 0, Qt.AlignmentFlag.AlignVCenter)
+            for text, accessible_name, slot in specs:
+                btn = QPushButton(text)
+                btn.clicked.connect(slot)
+                btn.setAccessibleName(accessible_name)
+                btn.setToolTip(
+                    tooltips.get("Restore generated", accessible_name)
+                    if text == "Restore generated" else accessible_name
+                )
+                btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+                command_row.addWidget(btn)
+                self.metadata_advanced_buttons.append(btn)
+            command_row.addStretch(1)
+            action_rows.addLayout(command_row)
+        label_width = max(label.sizeHint().width() for label in row_labels) + 12
+        for label in row_labels:
+            label.setFixedWidth(label_width)
+        more_box.setVisible(False)
+        more_toggle.toggled.connect(more_box.setVisible)
+        more_toggle.toggled.connect(
+            lambda expanded: more_toggle.setArrowType(
+                Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow))
+        self.metadata_more_toggle = more_toggle
+        self.metadata_more_group = more_box
+        layout.addWidget(more_box)
+
+        commit_row = QHBoxLayout()
+        commit_row.addStretch(1)
         validate_btn = QPushButton("Validate")
-        validate_btn.setProperty("primary", True)
         validate_btn.clicked.connect(self._validate_metadata)
         save_btn = QPushButton("Save samples.tsv")
         save_btn.setProperty("primary", True)
         save_btn.clicked.connect(self._save_metadata)
-        bottom_row.addWidget(validate_btn)
-        bottom_row.addWidget(save_btn)
-        layout.addLayout(bottom_row)
+        commit_row.addWidget(validate_btn)
+        commit_row.addWidget(save_btn)
+        layout.addLayout(commit_row)
 
         self.metadata_table = MetadataTable()
-        self.metadata_messages = QTextEdit()
-        self.metadata_messages.setReadOnly(True)
-        layout.addWidget(self.metadata_table)
-        layout.addWidget(self.metadata_messages)
-        self.tabs.addTab(page, "Metadata")
+        layout.addWidget(self.metadata_table, 1)
+        self.metadata_message_heading = QLabel("Validation messages")
+        self.metadata_message_frame = QFrame()
+        self.metadata_message_frame.setProperty("uiRole", "statusBanner")
+        message_layout = QVBoxLayout(self.metadata_message_frame)
+        message_layout.setContentsMargins(12, 7, 12, 7)
+        self.metadata_messages = _PlainTextLabel()
+        self.metadata_messages.setAccessibleName("Sample validation messages")
+        message_layout.addWidget(self.metadata_messages)
+        self.metadata_message_heading.setVisible(False)
+        self.metadata_message_frame.setVisible(False)
+        layout.addWidget(self.metadata_message_heading)
+        layout.addWidget(self.metadata_message_frame)
+        self.metadata_tab_index = self.tabs.addTab(self._scrollable(page), "Metadata")
 
     def _build_reference_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.addWidget(self._page_intro(
+            "Reference and annotation",
+            "Choose a genomic reference for raw-read processing, or organism annotation for identifier "
+            "mapping, enrichment and STRING. Completed result tables remain viewable without one."))
         self.reference_list = QListWidget()
+        self.reference_list.setMinimumHeight(130)
+        self.reference_list.setMaximumHeight(190)
         for entry in load_reference_catalog():
             self.reference_list.addItem(f"{entry['organism_name']} | {entry.get('strain')} | {entry.get('genome_size_category')}")
         choose = QPushButton("Use Selected Preset")
@@ -1193,15 +2035,26 @@ class MainWindow(QMainWindow):
         self.reference_mode_banner.setVisible(False)
         self.current_organism_label = QLabel("Selected organism: — none —")
         self.current_organism_label.setWordWrap(True)
-        self.current_organism_label.setStyleSheet("font-weight: 600;")
+        self.current_organism_label.setProperty("uiRole", "sectionLabel")
         layout.addWidget(self.reference_mode_banner)
-        layout.addWidget(self.current_organism_label)
-        layout.addWidget(QLabel("Available presets"))
-        layout.addWidget(self.reference_list)
-        layout.addWidget(choose)
+        preset_group = QGroupBox("Organism preset")
+        preset_layout = QVBoxLayout(preset_group)
+        preset_layout.addWidget(self.current_organism_label)
+        preset_layout.addWidget(self.reference_list)
+        preset_layout.addWidget(choose, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(preset_group)
 
-        # Custom reference import
-        layout.addWidget(QLabel("Custom reference"))
+        # Custom files are a secondary route. Keep them one disclosure away so
+        # the common organism-preset path remains a single clear decision.
+        custom_toggle = QToolButton()
+        custom_toggle.setText("Use custom reference files")
+        custom_toggle.setCheckable(True)
+        custom_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        custom_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        custom_toggle.setAccessibleName("Show custom reference fields")
+        layout.addWidget(custom_toggle)
+        custom_group = QGroupBox("Custom reference")
+        custom_layout = QVBoxLayout(custom_group)
         form = QFormLayout()
         self.ref_organism = QLineEdit()
         self.ref_genome = QLineEdit()
@@ -1231,10 +2084,23 @@ class MainWindow(QMainWindow):
         form.addRow("Annotation", ann_row)
         form.addRow("Format", self.ref_format)
         form.addRow(validate, use_custom)
-        layout.addLayout(form)
+        custom_layout.addLayout(form)
         self.reference_details = QTextEdit()
         self.reference_details.setReadOnly(True)
-        layout.addWidget(self.reference_details)
+        self.reference_details.setMinimumHeight(90)
+        self.reference_details.setMaximumHeight(150)
+        self.reference_details.setPlaceholderText(
+            "Reference validation and lock details appear here.")
+        custom_layout.addWidget(self.reference_details)
+        custom_group.setVisible(False)
+        custom_toggle.toggled.connect(custom_group.setVisible)
+        custom_toggle.toggled.connect(
+            lambda expanded: custom_toggle.setArrowType(
+                Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow))
+        self.reference_custom_toggle = custom_toggle
+        self.reference_custom_group = custom_group
+        layout.addWidget(custom_group)
+        layout.addStretch(1)
         self.tabs.addTab(self._scrollable(page), "Reference Manager")
 
     def _pick_reference_file(self, target: QLineEdit, filter_str: str) -> None:
@@ -1259,6 +2125,17 @@ class MainWindow(QMainWindow):
         if not genome.is_file() or not annotation.is_file():
             QMessageBox.warning(self, APP_NAME, "Genome FASTA and annotation must exist.")
             return
+        validation = validate_reference(genome, annotation)
+        if any(message.get("status") == "FAIL" for message in validation):
+            detail = self._format_messages(validation)
+            self.reference_details.setPlainText("Reference validation:\n" + detail)
+            QMessageBox.warning(
+                self,
+                APP_NAME,
+                "The custom reference was not selected because its FASTA and annotation "
+                "failed structural or contig-compatibility checks.\n\n" + detail,
+            )
+            return
         genome_md5 = md5sum(genome)
         lock_path = self.project_root / "references" / "project_reference.lock.yaml"
         existing = yaml.safe_load(lock_path.read_text(encoding="utf-8")) if lock_path.exists() else {}
@@ -1281,6 +2158,7 @@ class MainWindow(QMainWindow):
             enr.orgdb = entry.get("orgdb") or None
             enr.kegg_organism = entry.get("kegg_organism") or None
             enr.gprofiler_organism = entry.get("gprofiler_organism") or None
+            enr.taxon_id = entry.get("taxon_id")
             self.config.ppi.taxon = entry.get("string_taxon")
             if self.config.input.type != "microarray":
                 enr.keytype = entry.get("enrichment_keytype") or None
@@ -1339,9 +2217,69 @@ class MainWindow(QMainWindow):
             if name == "Salmon":
                 self.rseqc.setChecked(False)
 
+    def _sync_trimmer_controls(self, *_args) -> None:
+        """Expose only options the selected trimmer actually consumes."""
+        if not hasattr(self, "trim_poly_g"):
+            return
+        fastp_selected = self.trimmer.currentData() == "fastp"
+        enabled = self.trim.isEnabled() and self.trim.isChecked() and fastp_selected
+        self.trim_poly_g.setEnabled(enabled)
+        self.trim_poly_g.setToolTip(
+            "Available for fastp only (NextSeq/NovaSeq two-colour chemistry)."
+            if fastp_selected else
+            "Not used by the selected trimmer; switch to fastp to enable poly-G trimming."
+        )
+
+    def _update_workflow_summary(self, *_args) -> None:
+        if not hasattr(self, "workflow_summary"):
+            return
+        if self.config is None:
+            self.workflow_summary.setText(
+                "Open or create a project to resolve the input route, comparison, and active analysis modules."
+            )
+            return
+        route = str(self.config.input.type).replace("_", " ")
+        numerator = self.numerator.currentText().strip() or "not set"
+        denominator = self.denominator.currentText().strip() or "not set"
+        if self.config.input.type == "deseq2_results":
+            direction = self.config.input.deseq2_results_direction
+            source = self.config.input.deseq2_results_provenance
+            if direction.confirmed and direction.numerator and direction.denominator:
+                sign = (f"positive log2FC = higher in {direction.numerator} than "
+                        f"{direction.denominator}")
+            else:
+                sign = "log2FC direction still needs confirmation"
+            plan = (
+                "provided differential-expression table · no read processing or local DE model · "
+                f"{sign} · upstream method {source.upstream_method} · adjusted-p method "
+                f"{source.p_adjustment_method}"
+            )
+            threshold = (
+                f"use supplied adjusted-p values < {self.alpha.value():g} and "
+                f"|log2FC| ≥ {self.lfc_threshold.value():g}"
+            )
+        elif self.config.input.type == "count_matrix":
+            plan = (f"raw count matrix · no read alignment · {self.de_engine.currentText()} estimates "
+                    f"{numerator} relative to {denominator}")
+        elif self.config.input.type == "microarray":
+            plan = (f"microarray intensities · no read alignment · limma estimates "
+                    f"{numerator} relative to {denominator}")
+        else:
+            plan = (f"{route} input · {self.aligner.currentText()} / {self.quantifier.currentText()} · "
+                    f"estimate {numerator} relative to {denominator}")
+        if self.config.input.type != "deseq2_results":
+            threshold = (
+                f"BH FDR < {self.alpha.value():g} and |log2FC| ≥ {self.lfc_threshold.value():g}"
+            )
+        self.workflow_summary.setText(f"Current plan: {plan} · {threshold}.")
+
     def _build_workflow_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
+        # Preserve the horizontal reading inset while using the vertical space
+        # for expanded settings instead of creating an avoidable inner scroll.
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(8)
         self.aligner = QComboBox()
         self.aligner.addItems(["STAR", "HISAT2", "Salmon"])
         # STAR and HISAT2 align to a sorted BAM -> featureCounts; Salmon quantifies
@@ -1449,6 +2387,8 @@ class MainWindow(QMainWindow):
         self.fastp_len.setRange(0, 300)
         self.fastp_len.setValue(36)
         self.trim_poly_g = QCheckBox()
+        self.trimmer.currentIndexChanged.connect(self._sync_trimmer_controls)
+        self.trim.toggled.connect(self._sync_trimmer_controls)
         # DESeq2 design + contrast builder
         self.design = QLineEdit("~ condition")
         self.contrast_factor = QLineEdit("condition")
@@ -1462,8 +2402,8 @@ class MainWindow(QMainWindow):
         self.contrast_info.setWordWrap(True)
         self.contrast_info.setStyleSheet(f"color: {PALETTES[self._current_theme_mode()]['MUTED_TEXT']};")
         self.contrast_info.setVisible(False)
-        refresh = QPushButton("Refresh conditions from metadata")
-        refresh.clicked.connect(self._refresh_conditions)
+        self.refresh_conditions_button = QPushButton("Refresh conditions from metadata")
+        self.refresh_conditions_button.clicked.connect(self._refresh_conditions)
         self.alpha = QDoubleSpinBox()
         self.alpha.setRange(0.0001, 0.5)
         self.alpha.setSingleStep(0.01)
@@ -1485,7 +2425,7 @@ class MainWindow(QMainWindow):
             "most designs, including small ones. limma-voom and edgeR quasi-likelihood are optional "
             "cross-checks best suited to larger designs (about 6+ samples per group); at small n "
             "keep DESeq2. All three produce the same result tables and figures. Not used in "
-            "microarray mode (which uses limma-trend) or when a ready DESeq2 results table is uploaded."
+            "microarray mode (which uses limma-trend) or when an external results table is uploaded."
         )
         save = QPushButton("Save Workflow Settings")
         save.setProperty("primary", True)
@@ -1501,48 +2441,118 @@ class MainWindow(QMainWindow):
         align_form.addRow(self._info_label("Quantifier", "How reads are summarised to gene counts. STAR can use featureCounts (default) or STAR_GeneCounts (STAR's own per-gene counts, no extra pass); HISAT2 uses featureCounts and Salmon uses tximport (those are fixed)."), self.quantifier)
         align_form.addRow(self._info_label("Read trimming", "Adapter and quality trimming (recommended). Uncheck only if your reads are already trimmed. Pick the trimmer below."), self.trim)
         align_form.addRow(self._info_label("Trimmer", "fastp (default), Trim Galore, or Trimmomatic. Opt-in alternatives to fastp; all three yield the same trimmed reads for the rest of the pipeline. Enabled only when trimming is on."), self.trimmer)
-        align_form.addRow(self._info_label("fastp quality (-q)", "Minimum acceptable per-base Phred quality. Bases below this count as low quality. fastp default 15."), self.fastp_q)
-        align_form.addRow(self._info_label("fastp min length (-l)", "Reads shorter than this (after trimming) are discarded. Protocol default 36."), self.fastp_len)
-        align_form.addRow(self._info_label("fastp poly-G (-g)", "Trim poly-G tails, an artefact of 2-colour chemistry (NextSeq/NovaSeq). Leave off for HiSeq/MiSeq."), self.trim_poly_g)
+        align_form.addRow(self._info_label("Quality threshold (Phred)", "Minimum acceptable per-base Phred quality. This value is translated to the selected trimmer. Default 15."), self.fastp_q)
+        align_form.addRow(self._info_label("Minimum read length", "Reads shorter than this after trimming are discarded. This value is translated to the selected trimmer. Protocol default 36."), self.fastp_len)
+        align_form.addRow(self._info_label("fastp poly-G trimming", "fastp-only option for 2-colour chemistry (NextSeq/NovaSeq). Disabled for Trim Galore and Trimmomatic."), self.trim_poly_g)
         align_form.addRow("rRNA filtering", self.rrna)
         align_form.addRow(self._info_label("rRNA tool", "SortMeRNA (default, reference-based, ~150 MB database) or RiboDetector (reference-free, no database). Used only when rRNA filtering is on."), self.rrna_tool)
         align_form.addRow(self._info_label("Contamination screen", "Optional FastQ Screen report of the % of reads matching a panel of reference genomes — a QC report, not a filter. Needs a FastQ Screen config (set it under Advanced parameters); skipped if none is given. Results appear in MultiQC."), self.contam_screen)
         self.align_group = align_group
-        layout.addWidget(align_group)
 
         de_group = QGroupBox("Differential expression")
-        de_form = QFormLayout(de_group)
+        de_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        de_outer = QVBoxLayout(de_group)
+        self.external_de_direction_banner = QLabel("")
+        self.external_de_direction_banner.setObjectName("externalDEDirectionBanner")
+        self.external_de_direction_banner.setAccessibleName(
+            "Imported differential-expression direction")
+        self.external_de_direction_banner.setProperty("uiRole", "statusBanner")
+        self.external_de_direction_banner.setWordWrap(True)
+        self.external_de_direction_banner.setContentsMargins(10, 8, 10, 8)
+        self.external_de_direction_banner.setVisible(False)
+        de_outer.addWidget(self.external_de_direction_banner)
+        de_form = QFormLayout()
         de_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        de_form.addRow(self._info_label("DE engine", "Statistical engine for the differential test on count data. DESeq2 (default) fits most studies, including small ones; limma-voom is an optional cross-check for larger designs (about 6+ samples per group). Both write the same result tables and figures. Ignored in microarray mode and for DESeq2-results uploads."), self.de_engine)
-        de_form.addRow(self._info_label("Design formula", "R model formula used by every engine. The last term is the effect of interest; put known batch effects before it, e.g. '~ batch + condition'."), self.design)
-        design_helper = QPushButton("Design helper: adjust for batch / covariates…")
-        design_helper.setToolTip(
+        de_form.addRow(self._info_label("DE engine", "Statistical engine for the differential test on count data. DESeq2 (default) fits most studies, including small ones; limma-voom is an optional cross-check for larger designs (about 6+ samples per group). Both write the same result tables and figures. Ignored in microarray mode and for external-results uploads."), self.de_engine)
+
+        factor_row = QWidget()
+        factor_layout = QHBoxLayout(factor_row)
+        factor_layout.setContentsMargins(0, 0, 0, 0)
+        factor_layout.setSpacing(8)
+        factor_layout.addWidget(self.contrast_factor, 1)
+        factor_layout.addWidget(self.refresh_conditions_button)
+        de_form.addRow(
+            self._info_label("Comparison factor", "The metadata column compared in the differential test (usually 'condition')."),
+            factor_row)
+        de_form.addRow(self._info_label("Numerator group", "The group whose change is measured. Positive log2 fold change means higher in this group than the denominator."), self.numerator)
+        de_form.addRow(self._info_label("Denominator group", "The comparison baseline. Positive log2 fold change means higher in the numerator than this group."), self.denominator)
+        direction_hint = QLabel(
+            "Direction: positive log2 fold change means higher expression in the numerator group.")
+        direction_hint.setWordWrap(True)
+        direction_hint.setProperty("hint", True)
+        de_form.addRow("", direction_hint)
+        de_form.addRow("", self.contrast_info)
+
+        threshold_row = QWidget()
+        threshold_layout = QHBoxLayout(threshold_row)
+        threshold_layout.setContentsMargins(0, 0, 0, 0)
+        threshold_layout.setSpacing(8)
+        self.alpha_threshold_info = self._info_label(
+            "BH FDR",
+            "Significance threshold on Benjamini-Hochberg adjusted p-values. Default 0.05.",
+        )
+        threshold_layout.addWidget(self.alpha_threshold_info)
+        threshold_layout.addWidget(self.alpha)
+        threshold_layout.addSpacing(12)
+        threshold_layout.addWidget(self._info_label(
+            "|log2FC|", "Minimum absolute log2 fold change for a gene to count as up/down-regulated. Default 1.0."))
+        threshold_layout.addWidget(self.lfc_threshold)
+        threshold_layout.addStretch(1)
+        de_form.addRow("Decision thresholds", threshold_row)
+        de_outer.addLayout(de_form)
+        self.workflow_de_form = de_form
+        self.workflow_comparison_factor_row = factor_row
+        self.workflow_direction_hint = direction_hint
+        self.workflow_local_comparison_rows = (
+            factor_row,
+            self.numerator,
+            self.denominator,
+            direction_hint,
+        )
+
+        design_toggle = QToolButton()
+        design_toggle.setText("Advanced design and organellar options")
+        design_toggle.setCheckable(True)
+        design_toggle.setChecked(False)
+        design_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        design_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        design_toggle.setAccessibleName("Show advanced design and organellar options")
+        de_outer.addWidget(design_toggle)
+
+        design_options = QWidget()
+        design_form = QFormLayout(design_options)
+        design_form.setContentsMargins(0, 0, 0, 0)
+        design_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        design_form.addRow(self._info_label("Design formula", "R model formula used by every engine. The last term is the effect of interest; put known batch effects before it, e.g. '~ batch + condition'."), self.design)
+        self.design_helper_button = QPushButton("Design helper: adjust for batch / covariates…")
+        self.design_helper_button.setToolTip(
             "Compose the design formula from your metadata columns without typing R. Tick the "
             "batch/covariate columns to adjust for; the condition of interest is added last.")
-        design_helper.clicked.connect(self._open_design_helper)
-        de_form.addRow("", design_helper)
-        de_form.addRow(refresh)
-        de_form.addRow(self._info_label("Contrast factor", "The metadata column compared in the differential test (usually 'condition')."), self.contrast_factor)
-        de_form.addRow(self._info_label("Numerator (treated)", "The group whose change is measured. log2 fold change is numerator relative to denominator."), self.numerator)
-        de_form.addRow(self._info_label("Denominator (reference)", "The baseline group. Positive log2 fold change = higher in the numerator than this."), self.denominator)
-        de_form.addRow(self._info_label("Reference level", "The factor's baseline level (normally the same as the denominator); DESeq2 releveled to this."), self.reference_level)
-        de_form.addRow("", self.contrast_info)
-        de_form.addRow(self._info_label("Alpha (padj/FDR)", "Significance threshold on the Benjamini-Hochberg adjusted p-value (false discovery rate). Default 0.05."), self.alpha)
-        de_form.addRow(self._info_label("log2FC threshold", "Minimum absolute log2 fold change for a gene to count as up/down-regulated. |log2FC| >= this AND padj < alpha. Default 1.0 (a 2-fold change)."), self.lfc_threshold)
-        de_form.addRow(QLabel("featureCounts strandedness is auto-inferred per protocol."))
+        self.design_helper_button.clicked.connect(self._open_design_helper)
+        design_form.addRow("", self.design_helper_button)
+        design_form.addRow(self._info_label("Reference level", "The factor's baseline level (normally the same as the denominator); DESeq2 is releveled to this."), self.reference_level)
+        design_form.addRow(QLabel("featureCounts strandedness is auto-inferred per protocol."))
         self.organellar = QComboBox()
         self.organellar.addItem("Keep (include in analysis)", "keep")
         self.organellar.addItem("Discard before differential expression", "discard")
         self.organellar.addItem("Analyse separately (nuclear DE + organellar subset)", "separate")
-        de_form.addRow(self._info_label(
+        design_form.addRow(self._info_label(
             "Mitochondrial / chloroplast genes",
             "Organellar (mitochondrial + chloroplast) transcripts can dominate library size and "
             "skew DESeq2 normalization. Keep them, discard them before the differential test, or "
             "analyse them separately (the main DE runs on nuclear genes only; a separate organellar "
             "count subset and a per-sample organellar-fraction table are written). Applies to "
             "STAR/HISAT2/Salmon runs (needs a reference genome)."), self.organellar)
+        design_options.setVisible(False)
+        design_toggle.toggled.connect(design_options.setVisible)
+        design_toggle.toggled.connect(
+            lambda expanded: design_toggle.setArrowType(
+                Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow))
+        design_toggle.toggled.connect(self._schedule_workflow_section_height_update)
+        de_outer.addWidget(design_options)
+        self.workflow_design_toggle = design_toggle
+        self.workflow_design_options = design_options
         self.de_group = de_group
-        layout.addWidget(de_group)
 
         # ---- Advanced tool parameters (collapsible). Defaults reproduce the validated
         # behaviour; users can set each tool's important parameters manually here. ----
@@ -1553,68 +2563,189 @@ class MainWindow(QMainWindow):
             "Per-tool parameters for fine control. The defaults reproduce the validated pipeline "
             "behaviour, so leave them unless you have a specific reason to change them.")
         self.adv_container = QWidget()
-        adv_form = QFormLayout(self.adv_container)
-        adv_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        adv_columns = QGridLayout(self.adv_container)
+        adv_columns.setContentsMargins(0, 4, 0, 0)
+        adv_columns.setHorizontalSpacing(28)
+        adv_columns.setVerticalSpacing(0)
+
+        def advanced_column(title: str) -> tuple[QWidget, QFormLayout]:
+            column = QWidget()
+            # The form's unconstrained size hint is dominated by expandable path
+            # fields. Ignore that hint horizontally so the two columns share the
+            # actual pane width instead of forcing a nested horizontal scrollbar.
+            column.setMinimumWidth(0)
+            column.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Maximum)
+            column_layout = QVBoxLayout(column)
+            column_layout.setContentsMargins(0, 0, 0, 0)
+            column_layout.setSpacing(6)
+            heading = QLabel(title)
+            heading.setProperty("uiRole", "sectionLabel")
+            column_layout.addWidget(heading)
+            form_holder = QWidget()
+            form_holder.setMinimumWidth(0)
+            form_holder.setSizePolicy(
+                QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            form = QFormLayout(form_holder)
+            form.setContentsMargins(0, 0, 0, 0)
+            form.setHorizontalSpacing(12)
+            form.setVerticalSpacing(6)
+            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+            form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
+            form.setProperty("compactColumns", True)
+            column_layout.addWidget(form_holder)
+            return column, form
+
+        read_column, read_form = advanced_column("Read preparation")
+        analysis_column, analysis_form = advanced_column("Alignment and statistics")
+        adv_columns.addWidget(
+            read_column, 0, 0, alignment=Qt.AlignmentFlag.AlignTop)
+        adv_columns.addWidget(
+            analysis_column, 0, 1, alignment=Qt.AlignmentFlag.AlignTop)
+        adv_columns.setColumnStretch(0, 1)
+        adv_columns.setColumnStretch(1, 1)
         self.fastp_u = QSpinBox(); self.fastp_u.setRange(0, 100); self.fastp_u.setValue(40)
         self.fastp_polyx = QCheckBox()
-        adv_form.addRow(self._info_label("fastp: unqualified % limit (-u)", "Maximum percentage of low-quality bases before a read is discarded. fastp default 40."), self.fastp_u)
-        adv_form.addRow(self._info_label("fastp: trim poly-X (3')", "Trim 3' poly-A/poly-X tails (degraded or 3'-biased libraries). fastp default off."), self.fastp_polyx)
+        read_form.addRow(self._info_label("fastp: low-quality limit", "Maximum percentage of low-quality bases before a read is discarded (-u). fastp default 40."), self.fastp_u)
+        read_form.addRow(self._info_label("fastp: trim 3' poly-X", "Trim 3' poly-A/poly-X tails (degraded or 3'-biased libraries). fastp default off."), self.fastp_polyx)
         self.tm_sw_q = QSpinBox(); self.tm_sw_q.setRange(0, 40); self.tm_sw_q.setValue(15)
         self.tm_leading = QSpinBox(); self.tm_leading.setRange(0, 40); self.tm_leading.setValue(3)
         self.tm_trailing = QSpinBox(); self.tm_trailing.setRange(0, 40); self.tm_trailing.setValue(3)
-        adv_form.addRow(self._info_label("Trimmomatic: sliding-window quality", "Average Phred required over a 4-base sliding window (SLIDINGWINDOW:4:Q). Default 15."), self.tm_sw_q)
-        adv_form.addRow(self._info_label("Trimmomatic: leading quality", "Trim leading bases below this quality (LEADING). Default 3."), self.tm_leading)
-        adv_form.addRow(self._info_label("Trimmomatic: trailing quality", "Trim trailing bases below this quality (TRAILING). Default 3."), self.tm_trailing)
+        read_form.addRow(self._info_label("Trimmomatic: window quality", "Average Phred required over a 4-base sliding window (SLIDINGWINDOW:4:Q). Default 15."), self.tm_sw_q)
+        read_form.addRow(self._info_label("Trimmomatic: leading quality", "Trim leading bases below this quality (LEADING). Default 3."), self.tm_leading)
+        read_form.addRow(self._info_label("Trimmomatic: trailing quality", "Trim trailing bases below this quality (TRAILING). Default 3."), self.tm_trailing)
         self.rd_ensure = QComboBox()
         for _lbl, _v in (("norrna (keep confident non-rRNA)", "norrna"), ("rrna", "rrna"), ("both", "both"), ("none", "none")):
             self.rd_ensure.addItem(_lbl, _v)
         self.rd_chunk = QSpinBox(); self.rd_chunk.setRange(16, 4096); self.rd_chunk.setValue(256)
-        adv_form.addRow(self._info_label("RiboDetector: ensure mode (-e)", "Which class is kept with high confidence. norrna keeps high-confidence non-rRNA reads (recommended)."), self.rd_ensure)
-        adv_form.addRow(self._info_label("RiboDetector: chunk size", "Reads per batch (x1024): a memory/speed trade-off. Default 256."), self.rd_chunk)
+        read_form.addRow(self._info_label("RiboDetector: ensure mode (-e)", "Which class is kept with high confidence. norrna keeps high-confidence non-rRNA reads (recommended)."), self.rd_ensure)
+        read_form.addRow(self._info_label("RiboDetector: chunk size", "Reads per batch (x1024): a memory/speed trade-off. Default 256."), self.rd_chunk)
         self.fs_subset = QSpinBox(); self.fs_subset.setRange(1000, 5000000); self.fs_subset.setSingleStep(10000); self.fs_subset.setValue(100000)
-        adv_form.addRow(self._info_label("Contamination: reads subsampled", "How many reads FastQ Screen subsamples per sample. Default 100000."), self.fs_subset)
+        analysis_form.addRow(self._info_label("FastQ Screen: reads sampled", "How many reads FastQ Screen subsamples per sample. Default 100000."), self.fs_subset)
         self.fs_conf = QLineEdit()
         fs_conf_browse = QPushButton("Browse")
         fs_conf_browse.clicked.connect(lambda: self._pick_reference_file(self.fs_conf, "FastQ Screen config (*.conf *.txt);;All files (*)"))
         fs_conf_row = QHBoxLayout(); fs_conf_row.addWidget(self.fs_conf); fs_conf_row.addWidget(fs_conf_browse)
         fs_conf_widget = QWidget(); fs_conf_widget.setLayout(fs_conf_row)
-        adv_form.addRow(self._info_label("Contamination: FastQ Screen config", "Path to a fastq_screen.conf listing the bowtie2 genome indexes to screen against (required to run the screen). The built-in genome auto-download is not used; point this at a panel you already have."), fs_conf_widget)
+        analysis_form.addRow(self._info_label("FastQ Screen: config", "Path to a fastq_screen.conf listing the bowtie2 genome indexes to screen against (required to run the screen). The built-in genome auto-download is not used; point this at a panel you already have."), fs_conf_widget)
         self.star_twopass = QCheckBox()
         self.star_multimap = QSpinBox(); self.star_multimap.setRange(1, 200); self.star_multimap.setValue(10)
         self.star_mismatch = QDoubleSpinBox(); self.star_mismatch.setRange(0.0, 1.0); self.star_mismatch.setSingleStep(0.02); self.star_mismatch.setDecimals(2); self.star_mismatch.setValue(1.0)
-        adv_form.addRow(self._info_label("STAR: two-pass mode", "Two-pass mapping improves novel-junction detection (slower). STAR default off."), self.star_twopass)
-        adv_form.addRow(self._info_label("STAR: max multimappers", "Reads mapping to more than this many loci are discarded (outFilterMultimapNmax). Default 10."), self.star_multimap)
-        adv_form.addRow(self._info_label("STAR: max mismatch ratio", "Max mismatches as a fraction of read length (outFilterMismatchNoverReadLmax). 1.0 = STAR default."), self.star_mismatch)
+        analysis_form.addRow(self._info_label("STAR: two-pass mode", "Two-pass mapping improves novel-junction detection (slower). STAR default off."), self.star_twopass)
+        analysis_form.addRow(self._info_label("STAR: max multimappers", "Reads mapping to more than this many loci are discarded (outFilterMultimapNmax). Default 10."), self.star_multimap)
+        analysis_form.addRow(self._info_label("STAR: mismatch ratio", "Max mismatches as a fraction of read length (outFilterMismatchNoverReadLmax). 1.0 = STAR default."), self.star_mismatch)
         self.fc_feature = QLineEdit("exon")
         self.fc_attribute = QLineEdit("gene_id")
-        adv_form.addRow(self._info_label("featureCounts: feature type", "GTF feature counted (-t). Default exon."), self.fc_feature)
-        adv_form.addRow(self._info_label("featureCounts: attribute type", "GTF attribute grouped into genes (-g). Default gene_id."), self.fc_attribute)
+        analysis_form.addRow(self._info_label("featureCounts: feature", "GTF feature counted (-t). Default exon."), self.fc_feature)
+        analysis_form.addRow(self._info_label("featureCounts: gene attribute", "GTF attribute grouped into genes (-g). Default gene_id."), self.fc_attribute)
         self.de_min_count = QSpinBox(); self.de_min_count.setRange(0, 1000); self.de_min_count.setValue(10)
         self.de_shrink = QComboBox()
         for _v in ("apeglm", "ashr", "normal"):
             self.de_shrink.addItem(_v, _v)
-        adv_form.addRow(self._info_label("DESeq2: min count prefilter", "Keep genes with at least this many reads in the smallest group. Default 10 (the validated value)."), self.de_min_count)
-        adv_form.addRow(self._info_label("DESeq2: LFC shrinkage", "lfcShrink estimator for the MA/volcano effect sizes. Default apeglm (the validated value)."), self.de_shrink)
+        analysis_form.addRow(self._info_label("DESeq2: minimum count", "Keep genes with at least this many reads in the smallest group. Default 10 (the validated value)."), self.de_min_count)
+        analysis_form.addRow(self._info_label("DESeq2: LFC shrinkage", "lfcShrink estimator for the MA/volcano effect sizes. Default apeglm (the validated value)."), self.de_shrink)
         self.adv_container.setVisible(False)
         self.adv_toggle.toggled.connect(self.adv_container.setVisible)
+        self.adv_toggle.toggled.connect(self._schedule_workflow_section_height_update)
         adv_outer.addWidget(self.adv_toggle)
         adv_outer.addWidget(self.adv_container)
-        layout.addWidget(adv_group)
 
         out_group = QGroupBox("Outputs")
-        out_form = QFormLayout(out_group)
-        out_form.addRow("Enrichment", self.enrichment)
-        out_form.addRow("", self.enrichment_warn)
-        out_form.addRow("Figures", self.figures)
-        out_form.addRow(self._info_label("GSVA pathway activity", "Sample-level gene-set activity scores from your custom gene sets (organism-safe). Needs a custom GMT under Custom gene sets."), self.gsva)
-        out_form.addRow(self._info_label("Extended QC (RSeQC)", "Read-distribution + gene-body-coverage QC added to the MultiQC report. Genome-BAM routes only (not Salmon)."), self.rseqc)
-        out_form.addRow(self._info_label("Multi-study meta-analysis", "Combine 2+ studies (a 'dataset' column with >1 study): per-study DESeq2 + inverse-normal p-combination + effect-size pooling, with a cross-study comparative report. Ignored for single-study / microarray / results-upload."), self.meta_analysis)
-        out_form.addRow(self._info_label("Per-study enrichment (opt-in — slow: runs enrichment for every study)", "Run the full GO/KEGG enrichment separately for each study in the meta-analysis. Slow; off by default. Requires multi-study meta-analysis."), self.per_study_enrichment)
-        self.out_group = out_group
-        layout.addWidget(out_group)
+        out_layout = QVBoxLayout(out_group)
+        out_layout.setSpacing(8)
 
-        cs_group = QGroupBox("Custom gene sets (enrichment, optional)")
-        cs_form = QFormLayout(cs_group)
+        def option_row(control: QCheckBox, label: str, help_text: str) -> QWidget:
+            """Keep option names on one line while retaining detailed help."""
+            control.setText(label)
+            control.setAccessibleName(label)
+            control.setAccessibleDescription(help_text)
+            control.setToolTip(help_text)
+            control.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+            holder = QWidget()
+            holder.setProperty("uiRole", "optionRow")
+            row = QHBoxLayout(holder)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(4)
+            row.addWidget(control)
+            info = QToolButton()
+            info.setText("ⓘ")
+            info.setAccessibleName(f"About {label}")
+            info.setAccessibleDescription(help_text)
+            info.setAutoRaise(True)
+            info.setCursor(Qt.CursorShape.PointingHandCursor)
+            info.setToolTip(help_text)
+            info.clicked.connect(lambda _checked=False, title=label, body=help_text:
+                                 QMessageBox.information(self, title, body))
+            row.addWidget(info)
+            row.addStretch(1)
+            return holder
+
+        included_label = QLabel("Included outputs")
+        included_label.setProperty("uiRole", "sectionLabel")
+        out_layout.addWidget(included_label)
+        included_grid = QGridLayout()
+        included_grid.setContentsMargins(0, 0, 0, 0)
+        included_grid.setHorizontalSpacing(24)
+        included_grid.setVerticalSpacing(6)
+        included_grid.addWidget(option_row(
+            self.enrichment,
+            "Enrichment",
+            "Run the configured GO, KEGG, g:Profiler and custom-gene-set enrichment routes."), 0, 0)
+        included_grid.addWidget(option_row(
+            self.figures,
+            "Publication figures",
+            "Render the standard differential-expression, sample and quality-control figures."), 0, 1)
+        included_grid.setColumnStretch(0, 1)
+        included_grid.setColumnStretch(1, 1)
+        out_layout.addLayout(included_grid)
+        out_layout.addWidget(self.enrichment_warn)
+
+        optional_label = QLabel("Optional analysis modules")
+        optional_label.setProperty("uiRole", "sectionLabel")
+        out_layout.addWidget(optional_label)
+        optional_grid = QGridLayout()
+        optional_grid.setContentsMargins(0, 0, 0, 0)
+        optional_grid.setHorizontalSpacing(24)
+        optional_grid.setVerticalSpacing(6)
+        optional_grid.addWidget(option_row(
+            self.gsva,
+            "GSVA pathway activity",
+            "Sample-level gene-set activity scores from your custom gene sets. Needs a custom GMT under Custom gene sets."), 0, 0)
+        optional_grid.addWidget(option_row(
+            self.rseqc,
+            "Extended QC (RSeQC)",
+            "Read-distribution and gene-body-coverage QC added to MultiQC. Available for genome-BAM routes, not Salmon."), 0, 1)
+        optional_grid.addWidget(option_row(
+            self.meta_analysis,
+            "Multi-study meta-analysis",
+            "Combine two or more studies with per-study DESeq2, inverse-normal p-value combination and effect-size pooling. Ignored for single-study, microarray and external-results routes."), 1, 0)
+        optional_grid.addWidget(option_row(
+            self.per_study_enrichment,
+            "Per-study enrichment",
+            "Run GO and KEGG enrichment separately for every study in the meta-analysis. This optional step is slower and requires multi-study meta-analysis."), 1, 1)
+        optional_grid.setColumnStretch(0, 1)
+        optional_grid.setColumnStretch(1, 1)
+        out_layout.addLayout(optional_grid)
+        self.out_group = out_group
+
+        # Custom collections are an opt-in branch rather than part of the first
+        # run.  Keep them available in-flow, but avoid opening the Workflow page
+        # with another large card and several unused path fields.
+        custom_sets_section = QWidget()
+        custom_sets_layout = QVBoxLayout(custom_sets_section)
+        custom_sets_layout.setContentsMargins(0, 0, 0, 0)
+        custom_sets_layout.setSpacing(4)
+        (self.custom_gene_sets_toggle,
+         self.custom_gene_sets_panel) = self._disclosure(
+            "Custom gene sets (enrichment, optional)", expanded=False)
+        self.custom_gene_sets_toggle.setObjectName("customGeneSetsToggle")
+        self.custom_gene_sets_panel.setObjectName("customGeneSetsPanel")
+        self.custom_gene_sets_toggle.setToolTip(
+            "Optional GMT, annotation and background inputs for custom enrichment.")
+        self.custom_gene_sets_toggle.toggled.connect(
+            self._schedule_workflow_section_height_update)
+        custom_sets_layout.addWidget(self.custom_gene_sets_toggle)
+        custom_sets_layout.addWidget(self.custom_gene_sets_panel)
+        cs_form = QFormLayout(self.custom_gene_sets_panel)
         cs_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         cs_help = QLabel(
             "Run enrichment against your own gene sets, alongside the built-in GO/KEGG. The gene "
@@ -1642,14 +2773,77 @@ class MainWindow(QMainWindow):
             holder = QWidget()
             holder.setLayout(holder_row)
             cs_form.addRow(self._info_label(label, tip), holder)
-        layout.addWidget(cs_group)
+        workflow_intro = self._page_intro(
+            "Analysis settings",
+            "Resolve the input route, comparison direction and active analysis modules for this project.")
+        self.workflow_intro = workflow_intro
+        self.workflow_summary = workflow_intro.findChild(QLabel, "pagePurposeText")
+        self.workflow_summary.setAccessibleName("Current analysis plan")
+        layout.addWidget(workflow_intro)
 
+        section_tabs = QTabWidget()
+        section_tabs.setObjectName("workflowSectionTabs")
+        section_tabs.setMinimumHeight(360)
+        section_tabs.setMaximumHeight(520)
+        section_tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+        def section_page(*cards: QWidget) -> QScrollArea:
+            section = QWidget()
+            section_layout = QVBoxLayout(section)
+            # Keep flat group titles visibly inside the tab pane. With zero
+            # margins, titles such as "Differential expression" sat almost on
+            # the pane border and read like a clipped tab label.
+            section_layout.setContentsMargins(12, 8, 12, 8)
+            # Insert gaps only between real sections. QBoxLayout spacing also
+            # applies before a trailing stretch, which created an otherwise
+            # empty 8 px scroll range as soon as a disclosure was expanded.
+            section_layout.setSpacing(0)
+            for index, card in enumerate(cards):
+                if index:
+                    section_layout.addSpacing(8)
+                section_layout.addWidget(card)
+            section_layout.addStretch(1)
+            return self._scrollable(section)
+
+        section_tabs.addTab(section_page(de_group), "Comparison")
+        section_tabs.addTab(section_page(align_group), "Read processing")
+        self.custom_gene_sets_section = custom_sets_section
+        section_tabs.addTab(section_page(out_group, custom_sets_section), "Output options")
+        section_tabs.addTab(section_page(adv_group), "Advanced")
+        layout.addWidget(section_tabs)
+        self.workflow_section_tabs = section_tabs
+        section_tabs.currentChanged.connect(self._schedule_workflow_section_height_update)
+
+        save_bar = QWidget()
         save_row = QHBoxLayout()
+        save_row.setContentsMargins(0, 0, 0, 0)
+        save_row.addWidget(QLabel("Changes are stored in the project configuration."))
         save_row.addStretch(1)
+        save.setText("Save analysis settings")
         save_row.addWidget(save)
-        layout.addLayout(save_row)
+        save_bar.setLayout(save_row)
+        layout.addWidget(save_bar)
         layout.addStretch(1)
-        self.tabs.addTab(self._scrollable(page), "Workflow Settings")
+        self.workflow_page = page
+        self.workflow_page_layout = layout
+        self.workflow_save_bar = save_bar
+        page.installEventFilter(self)
+        self.tabs.addTab(page, "Workflow Settings")
+        self.tabs.currentChanged.connect(
+            lambda index: self._schedule_workflow_section_height_update()
+            if index == self.tabs.indexOf(page) else None)
+        for signal in (
+            self.aligner.currentTextChanged,
+            self.quantifier.currentTextChanged,
+            self.numerator.currentTextChanged,
+            self.denominator.currentTextChanged,
+            self.alpha.valueChanged,
+            self.lfc_threshold.valueChanged,
+        ):
+            signal.connect(self._update_workflow_summary)
+        self._sync_trimmer_controls()
+        self._update_workflow_summary()
+        self._schedule_workflow_section_height_update()
 
     def _open_design_helper(self) -> None:
         # Compose an additive design formula (~ covariates + condition) from the metadata
@@ -1732,6 +2926,10 @@ class MainWindow(QMainWindow):
     def _build_resources_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.addWidget(self._page_intro(
+            "Compute resources",
+            "Detect the usable CPU and memory, choose a resource profile, then save the allocation "
+            "for this project. Recommendations account for the WSL2 limit on Windows."))
 
         # System Information: a friendly summary instead of a raw key/value dump.
         system_group = QGroupBox("System Information")
@@ -1767,15 +2965,26 @@ class MainWindow(QMainWindow):
         self.profile.addItems(["balanced", "low", "high", "custom"])  # lowercase: matches config
         self.profile.currentTextChanged.connect(self._on_profile_changed)
         profile_help = (
-            "Balanced uses about 75% of your CPU and memory and suits most runs. "
-            "Low is conservative if you are using other programs at the same time. "
-            "High uses about 90% for a dedicated machine. "
+            "CPU presets use the WSL logical CPU allocation (or host logical CPUs when WSL is "
+            "unavailable), rounded down: Low 45%, Balanced 75%, and High 90%. Low uses about "
+            "55% of WSL memory, Balanced up to about 75%, and High leaves 2 GB free. "
             "Custom keeps the cores and memory you set below."
         )
         profile_form.addRow(self._info_label("Profile", profile_help), self.profile)
         layout.addWidget(profile_group)
 
-        # Manual adjustment: plain-language labels for cores and memory.
+        # Manual limits are useful for experts, but the detected recommendation is
+        # the safe default decision. Keep the lower-level values available without
+        # making them compete with that primary path.
+        manual_toggle = QToolButton()
+        manual_toggle.setText("Manual CPU and memory limits")
+        manual_toggle.setCheckable(True)
+        manual_toggle.setChecked(False)
+        manual_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        manual_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        manual_toggle.setAccessibleName("Show manual CPU and memory limits")
+        layout.addWidget(manual_toggle)
+
         manual_group = QGroupBox("Manual Adjustment")
         manual_form = QFormLayout(manual_group)
         self.cores = QSpinBox()
@@ -1783,9 +2992,14 @@ class MainWindow(QMainWindow):
         self.ram = QSpinBox()
         self.ram.setRange(1, 2048)
         manual_form.addRow(
-            self._info_label("CPU cores to use",
-                             "Number of processor cores the pipeline may use. Detect first to see how many your computer has."),
-            self.cores)
+            self._info_label(
+                "CPU workers to use",
+                "Maximum concurrent CPU workers available to the pipeline scheduler. "
+                "Detect first to derive a safe value from the WSL logical CPU allocation "
+                "(or host logical CPUs when WSL is unavailable).",
+            ),
+            self.cores,
+        )
         manual_form.addRow(
             self._info_label("Memory (GB)",
                              "RAM allocated to the pipeline. Alignment (STAR) is the most memory-intensive step."),
@@ -1793,8 +3007,21 @@ class MainWindow(QMainWindow):
         save = QPushButton("Save Resources")
         save.setToolTip("Persist the CPU core and memory allocation above to the project config.")
         save.clicked.connect(self._save_resources)
-        manual_form.addRow(save)
+        save.setEnabled(False)
+        self.save_resources_button = save
+        manual_group.setVisible(False)
+        manual_toggle.toggled.connect(manual_group.setVisible)
+        manual_toggle.toggled.connect(
+            lambda expanded: manual_toggle.setArrowType(
+                Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow))
+        self.resource_manual_toggle = manual_toggle
+        self.resource_manual_group = manual_group
         layout.addWidget(manual_group)
+
+        save_row = QHBoxLayout()
+        save_row.addWidget(save)
+        save_row.addStretch(1)
+        layout.addLayout(save_row)
 
         layout.addStretch(1)
         self.tabs.addTab(self._scrollable(page), "Resources")
@@ -1849,71 +3076,170 @@ class MainWindow(QMainWindow):
     def _build_runtime_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setSpacing(10)
+        layout.addWidget(self._page_intro(
+            "Runtime estimate",
+            "Estimate wall-clock time from the open project's sample count, input route and resource profile. "
+            "Completed local runs calibrate later estimates on this machine."))
+        (self.runtime_no_project_panel,
+         _runtime_empty_title,
+         _runtime_empty_body,
+         _runtime_empty_action) = self._empty_state_panel(
+            "Open a project to estimate runtime",
+            "The estimate uses the project's input route, sample count and saved compute profile.",
+            "Go to Project",
+            lambda: self.tabs.setCurrentIndex(0),
+        )
+        self.runtime_no_project_panel.setMaximumHeight(210)
+        layout.addWidget(self.runtime_no_project_panel)
+
+        self.runtime_operational_panel = QWidget()
+        runtime_layout = QVBoxLayout(self.runtime_operational_panel)
+        runtime_layout.setContentsMargins(0, 0, 0, 0)
+        runtime_layout.setSpacing(10)
+
         estimate = QPushButton("Estimate Runtime")
         estimate.setProperty("primary", True)
         estimate.setToolTip(
             "Estimate wall-clock runtime from your sample count, input mode, and resource settings, "
             "calibrated against past runs on this machine.")
         estimate.clicked.connect(self._estimate_runtime)
+        estimate.setEnabled(False)
+        self.runtime_estimate_button = estimate
         self.runtime_busy = self._busy_bar()
-        self.runtime_text = QTextEdit()
-        self.runtime_text.setReadOnly(True)
-        self.runtime_text.setPlaceholderText(
-            "Click Estimate Runtime for a wall-clock estimate based on your sample count and settings.")
+        result_group = QGroupBox("Estimate and assumptions")
+        result_layout = QVBoxLayout(result_group)
+        self.runtime_text = _PlainTextLabel()
+        self.runtime_text.setProperty("uiRole", "statusBanner")
+        self.runtime_text.setContentsMargins(12, 8, 12, 8)
+        self.runtime_text.setAccessibleName("Runtime estimate and assumptions")
+        self.runtime_text.setPlainText(
+            "Ready to estimate. The predicted range, resource assumptions and calibration basis will appear here.")
         estimate_row = QHBoxLayout()
         estimate_row.addWidget(estimate)
         estimate_row.addStretch(1)
-        layout.addLayout(estimate_row)
-        layout.addWidget(self.runtime_busy)
-        layout.addWidget(self.runtime_text)
+        runtime_layout.addLayout(estimate_row)
+        runtime_layout.addWidget(self.runtime_busy)
+        result_layout.addWidget(self.runtime_text)
+        runtime_layout.addWidget(result_group)
+        self.runtime_operational_panel.setVisible(False)
+        layout.addWidget(self.runtime_operational_panel)
+        layout.addStretch(1)
         self.tabs.addTab(self._scrollable(page), "Runtime")
 
     def _build_sanity_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
-        buttons = QHBoxLayout()
-        run = QPushButton("Run Project and Metadata Checks")
+        layout.setSpacing(10)
+        layout.addWidget(self._page_intro(
+            "Pre-run checks",
+            "Validate the project configuration, sample sheet, contrast and file paths before "
+            "starting a full analysis. Review-required findings must be acknowledged; failures "
+            "keep the run blocked until they are resolved."))
+
+        buttons = QGridLayout()
+        run = QPushButton("Validate current run inputs")
         run.setProperty("primary", True)
+        # A button at its exact style size can clip the outer antialiasing pixel
+        # of a leading glyph (notably the capital V on Windows). Reserve a
+        # font-scaled guard instead of relying on a display-specific pixel fix.
+        glyph_guard = max(2, (run.fontMetrics().horizontalAdvance(" ") + 1) // 2)
+        run.setMinimumWidth(run.sizeHint().width() + glyph_guard)
         run.setToolTip(
-            "Validate the project config and samples.tsv (sample sheet consistency, design/contrast "
-            "sanity, file paths) before starting a run.")
+            "Persist the current settings, then validate the active input route, sample sheet, "
+            "comparison direction, reference requirement and enrichment configuration.")
         run.clicked.connect(self._run_sanity_checks)
-        refresh = QPushButton("Refresh Phase Checks")
-        refresh.setToolTip("Re-run the per-phase readiness checks against the project's current settings.")
+        refresh = QPushButton("Reload saved phase checks")
+        refresh.setToolTip(
+            "Reload phase-check JSON files already written by the workflow. This does not rerun them "
+            "and does not replace validation of the current inputs.")
         refresh.clicked.connect(self._refresh_phase_checks)
-        buttons.addWidget(run)
-        buttons.addWidget(refresh)
-        self.approve_review = QCheckBox("I have reviewed and approved the items flagged for review above")
+        go_project = QPushButton("Go to Project")
+        go_project.clicked.connect(lambda: self.tabs.setCurrentIndex(0))
+        buttons.addWidget(run, 0, 0)
+        buttons.addWidget(refresh, 0, 1)
+        buttons.addWidget(go_project, 1, 0)
+        buttons.setColumnStretch(2, 1)
+        self.sanity_run_button = run
+        self.sanity_refresh_button = refresh
+        self.sanity_go_project = go_project
+
+        results_group = QGroupBox("Validation results")
+        results_layout = QVBoxLayout(results_group)
+        self.sanity_state_label = QLabel()
+        self.sanity_state_label.setWordWrap(True)
+        self.sanity_state_label.setProperty("hint", True)
+        self.approve_review = QCheckBox()
+        self.approve_review.setVisible(False)
         self.sanity_busy = self._busy_bar()
-        self.sanity_text = QTextEdit()
-        self.sanity_text.setReadOnly(True)
-        self.sanity_text.setPlaceholderText(
-            "Run the project and metadata checks before starting, to catch configuration issues early.")
+        self.sanity_text = _PlainTextLabel()
+        self.sanity_text.setProperty("uiRole", "statusBanner")
+        self.sanity_text.setContentsMargins(12, 8, 12, 8)
+        self.sanity_text.setAccessibleName("Pre-run check results")
+        self.sanity_text.setVisible(False)
+        results_layout.addWidget(self.sanity_state_label)
+        results_layout.addWidget(self.sanity_busy)
+        results_layout.addWidget(self.sanity_text)
+        results_layout.addWidget(self.approve_review)
+
+        self.sanity_next_label = QLabel()
+        self.sanity_next_label.setWordWrap(True)
+        self.sanity_go_run = QPushButton("Go to Run Monitor")
+        self.sanity_go_run.clicked.connect(lambda: self.tabs.setCurrentIndex(8))
+        next_row = QHBoxLayout()
+        next_row.addWidget(self.sanity_next_label, 1)
+        next_row.addWidget(self.sanity_go_run)
         layout.addLayout(buttons)
-        layout.addWidget(self.approve_review)
-        layout.addWidget(self.sanity_busy)
-        layout.addWidget(self.sanity_text)
+        layout.addWidget(results_group)
+        layout.addLayout(next_row)
+        layout.addStretch(1)
+        self.sanity_results_group = results_group
+        self._sanity_status_signature: tuple[tuple[str, str], ...] | None = None
+        self._update_sanity_state({})
         self.tabs.addTab(self._scrollable(page), "Sanity Checks")
 
     def _build_run_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setSpacing(10)
+        layout.addWidget(self._page_intro(
+            "Run monitor",
+            "Dry-run the plan, start or resume the workflow, and follow the current phase and detailed Snakemake log."))
+        (self.run_empty_panel,
+         self.run_empty_title,
+         self.run_empty_body,
+         self.run_go_project) = self._empty_state_panel(
+            "No project open",
+            "Open or create a project before starting a workflow.",
+            "Go to Project",
+            lambda: self.tabs.setCurrentIndex(0),
+        )
+        self.run_empty_panel.setMaximumHeight(190)
+        layout.addWidget(self.run_empty_panel)
+
+        self.run_operational_panel = QWidget()
+        self.run_operational_panel.setObjectName("runOperationalPanel")
+        self.run_operational_panel.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        operational_layout = QVBoxLayout(self.run_operational_panel)
+        operational_layout.setContentsMargins(0, 0, 0, 0)
+        operational_layout.setSpacing(10)
+
         # Resume banner: shown when a project is reopened with an interrupted (locked/incomplete) run,
         # so stop -> close -> reopen -> continue is one click. Amber warning styling reads on both themes.
         self.resume_banner = QLabel()
         self.resume_banner.setWordWrap(True)
-        self.resume_banner.setStyleSheet(
-            "background:#FFF4E5; color:#663C00; border:1px solid #E0A96D; border-radius:6px; padding:8px;")
+        self.resume_banner.setStyleSheet(self._advisory_banner_qss(self._current_theme_mode()))
         self.resume_banner.setVisible(False)
         self.resume_button = QPushButton("Resume Interrupted Run")
-        self.resume_button.setProperty("primary", True)
+        self.resume_button.setProperty("buttonRole", "warning")
         self.resume_button.setVisible(False)
         self.resume_button.clicked.connect(self._resume_interrupted)
         _banner_row = QHBoxLayout()
         _banner_row.addWidget(self.resume_banner, 1)
         _banner_row.addWidget(self.resume_button, 0)
-        layout.addLayout(_banner_row)
-        buttons = QHBoxLayout()
+        operational_layout.addLayout(_banner_row)
+
         run_tips = {
             "dry-run": "Show what the pipeline would do, without running anything.",
             "run": "Start the pipeline. Completed steps are reused; only missing outputs are produced.",
@@ -1921,14 +3247,22 @@ class MainWindow(QMainWindow):
                       "(re-runs only incomplete/missing steps — the project is the saved state).",
             "unlock": "Release a stale lock left by a killed run so you can start again.",
         }
-        for text, mode in [("Dry Run", "dry-run"), ("Start Run", "run"), ("Resume", "resume"), ("Unlock", "unlock")]:
+        for text, mode in [
+            ("Start Run", "run"),
+            ("Dry Run", "dry-run"),
+            ("Resume", "resume"),
+            ("Unlock", "unlock"),
+        ]:
             button = QPushButton(text)
+            button.setObjectName(f"runAction_{mode.replace('-', '_')}")
             button.setToolTip(run_tips.get(mode, ""))
             if mode == "run":
                 button.setProperty("primary", True)
+            elif mode == "unlock":
+                button.setProperty("buttonRole", "warning")
             button.clicked.connect(lambda _checked=False, m=mode: self._start_snakemake(m))
+            button.setEnabled(False)
             self.run_action_buttons[mode] = button
-            buttons.addWidget(button)
         self.use_wsl = QCheckBox("Use WSL2")
         # WSL2 exists only on Windows; on Linux/macOS the pipeline runs natively in the local
         # micromamba environment, so default the toggle off and hide it there.
@@ -1939,72 +3273,179 @@ class MainWindow(QMainWindow):
             "Run the pipeline inside the WSL2 Ubuntu distribution instead of natively on Windows. "
             "Recommended: the Linux toolchain (Snakemake, aligners, R/Bioconductor) is the validated "
             "route on Windows. Unchecked runs natively on Windows if a local environment is set up.")
-        buttons.addWidget(self.use_wsl)
-        actions = QHBoxLayout()
+
         stop = QPushButton("Stop")
+        stop.setProperty("buttonRole", "danger")
         stop.setEnabled(False)
+        stop.setVisible(False)
         stop.setToolTip("Terminate the running pipeline. Already-completed steps are kept and can be resumed later.")
         stop.clicked.connect(self._stop_run)
         self.stop_button = stop
-        open_folder = QPushButton("Open Project Folder")
+
+        run_section, run_section_layout = self._section_panel("Run workflow")
+        run_section.setObjectName("runWorkflowSection")
+        primary_actions = QHBoxLayout()
+        primary_actions.setSpacing(8)
+        primary_actions.addWidget(self.run_action_buttons["run"])
+        primary_actions.addWidget(self.run_action_buttons["dry-run"])
+        primary_actions.addStretch(1)
+        primary_actions.addWidget(stop)
+        run_section_layout.addLayout(primary_actions)
+
+        self.run_options_toggle, self.run_options_panel = self._disclosure("Execution options")
+        self.run_options_toggle.setObjectName("runExecutionOptionsToggle")
+        self.run_options_panel.setObjectName("runExecutionOptionsPanel")
+        options_layout = QHBoxLayout(self.run_options_panel)
+        options_layout.setContentsMargins(22, 0, 0, 0)
+        options_layout.setSpacing(8)
+        options_layout.addWidget(self.use_wsl)
+        options_layout.addWidget(self.run_action_buttons["resume"])
+        options_layout.addWidget(self.run_action_buttons["unlock"])
+        options_layout.addStretch(1)
+        run_section_layout.addWidget(self.run_options_toggle)
+        run_section_layout.addWidget(self.run_options_panel)
+        operational_layout.addWidget(run_section)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        # Qt paints one text colour across both the filled and unfilled halves.
+        # No single colour stays legible while the label straddles those surfaces,
+        # so keep the percentage in a separate label beside the phase instead.
+        self.progress.setTextVisible(False)
+        self.progress.setAccessibleName("Workflow progress")
+        self.progress_value_label = QLabel("0%")
+        self.progress_value_label.setProperty("uiRole", "sectionHint")
+        self.progress_value_label.setAccessibleName("Workflow progress percentage")
+        self.progress_value_label.setVisible(False)
+        self.progress.valueChanged.connect(
+            lambda value: self.progress_value_label.setText(f"{int(value)}%"))
+        self.elapsed_label = QLabel("Elapsed: 00:00:00")
+        self.elapsed_label.setProperty("uiRole", "sectionHint")
+        self.elapsed_label.setVisible(False)
+        self.elapsed_timer = QTimer(self)
+        self.elapsed_timer.timeout.connect(self._tick_elapsed)
+        self._run_start = 0.0
+        self.status_label = QLabel("Ready — configure the project, then start the workflow.")
+        self.status_label.setWordWrap(True)
+        self.phase_label = QLabel("")
+        self.phase_label.setProperty("uiRole", "sectionHint")
+
+        progress_section, progress_section_layout = self._section_panel("Workflow status")
+        progress_section.setObjectName("runProgressSection")
+        status_row = QHBoxLayout()
+        status_row.setSpacing(8)
+        status_row.addWidget(self.status_label, 1)
+        progress_section_layout.addLayout(status_row)
+        phase_row = QHBoxLayout()
+        phase_row.setSpacing(8)
+        phase_row.addWidget(self.phase_label)
+        phase_row.addStretch(1)
+        phase_row.addWidget(self.progress_value_label)
+        phase_row.addWidget(self.elapsed_label)
+        progress_section_layout.addLayout(phase_row)
+        progress_section_layout.addWidget(self.progress)
+        operational_layout.addWidget(progress_section)
+
+        # These are deliberately short: all post-run destinations remain visible
+        # in one predictable row at a compact desktop width; their tooltips carry
+        # the explanatory wording instead of forcing the monitor to overflow.
+        open_folder = QPushButton("Folder")
+        open_folder.setAccessibleName("Open project folder")
         open_folder.setToolTip("Open the project's root directory in the system file browser.")
         open_folder.clicked.connect(self._open_folder)
-        open_report = QPushButton("Open MultiQC Report")
+        open_report = QPushButton("MultiQC")
+        open_report.setAccessibleName("Open MultiQC report")
         open_report.setToolTip(
             "Open the aggregated MultiQC quality-control report (read QC, alignment/quantification "
             "metrics) in your browser. Produced when a run finishes.")
         open_report.clicked.connect(self._open_report)
-        open_html = QPushButton("Open Results Report")
+        open_html = QPushButton("Results")
+        open_html.setAccessibleName("Open results report")
         open_html.setToolTip(
             "Open the self-contained HTML results report (figures, top genes, enrichment, and "
             "provenance in one file) in your browser. Produced when a run finishes.")
         open_html.clicked.connect(self._open_results_report)
-        self.export_toolsref_button = QPushButton("Export Tools && References")
+        self.export_toolsref_button = QPushButton("References")
+        self.export_toolsref_button.setAccessibleName("Export tools and references")
         self.export_toolsref_button.setToolTip(
             "Save a text file listing the tool versions, reference genome/annotation (accession, "
             "source, MD5) and enrichment database sources used in this run. Available after the run completes.")
         self.export_toolsref_button.clicked.connect(self._export_tools_references)
-        self.export_design_button = QPushButton("Export Study Design")
+        self.export_design_button = QPushButton("Design")
+        self.export_design_button.setAccessibleName("Export study design")
         self.export_design_button.setToolTip(
             "Save a text file describing the study design: samples, conditions, layout, the DESeq2 "
             "design formula and contrasts. Available after the run completes.")
         self.export_design_button.clicked.connect(self._export_study_design)
-        for w in (stop, open_folder, open_report, open_html, self.export_toolsref_button, self.export_design_button):
-            actions.addWidget(w)
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 100)
-        self.elapsed_label = QLabel("Elapsed: 00:00:00")
-        self.elapsed_timer = QTimer(self)
-        self.elapsed_timer.timeout.connect(self._tick_elapsed)
-        self._run_start = 0.0
+        self.open_project_folder_button = open_folder
+        self.open_multiqc_button = open_report
+        self.open_results_report_button = open_html
+        self.run_project_buttons = [open_folder, open_report, open_html]
+        for button in self.run_project_buttons:
+            button.setEnabled(False)
+
+        after_section, after_section_layout = self._section_panel("After the run")
+        after_section.setObjectName("runAfterSection")
+        after_actions = QHBoxLayout()
+        after_actions.setSpacing(8)
+        after_actions.addWidget(open_html)
+        after_actions.addWidget(open_report)
+        after_actions.addWidget(self.export_design_button)
+        after_actions.addWidget(self.export_toolsref_button)
+        after_actions.addWidget(open_folder)
+        after_actions.addStretch(1)
+        after_section_layout.addLayout(after_actions)
+        operational_layout.addWidget(after_section)
+
         self.command_text = QLineEdit()
         self.command_text.setReadOnly(True)  # displays the launched command; not user-editable
-        self.status_label = QLabel("Idle")
-        # Plain-language "current phase" line so non-CLI users can follow along;
-        # the raw Snakemake log below is for power users.
-        self.phase_label = QLabel("Ready — open a project, configure it, then click Start Run.")
-        phase_font = self.phase_label.font()
-        phase_font.setPointSize(phase_font.pointSize() + 2)
-        phase_font.setBold(True)
-        self.phase_label.setFont(phase_font)
+        self.command_text.setProperty("uiRole", "codeOutput")
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
+        self.log_text.setProperty("uiRole", "codeOutput")
         self.log_text.setPlaceholderText("The Snakemake log streams here once a run starts.")
-        progress_row = QHBoxLayout()
-        progress_row.addWidget(self.progress)
-        progress_row.addWidget(self.elapsed_label)
-        layout.addLayout(buttons)
-        layout.addLayout(actions)
-        layout.addWidget(self.phase_label)
-        layout.addLayout(progress_row)
-        layout.addWidget(self.status_label)
-        layout.addWidget(QLabel("Command"))
-        layout.addWidget(self.command_text)
-        layout.addWidget(QLabel("Detailed log"))
-        layout.addWidget(self.log_text)
-        self.run_monitor_page = page
-        self.tabs.addTab(page, "Run Monitor")
+        self.log_text.setMinimumHeight(180)
+
+        details_section, details_section_layout = self._section_panel("Execution details")
+        details_section.setObjectName("runExecutionDetailsSection")
+        self.execution_details_toggle, self.execution_details_panel = self._disclosure(
+            "Show command and log")
+        self.execution_details_toggle.setObjectName("runExecutionDetailsToggle")
+        self.execution_details_panel.setObjectName("runExecutionDetailsPanel")
+        details_layout = QVBoxLayout(self.execution_details_panel)
+        details_layout.setContentsMargins(22, 0, 0, 0)
+        details_layout.setSpacing(6)
+        command_label = QLabel("Command")
+        command_label.setProperty("uiRole", "sectionHint")
+        log_label = QLabel("Detailed log")
+        log_label.setProperty("uiRole", "sectionHint")
+        details_layout.addWidget(command_label)
+        details_layout.addWidget(self.command_text)
+        details_layout.addWidget(log_label)
+        details_layout.addWidget(self.log_text)
+        details_section_layout.addWidget(self.execution_details_toggle)
+        details_section_layout.addWidget(self.execution_details_panel)
+        operational_layout.addWidget(details_section)
+
+        self._execution_details_had_content = False
+        self.command_text.textChanged.connect(self._sync_execution_details)
+        self.log_text.textChanged.connect(self._sync_execution_details)
+
+        layout.addWidget(self.run_operational_panel)
+        layout.addStretch(1)
+        self.run_monitor_page = self._scrollable(page)
+        self.tabs.addTab(self.run_monitor_page, "Run Monitor")
         self._refresh_export_buttons()
+
+    def _sync_execution_details(self) -> None:
+        """Keep technical output available without forcing the page to grow."""
+        if not hasattr(self, "execution_details_toggle"):
+            return
+        has_content = bool(
+            self.command_text.text().strip() or self.log_text.toPlainText().strip())
+        if not has_content:
+            self.execution_details_toggle.setChecked(False)
+        self._execution_details_had_content = has_content
 
     def _set_run_status(self, text: str, status: str | None = None) -> None:
         """Set the run-status label from a *semantic* status key, not a hex colour.
@@ -2018,6 +3459,16 @@ class MainWindow(QMainWindow):
         self.status_label.setText(text)
         self.status_label.setStyleSheet(self._status_label_qss(status))
 
+    def _set_progress_status(self, status: str | None = None) -> None:
+        """Apply a semantic progress-bar state that can be repainted on theme change."""
+        self._progress_status_key = status
+        if status == "FAIL":
+            self.progress.setStyleSheet(
+                "QProgressBar::chunk { background-color: "
+                f"{status_color('FAIL', self._current_theme_mode())}; }}")
+        else:
+            self.progress.setStyleSheet("")
+
     def _status_label_qss(self, status: str | None) -> str:
         if not status:
             return ""
@@ -2027,13 +3478,13 @@ class MainWindow(QMainWindow):
         colour = PALETTES[mode]["PRIMARY"] if status == "RUNNING" else status_color(status, mode)
         return f"color: {colour}; font-weight: 600;"
 
-    def _repaint_themed_labels(self) -> None:
+    def _repaint_themed_labels(self, mode: str | None = None) -> None:
         """Re-apply every per-widget stylesheet that encodes a palette colour.
 
         The application QSS is regenerated on a theme switch, but a stylesheet set
         directly on a widget is not, so these would keep their old palette's colours.
         """
-        mode = self._current_theme_mode()
+        mode = mode or self._current_theme_mode()
         palette = PALETTES[mode]
         if hasattr(self, "status_label"):
             self.status_label.setStyleSheet(self._status_label_qss(getattr(self, "_run_status_key", None)))
@@ -2043,6 +3494,10 @@ class MainWindow(QMainWindow):
             self.enrichment_warn.setStyleSheet(f"color: {status_color('WARNING', mode)};")
         if hasattr(self, "contrast_info"):
             self.contrast_info.setStyleSheet(f"color: {palette['MUTED_TEXT']};")
+        if hasattr(self, "resume_banner"):
+            self.resume_banner.setStyleSheet(self._advisory_banner_qss(mode))
+        if hasattr(self, "progress"):
+            self._set_progress_status(getattr(self, "_progress_status_key", None))
 
     @staticmethod
     def _advisory_banner_qss(mode: str) -> str:
@@ -2059,11 +3514,18 @@ class MainWindow(QMainWindow):
         # still gate Start to avoid concurrent snakemake against one directory.
         self._run_active = active
         for button in self.run_action_buttons.values():
-            button.setEnabled(not active)
+            button.setEnabled(not active and self.project_root is not None)
         if self.stop_button is not None:
             self.stop_button.setEnabled(active)
+            self.stop_button.setVisible(active and self.project_root is not None)
+        if hasattr(self, "use_wsl"):
+            self.use_wsl.setEnabled(not active and self.project_root is not None)
+        if hasattr(self, "elapsed_label"):
+            self.elapsed_label.setVisible(
+                active or self.elapsed_label.text() != "Elapsed: 00:00:00")
         if active:
-            self.progress.setStyleSheet("")
+            self._set_progress_status()
+            self.progress_value_label.setVisible(True)
         # Hide the resume banner while a run is live; re-evaluate when it ends (a stopped/failed run
         # leaves the project resumable, a completed run does not).
         self._refresh_resume_banner()
@@ -2095,7 +3557,7 @@ class MainWindow(QMainWindow):
         ("align", "Aligning reads to the genome"),
         ("salmon_quant", "Quantifying transcripts"),
         ("ingest_counts", "Reading the count matrix"),
-        ("ingest_deseq2_results", "Reading the DESeq2 results table"),
+        ("ingest_deseq2_results", "Reading the external differential-expression table"),
         ("featurecounts", "Counting reads per gene"),
         ("htseq", "Counting reads per gene"),
         ("genes_of_interest", "Genes-of-interest figures"),
@@ -2202,6 +3664,12 @@ class MainWindow(QMainWindow):
         show = bool(state.get("resumable"))
         self.resume_banner.setVisible(show)
         self.resume_button.setVisible(show)
+        generic_resume = self.run_action_buttons.get("resume")
+        generic_unlock = self.run_action_buttons.get("unlock")
+        if generic_resume is not None:
+            generic_resume.setVisible(show)
+        if generic_unlock is not None:
+            generic_unlock.setVisible(bool(state.get("locked")))
         if show:
             self.resume_banner.setText(
                 "This project has an unfinished run — it was stopped, interrupted, or the app was closed "
@@ -2299,7 +3767,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, lambda: self._start_snakemake("recover"))
             return
         if was_stop:
-            self.progress.setStyleSheet("")
+            self._set_progress_status()
             self._set_run_status("Stopped", "WARNING")
             self.phase_label.setText("")
             self.log_text.append("Run stopped.")
@@ -2309,9 +3777,22 @@ class MainWindow(QMainWindow):
         failed_in_output = getattr(self, "_run_error_detected", False)
         if code == 0 and not failed_in_output:
             self.progress.setValue(100)
-            self.progress.setStyleSheet("")
-            self._set_run_status("Completed", "PASS")
-            self.phase_label.setText("Finished")
+            self._set_progress_status()
+            success_labels = {
+                "dry-run": (
+                    "Dry run completed",
+                    "Plan checked — no analysis steps were executed.",
+                ),
+                "unlock": ("Project unlocked", "The workflow lock was released."),
+                "figures": ("Figures regenerated", "Publication figures were updated."),
+                "ppi": ("Protein network rebuilt", "The STRING network was updated."),
+                "goi": ("Gene figures generated", "Genes-of-interest outputs were updated."),
+                "term": ("Term heatmap generated", "The enrichment-term heatmap was updated."),
+            }
+            status_text, phase_text = success_labels.get(was_mode, ("Completed", ""))
+            self._set_run_status(status_text, "PASS")
+            self.phase_label.setText(phase_text)
+            self.progress_value_label.setVisible(True)
             # An enrichment-term heatmap writes the fixed term_heatmap.*; copy it to a
             # per-term name (before the gallery re-scan) so each extracted term persists.
             if was_mode == "term" and self.project_root is not None:
@@ -2328,8 +3809,8 @@ class MainWindow(QMainWindow):
                 self._populate_term_picker()
             if was_mode in ("run", "resume", "recover"):
                 self.statusBar().showMessage(
-                    "Run complete. View figures and tables on the Outputs tab, and the "
-                    "interactive network on the PPI Network tab.", 20000)
+                    "Run complete. Open Explore results > Figures and tables, or "
+                    "Explore results > Protein network.", 20000)
             # A "Rebuild from STRING" produces a new network; reload it into the
             # interactive viewer so it reflects the rebuild instead of the old graph.
             if was_mode == "ppi" and self.project_root is not None:
@@ -2352,9 +3833,7 @@ class MainWindow(QMainWindow):
             self._active_estimate = None
         else:
             # Failure: do not imply success. Red bar, red status, keep partial %.
-            self.progress.setStyleSheet(
-                "QProgressBar::chunk { background-color: "
-                f"{status_color('FAIL', self._current_theme_mode())}; }}")
+            self._set_progress_status("FAIL")
             status = "Failed — a rule reported an error (see the log)" if failed_in_output and code == 0 \
                 else f"Failed (exit code {code})"
             self._set_run_status(status, "FAIL")
@@ -2425,6 +3904,74 @@ class MainWindow(QMainWindow):
         # Enable the Run-Monitor provenance exports once a run has produced the files.
         root = getattr(self, "project_root", None)
         reports = (root / "results" / "reports") if root else None
+        if hasattr(self, "runtime_estimate_button"):
+            self.runtime_estimate_button.setEnabled(root is not None)
+        if hasattr(self, "runtime_no_project_panel"):
+            self.runtime_no_project_panel.setVisible(root is None)
+        if hasattr(self, "runtime_operational_panel"):
+            self.runtime_operational_panel.setVisible(root is not None)
+        if hasattr(self, "run_empty_panel"):
+            self.run_empty_panel.setVisible(root is None)
+        if hasattr(self, "run_operational_panel"):
+            project_open = root is not None
+            state_changed = self.run_operational_panel.isHidden() == project_open
+            self.run_operational_panel.setVisible(project_open)
+            if state_changed and hasattr(self, "run_monitor_page"):
+                # Replacing the compact empty state with the taller operational
+                # workspace can preserve an obsolete scroll offset and hide the page
+                # heading. A new project state always starts at the top of the task.
+                self.run_monitor_page.verticalScrollBar().setValue(0)
+        for button in getattr(self, "run_action_buttons", {}).values():
+            button.setEnabled(root is not None and not self._run_active)
+        if hasattr(self, "use_wsl"):
+            self.use_wsl.setEnabled(root is not None and not self._run_active)
+        if self.stop_button is not None:
+            self.stop_button.setVisible(root is not None and self._run_active)
+            self.stop_button.setEnabled(root is not None and self._run_active)
+        if hasattr(self, "resume_banner"):
+            self._refresh_resume_banner()
+        if hasattr(self, "open_project_folder_button"):
+            self.open_project_folder_button.setEnabled(root is not None)
+        if hasattr(self, "open_multiqc_button"):
+            self.open_multiqc_button.setEnabled(bool(
+                root and (root / "results" / "qc" / "multiqc" / "multiqc_report.html").exists()))
+        if hasattr(self, "open_results_report_button"):
+            self.open_results_report_button.setEnabled(bool(
+                root and (root / "results" / "reports" / "results_report.html").exists()))
+        if hasattr(self, "save_resources_button"):
+            self.save_resources_button.setEnabled(root is not None)
+        for button in getattr(self, "report_project_buttons", []):
+            button.setEnabled(root is not None)
+        if hasattr(self, "report_no_project_panel"):
+            self.report_no_project_panel.setVisible(root is None)
+        if hasattr(self, "report_operational_panel"):
+            self.report_operational_panel.setVisible(root is not None)
+        for control in getattr(self, "output_project_controls", []):
+            control.setEnabled(root is not None)
+        if hasattr(self, "output_no_project_panel"):
+            self.output_no_project_panel.setVisible(root is None)
+        if hasattr(self, "output_controls_widget"):
+            self.output_controls_widget.setVisible(root is not None)
+        if hasattr(self, "_outputs_main_splitter"):
+            self._outputs_main_splitter.setVisible(root is not None)
+        if hasattr(self, "results_inspector"):
+            self.results_inspector.setVisible(root is not None)
+        if hasattr(self, "ppi_load_button"):
+            self.ppi_load_button.setEnabled(root is not None)
+        for control in getattr(self, "ppi_construction_controls", []):
+            control.setEnabled(root is not None)
+        if hasattr(self, "ppi_go_project"):
+            self.ppi_go_project.setVisible(root is None)
+        if hasattr(self, "ppi_no_project_panel"):
+            self.ppi_no_project_panel.setVisible(root is None)
+        if hasattr(self, "ppi_command_widget"):
+            self.ppi_command_widget.setVisible(root is not None)
+        if hasattr(self, "ppi_workspace"):
+            self.ppi_workspace.setVisible(root is not None)
+        if hasattr(self, "ppi_inspector"):
+            self.ppi_inspector.setVisible(root is not None)
+            if root is not None:
+                self.ppi_inspector.setCurrentIndex(1)
         for attr, fname in (("export_toolsref_button", "tools_references.txt"),
                             ("export_design_button", "study_design.txt")):
             button = getattr(self, attr, None)
@@ -2457,18 +4004,59 @@ class MainWindow(QMainWindow):
     def _build_reports_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setSpacing(10)
+        layout.addWidget(self._page_intro(
+            "Reports and provenance",
+            "Generate the consolidated results report after a run, or open the quality-control and "
+            "results reports already produced for the current project."))
+        (self.report_no_project_panel,
+         _report_empty_title,
+         _report_empty_body,
+         _report_empty_action) = self._empty_state_panel(
+            "No project open",
+            "Open or create a project to generate reports or review saved provenance and quality-control outputs.",
+            "Go to Project",
+            lambda: self.tabs.setCurrentIndex(0),
+        )
+        layout.addWidget(self.report_no_project_panel, 1)
+
+        self.report_operational_panel = QWidget()
+        operational_layout = QVBoxLayout(self.report_operational_panel)
+        operational_layout.setContentsMargins(0, 0, 0, 0)
+        operational_layout.setSpacing(10)
         generate = QPushButton("Generate Reports")
         generate.setProperty("primary", True)
         generate.clicked.connect(self._generate_reports)
+        open_results = QPushButton("Open Results Report")
+        open_results.clicked.connect(self._open_results_report)
+        open_multiqc = QPushButton("Open MultiQC Report")
+        open_multiqc.clicked.connect(self._open_report)
+        open_folder = QPushButton("Open reports folder")
+        open_folder.clicked.connect(lambda: self._open_subpath("results/reports"))
+        self.report_project_buttons = [generate, open_results, open_multiqc, open_folder]
+        for button in self.report_project_buttons:
+            button.setEnabled(False)
+        result_group = QGroupBox("Report status")
+        result_layout = QVBoxLayout(result_group)
         self.report_text = QTextEdit()
         self.report_text.setReadOnly(True)
-        self.report_text.setPlaceholderText(
-            "Run the pipeline, then click Generate Reports for the run summary, timing and sanity checks.")
-        generate_row = QHBoxLayout()
-        generate_row.addWidget(generate)
-        generate_row.addStretch(1)
-        layout.addLayout(generate_row)
-        layout.addWidget(self.report_text)
+        self.report_text.setMinimumHeight(140)
+        self.report_text.setMaximumHeight(320)
+        self.report_text.setPlainText(
+            "No reports yet. Complete a run, then generate or open the saved reports from this page.")
+        report_actions = QGridLayout()
+        report_actions.setHorizontalSpacing(8)
+        report_actions.setVerticalSpacing(6)
+        for index, button in enumerate(self.report_project_buttons):
+            report_actions.addWidget(button, index // 2, index % 2)
+        report_actions.setColumnStretch(2, 1)
+        operational_layout.addLayout(report_actions)
+        result_layout.addWidget(self.report_text)
+        operational_layout.addWidget(result_group)
+        operational_layout.addStretch(1)
+        layout.addWidget(self.report_operational_panel, 1)
+        self.report_no_project_panel.setVisible(True)
+        self.report_operational_panel.setVisible(False)
         self.tabs.addTab(self._scrollable(page), "Reports")
 
     def _build_outputs_tab(self) -> None:
@@ -2479,10 +4067,28 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
+        layout.addWidget(self._page_intro(
+            "Figures and tables",
+            "Browse result tables and publication-ready figures. Editing tools appear only when a project is open."))
+        (self.output_no_project_panel,
+         _output_no_project_title,
+         _output_no_project_body,
+         _output_no_project_action) = self._empty_state_panel(
+            "Open a project to explore outputs",
+            "Figures, tables, and editing tools are organised by project. Open or create one to begin.",
+            "Go to Project",
+            lambda: self.tabs.setCurrentIndex(0),
+        )
+        layout.addWidget(self.output_no_project_panel, 1)
 
         # Table picker row.
-        controls = QHBoxLayout()
+        self.output_controls_widget = QWidget()
+        controls = QHBoxLayout(self.output_controls_widget)
+        controls.setContentsMargins(0, 0, 0, 0)
         self.output_table_pick = QComboBox()
+        self.output_table_pick.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.output_table_pick.setMinimumContentsLength(18)
         self.output_table_pick.addItems(
             ["results/counts/counts.txt", "results/deseq2/deseq2_results.csv",
              "results/deseq2/upregulated_genes.csv", "results/deseq2/downregulated_genes.csv",
@@ -2501,30 +4107,47 @@ class MainWindow(QMainWindow):
         controls.addWidget(self.output_table_pick, 1)
         controls.addWidget(load)
         controls.addWidget(open_results)
-        layout.addLayout(controls)
+        layout.addWidget(self.output_controls_widget)
 
         # --- Table panel (top of the vertical splitter) ---
         table_panel = QWidget()
+        # Splitter sub-control styling can colour the splitter's own palette. Keep
+        # the content panes opaque so that handle accents never bleed through them.
+        table_panel.setAutoFillBackground(True)
         table_layout = QVBoxLayout(table_panel)
-        table_layout.setContentsMargins(0, 0, 0, 0)
-        table_layout.addWidget(QLabel("Table preview (first 200 rows)"))
+        table_layout.setContentsMargins(8, 6, 8, 8)
+        table_layout.setSpacing(6)
+        self.output_table_heading = QLabel("Table preview (first 200 rows)")
+        table_layout.addWidget(self.output_table_heading)
         self.output_table = QTableWidget()
         self.output_table.setEditTriggers(QTableWidget.NoEditTriggers)
         # Click a header to sort the loaded preview (numeric columns sort numerically
         # via _SortableItem). Toggled off during (re)population in _load_output_table.
         self.output_table.setSortingEnabled(True)
         self.output_table.horizontalHeader().setSortIndicatorShown(True)
+        self.output_table.setMinimumHeight(48)
         self.output_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         table_layout.addWidget(self.output_table)
 
         # --- Figure panel (left of the horizontal splitter) ---
         figure_panel = QWidget()
+        figure_panel.setAutoFillBackground(True)
         figure_layout = QVBoxLayout(figure_panel)
-        figure_layout.setContentsMargins(0, 0, 0, 0)
-        figure_layout.addWidget(QLabel("Figures — scroll to zoom, drag to pan"))
-        fig_controls = QHBoxLayout()
+        figure_layout.setContentsMargins(8, 6, 8, 8)
+        figure_layout.setSpacing(6)
+        figure_header = QLabel("Figures — scroll to zoom, drag to pan")
+        figure_header.setWordWrap(True)
+        figure_header.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.output_figure_heading = figure_header
+        figure_layout.addWidget(figure_header)
+        fig_select = QHBoxLayout()
         self.figure_pick = QComboBox()
+        self.figure_pick.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.figure_pick.setMinimumContentsLength(16)
         self.figure_pick.currentTextChanged.connect(self._show_selected_figure)
+        self.figure_pick.addItem("(open a project to browse figures)")
+        self.figure_pick.setEnabled(False)
         regen_figs = QPushButton("Regenerate figures")
         regen_figs.setToolTip("Re-render figures with the current style. Does not re-run alignment or DESeq2. Progress shows on the Run Monitor tab.")
         regen_figs.clicked.connect(self._regenerate_figures)
@@ -2543,37 +4166,90 @@ class MainWindow(QMainWindow):
         # the right edge of the controls row.
         self.svg_toggle.setMinimumWidth(self.svg_toggle.sizeHint().width() + 12)
         self.svg_toggle.toggled.connect(lambda _=False: self._show_selected_figure(self.figure_pick.currentText()))
-        fig_controls.addWidget(QLabel("Figure:"))
-        fig_controls.addWidget(self.figure_pick, 1)
-        fig_controls.addWidget(regen_figs)
-        fig_controls.addWidget(refresh_figs)
-        fig_controls.addWidget(fit_btn)
-        fig_controls.addWidget(actual_btn)
-        fig_controls.addWidget(self.svg_toggle)
-        figure_layout.addLayout(fig_controls)
+        fig_select.addWidget(QLabel("Figure:"))
+        fig_select.addWidget(self.figure_pick, 1)
+        fig_select.addWidget(self.svg_toggle)
+        figure_layout.addLayout(fig_select)
+        render_actions = QHBoxLayout()
+        render_actions.addWidget(regen_figs)
+        render_actions.addWidget(refresh_figs)
+        render_actions.addStretch(1)
+        render_actions.addWidget(QLabel("View"))
+        render_actions.addWidget(fit_btn)
+        render_actions.addWidget(actual_btn)
+        figure_layout.addLayout(render_actions)
+        self.regenerate_figures_button = regen_figs
+        figure_canvas = QWidget()
+        figure_canvas_layout = QStackedLayout(figure_canvas)
+        figure_canvas_layout.setContentsMargins(0, 0, 0, 0)
+        figure_canvas_layout.setStackingMode(QStackedLayout.StackingMode.StackAll)
         self.figure_viewer = ImageViewer()
         self.figure_viewer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.figure_viewer.setMinimumSize(360, 320)
+        # Keep the figure scientifically inspectable even when a saved splitter
+        # state from a larger screen is restored at the compact desktop size.
+        self.figure_viewer.setMinimumSize(300, 280)
         self.figure_viewer.update_theme(IMAGEVIEWER_BG.get(self._current_theme_mode(), IMAGEVIEWER_BG["light"]))
-        figure_layout.addWidget(self.figure_viewer, 1)
+        figure_canvas_layout.addWidget(self.figure_viewer)
+        (self.output_empty_state_panel,
+         self.output_empty_title,
+         self.output_empty_state,
+         self.output_empty_action) = self._empty_state_panel(
+            "No project open",
+            "Open or create a project to browse stored figures and tables. "
+            "Figure editing becomes available with the project.",
+            "Go to Project",
+            self._go_from_output_empty_state,
+        )
+        figure_canvas_layout.addWidget(self.output_empty_state_panel)
+        figure_canvas_layout.setCurrentWidget(self.output_empty_state_panel)
+        self.output_figure_stack = figure_canvas_layout
+        self.output_figure_canvas = figure_canvas
+        figure_layout.addWidget(figure_canvas, 1)
 
-        # --- Controls panel (right of the horizontal splitter): tabbed ---
-        control_panel = QTabWidget()
-        control_panel.setMinimumWidth(280)
-        control_panel.setMaximumWidth(460)
-        control_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
-        control_panel.addTab(self._scrollable(self._build_figure_style_group()), "Figure Style")
-        control_panel.addTab(self._scrollable(self._build_goi_group()), "Genes of Interest")
-        control_panel.addTab(self._scrollable(self._build_enrichment_terms_group()), "Enrichment Terms")
+        # --- Progressive inspector (right of the horizontal splitter) ---
+        control_panel = _InspectorTabs()
+        control_panel.setObjectName("resultsInspector")
+        control_panel.setAccessibleName("Results editing panels")
+        control_panel.setMinimumWidth(320)
+        control_panel.setMaximumWidth(420)
+        control_panel.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        control_panel.addItem(self._build_figure_style_group(), "Style")
+        # The gene editor owns its scrolling.  Keeping its action footer outside
+        # another scroll area makes Save/Generate permanently reachable.
+        control_panel.addItem(self._build_goi_group(), "Genes")
+        control_panel.addItem(self._inspector_scrollable(self._build_enrichment_terms_group()), "Terms")
+        # Compact tab labels keep the entire inspector navigation visible. The
+        # full purpose remains available to pointer and assistive-technology users.
+        control_panel.setItemToolTip(0, "Global appearance, detail, size and per-figure overrides")
+        control_panel.setItemToolTip(1, "Genes of interest: inspect selected genes and create focused figures")
+        control_panel.setItemToolTip(2, "Enrichment terms: extract genes or build a heatmap from a term")
+        self.results_inspector = control_panel
+        self.output_project_controls = [
+            self.output_table_pick, load, open_results, regen_figs, refresh_figs,
+            fit_btn, actual_btn, self.svg_toggle, control_panel,
+        ]
+        for control in self.output_project_controls:
+            control.setEnabled(False)
+        control_panel.setVisible(False)
+
+        inspector_host = QWidget()
+        inspector_host.setAutoFillBackground(True)
+        inspector_host.setMinimumWidth(328)
+        inspector_host.setMaximumWidth(428)
+        inspector_host.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        inspector_layout = QVBoxLayout(inspector_host)
+        inspector_layout.setContentsMargins(8, 6, 0, 8)
+        inspector_layout.addWidget(control_panel)
+        self._outputs_inspector_host = inspector_host
 
         results_splitter = QSplitter(Qt.Orientation.Horizontal)
         results_splitter.setChildrenCollapsible(False)
         results_splitter.setHandleWidth(6)
         results_splitter.addWidget(figure_panel)
-        results_splitter.addWidget(control_panel)
-        results_splitter.setStretchFactor(0, 3)
-        results_splitter.setStretchFactor(1, 1)
-        results_splitter.setSizes([560, 420])  # wider control panel so the figure-override columns fit
+        results_splitter.addWidget(inspector_host)
+        results_splitter.setStretchFactor(0, 1)
+        results_splitter.setStretchFactor(1, 0)
+        results_splitter.setSizes([700, 420])
         self._outputs_results_splitter = results_splitter
 
         main_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -2583,15 +4259,19 @@ class MainWindow(QMainWindow):
         main_splitter.addWidget(results_splitter)
         main_splitter.setStretchFactor(0, 1)
         main_splitter.setStretchFactor(1, 3)
-        main_splitter.setSizes([220, 560])
+        # The table is secondary to figure inspection and starts collapsed. Loading
+        # a table expands it to a useful preview without permanently consuming the
+        # compact viewport.
+        main_splitter.setSizes([0, 680])
         self._outputs_main_splitter = main_splitter
+        self._outputs_table_panel = table_panel
 
         layout.addWidget(main_splitter, 1)
 
         # Restore saved splitter positions, if any.
         s = QSettings()
         for key, sp in (("_outputs_main_splitter", main_splitter), ("_outputs_results_splitter", results_splitter)):
-            st = s.value(f"outputs/{key}", QByteArray())
+            st = s.value(f"outputs/v3/{key}", QByteArray())
             if isinstance(st, QByteArray) and not st.isEmpty():
                 sp.restoreState(st)
 
@@ -2605,30 +4285,48 @@ class MainWindow(QMainWindow):
 
         page = QWidget()
         layout = QVBoxLayout(page)
-        help_label = QLabel(
-            "Interactive protein-protein interaction network (STRING) from the differential-"
-            "expression / genes-of-interest set. Hover a protein for its symbol, expression, "
-            "log2 fold-change, adjusted p-value and topology; drag nodes to rearrange and scroll "
-            "to zoom. Customise the layout, colour, size and confidence, then export PNG or SVG.")
-        help_label.setWordWrap(True)
-        layout.addWidget(help_label)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+        layout.addWidget(self._page_intro(
+            "Protein interaction network",
+            "Explore the STRING network from differential-expression or genes-of-interest results. "
+            "View filters never rebuild the network; construction settings explicitly replace its edge set."))
+        (self.ppi_no_project_panel,
+         _ppi_no_project_title,
+         _ppi_no_project_body,
+         _ppi_no_project_action) = self._empty_state_panel(
+            "Open a project to explore a protein network",
+            "BulkSeq Studio builds the STRING network from the current project's results or genes of interest.",
+            "Go to Project",
+            lambda: self.tabs.setCurrentIndex(0),
+        )
+        layout.addWidget(self.ppi_no_project_panel, 1)
 
         row1 = QHBoxLayout()
         load_btn = QPushButton("Load / refresh network")
         load_btn.setProperty("primary", True)
         load_btn.setToolTip("Assemble the network from this project's results and display it.")
         load_btn.clicked.connect(self._load_ppi_network)
-        # Friendly display labels mapped to the internal cytoscape.js values (held
-        # as userData) so a biologist sees "Force-directed", not "fcose".
+        self.ppi_load_button = load_btn
+        load_btn.setEnabled(False)
+        # Keep the compact control labels short enough to remain readable beside
+        # the network. The full statistical/layout meaning stays in tooltips and
+        # accessibility metadata; internal Cytoscape values remain userData.
         self.ppi_layout_pick = QComboBox()
-        for label, val in [("Force-directed (fCoSE)", "fcose"), ("Compact (CoSE)", "cose"),
+        for label, val in [("Force-directed", "fcose"), ("Compact", "cose"),
                            ("Circle", "circle"), ("Concentric", "concentric"), ("Grid", "grid")]:
             self.ppi_layout_pick.addItem(label, val)
+        self.ppi_layout_pick.setAccessibleName("Network layout")
+        self.ppi_layout_pick.setToolTip(
+            "Network layout. Force-directed uses the fCoSE algorithm; Compact uses CoSE.")
         self.ppi_layout_pick.currentIndexChanged.connect(
             lambda _i: self.ppi_viewer.set_layout(self.ppi_layout_pick.currentData()))
         self.ppi_color_pick = QComboBox()
-        for label, val in [("log₂ fold change", "log2FoldChange"), ("Module / cluster", "module")]:
+        for label, val in [("Fold change", "log2FoldChange"), ("Module / cluster", "module")]:
             self.ppi_color_pick.addItem(label, val)
+        self.ppi_color_pick.setAccessibleName("Node colour encoding")
+        self.ppi_color_pick.setToolTip(
+            "Colour nodes by log₂ fold change or detected module / cluster.")
         self.ppi_color_pick.currentIndexChanged.connect(
             lambda _i: self.ppi_viewer.set_color_by(self.ppi_color_pick.currentData()))
         self.ppi_view_pick = QComboBox()
@@ -2640,8 +4338,11 @@ class MainWindow(QMainWindow):
             lambda _i: self.ppi_viewer.set_direction_filter(self.ppi_view_pick.currentData()))
         self.ppi_size_pick = QComboBox()
         for label, val in [("Node degree", "degree"), ("Mean expression", "meanExpr"),
-                           ("−log₁₀ adj. p", "neglog10padj")]:
+                           ("Significance", "neglog10padj")]:
             self.ppi_size_pick.addItem(label, val)
+        self.ppi_size_pick.setAccessibleName("Node size encoding")
+        self.ppi_size_pick.setToolTip(
+            "Size nodes by degree, mean expression, or significance (−log₁₀ adjusted p-value).")
         self.ppi_size_pick.currentIndexChanged.connect(
             lambda _i: self.ppi_viewer.set_size_by(self.ppi_size_pick.currentData()))
         self.ppi_labels_cb = QCheckBox("Labels")
@@ -2669,7 +4370,6 @@ class MainWindow(QMainWindow):
         row1.addWidget(self.ppi_italic_cb)
         row1.addWidget(self.ppi_focus_cb)
         row1.addStretch(1)
-        layout.addLayout(row1)
 
         # Row 2 — VIEW filter: a client-side slider that only hides edges in the
         # already-loaded graph (it cannot show edges below the build threshold).
@@ -2693,10 +4393,7 @@ class MainWindow(QMainWindow):
         # clicking Rebuild actually re-contacts STRING at that confidence (the old button
         # silently used the far-away Figure-Style spinbox, so it looked like a no-op).
         row2.addWidget(QLabel("Rebuild at score ≥"))
-        self.ppi_rebuild_score = QSpinBox()
-        self.ppi_rebuild_score.setRange(0, 1000)
-        self.ppi_rebuild_score.setSingleStep(50)
-        self.ppi_rebuild_score.setValue(400)
+        self.ppi_rebuild_score = self.ppi_score
         self.ppi_rebuild_score.setToolTip("STRING combined-score cutoff to rebuild at (0-1000; 400 = "
                                           "medium, 700 = high confidence). Lower it to pull in weaker "
                                           "interactions, then click Rebuild.")
@@ -2706,8 +4403,9 @@ class MainWindow(QMainWindow):
         rebuild_btn.setToolTip("Re-contact string-db.org and rebuild the network at the 'Rebuild at "
                                "score' shown to the left. This replaces the current network.")
         rebuild_btn.clicked.connect(self._regenerate_ppi)
+        self.ppi_rebuild_button = rebuild_btn
+        rebuild_btn.setEnabled(False)
         row2.addWidget(rebuild_btn)
-        layout.addLayout(row2)
 
         # Row 3 — EXPORT: save the current network as an image or Cytoscape files.
         row3 = QHBoxLayout()
@@ -2736,28 +4434,134 @@ class MainWindow(QMainWindow):
         row3.addWidget(export_svg)
         row3.addWidget(save_cyto)
         row3.addStretch(1)
-        layout.addLayout(row3)
 
         self.ppi_status = QLabel("No network loaded — click “Load / refresh network”.")
         self.ppi_status.setWordWrap(True)
-        layout.addWidget(self.ppi_status)
+        self.ppi_go_project = QPushButton("Go to Project")
+        self.ppi_go_project.clicked.connect(lambda: self.tabs.setCurrentIndex(0))
 
         self.ppi_viewer = PpiViewer()
         self.ppi_viewer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.ppi_viewer.setMinimumHeight(360)
         self.ppi_viewer.update_theme(self._ppi_theme_palette())
-        layout.addWidget(self.ppi_viewer, 1)
+        self.ppi_view_controls = [
+            self.ppi_layout_pick,
+            self.ppi_color_pick,
+            self.ppi_view_pick,
+            self.ppi_size_pick,
+            self.ppi_labels_cb,
+            self.ppi_italic_cb,
+            self.ppi_focus_cb,
+            self.ppi_conf,
+        ]
+        self._set_ppi_network_controls(False)
+
+        self.ppi_command_widget = QWidget()
+        command_row = QHBoxLayout(self.ppi_command_widget)
+        command_row.setContentsMargins(0, 0, 0, 0)
+        command_row.addWidget(load_btn)
+        command_row.addWidget(self.ppi_status, 1)
+        command_row.addWidget(self.ppi_go_project)
+        layout.addWidget(self.ppi_command_widget)
+
+        inspector = _InspectorTabs()
+        inspector.setObjectName("ppiInspector")
+        inspector.setAccessibleName("Protein network controls")
+        inspector.setMinimumWidth(320)
+        inspector.setMaximumWidth(420)
+        inspector.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+
+        view_page = QWidget()
+        view_form = QFormLayout(view_page)
+        view_form.setProperty("narrowInspector", True)
+        view_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        view_form.addRow("Layout", self.ppi_layout_pick)
+        view_form.addRow("Colour by", self.ppi_color_pick)
+        view_form.addRow("Show proteins", self.ppi_view_pick)
+        view_form.addRow("Node size", self.ppi_size_pick)
+        label_options = QWidget()
+        label_options_layout = QVBoxLayout(label_options)
+        label_options_layout.setContentsMargins(0, 0, 0, 0)
+        label_options_layout.addWidget(self.ppi_labels_cb)
+        label_options_layout.addWidget(self.ppi_italic_cb)
+        label_options_layout.addWidget(self.ppi_focus_cb)
+        labels_heading = QLabel("Labels")
+        labels_heading.setProperty("uiRole", "sectionLabel")
+        view_form.addRow(labels_heading)
+        view_form.addRow(label_options)
+        filter_holder = QWidget()
+        filter_layout = QHBoxLayout(filter_holder)
+        filter_layout.setContentsMargins(0, 0, 0, 0)
+        filter_layout.addWidget(self.ppi_conf, 1)
+        filter_layout.addWidget(self.ppi_conf_lbl)
+        filter_holder.setToolTip(
+            "Hide loaded edges below this confidence in the current view. This does not rebuild the network.")
+        filter_holder.setAccessibleName("Current-view edge confidence filter")
+        view_form.addRow("Edge filter", filter_holder)
+        inspector.addItem(self._inspector_scrollable(view_page), "View")
+        inspector.setItemToolTip(0, "Current-view layout, colour, size, labels and edge filter")
+
+        network_page = QWidget()
+        network_form = QFormLayout(network_page)
+        network_form.setProperty("narrowInspector", True)
+        network_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        network_note = QLabel(
+            "Rebuild contacts STRING and replaces the network edge set. The confidence control in the View tab only hides loaded edges."
+        )
+        network_note.setWordWrap(True)
+        network_note.setProperty("hint", True)
+        network_form.addRow(network_note)
+        network_form.addRow("STRING combined score (0–1000)", self.ppi_score)
+        network_form.addRow("Hub labels in static figure", self.ppi_hub_labels)
+        network_form.addRow(rebuild_btn)
+        inspector.addItem(self._inspector_scrollable(network_page), "Rebuild")
+        inspector.setItemToolTip(1, "Rebuild and replace the STRING network edge set")
+        self.ppi_construction_controls = [self.ppi_score, self.ppi_hub_labels, rebuild_btn]
+        for control in self.ppi_construction_controls:
+            control.setEnabled(False)
+
+        export_page = QWidget()
+        export_form = QFormLayout(export_page)
+        export_form.setProperty("narrowInspector", True)
+        export_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        export_form.addRow("Background", self.ppi_export_bg)
+        export_form.addRow(export_png)
+        export_form.addRow(export_svg)
+        export_form.addRow(save_cyto)
+        inspector.addItem(self._inspector_scrollable(export_page), "Export")
+        inspector.setItemToolTip(2, "Export the current network view or Cytoscape files")
+
+        workspace = QSplitter(Qt.Orientation.Horizontal)
+        workspace.setObjectName("ppiWorkspace")
+        workspace.setChildrenCollapsible(False)
+        workspace.addWidget(self.ppi_viewer)
+        workspace.addWidget(inspector)
+        workspace.setStretchFactor(0, 1)
+        workspace.setStretchFactor(1, 0)
+        workspace.setSizes([900, 340])
+        layout.addWidget(workspace, 1)
+        self.ppi_inspector = inspector
+        self.ppi_workspace = workspace
+        # At startup there is no project context, so view/rebuild/export controls
+        # have no referent. The project lifecycle reveals the inspector and opens
+        # the construction section when a project becomes available.
+        self.ppi_inspector.setVisible(False)
 
         self.tabs.addTab(page, "PPI Network")
+        # Outputs and PPI are built after Run Monitor's first lifecycle refresh.
+        # Apply the current project state once their purposeful empty states exist.
+        self._refresh_export_buttons()
 
     def _ppi_theme_palette(self) -> dict:
         mode = self._current_theme_mode()
         pal = PALETTES.get(mode, PALETTES["light"])
         return {
             "bg": IMAGEVIEWER_BG.get(mode, IMAGEVIEWER_BG["light"]),
+            "surface": pal.get("SURFACE", "#ffffff"),
             "text": pal.get("TEXT", "#1a1a1a"),
-            "edge": pal.get("BORDER", "#c7c7c7"),
+            "edge": pal.get("CONTROL_BORDER", "#7d8996"),
             "muted": pal.get("MUTED_TEXT", "#8a8a8a"),
+            "focus": pal.get("PRIMARY", "#2c6fb6"),
         }
 
     def _load_ppi_network(self) -> None:
@@ -2771,13 +4575,19 @@ class MainWindow(QMainWindow):
                 self.ppi_viewer.load_static(png)
                 self.ppi_status.setText("Interactive view unavailable — showing the static PPI figure.")
             else:
+                self.ppi_viewer.clear_network(
+                    "No PPI network is available yet. Run the pipeline or rebuild the STRING network.")
                 self.ppi_status.setText("No PPI network found for this project yet.")
+            self._set_ppi_network_controls(False)
             return
         from app.core.ppi_graph import build_ppi_cytoscape_json
 
         try:
             graph = build_ppi_cytoscape_json(self.project_root)
         except Exception as exc:  # never crash the tab
+            self.ppi_viewer.clear_network(
+                "The PPI network could not be assembled. Review the status message and project outputs.")
+            self._set_ppi_network_controls(False)
             self.ppi_status.setText(f"Could not assemble the network: {exc}")
             return
         meta = graph.get("meta", {})
@@ -2792,6 +4602,9 @@ class MainWindow(QMainWindow):
         self.ppi_conf.blockSignals(False)
         self.ppi_conf_lbl.setText(f"{floor / 100:.2f}")
         has_network = n_nodes > 0
+        self._set_ppi_network_controls(has_network)
+        if has_network and hasattr(self, "ppi_inspector"):
+            self.ppi_inspector.setCurrentIndex(0)
         if hasattr(self, "ppi_export_png"):
             self.ppi_export_png.setEnabled(has_network)
             self.ppi_export_svg.setEnabled(has_network)
@@ -2801,14 +4614,24 @@ class MainWindow(QMainWindow):
                 self.ppi_save_cyto.setEnabled(has_network)
                 self.ppi_save_cyto.setToolTip("" if has_network else "Load a network first.")
         if not has_network:
+            self.ppi_viewer.set_empty_state(
+                "STRING returned no interactions for this project. Try a supported organism, "
+                "check gene-symbol mapping, or adjust the Network construction threshold.")
             self.ppi_status.setText(
                 "No PPI network for this run — STRING returned no interactions (the organism may "
                 "lack STRING coverage, or its genes have no mapped symbols). The static figure, if any, "
-                "is on the Outputs tab.")
+                "is under Explore results > Figures and tables.")
         else:
             self.ppi_status.setText(
                 f"{n_nodes} proteins, {n_edges} interactions. Hover a protein for details; "
                 "click to highlight its neighbours; drag and scroll to explore.")
+
+    def _set_ppi_network_controls(self, enabled: bool) -> None:
+        """Gate only controls that operate on an already-loaded network."""
+        for control in getattr(self, "ppi_view_controls", []):
+            control.setEnabled(enabled)
+        if hasattr(self, "ppi_export_bg"):
+            self.ppi_export_bg.setEnabled(enabled)
 
     def _ppi_confidence_changed(self, value: int) -> None:
         floor = value / 100.0
@@ -2855,8 +4678,12 @@ class MainWindow(QMainWindow):
 
     def _ppi_export(self, fmt: str) -> None:
         if not hasattr(self, "ppi_viewer") or not self.ppi_viewer.available:
-            QMessageBox.information(self, APP_NAME, "Interactive export needs the web view; "
-                                   "use the static figure on the Outputs tab instead.")
+            QMessageBox.information(
+                self,
+                APP_NAME,
+                "Interactive export needs the web view; use the static figure under "
+                "Explore results > Figures and tables instead.",
+            )
             return
         default = f"ppi_network.{fmt}"
         path, _ = QFileDialog.getSaveFileName(self, "Export PPI network", default,
@@ -2887,25 +4714,50 @@ class MainWindow(QMainWindow):
         # No group title — the enclosing "Genes of Interest" tab already names it.
         group = QWidget()
         v = QVBoxLayout(group)
-        help_label = QLabel("Paste gene IDs (one per line) in the same identifier format as your reference — locus tags (e.g. FBgn..., FGSG_...), Ensembl/RefSeq IDs, or gene symbols present in the GTF. They are matched to this run's genes; any that do not match are flagged in the genes-of-interest report (with examples of the run's ID format). On the next run you get a focused z-scored heatmap, per-condition expression plots, a counts table, and — when PPI seeding is set to the gene list — a STRING network for these genes.")
-        help_label.setWordWrap(True)  # without this the long label forces a huge min width
+        v.setContentsMargins(10, 10, 10, 10)
+        v.setSpacing(8)
+        full_help = (
+            "Use the identifier format from this run's reference: locus tags (for example "
+            "FBgn or FGSG identifiers), Ensembl/RefSeq IDs, or gene symbols present in the "
+            "GTF. Unmatched IDs are reported. A completed count-based run can generate a "
+            "z-scored heatmap, per-condition expression plots and a counts table; it can "
+            "also seed a STRING network when PPI seeding uses this list."
+        )
+        help_label = QLabel(
+            "Paste one gene ID per line. IDs must match the reference used for this run."
+        )
+        help_label.setWordWrap(True)
+        help_label.setToolTip(full_help)
+        help_label.setAccessibleName("Genes-of-interest instructions")
+        help_label.setAccessibleDescription(full_help)
         v.addWidget(help_label)
         self.goi_box = QTextEdit()
         self.goi_box.setAcceptRichText(False)  # paste gene IDs as plain text, no source formatting
         self.goi_box.setPlaceholderText("One gene ID per line")
         self.goi_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        save = QPushButton("Save genes of interest")
+        self.goi_box.setMinimumHeight(110)
+        self.goi_box.setAccessibleName("Genes of interest")
+        self.goi_box.setAccessibleDescription(full_help)
+        save = QPushButton("Save gene list")
+        save.setAccessibleName("Save genes of interest")
+        save.setToolTip("Save this genes-of-interest list in the project configuration.")
         save.clicked.connect(self._save_goi)
-        generate = QPushButton("Generate from existing results")
+        generate = QPushButton("Generate gene figures")
+        generate.setAccessibleName("Generate genes-of-interest figures from existing results")
         generate.setToolTip("Build the genes-of-interest heatmap, expression plots, and table "
                             "from the already-computed DESeq2 results — no re-alignment or "
                             "re-analysis. Requires a completed run.")
         generate.clicked.connect(self._generate_goi)
         v.addWidget(self.goi_box)
-        goi_buttons = QHBoxLayout()
+        # A vertical footer fits the narrow inspector without eliding either
+        # caption and remains visible while the text editor scrolls its content.
+        goi_buttons = QVBoxLayout()
+        goi_buttons.setSpacing(6)
         goi_buttons.addWidget(save)
         goi_buttons.addWidget(generate)
         v.addLayout(goi_buttons)
+        self.goi_save_button = save
+        self.goi_generate_button = generate
         return group
 
     def _generate_goi(self) -> None:
@@ -2989,24 +4841,35 @@ class MainWindow(QMainWindow):
         self.term_pick = QComboBox()
         self.term_pick.currentIndexChanged.connect(self._on_term_selected)
         v.addWidget(self.term_pick)
-        row = QHBoxLayout()
+        # Long, explicit action names matter here: one action writes a table;
+        # the other also builds a heatmap. A single horizontal row truncates
+        # them in the 320--420 px inspector, so the actions stack deliberately.
+        action_column = QVBoxLayout()
+        action_column.setContentsMargins(0, 2, 0, 0)
+        action_column.setSpacing(6)
         refresh = QPushButton("Refresh terms")
+        refresh.setAccessibleName("Refresh enrichment terms")
+        refresh.setToolTip("Reload extractable terms from the finished run.")
         refresh.clicked.connect(self._populate_term_picker)
-        self.term_table_btn = QPushButton("Extract genes → table")
+        self.term_table_btn = QPushButton("Extract genes\n→ table")
+        self.term_table_btn.setAccessibleName("Extract enrichment-term genes to table")
         self.term_table_btn.setToolTip("Write this term's genes with their DESeq2 stats to a CSV "
                                        "and show it in the table — instant, from existing results.")
         self.term_table_btn.clicked.connect(lambda: self._extract_term_genes(heatmap=False))
-        self.term_heatmap_btn = QPushButton("Build heatmap + expression")
+        self.term_heatmap_btn = QPushButton("Build heatmap\n+ expression")
+        self.term_heatmap_btn.setAccessibleName("Build enrichment-term heatmap and expression table")
         self.term_heatmap_btn.setToolTip("Reuses the finished DESeq2 results — no re-alignment "
                                          "or re-analysis. Adds a focused heatmap for the term's genes.")
         self.term_heatmap_btn.clicked.connect(lambda: self._extract_term_genes(heatmap=True))
-        row.addWidget(refresh)
-        row.addWidget(self.term_table_btn)
-        row.addWidget(self.term_heatmap_btn)
-        v.addLayout(row)
+        for button in (refresh, self.term_table_btn, self.term_heatmap_btn):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            action_column.addWidget(button)
+        self.enrichment_term_actions = action_column
+        v.addLayout(action_column)
         self.term_status = QLabel("")
         self.term_status.setWordWrap(True)
-        self.term_status.setStyleSheet("color:#6B7785;font-size:9pt;")
+        self.term_status.setProperty("hint", True)
         v.addWidget(self.term_status)
         v.addStretch(1)
         self._populate_term_picker()
@@ -3249,21 +5112,53 @@ class MainWindow(QMainWindow):
         # A form-row label with a small info button that explains a complex
         # parameter (tooltip on hover, full text on click).
         holder = QWidget()
+        holder.setProperty("infoTitle", text)
+        holder.setProperty("infoText", help_text)
         row = QHBoxLayout(holder)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(4)
         label = QLabel(text)
-        label.setWordWrap(True)  # lets narrow form columns wrap instead of forcing width
+        label.setObjectName("infoLabelText")
+        label.setProperty("uiRole", "formLabel")
+        # Form labels are concise navigation copy. Keeping them on one line lets
+        # QFormLayout reserve their real width instead of collapsing the label
+        # column and producing awkward two- and three-line fragments beside a
+        # mostly empty field column. Narrow inspector forms wrap the entire row.
+        label.setWordWrap(False)
+        label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         row.addWidget(label)
         info = QToolButton()
+        info.setObjectName("infoLabelButton")
         info.setText("ⓘ")  # circled small i
+        info.setAccessibleName(f"About {text}")
+        info.setAccessibleDescription(help_text)
         info.setAutoRaise(True)
         info.setCursor(Qt.CursorShape.PointingHandCursor)
         info.setToolTip(help_text)
-        info.clicked.connect(lambda: QMessageBox.information(self, text, help_text))
+        info.clicked.connect(
+            lambda _checked=False, source=holder: QMessageBox.information(
+                self,
+                str(source.property("infoTitle") or "Setting"),
+                str(source.property("infoText") or ""),
+            )
+        )
         row.addWidget(info)
         row.addStretch(1)
         return holder
+
+    @staticmethod
+    def _set_info_label(holder: QWidget, text: str, help_text: str) -> None:
+        """Update a labelled help control without reconnecting its click handler."""
+        holder.setProperty("infoTitle", text)
+        holder.setProperty("infoText", help_text)
+        label = holder.findChild(QLabel, "infoLabelText")
+        info = holder.findChild(QToolButton, "infoLabelButton")
+        if label is not None:
+            label.setText(text)
+        if info is not None:
+            info.setAccessibleName(f"About {text}")
+            info.setAccessibleDescription(help_text)
+            info.setToolTip(help_text)
 
     # Per-figure-group override columns (key -> header label).
     OVERRIDE_COLS = [
@@ -3292,27 +5187,50 @@ class MainWindow(QMainWindow):
         return s
 
     def _build_figure_override_table(self) -> QWidget:
-        from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableWidget
         families = QFontDatabase.families()
-        t = QTableWidget(len(self.PALETTE_GROUPS), 1 + len(self.OVERRIDE_COLS))
-        t.setHorizontalHeaderLabels(["Figure group"] + [lbl for _, lbl in self.OVERRIDE_COLS])
-        t.verticalHeader().setVisible(False)
-        t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        t.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        editor = QWidget()
+        layout = QVBoxLayout(editor)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        group_pick = QComboBox()
+        group_pick.setAccessibleName("Figure group to override")
+        group_pick.setToolTip("Choose one figure family and edit only the values that should differ from the global style.")
+        stack = QStackedWidget()
         self.fig_override_widgets = {}
-        for r, (gkey, glabel) in enumerate(self.PALETTE_GROUPS):
-            item = QTableWidgetItem(glabel.split(" (")[0])
-            item.setToolTip(glabel)
-            t.setItem(r, 0, item)
+        for gkey, glabel in self.PALETTE_GROUPS:
+            group_pick.addItem(glabel, gkey)
+            page = QWidget()
+            grid = QGridLayout(page)
+            grid.setContentsMargins(0, 4, 0, 0)
+            grid.setHorizontalSpacing(8)
+            grid.setVerticalSpacing(4)
             self.fig_override_widgets[gkey] = {}
-            for c, (okey, _lbl) in enumerate(self.OVERRIDE_COLS, start=1):
+            for index, (okey, label) in enumerate(self.OVERRIDE_COLS):
                 w = self._make_override_widget(okey, families)
-                t.setCellWidget(r, c, w)
+                w.setMinimumWidth(0)
+                w.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+                row = (index // 2) * 2
+                column = index % 2
+                field_label = QLabel(label)
+                field_label.setBuddy(w)
+                grid.addWidget(field_label, row, column)
+                grid.addWidget(w, row + 1, column)
+                grid.setColumnStretch(column, 1)
                 self.fig_override_widgets[gkey][okey] = w
-        t.resizeColumnsToContents()
-        t.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        t.setMinimumHeight(len(self.PALETTE_GROUPS) * 36 + 32)
-        return t
+            stack.addWidget(page)
+        group_pick.currentIndexChanged.connect(stack.setCurrentIndex)
+        group_row = QHBoxLayout()
+        group_row.setContentsMargins(0, 0, 0, 0)
+        group_row.setSpacing(8)
+        group_label = QLabel("Figure group")
+        group_label.setBuddy(group_pick)
+        group_row.addWidget(group_label)
+        group_row.addWidget(group_pick, 1)
+        layout.addLayout(group_row)
+        layout.addWidget(stack, 1)
+        self.fig_override_group_pick = group_pick
+        self.fig_override_stack = stack
+        return editor
 
     @staticmethod
     def _override_value(key: str, w) -> str:
@@ -3344,10 +5262,11 @@ class MainWindow(QMainWindow):
         # and consumed by workflow/scripts/make_figures.R. No group title — the
         # enclosing "Figure Style" tab already names it.
         group = QWidget()
-        form = QFormLayout(group)
-        # Stack each field under its (wrapping) label so the form fits the narrow
-        # control panel without a horizontal scrollbar.
-        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+        group.setMinimumWidth(0)
+        group.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        outer = QVBoxLayout(group)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(8)
         self.fig_palette = QComboBox()
         self.PALETTE_NAMES = ["Blue-Red", "Viridis", "Magma", "Plasma", "Cividis",
                               "Spectral", "Red-Yellow-Blue", "Greyscale"]
@@ -3441,7 +5360,7 @@ class MainWindow(QMainWindow):
         self.fig_volcano_alpha.setValue(0.55)
         self.fig_pca_fixed_aspect = QCheckBox("Fix PCA aspect ratio")
         self.fig_pca_fixed_aspect.setChecked(False)
-        self.fig_sample_labels = QCheckBox("Show per-sample labels on PCA and heatmaps")
+        self.fig_sample_labels = QCheckBox("Show sample labels")
         self.fig_sample_labels.setChecked(True)
         self.fig_sample_labels.setToolTip(
             "Sample-id text on the PCA, the sample-distance and correlation heatmaps, and the sample "
@@ -3461,47 +5380,111 @@ class MainWindow(QMainWindow):
         self.fig_ppi_layout.setEditable(True)  # accept layouts the R side may add
         self.fig_ppi_layout.addItems(["fr", "stress", "kk", "drl", "circle", "grid"])
         self.fig_ppi_layout.setCurrentText("fr")
-        save_style = QPushButton("Save figure style")
+        def narrow_form(page: QWidget) -> QFormLayout:
+            section_form = QFormLayout(page)
+            section_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+            section_form.setProperty("narrowInspector", True)
+            section_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+            section_form.setHorizontalSpacing(10)
+            section_form.setVerticalSpacing(8)
+            return section_form
+
+        def form_page() -> tuple[QWidget, QFormLayout]:
+            page = QWidget()
+            return page, narrow_form(page)
+
+        appearance_page = QWidget()
+        appearance_layout = QVBoxLayout(appearance_page)
+        appearance_layout.setContentsMargins(4, 4, 4, 4)
+        appearance_layout.setSpacing(4)
+        appearance_common_page = QWidget()
+        appearance = narrow_form(appearance_common_page)
+        appearance.setContentsMargins(0, 0, 0, 0)
+        appearance_layout.addWidget(appearance_common_page)
+        (self.figure_appearance_advanced_toggle,
+         self.figure_appearance_advanced_panel) = self._disclosure(
+            "Typography and labels", expanded=False)
+        appearance_advanced = narrow_form(self.figure_appearance_advanced_panel)
+        appearance_advanced.setContentsMargins(0, 4, 0, 0)
+        appearance_layout.addWidget(self.figure_appearance_advanced_toggle)
+        appearance_layout.addWidget(self.figure_appearance_advanced_panel)
+        appearance_layout.addStretch(1)
+        dimensions_page, dimensions = form_page()
+        override_page = QWidget()
+        overrides = QVBoxLayout(override_page)
+        overrides.setContentsMargins(4, 4, 4, 4)
+        overrides.setSpacing(6)
+
+        # Keep the settings most people change together in the first viewport. The
+        # rendering-specific controls remain available in place, but no longer make
+        # every user scroll through a long technical form before reaching the action
+        # buttons. This is an in-flow disclosure rather than another nested card.
+        detail_page = QWidget()
+        detail_layout = QVBoxLayout(detail_page)
+        detail_layout.setContentsMargins(4, 4, 4, 4)
+        detail_layout.setSpacing(4)
+        detail_common_page = QWidget()
+        detail_common = narrow_form(detail_common_page)
+        detail_common.setContentsMargins(0, 0, 0, 0)
+        detail_layout.addWidget(detail_common_page)
+        (self.figure_detail_advanced_toggle,
+         self.figure_detail_advanced_panel) = self._disclosure(
+            "Advanced plot rendering", expanded=False)
+        detail_advanced = narrow_form(self.figure_detail_advanced_panel)
+        detail_advanced.setContentsMargins(0, 4, 0, 0)
+        detail_layout.addWidget(self.figure_detail_advanced_toggle)
+        detail_layout.addWidget(self.figure_detail_advanced_panel)
+        detail_layout.addStretch(1)
+
+        save_style = QPushButton("Save style")
         save_style.clicked.connect(self._save_figure_style)
-        form.addRow(self._info_label("Palette", "Colour scheme for all figures. Blue-Red is diverging; Viridis is colour-blind friendly; Greyscale prints well in mono."), self.fig_palette)
-        _ov_hdr = QLabel("Per-figure-group overrides (optional)")
-        _ov_hdr.setStyleSheet("font-weight: 600; margin-top: 4px;")
-        form.addRow(_ov_hdr)
-        _ov_note = QLabel("Each cell defaults to inherit (the global settings above). Set a cell "
-                          "to give one figure group its own palette, font, point size, base font, "
-                          "or size. Width/height 0 = inherit.")
+        appearance.addRow(self._info_label("Palette", "Colour scheme for all figures. Blue-Red is diverging; Viridis is colour-blind friendly; Greyscale prints well in mono."), self.fig_palette)
+        _ov_note = QLabel(
+            "Choose a figure group and set only values that differ; everything else inherits the global style.")
         _ov_note.setWordWrap(True)
-        _ov_note.setStyleSheet("color: #6B7785; font-size: 9pt;")
-        form.addRow(_ov_note)
-        form.addRow(self._build_figure_override_table())
-        form.addRow(self._info_label("Point size", "Dot size in PCA/volcano scatter plots (ggplot2 size units)."), self.fig_point_size)
-        form.addRow(self._info_label("Base font size", "Base text size for all figures (ggplot2 theme base_size, points)."), self.fig_base_font)
-        form.addRow(self._info_label("Font family", "Font for figure text. Leave as default unless the font is also available in the WSL R environment."), self.fig_font_family)
-        form.addRow(self.fig_label_bold)
-        form.addRow(self.fig_title_bold)
-        form.addRow(self.fig_gene_italic)
-        form.addRow(self._info_label("Volcano top-N labels", "How many of the most significant genes to label on the volcano plot. 0 = none."), self.fig_volcano_top)
-        form.addRow(self._info_label("Heatmap top-N genes", "Number of top genes (by adjusted p) shown in the top-DEG heatmap."), self.fig_heatmap_top)
-        form.addRow(self._info_label("PCA n-top genes", "Number of most-variable genes used to compute the PCA. Protocol default 500."), self.fig_pca_ntop)
-        form.addRow(self._info_label("Size units", "Units for the width/height below. Pixels (px) are converted using the DPI."), self.fig_dim_unit)
-        form.addRow(self._info_label("Width", "Saved figure width (PNG and SVG), in the units selected above."), self.fig_width)
-        form.addRow(self._info_label("Height", "Saved figure height (PNG and SVG), in the units selected above."), self.fig_height)
-        form.addRow(self._info_label("DPI (PNG)", "Resolution for the raster PNG export. SVG is vector and unaffected. 300 is publication quality. Also converts px width/height to inches."), self.fig_dpi)
-        form.addRow(self._info_label("Volcano y-axis", "How the tall -log10(adjusted p) tail is shown so a marginal gene with extreme significance is visible. 'Cap the tail' squishes hyper-significant genes to a cap line marked with hollow triangles (default); 'Show all at full height' plots every gene at its true height; 'Compress (sqrt)' shrinks the tall tail so extreme genes stay readable without squashing the rest."), self.fig_volcano_yscale)
-        form.addRow(self._info_label("Volcano y cap", "Upper limit for the volcano -log10(adjusted p) axis when 'Cap the tail' is selected. 'auto' (0) caps at the 99.5th percentile so a few hyper-significant genes do not squash the rest."), self.fig_volcano_ycap)
-        form.addRow(self._info_label("Volcano point alpha", "Opacity of the significant points in the volcano plot (0-1). Lower values reveal density in the dense core."), self.fig_volcano_alpha)
-        form.addRow(self.fig_pca_fixed_aspect)
-        form.addRow(self.fig_sample_labels)
-        form.addRow(self._info_label("Heatmap z limit", "Symmetric cap on the row z-scores in the top-DEG heatmap; values beyond +/- this map to the extreme colours."), self.fig_heatmap_zlim)
-        form.addRow(self._info_label("Enrichment categories shown", "Number of terms shown in the enrichment dot/ridge/KEGG plots."), self.fig_enrich_show)
-        form.addRow(self._info_label("PPI layout", "Graph layout algorithm for the PPI network figure (graphlayouts). 'fr' (Fruchterman-Reingold) is force-directed and the default; 'stress' is a compact alternative."), self.fig_ppi_layout)
-        form.addRow(save_style)
+        _ov_note.setProperty("hint", True)
+        overrides.addWidget(_ov_note)
+        overrides.addWidget(self._build_figure_override_table(), 1)
+        appearance.addRow(self._info_label("Point size", "Dot size in PCA/volcano scatter plots (ggplot2 size units)."), self.fig_point_size)
+        appearance.addRow(self._info_label("Base font size", "Base text size for all figures (ggplot2 theme base_size, points)."), self.fig_base_font)
+        appearance_advanced.addRow(self._info_label("Font family", "Font for figure text. Leave as default unless the font is also available in the WSL R environment."), self.fig_font_family)
+        appearance_advanced.addRow(self.fig_label_bold)
+        appearance_advanced.addRow(self.fig_title_bold)
+        appearance_advanced.addRow(self.fig_gene_italic)
+        detail_common.addRow(self._info_label("Volcano top-N labels", "Display heuristic: how many significant genes are labelled. 0 = none; the DE table is unchanged."), self.fig_volcano_top)
+        detail_common.addRow(self._info_label("Heatmap top-N genes", "Display heuristic: number of top genes shown; the DE table is unchanged."), self.fig_heatmap_top)
+        detail_common.addRow(self.fig_sample_labels)
+        dimensions.addRow(self._info_label("Size units", "Units for width and height. Pixels are converted using the DPI."), self.fig_dim_unit)
+        dimensions.addRow(self._info_label("Width", "Saved figure width for PNG and SVG."), self.fig_width)
+        dimensions.addRow(self._info_label("Height", "Saved figure height for PNG and SVG."), self.fig_height)
+        dimensions.addRow(self._info_label("DPI (PNG)", "Raster resolution. SVG remains vector; 300 DPI is publication quality."), self.fig_dpi)
+        detail_advanced.addRow(self._info_label("PCA n-top genes", "Number of most-variable genes used for the displayed PCA. Protocol default 500."), self.fig_pca_ntop)
+        detail_advanced.addRow(self._info_label("Volcano y-axis", "Visual scale only: cap with off-scale markers, show true full height, or compress the tail using sqrt."), self.fig_volcano_yscale)
+        detail_advanced.addRow(self._info_label("Volcano y cap", "Visual upper limit in cap mode. Auto uses the 99.5th percentile and marks off-scale points."), self.fig_volcano_ycap)
+        detail_advanced.addRow(self._info_label("Volcano point alpha", "Opacity of significant points. Lower values reveal density in the dense core."), self.fig_volcano_alpha)
+        detail_advanced.addRow(self.fig_pca_fixed_aspect)
+        detail_advanced.addRow(self._info_label("Heatmap z limit", "Symmetric visual cap on heatmap row z-scores."), self.fig_heatmap_zlim)
+        detail_advanced.addRow(self._info_label("Enrichment categories shown", "Display heuristic: number of terms shown; enrichment tables are unchanged."), self.fig_enrich_show)
+        detail_advanced.addRow(self._info_label("Static PPI figure layout", "Layout algorithm for the saved R network figure. This does not change the STRING edge set."), self.fig_ppi_layout)
+        self.figure_detail_common_controls = (
+            self.fig_volcano_top,
+            self.fig_heatmap_top,
+            self.fig_sample_labels,
+        )
+        self.figure_detail_advanced_controls = (
+            self.fig_pca_ntop,
+            self.fig_volcano_yscale,
+            self.fig_volcano_ycap,
+            self.fig_volcano_alpha,
+            self.fig_pca_fixed_aspect,
+            self.fig_heatmap_zlim,
+            self.fig_enrich_show,
+            self.fig_ppi_layout,
+        )
         # --- PPI network (STRING) controls: customise + regenerate in-app ---
-        ppi_subheader = QLabel("PPI network (STRING) — also saved by 'Save figure style' above")
-        ppi_subheader.setStyleSheet("font-weight: bold; margin-top: 6px;")
-        form.addRow(ppi_subheader)
         self.ppi_score = QSpinBox()
         self.ppi_score.setRange(0, 1000)
+        self.ppi_score.setSingleStep(50)
         self.ppi_score.setValue(400)
         # Keep this Figure-Style threshold and the PPI-tab "Rebuild at score" spinbox in
         # lockstep, so either Regenerate button rebuilds at the value the user just set.
@@ -3509,11 +5492,33 @@ class MainWindow(QMainWindow):
         self.ppi_hub_labels = QSpinBox()
         self.ppi_hub_labels.setRange(0, 100)
         self.ppi_hub_labels.setValue(15)
-        regen_ppi = QPushButton("Regenerate PPI network")
-        regen_ppi.clicked.connect(self._regenerate_ppi)
-        form.addRow(self._info_label("PPI score threshold", "STRING combined-score cutoff for the protein-protein network (0-1000; 400 = medium, 700 = high confidence). Higher gives a sparser, higher-confidence network."), self.ppi_score)
-        form.addRow(self._info_label("PPI hub labels", "How many top hub proteins (by degree) to label on the PPI network figure."), self.ppi_hub_labels)
-        form.addRow(regen_ppi)
+        sections = QTabWidget()
+        sections.setObjectName("figureStyleSections")
+        sections.setMinimumWidth(0)
+        sections.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        sections.setElideMode(Qt.TextElideMode.ElideRight)
+        sections.setUsesScrollButtons(True)
+        sections.addTab(self._inspector_scrollable(appearance_page), "Appearance")
+        sections.addTab(self._inspector_scrollable(detail_page), "Detail")
+        sections.addTab(self._inspector_scrollable(dimensions_page), "Size")
+        sections.addTab(self._inspector_scrollable(override_page), "Overrides")
+        outer.addWidget(sections, 1)
+
+        action_row = QHBoxLayout()
+        action_row.addWidget(save_style)
+        # Escape the ampersand so Windows paints it literally instead of treating
+        # the following character as a mnemonic and showing an underscore.
+        apply_now = QPushButton("Apply && regenerate")
+        apply_now.setAccessibleName("Apply and regenerate figures")
+        apply_now.setProperty("primary", True)
+        apply_now.setToolTip(
+            "Save these settings and re-render figures only; alignment and differential expression are not rerun."
+        )
+        apply_now.clicked.connect(self._regenerate_figures)
+        action_row.addWidget(apply_now)
+        outer.addLayout(action_row)
+        self.apply_figure_style_button = apply_now
+        self.figure_style_sections = sections
         return group
 
     @staticmethod
@@ -3643,6 +5648,7 @@ class MainWindow(QMainWindow):
         if not self._require_project():
             return
         assert self.project_root is not None
+        self._expand_output_table_preview()
         # Namespaced entries (per-study) carry their relative path as userData;
         # plain entries fall back to the display text, which is the relative path.
         rel = self.output_table_pick.currentData() or self.output_table_pick.currentText()
@@ -3674,6 +5680,40 @@ class MainWindow(QMainWindow):
             for c in range(len(df.columns)):
                 self.output_table.setItem(r, c, _SortableItem(str(df.iat[r, c])))
         self.output_table.setSortingEnabled(True)
+        self._fit_output_table_columns([str(column) for column in df.columns])
+
+    def _fit_output_table_columns(self, labels: list[str]) -> None:
+        """Size preview columns for readable headers without letting one value dominate."""
+        header = self.output_table.horizontalHeader()
+        # The preview remains horizontally scrollable. A cap prevents a long pathway
+        # description or serialized list from consuming the entire viewport, while
+        # common DE headers such as log2FoldChange remain visible in full.
+        minimum_width = 72
+        maximum_width = 320
+        header.setMinimumSectionSize(minimum_width)
+        header.setMaximumSectionSize(maximum_width)
+        self.output_table.resizeColumnsToContents()
+        metrics = header.fontMetrics()
+        header_chrome = metrics.horizontalAdvance("  ▼") + 16
+        for column, label in enumerate(labels):
+            readable_header_width = metrics.horizontalAdvance(label) + header_chrome
+            fitted_width = max(
+                minimum_width,
+                readable_header_width,
+                self.output_table.columnWidth(column),
+            )
+            self.output_table.setColumnWidth(column, min(maximum_width, fitted_width))
+
+    def _expand_output_table_preview(self) -> None:
+        splitter = getattr(self, "_outputs_main_splitter", None)
+        if splitter is None:
+            return
+        sizes = splitter.sizes()
+        if len(sizes) != 2 or sizes[0] > 1:
+            return
+        total = max(sum(sizes), splitter.height(), 480)
+        preview = min(190, max(130, total // 4))
+        splitter.setSizes([preview, max(total - preview, 240)])
 
     def _refresh_gallery(self) -> None:
         prev = self.figure_pick.currentText()
@@ -3698,6 +5738,9 @@ class MainWindow(QMainWindow):
                         study = f.parent.parent.name
                         entries.append((f"{study} / {f.stem}", str(f)))
         if entries:
+            if hasattr(self, "output_empty_state"):
+                self.output_empty_state_panel.setVisible(False)
+                self.output_figure_stack.setCurrentWidget(self.figure_viewer)
             self.figure_pick.setEnabled(True)
             for display, data in entries:
                 self.figure_pick.addItem(display, data)
@@ -3708,10 +5751,32 @@ class MainWindow(QMainWindow):
             self.figure_pick.blockSignals(False)
             self._show_selected_figure(self.figure_pick.currentText())
         else:
+            if hasattr(self, "output_empty_state"):
+                if self.project_root is None:
+                    title = "No project open"
+                    message = (
+                        "Open or create a project to browse stored figures and tables. "
+                        "Figure editing becomes available with the project.")
+                    action = "Go to Project"
+                else:
+                    title = "No figures yet"
+                    message = (
+                        "No figures are available yet. Complete a run or regenerate figures, "
+                        "then refresh this view.")
+                    action = "Go to Run Monitor"
+                self.output_empty_title.setText(title)
+                self.output_empty_state.setText(message)
+                if self.output_empty_action is not None:
+                    self.output_empty_action.setText(action)
+                self.output_empty_state_panel.setVisible(True)
+                self.output_figure_stack.setCurrentWidget(self.output_empty_state_panel)
             self.figure_pick.addItem("(no figures yet — run the pipeline first)")
             self.figure_pick.setEnabled(False)
             self.figure_pick.blockSignals(False)
             self.figure_viewer.clear()
+
+    def _go_from_output_empty_state(self) -> None:
+        self.tabs.setCurrentIndex(0 if self.project_root is None else 8)
 
     def _show_selected_figure(self, name: str) -> None:
         if not name or name.startswith("(no figures") or self.project_root is None:
@@ -3919,6 +5984,13 @@ class MainWindow(QMainWindow):
         if directory:
             self._load_project(Path(directory))
 
+    def _configured_samples_path(self) -> Path:
+        """The one sample sheet used by the GUI, preflight and Snakemake."""
+        if self.project_root is None:
+            raise RuntimeError("No project is open")
+        configured = self.config.input.samples if self.config is not None else "config/samples.tsv"
+        return project_configured_path(self.project_root, configured)
+
     def _load_project(self, root: Path) -> None:
         # Opening (or creating) another project while a run is live would repoint
         # project_root under the running thread, whose log/finished signals would
@@ -3957,7 +6029,7 @@ class MainWindow(QMainWindow):
         # network) before showing the new one.
         self._clear_transient_ui()
         self._populate_widgets_from_config()
-        samples = root / "config" / "samples.tsv"
+        samples = self._configured_samples_path()
         if samples.exists():
             self.metadata_table.load_tsv(samples)
             # _populate_widgets_from_config seeded the contrast dropdowns from the PREVIOUS
@@ -3966,6 +6038,7 @@ class MainWindow(QMainWindow):
             self._refresh_conditions()
         self._refresh_gallery()
         self._refresh_export_buttons()
+        self._refresh_input_preview()
         if hasattr(self, "term_pick"):
             self._populate_term_picker()
         self._remember_recent_project(root)
@@ -3973,6 +6046,9 @@ class MainWindow(QMainWindow):
         # next time (instead of the app's install/AppData folder).
         QSettings().setValue("last_project_dir", str(root.parent))
         self.project_status.setPlainText(f"Open project: {root}")
+        self.statusBar().showMessage(
+            "Project open — review the inputs and settings, validate them, then start the workflow.")
+        self._refresh_phase_checks()
         # If this project was left with an unfinished run, surface the one-click Resume banner.
         self._refresh_resume_banner()
 
@@ -3981,26 +6057,99 @@ class MainWindow(QMainWindow):
         # figures and network do not linger after switching projects.
         self.log_text.clear()
         self.command_text.clear()
-        self._set_run_status("Idle")
-        self.phase_label.setText("Ready — configure your project, then click Start Run.")
+        self._set_run_status("Ready — configure the project, then start the workflow.")
+        self.phase_label.setText("")
         self.progress.setValue(0)
-        self.progress.setStyleSheet("")
+        self._set_progress_status()
+        self.progress_value_label.setVisible(False)
         self.elapsed_label.setText("Elapsed: 00:00:00")
+        self.elapsed_label.setVisible(False)
         self.input_preview.clear()
+        self.metadata_messages.clear()
+        self.metadata_message_heading.setVisible(False)
+        self.metadata_message_frame.setVisible(False)
         self.output_table.setRowCount(0)
-        self.report_text.clear()
-        self.runtime_text.clear()
+        if hasattr(self, "_outputs_main_splitter"):
+            self._outputs_main_splitter.setSizes([0, max(self._outputs_main_splitter.height(), 480)])
+        self.report_text.setPlainText(
+            "No reports yet. Complete a run, then generate or open the saved reports from this page."
+            if self.project_root is not None else ""
+        )
+        self.runtime_text.setPlainText(
+            "Ready to estimate. The predicted range, resource assumptions and calibration basis will appear here."
+            if self.project_root is not None else "")
         # The run-approval gate and the previous project's sanity output must not
         # carry over: approval is per project (a stale tick could let an unreviewed
         # run start).
         self.approve_review.setChecked(False)
         self.sanity_text.clear()
+        self._sanity_status_signature = None
         self.ppi_status.setText("No network loaded — click “Load / refresh network”.")
+        if hasattr(self, "ppi_viewer"):
+            self.ppi_viewer.clear_network()
+        self._set_ppi_network_controls(False)
         if hasattr(self, "ppi_export_png"):
             self.ppi_export_png.setEnabled(False)
             self.ppi_export_svg.setEnabled(False)
             if hasattr(self, "ppi_save_cyto"):
                 self.ppi_save_cyto.setEnabled(False)
+
+    def _refresh_input_preview(self) -> None:
+        """Summarise the selected input route after opening a project.
+
+        The route selector already holds the editing controls; this copy gives the
+        user a persistent, derived answer to "what is loaded, and what is next?"
+        instead of restoring an empty placeholder whenever projects are switched.
+        """
+        if self.config is None:
+            self.input_preview.setPlainText(
+                "Choose a route above. Imported samples, detected layout and the next required step appear here.")
+            return
+        route = self.config.input.type
+        sample_count = int(self.metadata_table.rowCount())
+        if route == "count_matrix":
+            source = Path(self.config.input.count_matrix or "count matrix").name
+            summary = (
+                f"Input route: raw count matrix ({source}). {sample_count} sample(s) are loaded. "
+                "Next: confirm sample conditions, the comparison and organism annotation."
+            )
+        elif route == "deseq2_results":
+            provenance = self.config.input.deseq2_results_provenance
+            source = provenance.original_basename or Path(
+                self.config.input.deseq2_results or "differential-expression table").name
+            direction = self.config.input.deseq2_results_direction
+            direction_copy = (
+                f" Positive log2 fold change means {direction.numerator} relative to {direction.denominator}."
+                if direction.confirmed and direction.numerator and direction.denominator else
+                " Confirm the positive log2 fold-change direction before validation."
+            )
+            summary = (
+                f"Input route: completed differential-expression table ({source})."
+                f"{direction_copy} Next: validate, then explore compatible figures, enrichment and PPI."
+            )
+        elif route == "microarray":
+            source = self.config.microarray.gse_accession or Path(
+                self.config.microarray.expression_matrix or "expression matrix").name
+            summary = (
+                f"Input route: microarray ({source}). {sample_count} sample(s) are loaded. "
+                "Next: confirm sample groups and the limma comparison."
+            )
+        elif route == "sra":
+            summary = (
+                f"Input route: public sequencing accessions. {sample_count} sample(s) are loaded. "
+                "Next: review the sample sheet and select the reference."
+            )
+        elif route == "mixed":
+            summary = (
+                f"Input route: mixed local and public FASTQ inputs. {sample_count} sample(s) are loaded. "
+                "Next: review every file assignment and select the reference."
+            )
+        else:
+            summary = (
+                f"Input route: local FASTQ. {sample_count} sample(s) are loaded. "
+                "Next: review file assignments and select the reference."
+            )
+        self.input_preview.setPlainText(summary)
 
     def _remember_recent_project(self, root: Path) -> None:
         # Keep up to 8 most-recently-opened project paths in QSettings for the
@@ -4085,6 +6234,9 @@ class MainWindow(QMainWindow):
         _des = self.de_shrink.findData(self.config.deseq2.shrinkage_method)
         self.de_shrink.setCurrentIndex(_des if _des >= 0 else 0)
         self.design.setText(self.config.deseq2.design_formula)
+        if hasattr(self, "workflow_design_toggle"):
+            self.workflow_design_toggle.setChecked(
+                self.config.deseq2.design_formula.strip() != "~ condition")
         self.alpha.setValue(self.config.deseq2.alpha)
         self.lfc_threshold.setValue(self.config.deseq2.lfc_threshold)
         self._refresh_conditions()
@@ -4179,17 +6331,23 @@ class MainWindow(QMainWindow):
                 enr.kegg_organism = entry.get("kegg_organism") or None
             if enr.gprofiler_organism is None:
                 enr.gprofiler_organism = entry.get("gprofiler_organism") or None
+            if enr.taxon_id is None:
+                enr.taxon_id = entry.get("taxon_id")
             if self.config.ppi.taxon is None:
                 self.config.ppi.taxon = entry.get("string_taxon")
         # Restore the custom-reference fields so reopening a project does not show
         # them blank (which would invite an accidental empty re-lock).
         ref = self.config.reference
         if ref.mode == "custom":
+            if hasattr(self, "reference_custom_toggle"):
+                self.reference_custom_toggle.setChecked(True)
             self.ref_organism.setText(ref.organism_name if ref.organism_name != "unset" else "")
             self.ref_genome.setText(ref.genome_fasta or "")
             self.ref_annotation.setText(ref.annotation_file or "")
             if ref.annotation_format in ("gtf", "gff3"):
                 self.ref_format.setCurrentText(ref.annotation_format)
+        elif hasattr(self, "reference_custom_toggle"):
+            self.reference_custom_toggle.setChecked(False)
         self._apply_input_mode_ui()
 
     def _design_variables(self) -> list[str]:
@@ -4218,7 +6376,7 @@ class MainWindow(QMainWindow):
             return
         rows = detect_fastq_inputs(files)
         df = dataframe_from_rows(rows)
-        # Under WSL the run reads samples.tsv inside Linux, so a Windows-drive FASTQ path
+        # Under WSL the run reads the configured sample sheet inside Linux, so a Windows-drive FASTQ path
         # (C:\...) is unresolvable — translate the file columns to /mnt/<drive>/... first.
         if getattr(self, "use_wsl", None) is not None and self.use_wsl.isChecked():
             for _col in ("fastq_1", "fastq_2"):
@@ -4226,7 +6384,7 @@ class MainWindow(QMainWindow):
                     df[_col] = df[_col].map(lambda p: windows_to_wsl_path(p) if p else p)
         assert self.project_root is not None
         save_metadata(df, self.project_root / "config" / "samples.auto_generated.tsv")
-        save_metadata(df, self.project_root / "config" / "samples.tsv")
+        save_metadata(df, self._configured_samples_path())
         # Selecting FASTQs switches the project back to the alignment route. Clear
         # any prior count-matrix / microarray mode so the run takes the fastq
         # branch (the SRA/count-matrix/GEO handlers set their own type the same way).
@@ -4327,12 +6485,23 @@ class MainWindow(QMainWindow):
         if not self._require_project():
             return
         assert self.project_root is not None
-        save_metadata(self.metadata_table.to_dataframe(), self.project_root / "config" / "samples.tsv")
-        self.metadata_messages.setPlainText("Saved config/samples.tsv")
+        save_metadata(self.metadata_table.to_dataframe(), self._configured_samples_path())
+        self._show_metadata_message(
+            f"Saved {self.config.input.samples if self.config else 'config/samples.tsv'}")
+
+    def _show_metadata_message(self, text: str) -> None:
+        self.metadata_messages.setPlainText(text)
+        self.metadata_message_heading.setVisible(bool(text.strip()))
+        self.metadata_message_frame.setVisible(bool(text.strip()))
 
     def _active_contrast(self) -> tuple[str, str] | None:
         # The contrast arms drive the multi-study confounding gate (which condition-vs-condition is
         # being compared); read them from the DE-tab combos so the gate fires for >2-level designs.
+        if self.config is not None and self.config.input.type == "deseq2_results":
+            direction = self.config.input.deseq2_results_direction
+            if direction.confirmed and direction.numerator and direction.denominator:
+                return direction.numerator, direction.denominator
+            return None
         num = self.numerator.currentText().strip() if hasattr(self, "numerator") else ""
         den = self.denominator.currentText().strip() if hasattr(self, "denominator") else ""
         return (num, den) if num and den else None
@@ -4346,7 +6515,7 @@ class MainWindow(QMainWindow):
             design_variables=self._design_variables(),
             contrast=self._active_contrast(),
         )
-        self.metadata_messages.setPlainText(self._format_messages(messages))
+        self._show_metadata_message(self._format_messages(messages))
 
     def _select_reference(self) -> None:
         if not self._require_project():
@@ -4364,6 +6533,7 @@ class MainWindow(QMainWindow):
         enr.orgdb = entry.get("orgdb") or None
         enr.kegg_organism = entry.get("kegg_organism") or None
         enr.gprofiler_organism = entry.get("gprofiler_organism") or None
+        enr.taxon_id = entry.get("taxon_id")
         self.config.ppi.taxon = entry.get("string_taxon")
         # Don't clobber the microarray SYMBOL keytype (mirrors the L468 guard).
         if self.config.input.type != "microarray":
@@ -4375,6 +6545,8 @@ class MainWindow(QMainWindow):
         ref.package_id = str(entry.get("assembly_accession") or "")
         gtf_url = entry.get("annotation_gtf_url")
         fasta_url = entry.get("genome_fasta_url")
+        ref.genome_md5 = entry.get("genome_md5") or None
+        ref.annotation_md5 = entry.get("annotation_md5") or None
         if fasta_url and gtf_url:
             # Wire the verified download URLs + canonical local paths so the
             # pipeline fetches and indexes this reference automatically.
@@ -4409,6 +6581,10 @@ class MainWindow(QMainWindow):
 
     def _workflow_settings_problem(self) -> str | None:
         # Catch contrasts DESeq2 will reject, before they reach the run.
+        if self.config is not None and self.config.input.type == "deseq2_results":
+            # External-result direction is validated from immutable import provenance; the
+            # hidden local contrast controls are intentionally irrelevant for this route.
+            return None
         num = self.numerator.currentText().strip()
         den = self.denominator.currentText().strip()
         if num and den and num == den:
@@ -4482,18 +6658,21 @@ class MainWindow(QMainWindow):
         self.config.featurecounts.attribute_type = self.fc_attribute.text().strip() or "gene_id"
         self.config.deseq2.min_count = self.de_min_count.value()
         self.config.deseq2.shrinkage_method = self.de_shrink.currentData()  # type: ignore[assignment]
-        self.config.deseq2.design_formula = self.design.text()
         self.config.deseq2.alpha = self.alpha.value()
         self.config.deseq2.lfc_threshold = self.lfc_threshold.value()
-        factor = self.contrast_factor.text().strip() or "condition"
-        if self.reference_level.currentText().strip():
-            self.config.deseq2.reference_level = {factor: self.reference_level.currentText().strip()}
-        if self.config.deseq2.contrasts:
-            contrast = self.config.deseq2.contrasts[0]
-            contrast.factor = factor
-            contrast.numerator = self.numerator.currentText().strip() or contrast.numerator
-            contrast.denominator = self.denominator.currentText().strip() or contrast.denominator
-            contrast.name = f"{contrast.numerator}_vs_{contrast.denominator}"
+        if self.config.input.type != "deseq2_results":
+            self.config.deseq2.design_formula = self.design.text()
+            factor = self.contrast_factor.text().strip() or "condition"
+            if self.reference_level.currentText().strip():
+                self.config.deseq2.reference_level = {
+                    factor: self.reference_level.currentText().strip()
+                }
+            if self.config.deseq2.contrasts:
+                contrast = self.config.deseq2.contrasts[0]
+                contrast.factor = factor
+                contrast.numerator = self.numerator.currentText().strip() or contrast.numerator
+                contrast.denominator = self.denominator.currentText().strip() or contrast.denominator
+                contrast.name = f"{contrast.numerator}_vs_{contrast.denominator}"
         self.manager.save_config(self.project_root, self.config)
         return True
 
@@ -4524,6 +6703,8 @@ class MainWindow(QMainWindow):
         # Recompute cores/RAM for the chosen preset using the last detected system,
         # so switching profile reflects immediately instead of staying stale until
         # the next Detect. Custom keeps whatever the user typed.
+        if profile == "custom" and hasattr(self, "resource_manual_toggle"):
+            self.resource_manual_toggle.setChecked(True)
         system = getattr(self, "_last_system", None)
         if system is None or profile == "custom":
             return
@@ -4545,23 +6726,71 @@ class MainWindow(QMainWindow):
             if base is not None and base.drive:
                 disk_note = f" on {base.drive} (backs the WSL disk)"
         info = (
-            f"{system.cpu_model} — {system.physical_cores} cores "
-            f"({system.logical_threads} threads), {system.total_ram_gb:.0f} GB RAM, "
+            f"{system.cpu_model} — {system.physical_cores} physical cores "
+            f"({system.logical_threads} logical CPUs), {system.total_ram_gb:.0f} GB RAM, "
             f"{system.disk_free_gb:.0f} GB free disk{disk_note}."
         )
-        if getattr(system, "wsl_ram_gb", 0):
-            # The pipeline runs in WSL2, whose caps (not the host total) bound it.
-            info += (f"\nWSL2 sees {system.wsl_cpus} CPUs / {system.wsl_ram_gb:.0f} GB — "
-                     "recommendations use these limits. Raise them in %UserProfile%\\.wslconfig "
-                     "([wsl2] memory=, processors=) then 'wsl --shutdown' if you want more.")
+        wsl_cpus = max(int(getattr(system, "wsl_cpus", 0) or 0), 0)
+        wsl_ram_gb = max(float(getattr(system, "wsl_ram_gb", 0) or 0), 0.0)
+        wsl_physical = max(int(getattr(system, "wsl_physical_cores", 0) or 0), 0)
+        if wsl_cpus or wsl_ram_gb:
+            # CPU and RAM probes can fail independently. Describe the same per-resource
+            # fallback that recommend_profile applies instead of inferring one from the other.
+            wsl_parts: list[str] = []
+            if wsl_cpus:
+                topology = (
+                    f"{wsl_cpus} logical CPUs / {wsl_physical} physical cores"
+                    if wsl_physical else f"{wsl_cpus} logical CPUs"
+                )
+                wsl_parts.append(topology)
+                cpu_explanation = "the WSL logical CPU allocation"
+                if wsl_physical:
+                    cpu_explanation += "; the physical-core count is topology information only"
+            else:
+                cpu_explanation = (
+                    f"host logical CPUs ({system.logical_threads}) because the WSL CPU "
+                    "allocation was unavailable"
+                )
+            if wsl_ram_gb:
+                wsl_parts.append(f"{wsl_ram_gb:.0f} GB RAM")
+                ram_explanation = "the WSL RAM limit"
+            else:
+                ram_explanation = (
+                    f"host RAM ({system.total_ram_gb:.0f} GB) because the WSL RAM limit "
+                    "was unavailable"
+                )
+            info += (
+                f"\nWSL2 sees {' / '.join(wsl_parts)} — "
+                f"CPU recommendations use {cpu_explanation}. "
+                f"RAM recommendations use {ram_explanation}. "
+                "Use 'Edit WSL2 memory / CPU limits…' below to change them, then detect again."
+            )
         self.system_info_label.setText(info)
         self.recommendation_label.setText(
             f"Recommended for the '{self.profile.currentText()}' profile: "
-            f"{rec['total_threads']} cores and {rec['total_memory_gb']} GB RAM."
+            f"{rec['total_threads']} CPU workers and {rec['total_memory_gb']} GB RAM."
         )
+        if wsl_cpus:
+            cpu_basis = (
+                f"WSL2 {wsl_physical} physical / {wsl_cpus} logical CPUs"
+                if wsl_physical else f"WSL2 {wsl_cpus} logical CPUs"
+            )
+        else:
+            cpu_basis = (
+                f"host {system.physical_cores} physical / {system.logical_threads} logical CPUs"
+            )
+            if wsl_ram_gb:
+                cpu_basis += " (WSL CPU allocation unavailable)"
+        ram_basis = (
+            f"WSL2 {wsl_ram_gb:.0f} GB RAM"
+            if wsl_ram_gb else f"host {system.total_ram_gb:.0f} GB RAM"
+        )
+        if wsl_cpus and not wsl_ram_gb:
+            ram_basis += " (WSL RAM limit unavailable)"
+        detected_basis = f"CPU basis: {cpu_basis}; RAM basis: {ram_basis}"
         self.statusBar().showMessage(
-            f"Detected {system.physical_cores} cores / {system.total_ram_gb:.0f} GB RAM — "
-            f"recommending {rec['total_threads']} cores, {rec['total_memory_gb']} GB.",
+            f"Detected {detected_basis} — recommending {rec['total_threads']} CPU workers, "
+            f"{rec['total_memory_gb']} GB.",
             8000,
         )
 
@@ -4571,6 +6800,11 @@ class MainWindow(QMainWindow):
         self.config.resources.profile = self.profile.currentText()  # type: ignore[assignment]
         self.config.resources.total_threads = self.cores.value()
         self.config.resources.total_memory_gb = self.ram.value()
+        # Resource profiles own the schedulable pool and its per-rule subdivision.
+        # Persist the derived requests so the workflow actually uses the CPU budget
+        # displayed by the GUI (instead of retaining the four-thread scaffold defaults).
+        for rule_name, threads in recommend_rule_threads(self.cores.value()).items():
+            setattr(self.config.rule_threads, rule_name, threads)
         self.manager.save_config(self.project_root, self.config)
 
     def _estimate_runtime(self) -> None:
@@ -4635,34 +6869,233 @@ class MainWindow(QMainWindow):
             self.runtime_text.setPlainText(f"Could not estimate runtime: {exc}")
 
     def _run_sanity_checks(self) -> None:
-        if not self._require_project():
+        if not self._require_project() or self.config is None:
+            return
+        running_worker = getattr(self, "_sanity_worker", None)
+        if running_worker is not None and running_worker.isRunning():
+            return
+        phase_worker = self._phase_refresh_worker
+        if phase_worker is not None and phase_worker.isRunning():
             return
         assert self.project_root is not None
         self.sanity_busy.setVisible(True)
-        QApplication.processEvents()
+        self.sanity_run_button.setEnabled(False)
         try:
-            allow_pending_sra = self.config is not None and self.config.input.type in (
-                "sra", "count_matrix", "microarray", "deseq2_results")
-            messages = validate_metadata(
+            # Persist every GUI-owned input before computing the fingerprint. A
+            # preflight must describe the exact state a subsequent run will read.
+            save_metadata(
                 self.metadata_table.to_dataframe(),
-                allow_pending_sra=allow_pending_sra,
-                design_variables=self._design_variables(),
-                contrast=self._active_contrast(),
-            )
-            messages = list(messages) + self._enrichment_config_messages()
-            write_check(self.project_root, "01_input_validation", messages)
-            text = self._format_messages(messages)
-            # Show the aggregate phase-check summary, then the per-message detail
-            # below it (the summary previously overwrote the detail entirely).
-            self._refresh_phase_checks()
-            if text:
-                self.sanity_text.append("")
-                self.sanity_text.append("Latest validation detail:")
-                self.sanity_text.append(text)
-        finally:
-            self.sanity_busy.setVisible(False)
+                self._configured_samples_path())
+            if not self._save_workflow_settings(validate=True):
+                self.sanity_busy.setVisible(False)
+                self.sanity_run_button.setEnabled(True)
+                return
+            self._save_resources()
+            self._apply_figure_style()
 
-    def _phase_check_statuses(self) -> dict[str, str]:
+            if self.config.input.type == "deseq2_results":
+                messages = self._deseq2_results_preflight_messages()
+            else:
+                allow_pending_sra = self.config.input.type in (
+                    "sra", "count_matrix", "microarray")
+                messages = validate_metadata(
+                    self.metadata_table.to_dataframe(),
+                    allow_pending_sra=allow_pending_sra,
+                    design_variables=self._design_variables(),
+                    contrast=self._active_contrast(),
+                )
+            messages = list(messages) + self._route_preflight_messages()
+            messages = list(messages) + self._enrichment_config_messages()
+            check_path = write_check(self.project_root, "01_input_validation", messages)
+            import json
+
+            payload = json.loads(check_path.read_text(encoding="utf-8"))
+            root = self.project_root
+            def fingerprint_and_validate():
+                write_input_validation_with_fingerprint(
+                    root,
+                    payload,
+                    cancel_requested=worker.isInterruptionRequested,
+                )
+                return validate_current_preflight(
+                    root,
+                    cancel_requested=worker.isInterruptionRequested,
+                )
+
+            worker = BackgroundWorker(fingerprint_and_validate)
+            worker.done.connect(
+                lambda outcome: self._on_sanity_fingerprint_done(
+                    root, payload, messages, outcome,
+                ),
+            )
+            worker.failed.connect(
+                lambda exc: self._on_sanity_fingerprint_failed(root, exc),
+            )
+            self._sanity_worker = worker
+            worker.start()
+        except Exception:
+            self.sanity_busy.setVisible(False)
+            self.sanity_run_button.setEnabled(True)
+            raise
+
+    def _on_sanity_fingerprint_done(
+        self,
+        project_root: Path,
+        payload: dict,
+        messages: list[dict[str, str]],
+        outcome,
+    ) -> None:
+        self.sanity_busy.setVisible(False)
+        self._sanity_worker = None
+        if self.project_root != project_root or getattr(self, "_closing", False):
+            return
+        text = self._format_messages(messages)
+        if not outcome.valid:
+            self._update_sanity_state(
+                {"01_input_validation": "STALE"},
+                reset_approval=True,
+            )
+            self.sanity_text.append("")
+            self.sanity_text.append("Input fingerprint could not authorize this run:")
+            self.sanity_text.append(outcome.reason)
+            return
+        # Only the current, fingerprinted preflight authorizes launch. Saved
+        # downstream phase checks remain inspectable through the reload button.
+        self._update_sanity_state(
+            {"01_input_validation": payload.get("status", "PASS")},
+            reset_approval=True,
+        )
+        if text:
+            self.sanity_text.append("")
+            self.sanity_text.append("Latest validation detail:")
+            self.sanity_text.append(text)
+
+    def _on_sanity_fingerprint_failed(self, project_root: Path, exc: object) -> None:
+        self.sanity_busy.setVisible(False)
+        self._sanity_worker = None
+        if self.project_root != project_root or getattr(self, "_closing", False):
+            return
+        self._update_sanity_state({"01_input_validation": "STALE"}, reset_approval=True)
+        QMessageBox.warning(
+            self,
+            APP_NAME,
+            f"Could not fingerprint the current scientific inputs:\n\n{exc}",
+        )
+
+    def _deseq2_results_preflight_messages(self) -> list[dict[str, str]]:
+        """Validate direction, full project copy, and its import-time provenance."""
+        if self.config is None or self.project_root is None:
+            return [{"status": "FAIL", "message": "Project configuration is not loaded."}]
+        direction = self.config.input.deseq2_results_direction
+        messages: list[dict[str, str]] = []
+        try:
+            confirmed = Deseq2ResultsDirectionProvenance.model_validate(direction.model_dump(mode="json"))
+            if not confirmed.confirmed:
+                raise ValueError("the recorded direction has not been explicitly confirmed")
+        except ValueError as exc:
+            messages.append({
+                "status": "FAIL",
+                "message": f"Imported-results direction provenance is incomplete or invalid: {exc}",
+            })
+        else:
+            messages.append({
+                "status": "PASS",
+                "message": (
+                    "Imported-results direction confirmed: positive log2FoldChange means higher in "
+                    f"{confirmed.numerator} than {confirmed.denominator}."
+                ),
+            })
+
+        configured = self.config.input.deseq2_results
+        if not configured:
+            messages.append({
+                "status": "FAIL",
+                "message": "The external-results route has no configured project-copy table.",
+            })
+            return messages
+        project_copy = Path(configured)
+        if not project_copy.is_absolute():
+            project_copy = self.project_root / project_copy
+        if not project_copy.exists():
+            messages.append({
+                "status": "FAIL",
+                "message": f"The external-results project copy is missing: {configured}",
+            })
+            return messages
+
+        file_provenance = self.config.input.deseq2_results_provenance
+        file_provenance_invalid = False
+        try:
+            file_provenance = Deseq2ResultsFileProvenance.model_validate(
+                file_provenance.model_dump(mode="json")
+            )
+        except ValueError as exc:
+            file_provenance_invalid = True
+            messages.append({
+                "status": "FAIL",
+                "message": f"External-results file provenance is invalid: {exc}",
+            })
+        validated, errors = validate_recorded_project_copy(
+            project_copy,
+            file_provenance,
+            configured_project_copy=configured,
+        )
+        messages.extend({"status": "FAIL", "message": error} for error in errors)
+        if validated is not None and not errors and not file_provenance_invalid:
+            messages.append({
+                "status": "PASS",
+                "message": (
+                    f"Validated the complete external-results project copy: {validated.row_count:,} rows, "
+                    f"{len(validated.column_names)} columns, SHA-256 {validated.sha256[:12]}…."
+                ),
+            })
+        return messages
+
+    def _route_preflight_messages(self) -> list[dict[str, str]]:
+        """Validate route-specific project files and reference requirements."""
+        if self.config is None or self.project_root is None:
+            return [{"status": "FAIL", "message": "Project configuration is not loaded."}]
+        messages: list[dict[str, str]] = []
+        mode = self.config.input.type
+        configured_input = None
+        if mode == "count_matrix":
+            configured_input = self.config.input.count_matrix
+        elif mode == "deseq2_results":
+            configured_input = self.config.input.deseq2_results
+        elif mode == "microarray" and self.config.microarray.source == "local_matrix":
+            configured_input = self.config.microarray.expression_matrix
+        if configured_input:
+            input_path = Path(configured_input)
+            if not input_path.is_absolute():
+                input_path = self.project_root / input_path
+            if not input_path.exists():
+                messages.append({
+                    "status": "FAIL",
+                    "message": f"Configured input file is missing: {configured_input}",
+                })
+        elif mode in ("count_matrix", "deseq2_results"):
+            messages.append({
+                "status": "FAIL",
+                "message": f"The {mode.replace('_', ' ')} route has no configured input table.",
+            })
+
+        if mode in ("fastq", "sra", "mixed"):
+            ref = self.config.reference
+            has_url = bool(ref.genome_fasta_url and ref.annotation_gtf_url)
+            has_local = bool(ref.genome_fasta and ref.annotation_file)
+            if not (has_url or has_local):
+                messages.append({
+                    "status": "FAIL",
+                    "message": "Raw-read processing needs a genome FASTA and annotation. Select a preset or custom reference.",
+                })
+        if not messages:
+            messages.append({
+                "status": "PASS",
+                "message": "The active input route and reference requirements are configured.",
+            })
+        return messages
+
+    def _phase_check_statuses(self, *, preflight=None) -> dict[str, str]:
         # Read every checks/*.json the GUI and pipeline have produced.
         statuses: dict[str, str] = {}
         if self.project_root is None:
@@ -4674,23 +7107,245 @@ class MainWindow(QMainWindow):
                 payload = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
                 continue
-            statuses[path.stem] = payload.get("status", "PASS")
+            raw_status = payload.get("status", "FAIL") if isinstance(payload, dict) else "FAIL"
+            statuses[path.stem] = (
+                raw_status
+                if isinstance(raw_status, str)
+                and raw_status in {"PASS", "WARNING", "REVIEW_REQUIRED", "FAIL", "STALE"}
+                else "FAIL"
+            )
+        if "01_input_validation" in statuses and (
+            preflight is None or not preflight.valid
+        ):
+            # Fingerprinting can read multi-gigabyte inputs. Treat the recorded
+            # status as stale until the background refresh proves it current.
+            statuses["01_input_validation"] = "STALE"
         return statuses
 
     def _refresh_phase_checks(self) -> None:
         if not self._require_project():
             return
-        statuses = self._phase_check_statuses()
-        if not statuses:
-            self.sanity_text.setPlainText("No phase checks yet. Run checks or the pipeline first.")
+        assert self.project_root is not None
+        running_sanity = getattr(self, "_sanity_worker", None)
+        if running_sanity is not None and running_sanity.isRunning():
             return
-        priority = {"FAIL": 4, "REVIEW_REQUIRED": 3, "WARNING": 2, "PASS": 1}
-        worst = max(statuses.values(), key=lambda s: priority.get(s, 0))
-        lines = [f"Overall: {worst}", ""]
-        lines += [f"{name}: {status}" for name, status in statuses.items()]
-        self.sanity_text.setPlainText("\n".join(lines))
+        running_refresh = self._phase_refresh_worker
+        if running_refresh is not None and running_refresh.isRunning():
+            return
+        root = self.project_root
+        pending = self._phase_check_statuses()
+        self._update_sanity_state(pending, reset_approval=True)
+        if "01_input_validation" not in pending:
+            return
+        self.sanity_busy.setVisible(True)
+        self.sanity_refresh_button.setEnabled(False)
 
-    def _run_gate_ok(self) -> bool:
+        def validate_saved_check():
+            return validate_current_preflight(
+                root,
+                cancel_requested=worker.isInterruptionRequested,
+            )
+
+        worker = BackgroundWorker(validate_saved_check)
+        worker.done.connect(
+            lambda outcome: self._on_phase_refresh_done(worker, root, outcome),
+        )
+        worker.failed.connect(
+            lambda exc: self._on_phase_refresh_failed(worker, root, exc),
+        )
+        self._phase_refresh_worker = worker
+        worker.start()
+
+    def _on_phase_refresh_done(
+        self,
+        worker: BackgroundWorker,
+        project_root: Path,
+        outcome,
+    ) -> None:
+        if worker is not self._phase_refresh_worker:
+            return
+        self._phase_refresh_worker = None
+        self.sanity_busy.setVisible(False)
+        if getattr(self, "_closing", False):
+            return
+        if self.project_root != project_root:
+            QTimer.singleShot(0, self._refresh_phase_checks)
+            return
+        self._update_sanity_state(
+            self._phase_check_statuses(preflight=outcome),
+            reset_approval=True,
+        )
+
+    def _on_phase_refresh_failed(
+        self,
+        worker: BackgroundWorker,
+        project_root: Path,
+        _exc: object,
+    ) -> None:
+        if worker is not self._phase_refresh_worker:
+            return
+        self._phase_refresh_worker = None
+        self.sanity_busy.setVisible(False)
+        if getattr(self, "_closing", False):
+            return
+        if self.project_root != project_root:
+            QTimer.singleShot(0, self._refresh_phase_checks)
+            return
+        self._update_sanity_state(
+            self._phase_check_statuses(),
+            reset_approval=True,
+        )
+
+    def _update_sanity_state(
+        self,
+        statuses: dict[str, str] | None = None,
+        *,
+        reset_approval: bool = False,
+    ) -> None:
+        """Render the validation state without presenting approval out of context."""
+        if not hasattr(self, "sanity_state_label"):
+            return
+        if self.project_root is None:
+            self.sanity_run_button.setEnabled(False)
+            self.sanity_refresh_button.setEnabled(False)
+            self.sanity_go_project.setVisible(True)
+            self.sanity_text.clear()
+            self.sanity_text.setVisible(False)
+            self.approve_review.setChecked(False)
+            self.approve_review.setVisible(False)
+            self.sanity_state_label.setText(
+                "Open or create a project to validate its configuration and study design.")
+            self.sanity_next_label.setText(
+                "What happens next: configure a project, then return here before starting a run.")
+            self.sanity_go_run.setEnabled(False)
+            self._sanity_status_signature = None
+            return
+
+        statuses = self._phase_check_statuses() if statuses is None else statuses
+        allowed_statuses = {"PASS", "WARNING", "REVIEW_REQUIRED", "FAIL", "STALE"}
+        statuses = {
+            str(name): (
+                status
+                if isinstance(status, str) and status in allowed_statuses
+                else "FAIL"
+            )
+            for name, status in statuses.items()
+        }
+        signature_parts = [f"{name}:{status}" for name, status in sorted(statuses.items())]
+        if self.project_root is not None:
+            # Include the actual payload, not only check names/statuses. Re-running
+            # REVIEW_REQUIRED with different findings must clear an old acknowledgement.
+            for name in sorted(statuses):
+                path = self.project_root / "checks" / f"{name}.json"
+                try:
+                    signature_parts.append(path.read_text(encoding="utf-8"))
+                except OSError:
+                    signature_parts.append("<missing>")
+        signature = tuple((str(index), value) for index, value in enumerate(signature_parts))
+        if reset_approval or signature != self._sanity_status_signature:
+            self.approve_review.setChecked(False)
+        self._sanity_status_signature = signature
+        self.sanity_run_button.setEnabled(True)
+        self.sanity_go_project.setVisible(False)
+
+        if not statuses:
+            self.sanity_refresh_button.setEnabled(False)
+            self.sanity_text.clear()
+            self.sanity_text.setVisible(False)
+            self.approve_review.setVisible(False)
+            self.sanity_state_label.setText(
+                "No checks yet — validate the project, sample sheet, contrast and file paths before running.")
+            self.sanity_next_label.setText(
+                "What happens next: run validation here, then continue to Run Monitor when the findings are resolved.")
+            self.sanity_go_run.setEnabled(False)
+            return
+
+        priority = {"STALE": 5, "FAIL": 4, "REVIEW_REQUIRED": 3, "WARNING": 2, "PASS": 1}
+        worst = max(statuses.values(), key=lambda value: priority.get(value, 0))
+        labels = {
+            "STALE": "Validation is out of date — run validation again for the current project settings.",
+            "FAIL": "Validation failed — resolve the named phase checks before starting a run.",
+            "REVIEW_REQUIRED": "Review required — inspect the named findings and acknowledge them below.",
+            "WARNING": "Validation completed with warnings — review them before continuing.",
+            "PASS": "Validation passed — no blocking findings were reported.",
+        }
+        self.sanity_state_label.setText(labels.get(worst, f"Validation status: {worst}"))
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        lines = [f"Overall: {worst}", f"Last refreshed: {timestamp}", ""]
+        lines.extend(f"{name}: {status}" for name, status in statuses.items())
+        self.sanity_text.setPlainText("\n".join(lines))
+        self.sanity_text.setVisible(True)
+        self.sanity_refresh_button.setEnabled(True)
+
+        review_count = sum(status == "REVIEW_REQUIRED" for status in statuses.values())
+        self.approve_review.setVisible(review_count > 0)
+        if review_count:
+            noun = "phase check" if review_count == 1 else "phase checks"
+            self.approve_review.setText(
+                f"I reviewed the {review_count} {noun} marked Review required")
+        self.sanity_go_run.setEnabled(worst not in ("FAIL", "STALE"))
+        next_steps = {
+            "STALE": "What happens next: run validation again so the checks match the current saved inputs.",
+            "FAIL": "What happens next: resolve the failed phase checks, then validate again before opening Run Monitor.",
+            "REVIEW_REQUIRED": "What happens next: inspect and acknowledge the review-required findings, then continue to Run Monitor.",
+            "WARNING": "What happens next: review the warnings, then continue to Run Monitor when they are acceptable.",
+            "PASS": "What happens next: continue to Run Monitor to dry-run or start the validated workflow.",
+        }
+        self.sanity_next_label.setText(next_steps[worst])
+
+    def _prompt_for_pre_run_validation(self) -> bool:
+        """Offer a direct route to validation instead of a dead-end warning box."""
+        dialog = QDialog(self)
+        dialog.setObjectName("preRunValidationDialog")
+        dialog.setWindowTitle(APP_NAME)
+        dialog.setModal(True)
+        dialog.setMinimumWidth(520)
+        dialog.setAccessibleName("Pre-run checks required")
+        dialog_layout = QVBoxLayout(dialog)
+        dialog_layout.setContentsMargins(24, 20, 24, 20)
+        dialog_layout.setSpacing(12)
+
+        heading = QLabel("Pre-run checks required")
+        heading.setProperty("uiRole", "pageTitle")
+        body = QLabel(
+            "The saved validation is missing or no longer matches the current inputs and "
+            "analysis settings. Open Pre-run checks, validate the current run inputs, "
+            "then start the workflow again."
+        )
+        body.setWordWrap(True)
+        body.setAccessibleName(body.text())
+        dialog_layout.addWidget(heading)
+        dialog_layout.addWidget(body)
+
+        buttons = QDialogButtonBox()
+        open_button = buttons.addButton(
+            "Open Pre-run checks", QDialogButtonBox.ButtonRole.AcceptRole)
+        open_button.setObjectName("preRunValidationOpenButton")
+        open_button.setProperty("primary", True)
+        open_button.setDefault(True)
+        open_button.setAutoDefault(True)
+        cancel_button = buttons.addButton(
+            "Cancel", QDialogButtonBox.ButtonRole.RejectRole)
+        cancel_button.setObjectName("preRunValidationCancelButton")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        dialog_layout.addWidget(buttons)
+        return dialog.exec() == QDialog.DialogCode.Accepted
+
+    def _open_pre_run_validation(self) -> None:
+        self.tabs.setCurrentIndex(7)
+
+        def focus_validation_action() -> None:
+            button = getattr(self, "sanity_run_button", None)
+            if button is not None and button.isVisible() and button.isEnabled():
+                button.setFocus(Qt.FocusReason.TabFocusReason)
+
+        # Focus immediately when the page is already laid out, then once more
+        # after TaskNavigator finishes the page transition.
+        focus_validation_action()
+        QTimer.singleShot(0, focus_validation_action)
+
+    def _run_gate_ok(self, *, preflight=None) -> bool:
         # A reference must be resolvable, or the pipeline dies mid-run with a
         # cryptic "genome_fasta_url is not set". Block early with clear guidance.
         if self.config is not None:
@@ -4711,7 +7366,7 @@ class MainWindow(QMainWindow):
             # Single-end and paired-end are both supported, but a run must be homogeneous
             # (one rule cannot emit both a 1- and a 2-file trimmed output). Block mixed layouts.
             if not no_reference_mode and self.project_root is not None:
-                samples_path = self.project_root / "config" / "samples.tsv"
+                samples_path = self._configured_samples_path()
                 if samples_path.exists():
                     try:
                         sdf = pd.read_csv(samples_path, sep="\t", dtype=str).fillna("")
@@ -4731,72 +7386,300 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(
                     self, APP_NAME,
                     f"The genes-of-interest file '{goi}' is missing. Re-save your genes "
-                    "of interest on the Outputs tab, or clear the list, before running.",
+                    "of interest under Explore results > Figures and tables > Genes, or "
+                    "clear the list before running.",
                 )
                 return False
-        # Block on FAIL; require explicit approval for REVIEW_REQUIRED.
-        statuses = self._phase_check_statuses()
-        if any(s == "FAIL" for s in statuses.values()):
-            QMessageBox.warning(self, APP_NAME, "Cannot start: one or more sanity checks FAILED. Resolve them first.")
+        if self.project_root is None or self.config is None:
+            QMessageBox.warning(self, APP_NAME, "Open or create a project before starting a run.")
             return False
-        if any(s == "REVIEW_REQUIRED" for s in statuses.values()) and not self.approve_review.isChecked():
-            QMessageBox.warning(self, APP_NAME, "REVIEW_REQUIRED checks present. Tick the approval box on the Sanity tab to proceed.")
+
+        # Only a current, versioned preflight describes the run about to launch.
+        # Downstream phase checks are historical outputs and never substitute for it.
+        if preflight is None:
+            preflight = validate_current_preflight(self.project_root)
+        if not preflight.valid:
+            self._update_sanity_state({"01_input_validation": "STALE"}, reset_approval=True)
+            if self._prompt_for_pre_run_validation():
+                self._open_pre_run_validation()
+            return False
+        import json
+
+        check_path = self.project_root / "checks" / "01_input_validation.json"
+        try:
+            payload = json.loads(check_path.read_text(encoding="utf-8"))
+            raw_status = payload.get("status", "FAIL")
+            status = raw_status if isinstance(raw_status, str) else "FAIL"
+        except (OSError, json.JSONDecodeError):
+            status = "FAIL"
+        statuses = {"01_input_validation": status}
+        self._update_sanity_state(statuses)
+        if status not in {"PASS", "WARNING", "REVIEW_REQUIRED"}:
+            self.tabs.setCurrentIndex(7)
+            QMessageBox.warning(
+                self, APP_NAME,
+                "Cannot start: current input validation failed or returned an unknown status. Resolve the named findings and validate again.")
+            return False
+        if status == "REVIEW_REQUIRED" and not self.approve_review.isChecked():
+            self.tabs.setCurrentIndex(7)
+            QMessageBox.warning(
+                self, APP_NAME,
+                "Current validation contains review-required findings. Review them and tick the acknowledgement on Pre-run checks.")
             return False
         return True
+
+    def _set_launch_preflight_busy(
+        self,
+        busy: bool,
+        *,
+        restore_content: bool = True,
+    ) -> None:
+        """Show launch validation without pretending that a pipeline is running."""
+        if busy:
+            if self._launch_preflight_ui_state is None:
+                self._launch_preflight_ui_state = {
+                    "progress_minimum": self.progress.minimum(),
+                    "progress_maximum": self.progress.maximum(),
+                    "progress_value": self.progress.value(),
+                    "progress_label_visible": self.progress_value_label.isVisible(),
+                    "status": self.status_label.text(),
+                    "phase": self.phase_label.text(),
+                    "status_bar": self.statusBar().currentMessage(),
+                    "button_enabled": {
+                        name: button.isEnabled()
+                        for name, button in self.run_action_buttons.items()
+                    },
+                    "use_wsl_enabled": self.use_wsl.isEnabled(),
+                    "page_enabled": [
+                        self.tabs.widget(index).isEnabled()
+                        for index in range(self.tabs.count())
+                    ],
+                }
+            run_page_index = self.tabs.indexOf(self.run_monitor_page)
+            for index in range(self.tabs.count()):
+                if index != run_page_index:
+                    self.tabs.widget(index).setEnabled(False)
+            for button in self.run_action_buttons.values():
+                button.setEnabled(False)
+            self.use_wsl.setEnabled(False)
+            self.progress.setRange(0, 0)
+            self.progress_value_label.setVisible(False)
+            self.status_label.setText("Checking current scientific inputs before launch...")
+            self.phase_label.setText(
+                "Pages remain available for review; scientific controls are locked until this check finishes.",
+            )
+            self.statusBar().showMessage("Checking current scientific inputs before launch...")
+            return
+
+        state = self._launch_preflight_ui_state
+        self._launch_preflight_ui_state = None
+        if state is None:
+            return
+        if restore_content:
+            self.progress.setRange(
+                int(state["progress_minimum"]), int(state["progress_maximum"]),
+            )
+            self.progress.setValue(int(state["progress_value"]))
+            self.progress_value_label.setVisible(bool(state["progress_label_visible"]))
+            self.status_label.setText(str(state["status"]))
+            self.phase_label.setText(str(state["phase"]))
+            previous_message = str(state["status_bar"])
+            if previous_message:
+                self.statusBar().showMessage(previous_message)
+            else:
+                self.statusBar().clearMessage()
+        else:
+            self.progress.setRange(0, 100)
+            self.progress.setValue(0)
+            self.statusBar().clearMessage()
+        button_enabled = state["button_enabled"]
+        if isinstance(button_enabled, dict):
+            for name, button in self.run_action_buttons.items():
+                button.setEnabled(
+                    bool(button_enabled.get(name, False))
+                    and self.project_root is not None
+                    and not self._run_active
+                )
+        self.use_wsl.setEnabled(
+            bool(state["use_wsl_enabled"])
+            and self.project_root is not None
+            and not self._run_active
+        )
+        page_enabled = state.get("page_enabled")
+        if isinstance(page_enabled, list):
+            for index, enabled in enumerate(page_enabled[: self.tabs.count()]):
+                self.tabs.widget(index).setEnabled(bool(enabled))
+
+    def _begin_launch_preflight(self, mode: str) -> None:
+        worker = self._launch_preflight_worker
+        if worker is not None and worker.isRunning():
+            self.statusBar().showMessage(
+                "The current scientific inputs are already being checked.", 5000,
+            )
+            return
+        assert self.project_root is not None
+        assert self.config is not None
+        root = self.project_root
+        config_snapshot = self.config.model_dump_json()
+
+        def validate_for_launch():
+            return validate_current_preflight(
+                root,
+                cancel_requested=worker.isInterruptionRequested,
+            )
+
+        worker = BackgroundWorker(validate_for_launch)
+        worker.done.connect(
+            lambda outcome: self._on_launch_preflight_done(
+                worker, root, config_snapshot, mode, outcome,
+            ),
+        )
+        worker.failed.connect(
+            lambda exc: self._on_launch_preflight_failed(worker, root, exc),
+        )
+        self._launch_preflight_worker = worker
+        self._set_launch_preflight_busy(True)
+        worker.start()
+
+    def _on_launch_preflight_done(
+        self,
+        worker: BackgroundWorker,
+        project_root: Path,
+        config_snapshot: str,
+        mode: str,
+        outcome,
+    ) -> None:
+        if worker is not self._launch_preflight_worker:
+            return
+        self._launch_preflight_worker = None
+        if getattr(self, "_closing", False):
+            self._launch_preflight_ui_state = None
+            return
+        if self.project_root != project_root:
+            self._set_launch_preflight_busy(False, restore_content=False)
+            self._refresh_export_buttons()
+            return
+        self._set_launch_preflight_busy(False)
+        if self.config is None or self.config.model_dump_json() != config_snapshot:
+            self._update_sanity_state(
+                {"01_input_validation": "STALE"}, reset_approval=True,
+            )
+            if self._prompt_for_pre_run_validation():
+                self._open_pre_run_validation()
+            self._refresh_resume_banner()
+            return
+        try:
+            self._start_snakemake_impl(
+                mode,
+                _validated_preflight=outcome,
+                _validated_root=project_root,
+            )
+        except Exception as exc:
+            self._handle_start_error(exc)
+
+    def _on_launch_preflight_failed(
+        self,
+        worker: BackgroundWorker,
+        project_root: Path,
+        exc: object,
+    ) -> None:
+        if worker is not self._launch_preflight_worker:
+            return
+        self._launch_preflight_worker = None
+        if getattr(self, "_closing", False):
+            self._launch_preflight_ui_state = None
+            return
+        if self.project_root != project_root:
+            self._set_launch_preflight_busy(False, restore_content=False)
+            self._refresh_export_buttons()
+            return
+        self._set_launch_preflight_busy(False)
+        self._pending_recover = False
+        self._refresh_resume_banner()
+        QMessageBox.warning(
+            self,
+            APP_NAME,
+            f"Could not verify the current scientific inputs before launch:\n\n{exc}",
+        )
+
+    def _handle_start_error(self, exc: Exception) -> None:
+        import traceback as _tb
+
+        detail = _tb.format_exc()
+        try:
+            self.log_text.append(f"Failed to start run: {exc}")
+            self.log_text.append(detail)
+        except Exception:
+            pass
+        self._pending_recover = False
+        self._set_running_ui(False)
+        QMessageBox.critical(self, APP_NAME, f"Failed to start the run:\n\n{exc}")
 
     def _start_snakemake(self, mode: str) -> None:
         # Never let a failure here crash the app; surface it in the log + a dialog.
         try:
             self._start_snakemake_impl(mode)
         except Exception as exc:
-            import traceback as _tb
-            detail = _tb.format_exc()
-            try:
-                self.log_text.append(f"Failed to start run: {exc}")
-                self.log_text.append(detail)
-            except Exception:
-                pass
-            self._pending_recover = False  # launch failed, no runner started: don't strand the recover flag
-            self._set_running_ui(False)
-            QMessageBox.critical(self, APP_NAME, f"Failed to start the run:\n\n{exc}")
+            self._handle_start_error(exc)
 
-    def _start_snakemake_impl(self, mode: str) -> None:
+    def _start_snakemake_impl(
+        self,
+        mode: str,
+        *,
+        _validated_preflight=None,
+        _validated_root: Path | None = None,
+    ) -> None:
         if self.config is None or self.project_root is None:
+            self.statusBar().showMessage(
+                "Open or create a project before starting the workflow.", 8000)
+            QMessageBox.information(
+                self, APP_NAME,
+                "Open or create a project first, then return to Run Monitor.")
+            return
+        if _validated_root is not None and self.project_root != _validated_root:
+            return
+        launch_worker = self._launch_preflight_worker
+        if _validated_preflight is None and launch_worker is not None and launch_worker.isRunning():
+            self.statusBar().showMessage(
+                "Wait for the current scientific-input check to finish before starting another action.",
+                6000,
+            )
             return
         # Guard double-starts: one snakemake per directory at a time.
         if self._run_active or (self.runner is not None and self.runner.is_running()):
             self.log_text.append("A run is already active. Stop it before starting another.")
             self._pending_recover = False  # a stranded recover flag would mis-handle the active run's finish
             return
-        # An existing project keeps its own copy of workflow/, so a workflow fix from an
-        # app update would not reach it. Re-sync the bundled scripts when the project's
-        # recorded workflow_version is older than this build's, before any run or figure
-        # regeneration. Best-effort: never block a run if the copy fails.
-        try:
-            synced = self.manager.sync_workflow_if_outdated(self.project_root)
-            if synced:
-                self.log_text.append(f"Updated project workflow scripts to match this app version ({synced}).")
-        except Exception as exc:
-            self.log_text.append(f"Could not refresh project workflow scripts: {exc}")
-        if mode in ("run", "resume", "recover") and not self._run_gate_ok():
+        if _validated_preflight is None:
+            # An existing project keeps its own copy of workflow/, so a workflow fix from an
+            # app update would not reach it. Re-sync the bundled scripts when the project's
+            # recorded workflow_version is older than this build's, before any run or figure
+            # regeneration. Best-effort: never block a run if the copy fails.
+            try:
+                synced = self.manager.sync_workflow_if_outdated(self.project_root)
+                if synced:
+                    self.log_text.append(f"Updated project workflow scripts to match this app version ({synced}).")
+            except Exception as exc:
+                self.log_text.append(f"Could not refresh project workflow scripts: {exc}")
+            # Persist the in-memory metadata table so the run uses current edits;
+            # Snakemake reads config.input.samples from disk, not the GUI table.
+            save_metadata(self.metadata_table.to_dataframe(), self._configured_samples_path())
+            # Validate the contrast only for the differential-expression modes; unlock,
+            # dry-run and the figure/ppi/goi regenerations reuse existing DE results.
+            if not self._save_workflow_settings(validate=mode in ("run", "resume", "recover")):
+                return  # invalid contrast; the user was warned
+            self._save_resources()
+            # Persist figure-style + PPI controls so in-session edits are honored by the run
+            # (previously only Save/Regenerate applied them; a plain Run dropped them).
+            self._apply_figure_style()
+            if mode in ("run", "resume", "recover"):
+                self._begin_launch_preflight(mode)
+                return
+        if mode in ("run", "resume", "recover") and not self._run_gate_ok(
+            preflight=_validated_preflight,
+        ):
             self._refresh_resume_banner()  # a blocked resume/recover must not leave the banner stranded hidden
             return
-        # Backstop the enrichment trap directly at run start (the sanity-check gate
-        # only fires if the user ran checks first). Not for recovery.
-        if mode in ("run", "resume") and not self._confirm_enrichment_config():
-            self._refresh_resume_banner()
-            return
-        # Persist the in-memory metadata table so the run uses current edits;
-        # Snakemake reads config/samples.tsv from disk, not the GUI table.
-        save_metadata(self.metadata_table.to_dataframe(), self.project_root / "config" / "samples.tsv")
-        # Validate the contrast only for the differential-expression modes; unlock,
-        # dry-run and the figure/ppi/goi regenerations reuse existing DE results.
-        if not self._save_workflow_settings(validate=mode in ("run", "resume", "recover")):
-            return  # invalid contrast; the user was warned
-        self._save_resources()
-        # Persist figure-style + PPI controls so in-session edits are honored by the run
-        # (previously only Save/Regenerate applied them; a plain Run dropped them).
-        self._apply_figure_style()
         run_tag = _new_run_tag() if self.use_wsl.isChecked() else None
         command = build_snakemake_command(
             self.project_root,
@@ -4839,7 +7722,7 @@ class MainWindow(QMainWindow):
             if hasattr(self, "run_monitor_page"):
                 self.tabs.setCurrentWidget(self.run_monitor_page)
             self.progress.setValue(0)
-            self.progress.setStyleSheet("")
+            self._set_progress_status()
             status = {"figures": "Regenerating figures...",
                       "goi": "Generating genes-of-interest outputs...",
                       "ppi": "Rebuilding PPI network...",

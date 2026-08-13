@@ -15,6 +15,7 @@ from app.core.paths import app_root, wsl_has_working_distro
 
 PYTHON_PACKAGES = {
     "PySide6": "PySide6",
+    "numpy": "numpy",
     "pandas": "pandas",
     "pydantic": "pydantic",
     "yaml": "PyYAML",
@@ -40,12 +41,17 @@ EXTERNAL_TOOLS = {
 # so a working STAR-route env is never flagged incomplete; each route is guarded at run time too.
 OPTIONAL_ROUTE_TOOLS = {
     "aria2c": "Faster multi-connection FASTQ download (aria2; falls back to a single stream)",
+    "hisat2-build": "HISAT2 reference index construction (HISAT2 route)",
     "trim_galore": "Read trimming (Trim Galore route)",
     "trimmomatic": "Read trimming (Trimmomatic route)",
     "sortmerna": "rRNA filtering (SortMeRNA)",
     "ribodetector_cpu": "rRNA filtering (RiboDetector)",
     "fastq_screen": "Contamination screen (FastQ Screen)",
+    "bowtie2": "Contamination-screen alignment (FastQ Screen)",
+    "perl": "Contamination-screen runtime (FastQ Screen)",
     "read_distribution.py": "Extended alignment QC (RSeQC)",
+    "geneBody_coverage.py": "Gene-body coverage QC (RSeQC)",
+    "gtfToGenePred": "RSeQC BED12 annotation conversion (UCSC)",
     "genePredToBed": "RSeQC BED12 from the annotation (UCSC)",
 }
 
@@ -93,15 +99,17 @@ WSL_TOOLS = {
 # enrichplot and fgsea are the clusterProfiler enrichment cluster (GO.db is a transitive dep a
 # solve can drop, which broke enrichment ~30 min into a run), and STRINGdb backs the PPI network
 # — probing them here catches a broken enrichment/PPI env from Check Environment, before a run.
-# Presence-checked (installed.packages), not load-tested, to stay under the 20s WSL probe timeout.
+# Load-tested with requireNamespace so missing compiled/transitive dependencies fail readiness.
 _R_PACKAGES_ALL = ("DESeq2", "edgeR", "limma", "GSVA", "clusterProfiler", "GO.db", "DOSE",
                    "enrichplot", "fgsea", "STRINGdb", "apeglm", "ashr", "GEOquery", "affy",
+                   "AnnotationDbi", "Biobase", "S4Vectors", "SummarizedExperiment",
                    "metaRNASeq", "metafor", "HTSFilter", "tximport", "gprofiler2",
                    # CRAN figure/plotting + set-overlap packages hard-loaded by the mandatory
                    # figures/sample-correlation/set-overlap rules on every run; scales in
                    # particular is only a transitive dep in the fallback spec, so a solve can
                    # drop it (like GO.db) and pass every check, then crash the figures rule.
-                   "ggplot2", "ggrepel", "pheatmap", "igraph", "scales", "svglite",
+                   "ggplot2", "ggrepel", "ggnewscale", "ggridges", "gtable", "pheatmap",
+                   "igraph", "jsonlite", "matrixStats", "scales", "svglite", "systemfonts",
                    "RColorBrewer", "msigdbr")
 
 R_ANALYSIS_PACKAGES = _R_PACKAGES_ALL

@@ -108,7 +108,7 @@ pd$neglp <- -log10(pd$wilcox_p)
 p <- ggplot(pd, aes(de_stat, neglp)) +
   geom_bin2d(bins = 60) +
   scale_fill_gradientn(colours = pal_spec$seq(256), transform = "log10", name = "genes") +
-  labs(x = "DESeq2 / limma statistic",
+  labs(x = "Primary differential-expression statistic",
        y = expression(-log[10]~"Wilcoxon rank-sum p")) +
   style_theme(theme_bw)
 save_gg(p, out[["png"]], out[["svg"]])

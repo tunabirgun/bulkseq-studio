@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.core.config_models import default_config
-from app.core.snakemake_runner import build_snakemake_command
+from app.core.snakemake_runner import build_snakemake_command, build_wsl_kill_command
 
 
 def test_snakemake_command_uses_project_workflow_snakefile() -> None:
@@ -45,6 +45,27 @@ def test_wsl_command_activates_micromamba_env() -> None:
     assert 'micromamba" run -n bulkseq snakemake' in inner
     assert "MAMBA_ROOT_PREFIX" in inner
     assert command.command[:3] == ["wsl", "--", "bash"]
+
+
+def test_wsl_stop_finds_the_exported_tag_in_proc_environments() -> None:
+    tag = "BULKSEQ_RUN_TAG_0123456789abcdef0123456789abcdef"
+    command = build_wsl_kill_command(tag, "Ubuntu-24.04")
+    inner = command[-1]
+    assert command[:5] == ["wsl", "-d", "Ubuntu-24.04", "--exec", "bash"]
+    assert "/proc/[0-9]*/environ" in inner
+    assert f"{tag}=1" in inner
+    assert "grep -Fqx" in inner
+    assert "kill -TERM $pids" in inner
+    assert "pkill" not in inner
+
+
+def test_wsl_stop_rejects_untrusted_tags_and_signals() -> None:
+    with pytest.raises(ValueError):
+        build_wsl_kill_command("BULKSEQ_RUN_TAG_bad; reboot")
+    with pytest.raises(ValueError):
+        build_wsl_kill_command(
+            "BULKSEQ_RUN_TAG_0123456789abcdef0123456789abcdef", signal="USR1"
+        )
 
 
 def test_figures_mode_gates_optional_targets_on_input_existence(tmp_path) -> None:

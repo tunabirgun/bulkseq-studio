@@ -102,15 +102,24 @@ if MICROARRAY_MODE:
 
 elif DE_RESULTS_MODE:
 
-    # DESeq2-results upload: the user supplies a ready results table. Ingest it into
+    # External-results route: ingest the verified project copy into
     # the canonical deseq2 outputs (results + up/down + a synthetic objects RDS that
     # carries no dds/vsd) so enrichment/figures/PPI run; alignment, counts and DESeq2
     # are skipped. Count-only outputs (normalized, unchanged, equivalence) are not
     # produced and are gated out of final_targets().
+    # The direction belongs to the external project copy's source provenance, not the DESeq2
+    # contrast settings (which can be stale because this branch fits no local model).
+    _UPLOADED_DIRECTION = INPUT.get("deseq2_results_direction", {}) or {}
+    _UPLOADED_PROVENANCE = INPUT.get("deseq2_results_provenance", {}) or {}
+
     rule ingest_deseq2_results:
         input:
             table=DE_RESULTS_TABLE,
             samples=config["input"]["samples"],
+            # The current config/direction provenance must pass setup + input validation before
+            # any normalized DE artifact is produced. input_validation depends on project_setup,
+            # so a failed/legacy provenance record stops this branch at the gate.
+            validated="checks/01_input_validation.json",
         output:
             results="results/deseq2/deseq2_results.csv",
             up="results/deseq2/upregulated_genes.csv",
@@ -122,9 +131,11 @@ elif DE_RESULTS_MODE:
         params:
             alpha=_DE.get("alpha", 0.05),
             lfc_threshold=_DE.get("lfc_threshold", 1.0),
-            contrast_factor=_CONTRAST.get("factor", "condition"),
-            numerator=_CONTRAST.get("numerator", ""),
-            denominator=_CONTRAST.get("denominator", ""),
+            numerator=_UPLOADED_DIRECTION.get("numerator", ""),
+            denominator=_UPLOADED_DIRECTION.get("denominator", ""),
+            upstream_method=_UPLOADED_PROVENANCE.get("upstream_method", "unknown"),
+            lfc_shrinkage=_UPLOADED_PROVENANCE.get("lfc_shrinkage", "unknown"),
+            p_adjustment_method=_UPLOADED_PROVENANCE.get("p_adjustment_method", "unknown"),
         benchmark:
             "benchmarks/ingest_deseq2_results.tsv"
         log:

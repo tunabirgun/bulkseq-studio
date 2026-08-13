@@ -9,6 +9,10 @@
      (Qt propagates the app colour scheme to QtWebEngine's prefers-color-scheme). */
   @media (prefers-color-scheme: dark) { html, body { background: #1c1c1e; } }
   #cy { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+  #cy:focus-visible { outline: 2px solid var(--focus-color, #2c6fb6); outline-offset: -3px; }
+  .sr-only { position: absolute !important; width: 1px !important; height: 1px !important;
+             padding: 0 !important; margin: -1px !important; overflow: hidden !important;
+             clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
   #tip { position: absolute; display: none; pointer-events: none; z-index: 10;
          background: rgba(28,28,30,0.94); color: #fff; padding: 7px 10px;
          border-radius: 6px; font-size: 12px; line-height: 1.5; max-width: 280px;
@@ -26,7 +30,13 @@
 <script src="cytoscape-svg.js"></script>
 </head>
 <body>
-<div id="cy"></div>
+<div id="cy" tabindex="0" role="application"
+     aria-label="Interactive protein interaction network"
+     aria-describedby="keyboard-help network-status" aria-controls="node-list"
+     aria-owns="node-list"></div>
+<p id="keyboard-help" class="sr-only">Use the arrow keys to move through proteins, Enter or Space to focus a protein and its neighbours, Escape to clear selection, plus and minus to zoom, and zero to fit the network.</p>
+<p id="network-status" class="sr-only" role="status" aria-live="polite"></p>
+<ul id="node-list" class="sr-only" role="listbox" aria-label="Proteins in the current network"></ul>
 <div id="tip"></div>
 <div id="empty">No PPI network to display.</div>
 <script src="viewer.js"></script>

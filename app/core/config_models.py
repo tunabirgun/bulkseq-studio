@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import date
+import unicodedata
+from datetime import date, datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.constants import APP_VERSION, WORKFLOW_VERSION
 
@@ -15,6 +16,135 @@ class ProjectConfig(BaseModel):
     created_at: str = Field(default_factory=lambda: date.today().isoformat())
     app_version: str = APP_VERSION
     workflow_version: str = WORKFLOW_VERSION
+
+
+class Deseq2ResultsDirectionProvenance(BaseModel):
+    """Direction supplied by the analyst for an imported DE-results table.
+
+    A results table alone cannot establish what a positive log2 fold change means.
+    Keep that statement apart from ``Deseq2Config.contrasts``: those settings describe
+    a model BulkSeq Studio fits, while this record describes a model fitted elsewhere.
+    Defaults deliberately keep legacy project configurations loadable; the workflow
+    validates a complete, confirmed record before a new imported-results run starts.
+    """
+
+    numerator: str | None = None
+    denominator: str | None = None
+    confirmed: bool = False
+    confirmed_at: str | None = None
+
+    @field_validator("numerator", "denominator", "confirmed_at", mode="before")
+    @classmethod
+    def empty_strings_are_none(cls, value: object) -> str | None | object:
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    @model_validator(mode="after")
+    def confirmed_direction_is_complete(self) -> "Deseq2ResultsDirectionProvenance":
+        # Legacy records deliberately remain loadable while unconfirmed. Once a
+        # user confirms the interpretation, every field becomes a hard provenance
+        # contract because downstream up/down labels depend on it.
+        if not self.confirmed:
+            return self
+        labels = (("numerator", self.numerator), ("denominator", self.denominator))
+        for field_name, label in labels:
+            if not label:
+                raise ValueError(f"Confirmed direction requires a nonempty {field_name} label.")
+            if len(label) > 160:
+                raise ValueError(f"Confirmed direction {field_name} label is unreasonably long.")
+            if any(unicodedata.category(character) in {"Cc", "Cf", "Zl", "Zp"}
+                   for character in label):
+                raise ValueError(f"Confirmed direction {field_name} label contains a control character.")
+        assert self.numerator is not None and self.denominator is not None
+        if self.numerator.casefold() == self.denominator.casefold():
+            raise ValueError("Confirmed direction numerator and denominator must be different groups.")
+        if not self.confirmed_at:
+            raise ValueError("Confirmed direction requires a confirmation timestamp.")
+        try:
+            parsed = datetime.fromisoformat(self.confirmed_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("Direction confirmation timestamp must be ISO 8601.") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("Direction confirmation timestamp must include a timezone offset.")
+        return self
+
+
+class Deseq2ResultsFileProvenance(BaseModel):
+    """Privacy-preserving import and integrity facts for the project copy."""
+
+    original_basename: str | None = None
+    imported_at: str | None = None
+    project_copy: str | None = None
+    sha256: str | None = None
+    byte_size: int | None = None
+    row_count: int | None = None
+    column_names: list[str] = Field(default_factory=list)
+    gene_id_column: str | None = None
+    log2fc_column: str | None = None
+    adjusted_p_column: str | None = None
+    upstream_method: str = "unknown"
+    lfc_shrinkage: Literal["unknown", "applied", "not_applied"] = "unknown"
+    p_adjustment_method: str = "unknown"
+
+    @field_validator(
+        "original_basename", "imported_at", "project_copy", "sha256",
+        "gene_id_column", "log2fc_column", "adjusted_p_column", mode="before",
+    )
+    @classmethod
+    def empty_file_fields_are_none(cls, value: object) -> str | None | object:
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    @field_validator("original_basename")
+    @classmethod
+    def retain_basename_only(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        # Never persist the user's original directory; it may contain identifying
+        # workstation, study or participant information.
+        return value.replace("\\", "/").rsplit("/", 1)[-1] or None
+
+    @field_validator("upstream_method", "p_adjustment_method", mode="before")
+    @classmethod
+    def normalize_optional_methods(cls, value: object) -> str:
+        text = str(value or "").strip() or "unknown"
+        if len(text) > 160:
+            raise ValueError("External-results method provenance is unreasonably long.")
+        if any(unicodedata.category(character) in {"Cc", "Cf", "Zl", "Zp"}
+               for character in text):
+            raise ValueError("External-results method provenance contains a control character.")
+        return text
+
+    @field_validator("sha256")
+    @classmethod
+    def valid_sha256(cls, value: str | None) -> str | None:
+        if value is not None and (len(value) != 64 or any(c not in "0123456789abcdefABCDEF" for c in value)):
+            raise ValueError("External-results SHA-256 must contain 64 hexadecimal characters.")
+        return value.lower() if value else None
+
+    @field_validator("byte_size", "row_count")
+    @classmethod
+    def positive_recorded_count(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("Recorded external-results sizes and row counts must be positive.")
+        return value
+
+    @field_validator("imported_at")
+    @classmethod
+    def imported_at_is_timezone_aware(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("External-results import timestamp must be ISO 8601.") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("External-results import timestamp must include a timezone offset.")
+        return value
 
 
 class InputConfig(BaseModel):
@@ -35,6 +165,14 @@ class InputConfig(BaseModel):
     # results/deseq2/deseq2_results.csv and runs enrichment -> figures -> PPI. Outputs that
     # require raw/normalized counts (PCA, sample correlation, count heatmaps, GOI) are skipped.
     deseq2_results: str | None = None
+    # Direction provenance for an externally computed results table. This is deliberately
+    # separate from ``deseq2.contrasts`` because no local DESeq2 model is fitted on this route.
+    deseq2_results_direction: Deseq2ResultsDirectionProvenance = Field(
+        default_factory=Deseq2ResultsDirectionProvenance
+    )
+    deseq2_results_provenance: Deseq2ResultsFileProvenance = Field(
+        default_factory=Deseq2ResultsFileProvenance
+    )
 
 
 class MicroarrayConfig(BaseModel):
@@ -75,6 +213,16 @@ class ReferenceConfig(BaseModel):
     genome_md5: str | None = None
     annotation_md5: str | None = None
     genome_size_category: str = "custom"
+
+    @field_validator("genome_md5", "annotation_md5", mode="before")
+    @classmethod
+    def valid_optional_md5(cls, value: object) -> str | None:
+        text = str(value or "").strip().lower()
+        if not text:
+            return None
+        if len(text) != 32 or any(character not in "0123456789abcdef" for character in text):
+            raise ValueError("Reference MD5 values must contain 32 hexadecimal characters.")
+        return text
 
 
 class WorkflowConfig(BaseModel):
@@ -246,6 +394,9 @@ class EnrichmentConfig(BaseModel):
     orgdb: str | None = None
     keytype: str | None = None
     kegg_organism: str | None = None
+    # Independent species-level NCBI taxon used to verify the KEGG organism code.
+    # This is deliberately separate from an OrgDb's TAXID, which may name a strain.
+    taxon_id: int | None = None
     # backend default 'clusterprofiler' keeps the auto OrgDb->gprofiler->none chain;
     # setting 'gprofiler' forces the g:Profiler GO route even when an OrgDb loads.
     backend: Literal["clusterprofiler", "gprofiler"] = "clusterprofiler"

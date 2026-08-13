@@ -1176,11 +1176,44 @@ pre code {
   }
 
   .content {
+    overflow-x: clip;
     padding-inline: 1rem;
+  }
+
+  .content section,
+  .content section.wide,
+  .hero,
+  .hero > *,
+  .note {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  .hero {
+    width: 100%;
+    padding-left: 1rem;
   }
 
   .hero h1 {
     font-size: 3rem;
+  }
+
+  .hero .badges {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hero .badge {
+    width: 100%;
+    white-space: normal;
+  }
+
+  .btn-row,
+  .btn {
+    min-width: 0;
+    max-width: 100%;
+    white-space: normal;
   }
 }
 

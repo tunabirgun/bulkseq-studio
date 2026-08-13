@@ -17,6 +17,7 @@ const state = {
   dirFilter: "all",           // direction view: all | up | down (by log2FoldChange sign)
   layout: "fcose",            // current layout name (kept in sync with the Qt combo)
   floor: 0,                   // confidence (edge weight) floor
+  keyboardIndex: -1,         // current node in the keyboard/AT traversal
   theme: { bg: "#ffffff", text: "#1a1a1a", edge: "#c7c7c7", muted: "#8a8a8a" },
 };
 let RANGE = { lfc: 3, deg: [1, 10], meanExpr: [0, 1], neglp: [0, 1] };
@@ -92,12 +93,16 @@ function styleArrayFor(theme) {
     { selector: "edge", style: {
         "width": function (e) { return 0.5 + (e.data("weight") || 0.4) * 3.5; },
         "line-color": theme.edge, "curve-style": "haystack",
-        "opacity": 0.65 } },
+        "opacity": 0.82 } },
     { selector: "node.faded", style: { "opacity": 0.12 } },
     { selector: "edge.faded", style: { "opacity": 0.05 } },
-    { selector: "node.hl", style: { "border-width": 3, "border-color": "#1a73e8" } },
+    { selector: "node.hl", style: {
+        "border-width": 3,
+        "border-color": function () { return theme.focus || theme.text; } } },
     { selector: ".dirhidden", style: { "display": "none" } },
-    { selector: "node:selected", style: { "border-width": 4, "border-color": "#e8710a" } },
+    { selector: "node:selected", style: {
+        "border-width": 4,
+        "border-color": function () { return theme.focus || theme.text; } } },
   ];
 }
 function styleArray() { return styleArrayFor(state.theme); }
@@ -140,8 +145,23 @@ function relayout(name) {
   if (name) state.layout = name;
   __rngSeed = 42;  // reset the seeded RNG each layout to reduce run-to-run drift
   var lay = cy.layout(layoutOpts(state.layout, cy.nodes().length));
-  lay.one("layoutstop", function () { cy.fit(undefined, 40); });
+  var fitNetwork = function () {
+    if (!cy) return;
+    var container = cy.container();
+    if (!container || container.clientWidth < 100 || container.clientHeight < 100) return;
+    cy.resize();
+    cy.fit(undefined, 40);
+  };
+  lay.one("layoutstop", function () {
+    fitNetwork();
+    window.requestAnimationFrame(fitNetwork);
+    window.setTimeout(fitNetwork, 60);
+  });
   lay.run();
+  // Some Chromium/software-renderer combinations do not deliver layoutstop to
+  // the extension object. The delayed fit is idempotent and keeps the graph in
+  // view even on that fallback path.
+  window.setTimeout(fitNetwork, 240);
 }
 
 // Direction view: hide nodes whose log2FC sign does not match the mode (up>0, down<0);
@@ -166,6 +186,7 @@ function applyDirFilter() {
     }
     applyEdgeVisibility();
   });
+  rebuildAccessibleNodeList();
 }
 
 // Single source of truth for edge display: an edge shows iff its weight clears the
@@ -206,6 +227,92 @@ function moveTip(evt) {
 }
 function hideTip() { tip().style.display = "none"; }
 
+function visibleKeyboardNodes() {
+  if (!cy) return [];
+  return cy.nodes().filter(function (node) { return node.visible(); }).toArray();
+}
+
+function nodeSummary(node) {
+  const d = node.data();
+  const name = d.symbol || d.id;
+  const neighbours = node.neighborhood("node").length;
+  return name + ", log2 fold change " + fmt(d.log2FoldChange, 2) +
+    ", degree " + (d.degree != null ? d.degree : "n/a") +
+    ", module " + (d.module != null ? d.module : "n/a") +
+    ", " + neighbours + (neighbours === 1 ? " neighbour" : " neighbours");
+}
+
+function rebuildAccessibleNodeList() {
+  const list = document.getElementById("node-list");
+  const container = document.getElementById("cy");
+  const status = document.getElementById("network-status");
+  while (list.firstChild) list.removeChild(list.firstChild);
+  const nodes = visibleKeyboardNodes();
+  nodes.forEach(function (node, index) {
+    const item = document.createElement("li");
+    item.id = "ppi-node-" + index;
+    item.setAttribute("role", "option");
+    item.setAttribute("aria-selected", "false");
+    item.textContent = nodeSummary(node);
+    list.appendChild(item);
+  });
+  state.keyboardIndex = -1;
+  container.removeAttribute("aria-activedescendant");
+  container.setAttribute(
+    "aria-label",
+    "Interactive protein interaction network, " + nodes.length +
+      (nodes.length === 1 ? " visible protein" : " visible proteins")
+  );
+  status.textContent = nodes.length +
+    (nodes.length === 1 ? " visible protein. " : " visible proteins. ") +
+    "Use arrow keys to inspect them.";
+}
+
+function announceKeyboardNode(node, index) {
+  const list = document.getElementById("node-list");
+  Array.prototype.forEach.call(list.children, function (item, itemIndex) {
+    item.setAttribute("aria-selected", itemIndex === index ? "true" : "false");
+  });
+  const active = document.getElementById("ppi-node-" + index);
+  if (active) document.getElementById("cy").setAttribute("aria-activedescendant", active.id);
+  document.getElementById("network-status").textContent = nodeSummary(node);
+}
+
+function clearNetworkFocus() {
+  if (!cy) return;
+  cy.elements().removeClass("faded");
+  cy.nodes().removeClass("hl");
+  cy.elements().unselect();
+  state.selectionActive = false;
+  state.keyboardIndex = -1;
+  document.getElementById("cy").removeAttribute("aria-activedescendant");
+  rebuildAccessibleNodeList();
+  if (state.focusLabels) cy.style(styleArray());
+}
+
+function activateNode(node) {
+  if (!cy || !node) return;
+  const neighbourhood = node.closedNeighborhood();
+  cy.elements().addClass("faded");
+  neighbourhood.removeClass("faded");
+  node.addClass("hl");
+  state.selectionActive = true;
+  if (state.focusLabels) cy.style(styleArray());
+}
+
+function moveKeyboardFocus(delta, absolute) {
+  const nodes = visibleKeyboardNodes();
+  if (!nodes.length) return;
+  if (absolute === "first") state.keyboardIndex = 0;
+  else if (absolute === "last") state.keyboardIndex = nodes.length - 1;
+  else state.keyboardIndex = (state.keyboardIndex + delta + nodes.length) % nodes.length;
+  const node = nodes[state.keyboardIndex];
+  cy.elements().unselect();
+  node.select();
+  cy.center(node);
+  announceKeyboardNode(node, state.keyboardIndex);
+}
+
 function bindInteractions() {
   cy.on("mouseover", "node", showTip);
   cy.on("mousemove", "node", moveTip);
@@ -220,20 +327,40 @@ function bindInteractions() {
       n.closedNeighborhood().nodes().select();
       return;
     }
-    const nb = n.closedNeighborhood();
-    cy.elements().addClass("faded"); nb.removeClass("faded"); n.addClass("hl");
-    // Re-evaluate labels so focus mode can hide the background node names.
-    state.selectionActive = true;
-    if (state.focusLabels) cy.style(styleArray());
+    activateNode(n);
+    const index = visibleKeyboardNodes().indexOf(n);
+    if (index >= 0) {
+      state.keyboardIndex = index;
+      announceKeyboardNode(n, index);
+    }
   });
   cy.on("tap", function (evt) {
     if (evt.target === cy) {
-      cy.elements().removeClass("faded"); cy.nodes().removeClass("hl");
-      cy.elements().unselect();
-      state.selectionActive = false;
-      if (state.focusLabels) cy.style(styleArray());
+      clearNetworkFocus();
     }
   });
+
+  const container = cy.container();
+  if (!container.dataset.ppiKeyboardBound) {
+    container.dataset.ppiKeyboardBound = "true";
+    container.addEventListener("keydown", function (event) {
+      const key = event.key;
+      if (key === "ArrowRight" || key === "ArrowDown") moveKeyboardFocus(1);
+      else if (key === "ArrowLeft" || key === "ArrowUp") moveKeyboardFocus(-1);
+      else if (key === "Home") moveKeyboardFocus(0, "first");
+      else if (key === "End") moveKeyboardFocus(0, "last");
+      else if (key === "Enter" || key === " ") {
+        const nodes = visibleKeyboardNodes();
+        if (state.keyboardIndex >= 0 && state.keyboardIndex < nodes.length) activateNode(nodes[state.keyboardIndex]);
+      } else if (key === "Escape") clearNetworkFocus();
+      else if (key === "0") cy.fit(undefined, 40);
+      else if (key === "+" || key === "=") cy.zoom({ level: Math.min(cy.maxZoom(), cy.zoom() * 1.2), renderedPosition: { x: container.clientWidth / 2, y: container.clientHeight / 2 } });
+      else if (key === "-" || key === "_") cy.zoom({ level: Math.max(cy.minZoom(), cy.zoom() / 1.2), renderedPosition: { x: container.clientWidth / 2, y: container.clientHeight / 2 } });
+      else return;
+      event.preventDefault();
+      event.stopPropagation();
+    });
+  }
 }
 
 window.PPI = {
@@ -245,6 +372,7 @@ window.PPI = {
     if (!elements.nodes || elements.nodes.length === 0) {
       if (cy) { cy.destroy(); cy = null; }
       empty.style.display = "block";
+      rebuildAccessibleNodeList();
       return JSON.stringify({ nodes: 0, edges: 0 });
     }
     empty.style.display = "none";
@@ -261,6 +389,14 @@ window.PPI = {
     relayout(state.layout);
     applyDirFilter();  // survive a reload: re-apply the current direction view
     return JSON.stringify({ nodes: cy.nodes().length, edges: cy.edges().length });
+  },
+  resize: function () {
+    if (!cy) return;
+    cy.resize();
+    // A graph first rendered while its stacked Qt page is hidden can receive a
+    // zero-height layout. Re-run the deterministic layout once real geometry is
+    // available; fitting alone cannot recover coincident/off-canvas positions.
+    relayout(state.layout);
   },
   setLayout: function (name) { relayout(name); },
   setColorBy: function (f) { state.colorBy = f; if (cy) cy.style(styleArray()); },
@@ -279,6 +415,7 @@ window.PPI = {
   setTheme: function (t) {
     if (t) state.theme = t;
     document.body.style.background = state.theme.bg;
+    document.documentElement.style.setProperty("--focus-color", state.theme.focus || state.theme.text);
     if (cy) cy.style(styleArray());
   },
   exportImage: function (fmt, bg) {

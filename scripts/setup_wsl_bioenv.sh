@@ -20,7 +20,8 @@ case "${HOST_OS}/${HOST_ARCH}" in
     echo "inside WSL2 on Windows." >&2
     exit 1 ;;
 esac
-if [ "$PROFILE" = "full" ]; then
+case "$PROFILE" in
+full)
   # Install the full R/Bioconductor + CLI stack from the pinned LOCK, not the floating
   # bulkseq_full.yaml. A fresh solve of the float spec can silently drop a transitive
   # dependency (e.g. GO.db) and leave clusterProfiler unable to load; the lock pins every
@@ -37,10 +38,16 @@ if [ "$PROFILE" = "full" ]; then
     ENV_FILE="$FALLBACK_ENV_FILE"
     FALLBACK_ENV_FILE=""
   fi
-else
+  ;;
+core)
   ENV_FILE="$REPO_DIR/workflow/envs/bulkseq_core.yaml"
   FALLBACK_ENV_FILE=""
-fi
+  ;;
+*)
+  echo "Unsupported environment profile: $PROFILE (expected 'core' or 'full')." >&2
+  exit 2
+  ;;
+esac
 LOG_DIR="$REPO_DIR/scripts/logs"
 LOG_FILE="$LOG_DIR/wsl_bioenv_install.log"
 MAMBA_ROOT="$HOME/micromamba"
@@ -227,9 +234,13 @@ echo "Stage 2/3: Creating/updating the BulkSeq micromamba environment"
 # The full profile installs from the pinned lock so the R/Bioconductor stack reproduces
 # exactly (a re-solve of the float spec can drop a transitive dep like GO.db). An in-place
 # `env update` can still leave a package installed-but-unloadable (a build GC, an r-base ABI
-# drift); Stage 2b below verifies the stack actually loads and does one clean rebuild if not.
-# BULKSEQ_REBUILD=1 forces the clean rebuild up front.
+# drift); Stage 2b below verifies the stack actually loads. It never destroys that environment
+# implicitly: BULKSEQ_REBUILD=1 is the explicit authorization for a clean rebuild up front.
 REBUILD="${BULKSEQ_REBUILD:-0}"
+case "$REBUILD" in
+  0|1) ;;
+  *) echo "BULKSEQ_REBUILD must be 0 or 1." >&2; exit 2 ;;
+esac
 
 env_exists() { "$MICROMAMBA" env list | awk '{print $1}' | grep -qx "$ENV_NAME"; }
 
@@ -273,12 +284,16 @@ attempt_install() {
 # NOT the exit code â€” `micromamba run` can mask a non-zero status. A dropped GO.db or an
 # r-base ABI drift leaves these installed-but-unloadable, which is what kills enrichment
 # mid-run. Core/empty profile -> trivially "loads".
-R_STACK_PROBE='q<-c("DESeq2","edgeR","limma","GSVA","clusterProfiler","GO.db","DOSE","enrichplot","fgsea","STRINGdb","GEOquery","affy","metaRNASeq","metafor","HTSFilter","tximport","gprofiler2","ggplot2","scales","svglite","RColorBrewer","msigdbr"); ok<-function(p) isTRUE(tryCatch(suppressWarnings(suppressMessages(requireNamespace(p,quietly=TRUE))),error=function(e)FALSE)); bad<-q[!vapply(q,ok,logical(1))]; cat(if(length(bad)) paste0("R_STACK_BAD:",paste(bad,collapse=",")) else "R_STACK_OK")'
+R_STACK_PROBE='q<-c("DESeq2","edgeR","limma","GSVA","clusterProfiler","GO.db","DOSE","enrichplot","fgsea","STRINGdb","apeglm","ashr","GEOquery","affy","AnnotationDbi","Biobase","S4Vectors","SummarizedExperiment","metaRNASeq","metafor","HTSFilter","tximport","gprofiler2","ggplot2","ggrepel","ggnewscale","ggridges","gtable","pheatmap","igraph","jsonlite","matrixStats","scales","svglite","systemfonts","RColorBrewer","msigdbr"); ok<-function(p) isTRUE(tryCatch(suppressWarnings(suppressMessages(requireNamespace(p,quietly=TRUE))),error=function(e)FALSE)); bad<-q[!vapply(q,ok,logical(1))]; cat(if(length(bad)) paste0("R_STACK_BAD:",paste(bad,collapse=",")) else "R_STACK_OK")'
 r_stack_loads() {
   [ "$PROFILE" = "full" ] || return 0
   local out
   out="$("$MICROMAMBA" run -n "$ENV_NAME" Rscript --vanilla -e "$R_STACK_PROBE" 2>/dev/null || true)"
-  echo "$out" | grep -q "R_STACK_OK"
+  if echo "$out" | grep -q "R_STACK_OK"; then
+    return 0
+  fi
+  echo "${out:-R_STACK_BAD:probe produced no output}" >&2
+  return 1
 }
 
 # Stage 2a: install/repair from the lock (or core.yaml). Fall back to the floating spec only
@@ -298,22 +313,23 @@ else
 fi
 
 # Stage 2b (full profile): confirm the R stack loads. An in-place update can leave a package
-# installed-but-unloadable that `env update` will not repair; escalate to ONE clean rebuild
-# from the lock, which reproduces a self-consistent stack. No-op for a healthy or core env.
+# installed-but-unloadable that `env update` will not repair. Preserve that environment and ask
+# for explicit destructive-recovery authorization rather than silently removing it. No-op for a
+# healthy or core environment; an explicitly requested BULKSEQ_REBUILD was already done above.
 if ! r_stack_loads; then
-  echo "The R/Bioconductor stack did not load after the update; doing a clean rebuild from the lockâ€¦"
-  remove_env
-  attempt_install "$ENV_FILE" || { echo "Clean rebuild failed." >&2; exit 1; }
-  if ! r_stack_loads; then
-    echo "ERROR: the R/Bioconductor stack still does not load after a clean rebuild." >&2
-    echo "See the messages above for the failing packages; the environment may need manual attention." >&2
-    exit 1
+  if [ "$REBUILD" = "1" ]; then
+    echo "ERROR: the R/Bioconductor stack still does not load after the explicitly authorized rebuild." >&2
+    echo "The new environment has been retained for diagnosis; see R_STACK_BAD above." >&2
+  else
+    echo "ACTION REQUIRED: the R/Bioconductor stack does not load after the in-place update." >&2
+    echo "The existing environment was retained. Review R_STACK_BAD above, then explicitly choose" >&2
+    echo "Rebuild from scratch (BULKSEQ_REBUILD=1) if you authorize removal and recreation." >&2
   fi
-  echo "Clean rebuild succeeded; the R/Bioconductor stack now loads."
+  exit 1
 fi
 
 echo ""
-echo "Stage 3/3: Configuring shell activation helper"
+echo "Configuring shell activation helper"
 # Writing only to ~/.bashrc leaves the hook unreachable for anyone whose login shell is
 # zsh. Write to every rc that applies: always bash (the app invokes `bash -lc` for its own
 # probes), plus zsh when that is the login shell or a ~/.zshrc already exists. Each gets
@@ -340,27 +356,92 @@ case "${SHELL:-}" in
 esac
 
 echo ""
+echo "Stage 3/3: Verifying the $PROFILE environment"
+echo "Verification:"
+CORE_PROBE_TOOLS=(
+  snakemake aria2c fastqc multiqc fastp STAR hisat2 hisat2-build salmon gffread
+  featureCounts samtools trim_galore trimmomatic sortmerna fastq_screen bowtie2 perl
+  read_distribution.py geneBody_coverage.py gtfToGenePred genePredToBed
+)
+FULL_ONLY_PROBE_TOOLS=(ribodetector_cpu Rscript)
+PROBE_TOOLS=("${CORE_PROBE_TOOLS[@]}")
+if [ "$PROFILE" = "full" ]; then
+  PROBE_TOOLS+=("${FULL_ONLY_PROBE_TOOLS[@]}")
+fi
+
+verification_failed=0
+probe_tool() {
+  local tool="$1" path="" out="" rc=0 expected_marker=""
+  local -a probe_args=()
+  path="$("$MICROMAMBA" run -n "$ENV_NAME" bash -c 'command -v "$1"' _ "$tool" 2>/dev/null | tail -n 1 || true)"
+  printf "  %-22s" "$tool"
+  if [ -z "$path" ]; then
+    echo "not found"
+    verification_failed=1
+    return
+  fi
+
+  # Every probe executes the installed program. command -v supplies the auditable path for the
+  # setup log, but path presence alone is never accepted as readiness evidence.
+  case "$tool" in
+    featureCounts)       probe_args=(-v) ;;
+    trimmomatic)         probe_args=(-version) ;;
+    read_distribution.py|geneBody_coverage.py|ribodetector_cpu) probe_args=(--help) ;;
+    perl)                probe_args=(-v) ;;
+    Rscript)             probe_args=(--version) ;;
+    gtfToGenePred|genePredToBed)
+      probe_args=()
+      expected_marker="$tool"
+      ;;
+    *)                   probe_args=(--version) ;;
+  esac
+
+  if out="$(run_limited 20 "$MICROMAMBA" run -n "$ENV_NAME" "$tool" "${probe_args[@]}" 2>&1)"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  # UCSC conversion tools print an identifying usage banner and return 255 when executed without
+  # files. Accept that documented execution signature; a missing binary or loader failure does not
+  # contain the exact tool banner and therefore fails closed.
+  if [ "$rc" -ne 0 ] && { [ -z "$expected_marker" ] || ! grep -Fq "$expected_marker" <<< "$out"; }; then
+    echo "execution failed (exit $rc)"
+    [ -n "$out" ] && printf "    %s\n" "$(printf '%s\n' "$out" | head -n 1)"
+    verification_failed=1
+    return
+  fi
+  echo "$path"
+  if [ -n "$out" ]; then
+    printf "    version: %s\n" "$(printf '%s\n' "$out" | head -n 1)"
+  fi
+  return 0
+}
+
+for tool in "${PROBE_TOOLS[@]}"; do
+  probe_tool "$tool"
+done
+
+printf "  %-22s" "Python imports"
+python_path="$("$MICROMAMBA" run -n "$ENV_NAME" bash -c 'command -v python' 2>/dev/null | tail -n 1 || true)"
+if python_versions="$(run_limited 20 "$MICROMAMBA" run -n "$ENV_NAME" python -c \
+    'import numpy, pandas, yaml; print("numpy=" + numpy.__version__ + "; pandas=" + pandas.__version__ + "; PyYAML=" + yaml.__version__)' 2>&1)"; then
+  echo "$python_path"
+  printf "    versions: %s\n" "$python_versions"
+else
+  echo "numpy/pandas/PyYAML import failed"
+  [ -n "$python_versions" ] && printf "    %s\n" "$(printf '%s\n' "$python_versions" | head -n 1)"
+  verification_failed=1
+fi
+
+if [ "$verification_failed" -ne 0 ]; then
+  echo "ERROR: $PROFILE environment verification failed; see the probes above." >&2
+  exit 1
+fi
+
+echo ""
 echo "Setup complete."
 echo "Finished: $(date '+%Y-%m-%d %H:%M:%S')"
 echo ""
-echo "Verification:"
-for tool in snakemake aria2c fastqc multiqc fastp STAR hisat2 salmon gffread featureCounts samtools \
-            trim_galore trimmomatic sortmerna ribodetector_cpu fastq_screen read_distribution.py genePredToBed; do
-  printf "  %-14s" "$tool"
-  if run_limited 10 "$MICROMAMBA" run -n "$ENV_NAME" bash -lc "command -v $tool" >/tmp/bulkseq_tool_check.txt 2>/tmp/bulkseq_tool_check.err; then
-    cat /tmp/bulkseq_tool_check.txt
-  else
-    echo "not found or timed out"
-  fi
-done
-if [ "$PROFILE" = "full" ]; then
-  printf "  %-14s" "Rscript"
-  if run_limited 10 "$MICROMAMBA" run -n "$ENV_NAME" bash -lc "command -v Rscript" >/tmp/bulkseq_tool_check.txt 2>/tmp/bulkseq_tool_check.err; then
-    cat /tmp/bulkseq_tool_check.txt
-  else
-    echo "not found or timed out"
-  fi
-fi
 echo "Open a new WSL shell and run:"
 echo "  micromamba activate $ENV_NAME"
 echo "  snakemake --version"

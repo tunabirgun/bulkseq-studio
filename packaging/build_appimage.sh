@@ -73,4 +73,14 @@ if [ ! -f "$OUT.zsync" ] && [ -f "$(basename "$OUT").zsync" ]; then
 fi
 echo "APPIMAGE=$OUT"
 ls -lh "$OUT"
-[ -f "$OUT.zsync" ] && { echo "ZSYNC=$OUT.zsync"; ls -lh "$OUT.zsync"; } || echo "WARNING: no .zsync produced"
+[ -f "$OUT.zsync" ] || { echo "zsync metadata was not produced" >&2; exit 1; }
+echo "ZSYNC=$OUT.zsync"
+ls -lh "$OUT.zsync"
+
+# Also provide the intact PyInstaller onedir as a conventional portable archive
+# for systems where AppImage/FUSE is unavailable.
+PORTABLE="$OUTDIR/BulkSeqStudio-Portable-${VERSION}-linux-x86_64.tar.gz"
+tar -C "$(dirname "$ONEDIR")" -czf "$PORTABLE" "$(basename "$ONEDIR")"
+tar -tzf "$PORTABLE" >/dev/null
+echo "PORTABLE=$PORTABLE"
+ls -lh "$PORTABLE"

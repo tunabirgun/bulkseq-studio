@@ -32,7 +32,8 @@ def write_timing_summary(project_root: Path, estimate: dict[str, object] | None 
 
 
 def _timing_text(payload: dict[str, object]) -> str:
-    lines = ["RNA-seq Analysis Timing Summary", "===============================", "", "Project", "-------"]
+    title = "BulkSeq Studio Analysis Timing Summary"
+    lines = [title, "=" * len(title), "", "Project", "-------"]
     lines.append(f"Project name: {payload.get('project_name')}")
     lines.append(f"Run started: {payload.get('run_start_time') or 'not recorded yet'}")
     lines.append(f"Run finished: {payload.get('run_finish_time') or 'not recorded yet'}")

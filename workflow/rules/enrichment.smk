@@ -53,6 +53,12 @@ rule enrichment:
         # g:Profiler organism id (e.g. hsapiens, anidulans), distinct from the KEGG code.
         backend=_ENR.get("backend", "clusterprofiler"),
         gprofiler_organism=_ENR.get("gprofiler_organism") or "",
+        # Independent expected species name for fail-closed validation against
+        # clusterProfiler's current KEGG species catalog. Missing legacy taxon ids
+        # are resolved from the exact official KEGG GENOME organism record.
+        organism_name=config.get("reference", {}).get("organism_name") or "",
+        # A catalog species taxon is independent of strain-specific OrgDb metadata.
+        taxon_id=_ENR.get("taxon_id") or "",
         alpha=config.get("deseq2", {}).get("alpha", 0.05),
     benchmark:
         "benchmarks/enrichment.tsv"

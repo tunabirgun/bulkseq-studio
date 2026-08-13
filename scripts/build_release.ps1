@@ -10,7 +10,7 @@ Set-Location $root
 $py = Join-Path $root ".venv\Scripts\python.exe"
 if (-not (Test-Path $py)) { throw "venv python not found at $py" }
 
-Write-Host "[1/2] Building executable with PyInstaller..."
+Write-Host "[1/5] Building executable with PyInstaller..."
 # Pre-clean build/ and dist/ ourselves (PyInstaller --clean can hit locked
 # localpycs dirs from an interrupted run); retry once to dodge transient locks.
 foreach ($d in @("build", "dist")) {
@@ -24,7 +24,34 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
 
 $version = ((Select-String -Path "app\constants.py" -Pattern 'APP_VERSION\s*=\s*"([^"]+)"').Matches.Groups[1].Value)
 
-Write-Host "[2/2] Building installer with Inno Setup (version $version)..."
+Write-Host "[2/5] Running the frozen QtWebEngine self-test..."
+$frozenExe = Join-Path $root "dist\BulkSeq Studio\BulkSeqStudio.exe"
+$selftestOut = Join-Path ([System.IO.Path]::GetTempPath()) "bulkseq-selftest-$PID.json"
+if (Test-Path $selftestOut) { Remove-Item -LiteralPath $selftestOut -Force }
+$env:BULKSEQ_SELFTEST = "1"
+$env:BULKSEQ_SKIP_READINESS_DIALOG = "1"
+$env:BULKSEQ_SELFTEST_OUT = $selftestOut
+try {
+    $selftest = Start-Process -FilePath $frozenExe -PassThru -WindowStyle Hidden
+    if (-not $selftest.WaitForExit(90000)) {
+        Stop-Process -Id $selftest.Id -Force -ErrorAction SilentlyContinue
+        throw "Frozen self-test timed out after 90 seconds"
+    }
+    $selftest.Refresh()
+    if ($selftest.ExitCode -ne 0) { throw "Frozen self-test exited $($selftest.ExitCode)" }
+    if (-not (Test-Path $selftestOut)) { throw "Frozen self-test did not write $selftestOut" }
+    $selftestResult = Get-Content -Raw -LiteralPath $selftestOut | ConvertFrom-Json
+    if (-not $selftestResult.pass -or -not $selftestResult.webengine -or $selftestResult.nodes -ne 3) {
+        throw "Frozen self-test failed: $(Get-Content -Raw -LiteralPath $selftestOut)"
+    }
+} finally {
+    $env:BULKSEQ_SELFTEST = $null
+    $env:BULKSEQ_SKIP_READINESS_DIALOG = $null
+    $env:BULKSEQ_SELFTEST_OUT = $null
+    if (Test-Path $selftestOut) { Remove-Item -LiteralPath $selftestOut -Force }
+}
+
+Write-Host "[3/5] Building installer with Inno Setup (version $version)..."
 $iscc = "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
 if (-not (Test-Path $iscc)) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
 if (-not (Test-Path $iscc)) { throw "ISCC.exe (Inno Setup) not found" }
@@ -35,7 +62,7 @@ if ($LASTEXITCODE -ne 0) { throw "Inno Setup compile failed" }
 $installerExe = Join-Path $root "installer_output\BulkSeqStudio-Setup-$version.exe"
 if (-not (Test-Path $installerExe)) { throw "Installer not produced at $installerExe" }
 
-Write-Host "[3/3] Creating portable (click-and-run) ZIP..."
+Write-Host "[4/5] Creating portable (click-and-run) ZIP..."
 # Zip the onedir folder so a user can unzip and double-click BulkSeqStudio.exe
 # with no install. dist/ is pre-cleaned each build, so the ZIP is always current.
 $installerOut = Join-Path $root "installer_output"
@@ -59,7 +86,7 @@ foreach ($attempt in 1..8) {
 }
 if (-not $zipped) { throw "Portable ZIP creation failed after retries (a dist/ file stayed locked)." }
 
-Write-Host "[4/4] Refreshing the repo-root launch copy so it is always the latest build..."
+Write-Host "[5/5] Refreshing the repo-root launch copy so it is always the latest build..."
 # Keep BulkSeqStudio.exe + _internal at the repo root in sync with this build, so
 # the click-to-run copy there (e.g. a Desktop shortcut target) is never stale.
 # Best-effort: if the root exe is currently running it is locked, so warn instead

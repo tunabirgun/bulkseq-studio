@@ -21,7 +21,8 @@ def main() -> int:
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
-    lines = ["RNA-seq Sanity Checks", "====================", ""]
+    title = "BulkSeq Studio validation checks"
+    lines = [title, "=" * len(title), ""]
     worst = "PASS"
     for path in sorted(Path(p) for p in args.checks):
         if not path.exists():

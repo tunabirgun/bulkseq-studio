@@ -39,3 +39,25 @@ def test_bioenv_script_bootstraps_micromamba_without_interactive_sudo() -> None:
         assert text.index(apt_call) > guard
     # When nothing automatic works, the script prints the exact recovery command.
     assert "ACTION REQUIRED" in text
+
+
+def test_stage3_is_profile_aware_and_executes_direct_companion_tools() -> None:
+    text = wsl_bioenv_script().read_text(encoding="utf-8")
+    stage3 = text.split('echo "Stage 3/3: Verifying the $PROFILE environment"', 1)[1]
+    assert "CORE_PROBE_TOOLS=(" in stage3
+    assert "FULL_ONLY_PROBE_TOOLS=(ribodetector_cpu Rscript)" in stage3
+    assert 'if [ "$PROFILE" = "full" ]' in stage3
+    for command in ("gtfToGenePred", "geneBody_coverage.py", "hisat2-build", "bowtie2", "perl"):
+        assert command in stage3
+    assert 'run_limited 20 "$MICROMAMBA" run -n "$ENV_NAME" "$tool"' in stage3
+    assert "path presence alone is never accepted" in stage3
+    assert "import numpy, pandas, yaml" in stage3
+
+
+def test_r_load_failure_is_non_destructive_without_explicit_rebuild() -> None:
+    text = wsl_bioenv_script().read_text(encoding="utf-8")
+    stage2b = text.split("# Stage 2b (full profile)", 1)[1].split('echo "Configuring shell activation helper"', 1)[0]
+    assert "ACTION REQUIRED" in stage2b
+    assert "The existing environment was retained" in stage2b
+    assert "remove_env" not in stage2b
+    assert 'if [ "$REBUILD" = "1" ]' in stage2b

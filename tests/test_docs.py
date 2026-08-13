@@ -10,8 +10,10 @@ import pytest
 ROOT = Path(__file__).parents[1]
 DOCS_ROOT = ROOT / "docs"
 README_PATH = ROOT / "README.md"
-# The public version is an external release-state fact and controls the public site shell.
-PUBLIC_VERSION = "0.26.6"
+# The public software version controls the site shell. The deposited benchmark archive has its
+# own version and must not be relabelled when the application advances.
+PUBLIC_VERSION = "0.28.0"
+ARCHIVE_VERSION = "0.26.6"
 
 
 def _product_stem(version: str) -> str:
@@ -209,7 +211,7 @@ def _replace_once(source: str, old: str, new: str) -> str:
         ("index.html", '<li><a href="faq.html">FAQ &amp; cite</a></li>', '<li><a href="benchmarks.html">Benchmarks</a></li>', "retired benchmark page"),
         ("index.html", "<p class=\"lead\">BulkSeq Studio is for biologists", "<p class=\"lead\">BulkSeq Studio is for\nbiologists", "one physical line"),
         ("guide.html", "</section>", f'<img src="assets/screenshot-linux.png" alt="BulkSeq Studio {PUBLIC_VERSION} AppImage">\n</section>', "relabels the earlier Linux screenshot"),
-        ("README.md", "Version 0.26.6 is the current public release.", "Version 0.26.6 is a source candidate.", "source-candidate claim"),
+        ("README.md", "Version 0.28.0 is the current public release.", "Version 0.28.0 is a source candidate.", "source-candidate claim"),
     ],
     ids=(
         "stale-product-shell",

@@ -50,6 +50,7 @@ pal_spec <- palette_spec(palette_name)
 base_family <- if (nzchar(font_family)) font_family else NULL
 style_theme <- make_style_theme(base_size = base_size, base_family = base_family,
                                 label_bold = label_bold, title_bold = title_bold)
+save_gg <- make_save_gg(fig_w = fig_w, fig_h = fig_h, fig_dpi = fig_dpi)
 
 write_check <- function(status, message) {
   msg <- gsub('"', '\\\\"', message)
@@ -57,9 +58,11 @@ write_check <- function(status, message) {
                      status, status, msg), out[["check"]])
 }
 placeholder <- function(msg) {
-  p <- ggplot() + annotate("text", x = 0, y = 0, label = msg, size = 5) + theme_void()
-  ggsave(out[["png"]], p, width = fig_w, height = fig_h, units = "in", dpi = fig_dpi)
-  ggsave(out[["svg"]], p, width = fig_w, height = fig_h, units = "in")
+  p <- ggplot() + annotate("text", x = 0, y = 0, label = msg, size = 5) +
+    theme_void() +
+    theme(plot.background = element_rect(fill = "white", colour = NA),
+          panel.background = element_rect(fill = "white", colour = NA))
+  save_gg(p, out[["png"]], out[["svg"]])
 }
 writeLines("ID,Description,note", out[["csv"]])  # default; overwritten on success
 
@@ -112,8 +115,7 @@ if (is.null(spec)) {
         # Canvas height scales with the number of plotted sets so the dot does not
         # float in an oversized panel; capped so very large sets stay readable.
         ov_h <- max(fig_h, 1.2 + 0.32 * n_show)
-        ggsave(out[["png"]], dp, width = fig_w, height = ov_h, units = "in", dpi = fig_dpi)
-        ggsave(out[["svg"]], dp, width = fig_w, height = ov_h, units = "in")
+        save_gg(dp, out[["png"]], out[["svg"]], w = fig_w, h = ov_h)
       } else {
         placeholder("No significant MSigDB Hallmark overlap")
       }

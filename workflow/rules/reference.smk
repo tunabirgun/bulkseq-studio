@@ -1,85 +1,171 @@
-# Reference: download genome FASTA + GTF, then build the STAR index with
-# genome-size-aware parameters (protocol section 6.8).
+# Reference: stage provider/custom bytes atomically, verify a configured source MD5 before
+# decompression, persist canonical hashes, validate the realized FASTA/GTF pair, and only then
+# release downstream indexing (protocol section 6.8).
 
 
-def _stage_reference(src, url, dest):
-    # mode == "custom": copy the user-supplied file (gzipped or plain) into the
-    # project. Otherwise download it from the configured URL. Runs inside WSL, so
-    # `src` is the WSL-resolvable path stored by the GUI at lock time.
-    import gzip
-    import shutil
-    import urllib.request
+GENOME_INTEGRITY = GENOME_FA + ".integrity.json"
+ANNOTATION_INTEGRITY = ANNOTATION_GTF + ".integrity.json"
+REFERENCE_LOCK = "references/reference.lock.json"
+REFERENCE_GATE = "checks/05_reference_validation.passed"
 
-    os.makedirs(os.path.dirname(dest), exist_ok=True)
-    if REF.get("mode") == "custom":
-        if not src:
-            raise ValueError("custom reference selected but the source path is not set in config.")
-        if not os.path.exists(src):
-            raise FileNotFoundError(f"Custom reference file not found inside WSL: {src}")
-        if str(src).endswith(".gz"):
-            with gzip.open(src, "rb") as f_in, open(dest, "wb") as f_out:
-                shutil.copyfileobj(f_in, f_out)
-        else:
-            shutil.copyfile(src, dest)
-        return
-    if not url:
-        raise ValueError("reference URL is not set in config (and mode is not 'custom').")
-    tmp = dest + ".gz"
-    urllib.request.urlretrieve(url, tmp)
-    with gzip.open(tmp, "rb") as f_in, open(dest, "wb") as f_out:
-        shutil.copyfileobj(f_in, f_out)
-    os.remove(tmp)
+_CUSTOM_REFERENCE = str(REF.get("mode") or "").casefold() == "custom"
 
 
 rule download_genome:
     output:
-        GENOME_FA,
+        fa=GENOME_FA,
+        integrity=GENOME_INTEGRITY,
     params:
-        url=REF.get("genome_fasta_url", ""),
-        src=REF.get("genome_fasta", ""),
+        url="" if _CUSTOM_REFERENCE else (REF.get("genome_fasta_url") or ""),
+        src=(REF.get("genome_fasta") or "") if _CUSTOM_REFERENCE else "",
+        md5=REF.get("genome_md5") or "",
     log:
         "logs/download_genome.log",
-    run:
-        _stage_reference(params.src, params.url, output[0])
+    shell:
+        "python workflow/scripts/stage_reference.py "
+        "--source {params.src:q} --url {params.url:q} "
+        "--destination {output.fa:q} --sidecar {output.integrity:q} "
+        "--kind fasta --format fasta --expected-md5 {params.md5:q} > {log:q} 2>&1"
 
 
 rule download_gtf:
     output:
-        ANNOTATION_GTF,
+        gtf=ANNOTATION_GTF,
+        integrity=ANNOTATION_INTEGRITY,
     params:
-        url=REF.get("annotation_gtf_url", ""),
-        src=REF.get("annotation_file", ""),
-        fmt=str(REF.get("annotation_format", "gtf")).lower(),
+        url="" if _CUSTOM_REFERENCE else (REF.get("annotation_gtf_url") or ""),
+        src=(REF.get("annotation_file") or "") if _CUSTOM_REFERENCE else "",
+        fmt="gff3" if str(REF.get("annotation_format") or "gtf").casefold() == "gff3" else "gtf",
+        md5=REF.get("annotation_md5") or "",
     log:
         "logs/download_gtf.log",
-    run:
-        # GFF3 input is converted to GTF (gffread -T) so every downstream consumer
-        # (STAR --sjdbGTFfile, featureCounts -g gene_id, make_transcriptome) gets the GTF
-        # it expects. Only the gff3 path runs gffread; gtf / unset stage unchanged, so the
-        # GTF path is byte-identical to before.
-        if params.fmt == "gff3":
-            import subprocess
-            tmp = output[0] + ".gff3"
-            _stage_reference(params.src, params.url, tmp)
-            with open(log[0], "w", encoding="utf-8") as lf:
-                subprocess.run(["gffread", tmp, "-T", "-o", output[0]], check=True,
-                               stdout=lf, stderr=subprocess.STDOUT)
-            os.remove(tmp)
-        else:
-            _stage_reference(params.src, params.url, output[0])
+    shell:
+        "python workflow/scripts/stage_reference.py "
+        "--source {params.src:q} --url {params.url:q} "
+        "--destination {output.gtf:q} --sidecar {output.integrity:q} "
+        "--kind annotation --format {params.fmt:q} --expected-md5 {params.md5:q} "
+        "> {log:q} 2>&1"
 
 
 rule reference_check:
     input:
         fa=GENOME_FA,
         gtf=ANNOTATION_GTF,
+        genome_integrity=GENOME_INTEGRITY,
+        annotation_integrity=ANNOTATION_INTEGRITY,
         prev="checks/00_project_setup.json",
     output:
-        "checks/05_reference_validation.json",
+        check="checks/05_reference_validation.json",
+        lock=REFERENCE_LOCK,
+    params:
+        feature_type=(config.get("featurecounts") or {}).get("feature_type", "exon"),
+        attribute_type=(config.get("featurecounts") or {}).get("attribute_type", "gene_id"),
     benchmark:
         "benchmarks/05_reference_validation.tsv"
-    shell:
-        "python workflow/scripts/validate_reference.py --config config/config.yaml --out {output}"
+    log:
+        "logs/reference_validation.log",
+    run:
+        # validate_reference exits non-zero on a scientific FAIL. Preserve its explicit check and
+        # lock evidence as successful outputs here, then let reference_integrity_gate fail the DAG.
+        # Unexpected failures that did not produce both evidence files still fail this rule.
+        import subprocess
+
+        command = [
+            "python", "workflow/scripts/validate_reference.py",
+            "--config", "config/config.yaml",
+            "--fasta", str(input.fa),
+            "--annotation", str(input.gtf),
+            "--genome-sidecar", str(input.genome_integrity),
+            "--annotation-sidecar", str(input.annotation_integrity),
+            "--feature-type", str(params.feature_type),
+            "--attribute-type", str(params.attribute_type),
+            "--out", str(output.check),
+            "--lock", str(output.lock),
+        ]
+        with open(log[0], "w", encoding="utf-8") as handle:
+            completed = subprocess.run(command, stdout=handle, stderr=subprocess.STDOUT, check=False)
+            handle.write(f"validator_exit_code={completed.returncode}\n")
+        if not os.path.isfile(output.check) or not os.path.isfile(output.lock):
+            raise ValueError(
+                f"Reference validator exited {completed.returncode} without complete check/lock evidence."
+            )
+
+
+rule reference_integrity_gate:
+    input:
+        fa=GENOME_FA,
+        gtf=ANNOTATION_GTF,
+        genome_integrity=GENOME_INTEGRITY,
+        annotation_integrity=ANNOTATION_INTEGRITY,
+        check="checks/05_reference_validation.json",
+        lock=REFERENCE_LOCK,
+    output:
+        REFERENCE_GATE,
+    run:
+        import hashlib
+        import json
+
+        check_payload = json.loads(open(input.check, encoding="utf-8").read())
+        lock_payload = json.loads(open(input.lock, encoding="utf-8").read())
+        if check_payload.get("status") != "PASS" or lock_payload.get("status") != "PASS":
+            messages = check_payload.get("messages") or []
+            detail = "; ".join(str(message.get("message") or "") for message in messages)
+            raise ValueError(f"Reference integrity gate failed: {detail}")
+        check_evidence = check_payload.get("evidence") or {}
+        locked_contract = lock_payload.get("counting_contract") or {}
+        checked_contract = check_evidence.get("counting_contract") or {}
+        configured_fc = config.get("featurecounts") or {}
+        expected_features = sorted(
+            value.strip()
+            for value in str(configured_fc.get("feature_type", "exon")).split(",")
+            if value.strip()
+        )
+        expected_attribute = str(configured_fc.get("attribute_type", "gene_id")).strip()
+        if (
+            checked_contract != locked_contract
+            or locked_contract.get("feature_types") != expected_features
+            or locked_contract.get("attribute_type") != expected_attribute
+            or int(locked_contract.get("feature_rows", 0)) <= 0
+            or int(locked_contract.get("feature_rows_missing_attribute", 0)) != 0
+        ):
+            raise ValueError("Reference integrity gate found an invalid configured counting contract.")
+        compatibility = lock_payload.get("contig_compatibility") or {}
+        if (
+            check_evidence.get("contig_compatibility") != compatibility
+            or float(compatibility.get("feature_row_overlap_fraction", 0.0)) < 0.95
+            or float(compatibility.get("minimum_feature_row_overlap_fraction", 0.0)) != 0.95
+        ):
+            raise ValueError("Reference integrity gate found insufficient feature-weighted contig compatibility.")
+        for artifact, canonical, sidecar_path, evidence_key in (
+            ("genome", input.fa, input.genome_integrity, "genome_canonical_sha256"),
+            ("annotation", input.gtf, input.annotation_integrity, "annotation_canonical_sha256"),
+        ):
+            locked = str(
+                ((lock_payload.get(artifact) or {}).get("integrity") or {}).get("canonical_sha256")
+                or ""
+            )
+            checked = str(check_evidence.get(evidence_key) or "")
+            sidecar = json.loads(open(sidecar_path, encoding="utf-8").read())
+            sidecar_sha256 = str(sidecar.get("canonical_sha256") or "")
+            digest = hashlib.sha256()
+            with open(canonical, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            observed = digest.hexdigest()
+            if (
+                len(locked) != 64
+                or checked != locked
+                or sidecar_sha256 != locked
+                or observed != locked
+            ):
+                raise ValueError(
+                    f"Reference integrity gate found inconsistent {artifact} canonical hashes."
+                )
+        temporary = str(output[0]) + ".tmp"
+        os.makedirs(os.path.dirname(str(output[0])), exist_ok=True)
+        with open(temporary, "w", encoding="utf-8") as handle:
+            handle.write("PASS\n")
+        os.replace(temporary, output[0])
 
 
 rule read_length:
@@ -98,7 +184,7 @@ rule star_index:
         fa=GENOME_FA,
         gtf=ANNOTATION_GTF,
         rl="results/qc/read_length.txt",
-        check="checks/05_reference_validation.json",
+        check=REFERENCE_GATE,
     output:
         directory(STAR_INDEX),
     threads:
@@ -127,7 +213,7 @@ rule star_index:
 rule hisat2_index:
     input:
         fa=GENOME_FA,
-        check="checks/05_reference_validation.json",
+        check=REFERENCE_GATE,
     output:
         directory(HISAT2_INDEX_DIR),
     threads:
@@ -149,7 +235,7 @@ rule make_transcriptome:
     input:
         fa=GENOME_FA,
         gtf=ANNOTATION_GTF,
-        check="checks/05_reference_validation.json",
+        check=REFERENCE_GATE,
     output:
         fa=TRANSCRIPTOME_FA,
         tx2gene="references/tx2gene.tsv",

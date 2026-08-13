@@ -14,12 +14,10 @@ local({
 #   - vst_matrix.csv: the homoscedastic expression matrix (VST counts, or log2
 #     intensities on the microarray backend) that most external tools expect,
 #     currently locked inside deseq2_objects.rds.
-#   - ranked_genes.rnk: a stat-ranked gene list for preranked GSEA / MSigDB.
-# Both backends are supported (assay(vsd) and the `stat` column exist for each).
-
-suppressMessages({
-  library(SummarizedExperiment)
-})
+#   - ranked_genes.rnk: a signed gene list for preranked GSEA / MSigDB.
+# Locally fitted models use their test statistic. Results-only imports instead use the supplied
+# log2FC directly: its direction was explicitly confirmed, while a source `stat` may use an
+# undocumented scale. ingest_deseq2_results.R rejects any supplied statistic with a contrary sign.
 
 log_con <- file(snakemake@log[[1]], open = "wt")
 sink(log_con, type = "message")
@@ -34,16 +32,27 @@ vsd <- obj$vsd
 if (is.null(vsd)) {
   writeLines("gene_id", snakemake@output[["vst"]])
 } else {
-  mat <- as.data.frame(assay(vsd))
+  if (!requireNamespace("SummarizedExperiment", quietly = TRUE)) {
+    stop("The required R package 'SummarizedExperiment' is unavailable for matrix export.")
+  }
+  mat <- as.data.frame(SummarizedExperiment::assay(vsd))
   mat <- cbind(gene_id = rownames(mat), mat)
   write.csv(mat, snakemake@output[["vst"]], row.names = FALSE)
 }
 
-# Preranked .rnk: gene_id <tab> stat, descending, NA dropped (no header per the
-# GSEA .rnk spec).
+# Preranked .rnk: gene_id <tab> signed score, descending, NA dropped (no header per the
+# GSEA .rnk spec). External results use log2FC so the ranking cannot contradict the confirmed
+# source direction; local DE routes retain their model statistic.
 res <- read.csv(snakemake@input[["results"]], stringsAsFactors = FALSE, check.names = FALSE)
 gene_id <- if ("gene_id" %in% names(res)) res$gene_id else res[[1]]
-score <- if ("stat" %in% names(res)) res$stat else NA_real_
+results_only <- identical(obj$assay_kind, "results_only")
+score <- if (results_only && "log2FoldChange" %in% names(res)) {
+  res$log2FoldChange
+} else if ("stat" %in% names(res)) {
+  res$stat
+} else {
+  NA_real_
+}
 keep <- !is.na(gene_id) & !is.na(score)
 rnk <- data.frame(gene = gene_id[keep], stat = score[keep])
 rnk <- rnk[order(-rnk$stat), ]

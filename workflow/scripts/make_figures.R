@@ -121,9 +121,10 @@ draw_grid <- function(gtable) {
   }
 }
 save_grid <- function(gtable, png_path, svg_path, w = fig_w, h = fig_h) {
-  png(png_path, width = w, height = h, units = "in", res = fig_dpi)
+  png(png_path, width = w, height = h, units = "in", res = fig_dpi,
+      bg = "white")
   draw_grid(gtable); dev.off()
-  svglite(svg_path, width = w, height = h)
+  svglite(svg_path, width = w, height = h, bg = "white")
   draw_grid(gtable); dev.off()
 }
 
@@ -141,13 +142,336 @@ save_placeholder <- function(msg, png_path, svg_path) {
   save_gg(p, png_path, svg_path)
 }
 
+# Choose the least-rotated sample-label layout whose measured horizontal extent
+# fits one fixed-width matrix cell. Fixed cells prevent long row labels and two
+# legends from collapsing the matrix to slivers; the final device is measured
+# from the rendered gtable below, so labels and legends cannot push it off-canvas.
+sample_distance_label_layout <- function(labels, cell_width_pt, fontsize,
+                                          fontfamily = NULL, gap_pt = 2) {
+  labels <- as.character(labels)
+  if (!length(labels)) {
+    return(list(angle = 0, height_in = 0, cell_spacing_in = Inf,
+                max_label_width_in = 0, max_label_height_in = 0))
+  }
+
+  metrics <- (function() {
+    grDevices::pdf(NULL, width = 7, height = 7)
+    on.exit(grDevices::dev.off(), add = TRUE)
+    grid::grid.newpage()
+    if (!is.null(fontfamily) && nzchar(fontfamily)) {
+      grid::pushViewport(grid::viewport(
+        gp = grid::gpar(fontfamily = fontfamily)
+      ))
+    }
+    text_gp <- grid::gpar(
+      fontsize = fontsize,
+      fontfamily = if (is.null(fontfamily)) "" else fontfamily
+    )
+    label_grobs <- lapply(labels, function(x) grid::textGrob(x, gp = text_gp))
+    label_widths <- vapply(
+      label_grobs,
+      function(g) grid::convertWidth(grid::grobWidth(g), "in", valueOnly = TRUE),
+      numeric(1)
+    )
+    label_heights <- vapply(
+      label_grobs,
+      function(g) grid::convertHeight(grid::grobHeight(g), "in", valueOnly = TRUE),
+      numeric(1)
+    )
+    list(label_widths_in = label_widths, label_heights_in = label_heights,
+         max_label_width_in = max(label_widths),
+         max_label_height_in = max(label_heights))
+  })()
+
+  cell_spacing_in <- as.numeric(cell_width_pt) / 72
+  gap_in <- as.numeric(gap_pt) / 72
+  candidate_angles <- c(0, 45, 90)
+  projected_widths <- vapply(candidate_angles, function(angle) {
+    theta <- angle * pi / 180
+    max(metrics$label_widths_in * cos(theta) +
+          metrics$label_heights_in * sin(theta))
+  }, numeric(1))
+  fits <- projected_widths + gap_in <= cell_spacing_in
+  angle <- if (any(fits)) candidate_angles[which(fits)[1]] else 90
+  theta <- angle * pi / 180
+  height_in <- metrics$max_label_width_in * sin(theta) +
+    metrics$max_label_height_in * cos(theta) + gap_in
+  list(angle = angle, height_in = height_in,
+       cell_spacing_in = cell_spacing_in,
+       max_label_width_in = metrics$max_label_width_in,
+       max_label_height_in = metrics$max_label_height_in)
+}
+
+# Build, measure, and (when the configured minimum canvas has spare room) grow
+# only the cells. Rebuilding is deliberate: pheatmap's legends and text grobs
+# have real dimensions that an n-by-n arithmetic estimate cannot recover.
+fit_sample_distance_heatmap <- function(make_heatmap, labels, min_cell_width_pt,
+                                        min_cell_height_pt, min_dim,
+                                        fontsize, fontfamily = NULL,
+                                        iterations = 3L) {
+  n <- max(length(labels), 1L)
+  cell_width_pt <- as.numeric(min_cell_width_pt)
+  cell_height_pt <- as.numeric(min_cell_height_pt)
+  label_layout <- NULL
+  measured <- NULL
+  for (i in seq_len(max(1L, as.integer(iterations)))) {
+    label_layout <- sample_distance_label_layout(
+      labels, cell_width_pt, fontsize, fontfamily
+    )
+    ph <- make_heatmap(label_layout$angle, TRUE,
+                       cell_width_pt, cell_height_pt)
+    ph <- prepare_sample_distance_gtable(ph)
+    measured <- finalize_heatmap_gtable(ph$gtable, min_w = 0, min_h = 0)
+    add_width_pt <- max(0, as.numeric(min_dim[1]) - measured$dim[1]) * 72 / n
+    add_height_pt <- max(0, as.numeric(min_dim[2]) - measured$dim[2]) * 72 / n
+    if (add_width_pt < 0.1 && add_height_pt < 0.1) break
+    cell_width_pt <- cell_width_pt + add_width_pt
+    cell_height_pt <- cell_height_pt + add_height_pt
+  }
+  label_layout <- sample_distance_label_layout(
+    labels, cell_width_pt, fontsize, fontfamily
+  )
+  ph <- make_heatmap(label_layout$angle, TRUE,
+                     cell_width_pt, cell_height_pt)
+  ph <- prepare_sample_distance_gtable(ph)
+  measured <- finalize_heatmap_gtable(
+    ph$gtable, min_w = as.numeric(min_dim[1]), min_h = as.numeric(min_dim[2])
+  )
+  list(gtable = measured$gtable, dim = measured$dim,
+       angle = label_layout$angle,
+       cell_width_pt = cell_width_pt, cell_height_pt = cell_height_pt,
+       label_layout = label_layout)
+}
+
+# pheatmap draws a continuous legend as hundreds of abutting rectangles. SVG
+# renderers antialias each rectangle independently, exposing horizontal seams
+# that are absent in the PNG. Replace only that legend bar with one true vector
+# linear gradient; tick labels and all other heatmap grobs remain unchanged.
+smooth_continuous_legend <- function(gtable) {
+  legend_idx <- which(gtable$layout$name == "legend")
+  if (length(legend_idx) != 1L) return(gtable)
+  legend_grob <- gtable$grobs[[legend_idx]]
+  rect_idx <- which(vapply(legend_grob$children, function(child) {
+    inherits(child, "rect") && length(child$gp$fill) > 1L &&
+      length(child$height) > 1L
+  }, logical(1)))
+  if (length(rect_idx) != 1L) return(gtable)
+
+  source_rect <- legend_grob$children[[rect_idx]]
+  fill_colors <- rep_len(
+    as.character(source_rect$gp$fill), length(source_rect$height)
+  )
+  gradient_rect <- grid::rectGrob(
+    x = source_rect$x[1], y = source_rect$y[1],
+    width = source_rect$width[1], height = sum(source_rect$height),
+    hjust = source_rect$hjust, vjust = source_rect$vjust,
+    name = source_rect$name,
+    gp = grid::gpar(
+      fill = grid::linearGradient(
+        fill_colors, stops = seq(0, 1, length.out = length(fill_colors)),
+        x1 = 0, y1 = 0, x2 = 0, y2 = 1
+      ),
+      col = NA
+    )
+  )
+  legend_grob$children[[rect_idx]] <- gradient_rect
+  gtable$grobs[[legend_idx]] <- legend_grob
+  gtable
+}
+
+prepare_sample_distance_gtable <- function(ph) {
+  ph$gtable <- smooth_continuous_legend(ph$gtable)
+  ph
+}
+
+# ---- Volcano ranked-key geometry -------------------------------------------
+
+# Keep every selected gene visible without implying a line-to-point association.
+# The measured outside keys report adjusted-p rank and exact signed log2FC;
+# highlighted markers remain at their true displayed coordinates in the panel.
+volcano_add_ranked_key <- function(plot, labels, xm, ytop, canvas_w, canvas_h,
+                                   label_family = NULL, label_size = 4,
+                                   marker_size_mm = 1.4) {
+  if (!nrow(labels)) {
+    keyed_plot <- plot + ggplot2::coord_cartesian(
+      xlim = c(-xm, xm), ylim = c(0, ytop), clip = "on", expand = FALSE
+    )
+    attr(keyed_plot, "volcano_canvas_width") <- canvas_w
+    return(keyed_plot)
+  }
+  if (!is.finite(xm) || xm <= 0 || !is.finite(ytop) || ytop <= 0) {
+    stop("Volcano key geometry requires finite positive axis spans")
+  }
+  required <- c("label", "log2FoldChange", "padj_rank", "direction",
+                "y_plot", "capped")
+  if (!all(required %in% colnames(labels))) {
+    stop("Volcano key is missing required selected-gene fields")
+  }
+  if (any(!is.finite(labels$log2FoldChange)) ||
+      any(!is.finite(labels$padj_rank))) {
+    stop("Volcano key requires finite effects and adjusted-p ranks")
+  }
+  labels$key_side <- ifelse(labels$log2FoldChange < 0, "left", "right")
+  labels$key_text <- sprintf("%02d  %s  (%+.2f)",
+                             as.integer(labels$padj_rank),
+                             as.character(labels$label),
+                             labels$log2FoldChange)
+  labels <- labels[order(labels$key_side, labels$padj_rank,
+                         labels$label, method = "radix"), , drop = FALSE]
+
+  gap_in <- 3 / 72
+  panel_width_fraction <- 0.90
+  minimum_data_fraction <- 0.34
+  panel_w_in <- max(1, canvas_w * panel_width_fraction)
+  panel_h_in <- max(1, canvas_h * 0.75)
+  font_points <- label_size * 72.27 / 25.4
+  text_gp <- grid::gpar(
+    fontsize = font_points,
+    fontfamily = if (is.null(label_family)) "" else label_family
+  )
+  row_grobs <- lapply(labels$key_text, function(x) {
+    grid::textGrob(x, hjust = 0, gp = text_gp)
+  })
+  row_width_in <- vapply(
+    row_grobs,
+    function(g) grid::convertWidth(grid::grobWidth(g), "in", valueOnly = TRUE),
+    numeric(1)
+  )
+  row_height_in <- vapply(
+    row_grobs,
+    function(g) grid::convertHeight(grid::grobHeight(g), "in", valueOnly = TRUE),
+    numeric(1)
+  )
+  header_height_in <- grid::convertHeight(
+    grid::grobHeight(grid::textGrob("Down", gp = text_gp)),
+    "in", valueOnly = TRUE
+  )
+  key_width_in <- vapply(c("left", "right"), function(side) {
+    values <- row_width_in[labels$key_side == side]
+    if (length(values)) max(values) else 0
+  }, numeric(1))
+  names(key_width_in) <- c("left", "right")
+  reserved_key_in <- key_width_in + 2 * gap_in
+  required_panel_w_in <- sum(reserved_key_in) /
+    (1 - minimum_data_fraction)
+  required_canvas_w_in <- required_panel_w_in / panel_width_fraction
+  canvas_w <- max(canvas_w, required_canvas_w_in)
+  panel_w_in <- max(1, canvas_w * panel_width_fraction)
+  data_panel_in <- panel_w_in - sum(reserved_key_in)
+  if (!is.finite(data_panel_in) ||
+      data_panel_in < minimum_data_fraction * panel_w_in) {
+    stop("Volcano ranked keys require a wider figure canvas")
+  }
+  em_height_in <- font_points / 72
+  row_step_in <- max(c(row_height_in, header_height_in, em_height_in)) + gap_in
+  side_count <- table(factor(labels$key_side, levels = c("left", "right")))
+  required_height_in <- (max(side_count) + 1) * row_step_in + gap_in
+  if (!is.finite(required_height_in) || required_height_in > panel_h_in) {
+    stop("Volcano ranked keys require a taller figure canvas")
+  }
+
+  x_per_in <- 2 * xm / data_panel_in
+  y_per_in <- ytop / panel_h_in
+  edge_gap_x <- gap_in * x_per_in
+  left_extent <- reserved_key_in[["left"]] * x_per_in
+  right_extent <- reserved_key_in[["right"]] * x_per_in
+  x_limits <- c(-xm - left_extent, xm + right_extent)
+  labels$key_x <- ifelse(
+    labels$key_side == "left",
+    x_limits[1] + gap_in * x_per_in,
+    xm + edge_gap_x
+  )
+  labels$key_y <- NA_real_
+  header_rows <- list()
+  for (side in c("left", "right")) {
+    indices <- which(labels$key_side == side)
+    if (!length(indices)) next
+    labels$key_y[indices] <- ytop -
+      (seq_along(indices) + 1) * row_step_in * y_per_in
+    header_rows[[side]] <- data.frame(
+      key_side = side,
+      direction = if (side == "left") "Down" else "Up",
+      header = if (side == "left") "Down key" else "Up key",
+      x = labels$key_x[indices[1]],
+      y = ytop - row_step_in * y_per_in
+    )
+  }
+  if (any(!is.finite(labels$key_y)) || any(labels$key_y <= 0)) {
+    stop("Volcano ranked-key packing left a row outside the canvas")
+  }
+  headers <- do.call(rbind, header_rows)
+
+  regular_selected <- labels[!labels$capped, , drop = FALSE]
+  capped_selected <- labels[labels$capped, , drop = FALSE]
+  if (nrow(regular_selected)) {
+    plot <- plot + ggplot2::geom_point(
+      data = regular_selected,
+      mapping = ggplot2::aes(x = log2FoldChange, y = y_plot,
+                             colour = direction),
+      inherit.aes = FALSE, shape = 21, fill = "white",
+      size = marker_size_mm + 0.8, stroke = 0.55,
+      show.legend = FALSE
+    )
+  }
+  if (nrow(capped_selected)) {
+    plot <- plot + ggplot2::geom_point(
+      data = capped_selected,
+      mapping = ggplot2::aes(x = log2FoldChange, y = y_plot,
+                             colour = direction),
+      inherit.aes = FALSE, shape = 17, size = marker_size_mm + 0.65,
+      alpha = 0.95, show.legend = FALSE
+    )
+  }
+  row_args <- list(
+    data = labels,
+    mapping = ggplot2::aes(x = key_x, y = key_y, label = key_text,
+                           colour = direction),
+    inherit.aes = FALSE, hjust = 0, size = label_size,
+    show.legend = FALSE
+  )
+  header_args <- list(
+    data = headers,
+    mapping = ggplot2::aes(x = x, y = y, label = header,
+                           colour = direction),
+    inherit.aes = FALSE, hjust = 0, size = label_size,
+    fontface = "bold", show.legend = FALSE
+  )
+  if (!is.null(label_family)) {
+    row_args$family <- label_family
+    header_args$family <- label_family
+  }
+  x_breaks <- pretty(c(-xm, xm), n = 5)
+  x_breaks <- x_breaks[x_breaks >= -xm & x_breaks <= xm]
+  zero_fraction <- (0 - x_limits[1]) / diff(x_limits)
+  keyed_plot <- plot +
+    do.call(ggplot2::geom_text, row_args) +
+    do.call(ggplot2::geom_text, header_args) +
+    ggplot2::scale_x_continuous(breaks = x_breaks, minor_breaks = NULL) +
+    ggplot2::coord_cartesian(
+      xlim = x_limits, ylim = c(0, ytop), clip = "on", expand = FALSE
+    ) +
+    ggplot2::labs(caption = paste0(
+      "Highlighted triangles: listed genes.\n",
+      "Ranked by adjusted p-value; signed log2FC gives x position."
+    )) +
+    ggplot2::theme(axis.title.x = ggplot2::element_text(hjust = zero_fraction))
+  attr(keyed_plot, "volcano_canvas_width") <- canvas_w
+  keyed_plot
+}
+
+# ---- End volcano-label geometry --------------------------------------------
+
 # ---- Grouping factor (from the DESeq2 contrast; falls back safely) ----------
 group_var <- "condition"
+contrast_cfg <- list()
 de_cfg <- tryCatch(snakemake@config[["deseq2"]], error = function(e) NULL)
 if (is.list(de_cfg)) {
   cons <- de_cfg[["contrasts"]]
-  if (is.list(cons) && length(cons) >= 1 && !is.null(cons[[1]][["factor"]])) {
-    group_var <- as.character(cons[[1]][["factor"]])
+  if (is.list(cons) && length(cons) >= 1) {
+    contrast_cfg <- cons[[1]]
+    if (!is.null(contrast_cfg[["factor"]])) {
+      group_var <- as.character(contrast_cfg[["factor"]])
+    }
   }
 }
 if (has_counts && !(group_var %in% colnames(colData(dds)))) group_var <- colnames(colData(dds))[1]
@@ -166,11 +490,10 @@ lfc_thr <- if (is.list(de_cfg)) num_cfg("lfc_threshold", 1) else 1
 if (has_counts) {
 pca <- plotPCA(vsd, intgroup = group_var, ntop = pca_ntop, returnData = TRUE)
 pv <- round(100 * attr(pca, "percentVar"))
-# Expand the discrete palette when the factor has more levels than the palette has
-# colours, else scale_colour_manual aborts ("Insufficient values in manual scale").
-pca_disc <- pal_spec$discrete
-n_grp_pca <- length(unique(pca$group))
-if (n_grp_pca > length(pca_disc)) pca_disc <- grDevices::colorRampPalette(pca_disc)(n_grp_pca)
+# The shared mapping is named, contrast-aware and therefore independent of the
+# order in which samples happen to occur in pca/colData.
+pca_disc <- contrast_color_map(unique(as.character(pca$group)), contrast_cfg,
+                               pal_spec$discrete)
 p_pca <- ggplot(pca, aes(PC1, PC2, colour = group)) +
   geom_point(size = point_size, alpha = 0.9)
 if (sample_labels) {
@@ -198,23 +521,75 @@ mat <- as.matrix(sampleDists)
 rownames(mat) <- colnames(mat) <- colnames(vsd)
 dist_ann <- as.data.frame(colData(vsd)[, group_var, drop = FALSE])
 ann_levels <- unique(as.character(dist_ann[[group_var]]))
-ann_cols <- setNames(pal_spec$discrete[seq_along(ann_levels)], ann_levels)
+ann_cols <- contrast_color_map(ann_levels, contrast_cfg, pal_spec$discrete)
 # Distance is non-negative and sequential, not diverging (no false midpoint).
+# Exclude the structural zero diagonal from the colour-domain calculation: it
+# otherwise consumes almost the full sequential ramp and makes scientifically
+# relevant off-diagonal differences indistinguishable. The diagonal is drawn in
+# a neutral colour and the legend explicitly states its off-diagonal domain.
+off_diag <- mat[row(mat) != col(mat) & is.finite(mat)]
+dist_rng <- range(off_diag)
+if (!length(off_diag) || any(!is.finite(dist_rng))) dist_rng <- c(0, 1)
+if (dist_rng[2] <= dist_rng[1]) {
+  eps <- max(abs(dist_rng[1]) * 0.01, 1e-8)
+  dist_rng <- dist_rng + c(-eps, eps)
+}
+dist_breaks <- seq(dist_rng[1], dist_rng[2], length.out = 256)
+dist_legend_breaks <- c(dist_rng[1], mean(dist_rng), dist_rng[2])
+dist_legend_labels <- c(
+  formatC(dist_legend_breaks[1], digits = 4, format = "fg"),
+  formatC(dist_legend_breaks[2], digits = 4, format = "fg"),
+  paste0(formatC(dist_legend_breaks[3], digits = 4, format = "fg"),
+         "  off-diagonal\nEuclidean distance")
+)
+mat_display <- mat
+diag(mat_display) <- NA_real_
 cols <- pal_spec$seq(255)
-ph <- pheatmap(mat, clustering_distance_rows = sampleDists,
-               clustering_distance_cols = sampleDists,
-               clustering_method = "ward.D2", col = cols,
-               annotation_col = dist_ann,
-               annotation_colors = setNames(list(ann_cols), group_var),
-               annotation_names_col = FALSE, angle_col = 45,
-               show_rownames = sample_labels, show_colnames = sample_labels,
-               fontsize = base_size, silent = TRUE)
-# n x n sample matrix: both axes grow with sample count, so size from ncol on both.
-dist_dim <- if (!is.null(size_overrides[["sample_distance"]])) fig_dim("sample_distance")
-  else heatmap_dim(ncol(vsd), ncol(vsd), cell_h = 14, cell_w = 14,
-                   row_label_chars = max(nchar(colnames(vsd))),
-                   show_col_labels = sample_labels, min_w = fig_w, min_h = fig_h)
-save_grid(ph$gtable, out[["dist_png"]], out[["dist_svg"]], w = dist_dim[1], h = dist_dim[2])
+make_distance_heatmap <- function(angle_col, show_colnames,
+                                  cell_width_pt, cell_height_pt) {
+  pheatmap(mat_display, clustering_distance_rows = sampleDists,
+           clustering_distance_cols = sampleDists,
+           clustering_method = "ward.D2", col = cols,
+           breaks = dist_breaks, legend_breaks = dist_legend_breaks,
+           legend_labels = dist_legend_labels, na_col = "#F2F4F7",
+           annotation_col = dist_ann,
+           annotation_colors = setNames(list(ann_cols), group_var),
+           annotation_names_col = TRUE, annotation_legend = TRUE,
+           angle_col = angle_col,
+           show_rownames = sample_labels, show_colnames = show_colnames,
+           cellwidth = cell_width_pt, cellheight = cell_height_pt,
+           fontsize = base_size, silent = TRUE)
+}
+# A physical cell floor scales with the configured font, while the configured
+# figure size remains a minimum canvas rather than a clipping boundary.
+dist_floor <- fig_dim("sample_distance")
+dist_min_cell_width_pt <- max(18, 1.6 * base_size)
+dist_min_cell_height_pt <- max(18, 1.6 * base_size)
+if (sample_labels) {
+  dist_render <- fit_sample_distance_heatmap(
+    make_distance_heatmap, colnames(vsd),
+    dist_min_cell_width_pt, dist_min_cell_height_pt, dist_floor,
+    fontsize = base_size, fontfamily = base_family
+  )
+} else {
+  make_unlabelled_distance_heatmap <- function(angle_col, show_colnames,
+                                               cell_width_pt, cell_height_pt) {
+    make_distance_heatmap(angle_col, FALSE, cell_width_pt, cell_height_pt)
+  }
+  dist_render <- fit_sample_distance_heatmap(
+    make_unlabelled_distance_heatmap, character(0),
+    dist_min_cell_width_pt, dist_min_cell_height_pt, dist_floor,
+    fontsize = base_size, fontfamily = base_family
+  )
+}
+message(sprintf(
+  paste0("Sample-distance geometry: angle=%d degrees; cell=%.1f x %.1f pt; ",
+         "canvas=%.2f x %.2f in"),
+  dist_render$angle, dist_render$cell_width_pt, dist_render$cell_height_pt,
+  dist_render$dim[1], dist_render$dim[2]
+))
+save_grid(dist_render$gtable, out[["dist_png"]], out[["dist_svg"]],
+          w = dist_render$dim[1], h = dist_render$dim[2])
 } else {
   save_placeholder("PCA needs the counts / VST matrix (unavailable for a DESeq2-results upload).", out[["pca_png"]], out[["pca_svg"]])
   save_placeholder("Sample-distance heatmap needs the counts / VST matrix (unavailable for a DESeq2-results upload).", out[["dist_png"]], out[["dist_svg"]])
@@ -318,59 +693,79 @@ vol$direction[!is.na(vol$log2FoldChange_raw) & vol$padj < alpha_thr & vol$log2Fo
 vol$direction[!is.na(vol$log2FoldChange_raw) & vol$padj < alpha_thr & vol$log2FoldChange_raw <= -lfc_thr] <- "Down"
 lab <- vol[vol$direction != "n.s.", ]
 lab <- head(lab[order(lab$padj), ], volcano_top)
+lab$padj_rank <- seq_len(nrow(lab))
+vol$volcano_label_selected <- vol$gene %in% lab$gene
 
-pal <- c(Up = pal_spec$discrete[2], Down = pal_spec$discrete[1], "n.s." = "grey80")
-shp <- c(Up = 17, Down = 16, "n.s." = 16)
+pal <- c(Down = pal_spec$discrete[1], "n.s." = "grey80", Up = pal_spec$discrete[2])
 
 # Density-readable core: faint n.s. under, smaller/softer significant on top.
 sig_size  <- max(0.6, point_size * as.numeric(getp("volcano_point_scale", 0.55)))
 sig_alpha <- as.numeric(getp("volcano_point_alpha", 0.55))
 
 xm   <- max(abs(vol$log2FoldChange))
+cap_labels <- lab[lab$capped, , drop = FALSE]
+cap_side_n <- if (nrow(cap_labels)) max(table(cap_labels$direction)) else 0
+# Capped genes share one truthful y coordinate. Retain modest headroom above the
+# off-scale marker shelf; the measured ranked keys occupy outside side columns.
+cap_label_headroom <- if (do_cap && nrow(cap_labels)) {
+  max(as.numeric(getp("volcano_cap_headroom", 0.10)),
+      min(0.55, 0.08 + 0.04 * cap_side_n))
+} else as.numeric(getp("volcano_cap_headroom", 0.10))
 ytop <- if (do_cap) {
-  ycap * (1 + as.numeric(getp("volcano_cap_headroom", 0.10)))
+  ycap * (1 + cap_label_headroom)
 } else max(vol$y_plot) * 1.02
 
 p_vol <- ggplot(vol, aes(log2FoldChange, y_plot)) +
   geom_vline(xintercept = c(-lfc_thr, lfc_thr), linetype = "dashed",
              colour = "grey60", linewidth = 0.3) +
-  geom_hline(yintercept = -log10(alpha_thr), linetype = "dashed",
-             colour = "grey60", linewidth = 0.3) +
+  annotate("segment", x = -xm, xend = xm,
+           y = -log10(alpha_thr), yend = -log10(alpha_thr),
+           linetype = "dashed", colour = "grey60", linewidth = 0.3) +
   geom_point(data = subset(vol, direction == "n.s." & !capped),
-             colour = "grey80", shape = 16,
+             aes(colour = direction), shape = 16,
              size = max(0.5, sig_size * 0.8), alpha = 0.4) +
   geom_point(data = subset(vol, direction != "n.s." & !capped),
-             aes(colour = direction, shape = direction),
+             aes(colour = direction), shape = 16,
              size = sig_size, alpha = sig_alpha)
 
-# Hollow up-triangle marks points pushed to the cap line (no data hidden).
+# Small open triangles mark points pushed to the cap line (no data hidden). Their
+# direction colour remains visible without the dense white-filled marker row that
+# previously collided with every capped-gene label.
 if (any(vol$capped)) {
   p_vol <- p_vol +
-    geom_point(data = subset(vol, capped), shape = 24, fill = "white",
-               colour = "grey20", size = sig_size + 0.6, stroke = 0.4, alpha = 0.95)
+    geom_point(data = subset(vol, capped & !volcano_label_selected),
+               aes(colour = direction), shape = 2,
+               size = sig_size + 0.25, stroke = 0.45, alpha = 0.75,
+               show.legend = FALSE)
 }
 
 p_vol <- p_vol +
-  geom_text_repel(data = lab, aes(label = label, colour = direction),
-                  family = base_family, size = 3, seed = 42,
-                  fontface = if (gene_symbol_italic) "italic" else "plain",
-                  max.overlaps = volcano_top + 5, box.padding = 0.5,
-                  point.padding = 0.3, min.segment.length = 0,
-                  segment.size = 0.3, segment.colour = "grey55",
-                  force = 3, force_pull = 0.5,
-                  ylim = c(-log10(alpha_thr), ytop), show.legend = FALSE) +
-  scale_colour_manual(values = pal, name = NULL) +
-  scale_shape_manual(values = shp, name = NULL) +
-  coord_cartesian(xlim = c(-xm, xm), ylim = c(0, ytop), clip = "off") +
+  scale_colour_manual(values = pal, breaks = c("Down", "n.s.", "Up"),
+                      drop = FALSE, name = NULL,
+                      guide = guide_legend(override.aes = list(shape = 16,
+                                                               alpha = 1,
+                                                               size = 3))) +
   labs(x = if (lfc_is_shrunken) "log2 fold change (shrunken)" else "log2 fold change",
        y = if (do_cap) "-log10 adjusted p (axis capped)"
            else if (identical(yscale, "sqrt")) "-log10 adjusted p (sqrt scale)"
            else "-log10 adjusted p") +
   style_theme(theme_bw) + theme(legend.position = "top")
 # 'sqrt' compresses the tall padj tail (incl. the padj==0 floor shelf) so extreme genes stay readable
-# without squashing the bulk. It is a scale transform, so the guide lines / repel ylim stay in data units.
+# without squashing the bulk. It is a scale transform, so guide and label coordinates stay in data units.
 if (identical(yscale, "sqrt")) p_vol <- p_vol + scale_y_sqrt()
 vol_dim <- fig_dim("volcano")
+# Every selected gene is retained in a measured side key with rank and exact
+# signed effect. Highlighted markers stay at their actual displayed positions;
+# no connector is drawn when point-to-label association cannot be proved.
+p_vol <- volcano_add_ranked_key(
+  p_vol, lab, xm = xm, ytop = ytop, canvas_w = vol_dim[1],
+  canvas_h = vol_dim[2], label_family = base_family,
+  label_size = 4, marker_size_mm = sig_size
+)
+derived_vol_w <- attr(p_vol, "volcano_canvas_width", exact = TRUE)
+if (length(derived_vol_w) == 1L && is.finite(derived_vol_w)) {
+  vol_dim[1] <- max(vol_dim[1], derived_vol_w)
+}
 save_gg(p_vol, out[["volcano_png"]], out[["volcano_svg"]], w = vol_dim[1], h = vol_dim[2])
 
 # ---- Top-DEG heatmap --------------------------------------------------------
@@ -392,8 +787,11 @@ hm <- pmin(pmax(hm, -zlim), zlim)
 hm_breaks <- seq(-zlim, zlim, length.out = 256)
 ann <- as.data.frame(colData(dds)[, group_var, drop = FALSE])
 hm_levels <- unique(as.character(ann[[group_var]]))
-hm_ann_cols <- setNames(pal_spec$discrete[seq_along(hm_levels)], hm_levels)
+hm_ann_cols <- contrast_color_map(hm_levels, contrast_cfg, pal_spec$discrete)
 fs_row <- if (heatmap_fs_row > 0) heatmap_fs_row else max(4, base_size - 4)
+hm_canvas_w <- if (!is.null(size_overrides[["top_deg_heatmap"]])) fig_dim("top_deg_heatmap")[1] else fig_w
+hm_cell_w <- heatmap_cell_w_fill(ncol(hm), hm_canvas_w,
+                                 row_label_chars = max(nchar(rownames(hm))))
 ph2 <- pheatmap(hm, scale = "none", annotation_col = ann, show_rownames = TRUE,
                 show_colnames = sample_labels,  # hide sample names to declutter a many-sample run
                 labels_row = italic_labels(rownames(hm), gene_symbol_italic),
@@ -403,16 +801,16 @@ ph2 <- pheatmap(hm, scale = "none", annotation_col = ann, show_rownames = TRUE,
                 legend_breaks = c(-zlim, 0, zlim),
                 legend_labels = c(sprintf("%.1f", -zlim), "0  (row z-score)", sprintf("%.1f", zlim)),
                 annotation_colors = setNames(list(hm_ann_cols), group_var),
-                annotation_names_col = FALSE, cellheight = heatmap_cell_h,
+                annotation_names_col = TRUE, cellheight = heatmap_cell_h,
+                cellwidth = hm_cell_w,
                 border_color = NA, fontsize = base_size, fontsize_row = fs_row, silent = TRUE)
-# Size the canvas from BOTH matrix axes (rows -> height, samples -> width) so a
-# many-sample run no longer crushes columns; honour an explicit size override when set.
-hm_dim <- if (!is.null(size_overrides[["top_deg_heatmap"]])) {
-  fig_dim("top_deg_heatmap")
-} else heatmap_dim(n_top, ncol(hm), cell_h = heatmap_cell_h,
-                   row_label_chars = max(nchar(rownames(hm))), min_w = fig_w, min_h = fig_h,
-                   max_h = Inf)  # cellheight is pinned, so let height grow with rows (no clip)
-save_grid(ph2$gtable, out[["heatmap_png"]], out[["heatmap_svg"]], w = hm_dim[1], h = hm_dim[2])
+# pheatmap's fixed cells can make its gtable slightly wider than an estimated
+# canvas; derive the final device from the padded gtable so neither dendrogram
+# nor annotation legend can touch or cross the export boundary.
+hm_min_dim <- fig_dim("top_deg_heatmap")
+hm_render <- finalize_heatmap_gtable(ph2$gtable, hm_min_dim[1], hm_min_dim[2])
+save_grid(hm_render$gtable, out[["heatmap_png"]], out[["heatmap_svg"]],
+          w = hm_render$dim[1], h = hm_render$dim[2])
 } else save_placeholder("Top-DEG heatmap needs the counts / VST matrix (unavailable for a DESeq2-results upload).", out[["heatmap_png"]], out[["heatmap_svg"]])
 
 # ---- Separate up- / down-regulated top-DEG heatmaps -------------------------
@@ -443,8 +841,13 @@ make_dir_heatmap <- function(direction, png_path, svg_path) {
   hm_breaks <- seq(-heatmap_zlim, heatmap_zlim, length.out = 256)
   ann <- as.data.frame(colData(dds)[, group_var, drop = FALSE])
   hm_levels <- unique(as.character(ann[[group_var]]))
-  hm_ann_cols <- setNames(pal_spec$discrete[seq_along(hm_levels)], hm_levels)
+  hm_ann_cols <- contrast_color_map(hm_levels, contrast_cfg, pal_spec$discrete)
   fs_row <- if (heatmap_fs_row > 0) heatmap_fs_row else max(4, base_size - 4)
+  hm_key <- if (identical(direction, "Up")) "top_upregulated_heatmap" else "top_downregulated_heatmap"
+  hm_min_dim <- fig_dim(hm_key)
+  hm_canvas_w <- hm_min_dim[1]
+  hm_cell_w <- heatmap_cell_w_fill(ncol(hm), hm_canvas_w,
+                                   row_label_chars = max(nchar(rownames(hm))))
   ph <- pheatmap(hm, scale = "none", annotation_col = ann, show_rownames = TRUE,
                  show_colnames = sample_labels,  # hide sample names to declutter a many-sample run
                  labels_row = italic_labels(rownames(hm), gene_symbol_italic),
@@ -454,12 +857,12 @@ make_dir_heatmap <- function(direction, png_path, svg_path) {
                  legend_breaks = c(-heatmap_zlim, 0, heatmap_zlim),
                  legend_labels = c(sprintf("%.1f", -heatmap_zlim), "0  (row z-score)", sprintf("%.1f", heatmap_zlim)),
                  annotation_colors = setNames(list(hm_ann_cols), group_var),
-                 annotation_names_col = FALSE, cellheight = heatmap_cell_h,
+                 annotation_names_col = TRUE, cellheight = heatmap_cell_h,
+                 cellwidth = hm_cell_w,
                  border_color = NA, fontsize = base_size, fontsize_row = fs_row, silent = TRUE)
-  hm_dim <- heatmap_dim(n_top, ncol(hm), cell_h = heatmap_cell_h,
-                        row_label_chars = max(nchar(rownames(hm))), min_w = fig_w, min_h = fig_h,
-                        max_h = Inf)  # cellheight pinned -> height grows with rows (no clip)
-  save_grid(ph$gtable, png_path, svg_path, w = hm_dim[1], h = hm_dim[2])
+  hm_render <- finalize_heatmap_gtable(ph$gtable, hm_min_dim[1], hm_min_dim[2])
+  save_grid(hm_render$gtable, png_path, svg_path,
+            w = hm_render$dim[1], h = hm_render$dim[2])
 }
 make_dir_heatmap("Up", out[["up_heatmap_png"]], out[["up_heatmap_svg"]])
 make_dir_heatmap("Down", out[["down_heatmap_png"]], out[["down_heatmap_svg"]])
@@ -470,11 +873,21 @@ make_dir_heatmap("Down", out[["down_heatmap_png"]], out[["down_heatmap_svg"]])
 # identically for DESeq2 (results$pvalue) and limma (P.Value -> pvalue).
 pv <- res$pvalue[!is.na(res$pvalue)]
 if (length(pv) > 0) {
+  pval_counts <- hist(
+    pv[pv >= 0 & pv <= 1],
+    breaks = seq(0, 1, length.out = 51),
+    plot = FALSE, include.lowest = TRUE, right = FALSE
+  )$counts
+  pval_label_y <- max(pval_counts, na.rm = TRUE) * 0.97
   p_pval <- ggplot(data.frame(pvalue = pv), aes(pvalue)) +
     geom_histogram(boundary = 0, bins = 50, fill = pal_spec$discrete[1],
                    colour = "white", linewidth = 0.2, alpha = 0.9) +
     geom_vline(xintercept = alpha_thr, linetype = "dashed", colour = "grey40",
                linewidth = 0.3) +
+    annotate("text", x = alpha_thr, y = pval_label_y,
+             label = sprintf("raw p = %.3g", alpha_thr),
+             hjust = -0.08, vjust = 1, colour = "grey25",
+             family = if (is.null(base_family)) "" else base_family, size = 3) +
     labs(x = "raw p-value", y = "gene count") +
     style_theme(theme_bw)
   save_gg(p_pval, out[["pval_png"]], out[["pval_svg"]])

@@ -104,6 +104,10 @@ def write_run_summary(project_root: Path, default_config_path: Path | None = Non
         "project": config.get("project", {}),
         "input": config.get("input", {}),
         "reference": config.get("reference", {}),
+        "reference_integrity": _load_reference_integrity(
+            project_root,
+            str((config.get("input") or {}).get("type", "fastq")),
+        ),
         "workflow": config.get("workflow", {}),
         "resources": config.get("resources", {}),
         "software_versions": versions,
@@ -115,6 +119,106 @@ def write_run_summary(project_root: Path, default_config_path: Path | None = Non
     (reports / "run_summary.json").write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
     (reports / "run_summary.txt").write_text(_summary_text(payload), encoding="utf-8")
     return payload
+
+
+def _load_reference_integrity(project_root: Path, input_type: str) -> dict[str, Any]:
+    """Load the realized reference lock for the GUI-side report fallback.
+
+    The pipeline report writer has the same contract.  The selection-time YAML
+    lock is intentionally not used here: it cannot describe the canonical bytes
+    produced after decompression or GFF3 conversion.
+    """
+    if input_type in {"count_matrix", "microarray", "deseq2_results"}:
+        return {}
+    relative = Path("references/reference.lock.json")
+    path = project_root / relative
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return {
+            "status": "FAIL",
+            "lock_path": relative.as_posix(),
+            "error": f"Reference lock could not be read: {exc}",
+        }
+    if not isinstance(payload, dict):
+        return {
+            "status": "FAIL",
+            "lock_path": relative.as_posix(),
+            "error": "Reference lock root is not a JSON object.",
+        }
+    realized = dict(payload)
+    realized["lock_path"] = relative.as_posix()
+    return realized
+
+
+def _reference_integrity_lines(payload: dict[str, Any]) -> list[str]:
+    realized = payload.get("reference_integrity") or {}
+    if not realized:
+        return ["Realized reference lock: not recorded"]
+    if realized.get("error"):
+        return [
+            f"Realized reference lock: {realized.get('status') or 'FAIL'}",
+            f"Reference-lock error: {realized['error']}",
+        ]
+
+    lines = [
+        f"Realized reference lock: {realized.get('status') or 'not recorded'} "
+        f"({realized.get('lock_path') or 'references/reference.lock.json'})"
+    ]
+    for key, label in (("genome", "Genome"), ("annotation", "Annotation")):
+        part = realized.get(key) or {}
+        integrity = part.get("integrity") or {}
+        content = part.get("content") or {}
+        lines.extend([
+            f"{label} source MD5: {integrity.get('source_md5') or 'not recorded'} "
+            f"({integrity.get('md5_status') or 'not recorded'}; "
+            f"configured={integrity.get('configured_md5') or 'not configured'})",
+            f"{label} canonical SHA-256: "
+            f"{integrity.get('canonical_sha256') or 'not recorded'}",
+            f"{label} source/canonical bytes: "
+            f"{integrity.get('source_bytes', 'not recorded')} / "
+            f"{integrity.get('canonical_bytes', 'not recorded')}",
+        ])
+        if key == "genome":
+            lines.append(
+                f"{label} records/bases: {content.get('record_count', 'not recorded')} / "
+                f"{content.get('total_bases', 'not recorded')}"
+            )
+        else:
+            evidence = content.get("evidence_counts") or {}
+            lines.append(
+                f"{label} features (gene/exon/CDS): "
+                f"{evidence.get('gene', 'not recorded')}/"
+                f"{evidence.get('exon', 'not recorded')}/"
+                f"{evidence.get('CDS', 'not recorded')}"
+            )
+    compatibility = realized.get("contig_compatibility") or {}
+    counting = realized.get("counting_contract") or {}
+    lines.append(
+        "Configured counting contract: feature_type="
+        f"{','.join(str(value) for value in (counting.get('feature_types') or [])) or 'not recorded'}; "
+        f"attribute_type={counting.get('attribute_type') or 'not recorded'}; "
+        f"eligible rows={counting.get('feature_rows', 'not recorded')}; "
+        f"rows missing attribute={counting.get('feature_rows_missing_attribute', 'not recorded')}"
+    )
+    lines.append(
+        "Compatible contigs (overlap/annotation): "
+        f"{compatibility.get('overlap_contigs', 'not recorded')}/"
+        f"{compatibility.get('annotation_contigs', 'not recorded')}"
+    )
+    fraction = compatibility.get("feature_row_overlap_fraction")
+    threshold = compatibility.get("minimum_feature_row_overlap_fraction")
+    lines.append(
+        "Compatible annotation feature rows: "
+        f"{compatibility.get('compatible_feature_rows', 'not recorded')}/"
+        f"{compatibility.get('annotation_feature_rows', 'not recorded')} "
+        f"({fraction:.2%}; required >= {threshold:.0%})"
+        if isinstance(fraction, (int, float)) and isinstance(threshold, (int, float))
+        else "Compatible annotation feature rows: not recorded"
+    )
+    return lines
 
 
 def _drop_project(config: dict[str, Any]) -> dict[str, Any]:
@@ -137,10 +241,42 @@ def diff_configs(defaults: dict[str, Any], used: dict[str, Any], prefix: str = "
 
 
 def _summary_text(payload: dict[str, Any]) -> str:
-    lines = ["RNA-seq Analysis Run Summary", "============================", ""]
+    title = "BulkSeq Studio Analysis Run Summary"
+    lines = [title, "=" * len(title), ""]
     project = payload.get("project", {})
     lines += ["Project", "-------", f"Project name: {project.get('name')}", f"Working directory: {project.get('working_directory')}", ""]
+    input_cfg = payload.get("input", {}) or {}
+    if input_cfg.get("type") == "deseq2_results":
+        direction = input_cfg.get("deseq2_results_direction") or {}
+        source = input_cfg.get("deseq2_results_provenance") or {}
+        numerator = str(direction.get("numerator") or "").strip()
+        denominator = str(direction.get("denominator") or "").strip()
+        confirmed = direction.get("confirmed") is True
+        confirmed_at = str(direction.get("confirmed_at") or "").strip()
+        meaning = (f"positive log2FC = higher in {numerator} than {denominator}"
+                   if numerator and denominator else "direction was not recorded")
+        confirmation = "confirmed" if confirmed else "NOT confirmed"
+        if confirmed_at:
+            confirmation += f" at {confirmed_at}"
+        lines += ["Imported-results provenance", "---------------------------",
+                  f"Original basename (local provenance only): {source.get('original_basename') or 'not recorded'}",
+                  f"Project copy: {source.get('project_copy') or input_cfg.get('deseq2_results') or 'not recorded'}",
+                  f"Project-copy SHA-256: {source.get('sha256') or 'not recorded'}",
+                  f"Imported at: {source.get('imported_at') or 'not recorded'}",
+                  f"Imported rows: {source.get('row_count') or 'not recorded'}",
+                  f"Imported columns: {', '.join(source.get('column_names') or []) or 'not recorded'}",
+                  f"Log2FC direction: {meaning} ({confirmation}).",
+                  f"Upstream differential-expression method: {source.get('upstream_method') or 'unknown'}",
+                  f"Upstream LFC shrinkage: {source.get('lfc_shrinkage') or 'unknown'}",
+                  f"Upstream adjusted-p method: {source.get('p_adjustment_method') or 'unknown'}",
+                  "Local analysis: no differential-expression model or LFC shrinkage was run by "
+                  "BulkSeq Studio for this results-only route.", ""]
     lines += ["Workflow", "--------", json.dumps(payload.get("workflow", {}), indent=2), ""]
+    if input_cfg.get("type", "fastq") not in {
+        "count_matrix", "microarray", "deseq2_results",
+    }:
+        lines += ["Reference integrity", "-------------------",
+                  *_reference_integrity_lines(payload), ""]
     lines += ["Customized / Non-standard Parameters", "------------------------------------"]
     changed = payload.get("customized_parameters", {})
     if changed:

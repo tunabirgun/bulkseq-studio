@@ -1,13 +1,18 @@
+[build-system]
+requires = ["setuptools==84.0.0", "wheel==0.48.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "bulkseq-studio"
-version = "0.26.6"
-description = "Cross-platform (Windows + Linux) GUI project manager for reproducible bulk RNA-seq Snakemake workflows"
+version = "0.28.0"
+description = "Cross-platform Windows and Linux GUI project manager for reproducible bulk RNA-seq Snakemake workflows"
 readme = "README.md"
 license = { text = "MIT" }
-authors = [{ name = "Tuna Birgün" }]
+authors = [{ name = "Tuna Birgun" }]
 requires-python = ">=3.11"
 dependencies = [
   "PySide6>=6.7",
+  "numpy>=1.26",
   "pandas>=2.2",
   "pydantic>=2.7",
   "PyYAML>=6.0",
@@ -26,3 +31,9 @@ test = ["pytest>=8.2"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.setuptools.packages.find]
+include = ["app", "app.*"]
+
+[tool.setuptools.package-data]
+app = ["data/*.yaml", "assets/**/*"]

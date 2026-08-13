@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import shutil
 import subprocess
 import sys
+import warnings
+from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
 import yaml
 
 
@@ -41,6 +45,56 @@ GATING_PATHS: tuple[tuple[str, str, str], ...] = (
     ("input", "deseq2_results", "DESeq2-results input mode"),
     ("microarray", "expression_matrix", "the local-matrix microarray route"),
 )
+
+_RESULTS_ONLY_SAMPLE_COLUMNS = ("sample_id", "condition", "layout", "fastq_1")
+_RESULTS_PROVENANCE_REQUIRED = (
+    "original_basename", "imported_at", "project_copy", "sha256", "byte_size",
+    "row_count", "column_names", "gene_id_column", "log2fc_column", "adjusted_p_column",
+    "upstream_method", "lfc_shrinkage", "p_adjustment_method",
+)
+
+
+def _timezone_aware_iso(value: object) -> bool:
+    parsed: datetime | None = None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        stamp = value.strip()
+        if stamp.endswith(("Z", "z")):
+            stamp = stamp[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(stamp)
+        except ValueError:
+            parsed = None
+    return parsed is not None and parsed.tzinfo is not None and parsed.utcoffset() is not None
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _read_external_table(path: Path) -> pd.DataFrame:
+    """Mirror the GUI import reader's delimiter, encoding, and row-shift safeguards."""
+    last_decode_error: UnicodeDecodeError | None = None
+    for encoding in ("utf-8-sig", "cp1252", "latin-1"):
+        try:
+            with warnings.catch_warnings():
+                # A data row with one extra field can otherwise make pandas silently use its
+                # first value as an index and shift/truncate scientific columns.
+                warnings.simplefilter("error", pd.errors.ParserWarning)
+                return pd.read_csv(
+                    path, sep=None, engine="python", dtype=str, keep_default_na=False,
+                    index_col=False, encoding=encoding,
+                )
+        except UnicodeDecodeError as exc:
+            last_decode_error = exc
+    if last_decode_error is not None:
+        raise last_decode_error
+    raise ValueError("Could not decode the external-results project copy.")
 
 
 def check_gating_paths(config: dict, base: Path | None = None) -> list[dict[str, str]]:
@@ -80,7 +134,7 @@ def check_design(config: dict, samples_path: Path) -> list[dict[str, str]]:
     existing level") after alignment and counting have already run for many minutes."""
     msgs: list[dict[str, str]] = []
     if (config.get("input") or {}).get("type") == "deseq2_results":
-        return msgs  # results are uploaded; no DE model is fit, so the design is unused
+        return msgs  # external results are supplied; no DE model is fit, so design is unused
     de = config.get("deseq2") or {}
     # Required (factor -> {levels}) from the reference level and every contrast.
     required: dict[str, set[str]] = {}
@@ -118,6 +172,177 @@ def check_design(config: dict, samples_path: Path) -> list[dict[str, str]]:
                     f"reference level / contrast on Workflow Settings to match your sample "
                     f"conditions, then re-run.")})
     return msgs
+
+
+def check_deseq2_results_direction(config: dict) -> list[dict[str, str]]:
+    """Require an explicit, non-ambiguous log2FC direction for imported DE results.
+
+    An imported table carries signed effects but not necessarily the comparison labels that
+    define the sign.  Do not reuse ``deseq2.contrasts`` here: it may be stale from a prior
+    local run and describes no model on the external-results route. Defaults remain lenient in
+    the Pydantic model so legacy projects open, while every *new run* of this route fails until
+    the analyst confirms the source table's direction.
+    """
+    inp = config.get("input") or {}
+    if inp.get("type") != "deseq2_results":
+        return []
+    direction = inp.get("deseq2_results_direction")
+    if not isinstance(direction, dict):
+        return [{"status": "FAIL", "message": (
+            "Imported DE-results mode requires direction provenance. Specify the numerator and "
+            "denominator that define a positive log2 fold change, then confirm the source table.")}]
+
+    numerator = str(direction.get("numerator") or "").strip()
+    denominator = str(direction.get("denominator") or "").strip()
+    messages: list[dict[str, str]] = []
+    if not numerator or not denominator:
+        messages.append({"status": "FAIL", "message": (
+            "Imported DE-results direction is incomplete. Set both numerator and denominator so "
+            "positive log2 fold change has an unambiguous meaning.")})
+    elif numerator.casefold() == denominator.casefold():
+        messages.append({"status": "FAIL", "message": (
+            f"Imported DE-results direction uses '{numerator}' as both numerator and denominator. "
+            "Use two labels that are distinct even when capitalization is ignored; otherwise the "
+            "sign of log2 fold change is not meaningful.")})
+    if direction.get("confirmed") is not True:
+        messages.append({"status": "FAIL", "message": (
+            "Imported DE-results direction has not been confirmed. Confirm that positive log2 fold "
+            "change means higher expression in the recorded numerator than denominator before running.")})
+    if not _timezone_aware_iso(direction.get("confirmed_at")):
+        messages.append({"status": "FAIL", "message": (
+            "Imported DE-results direction needs confirmed_at as a timezone-aware ISO 8601 "
+            "timestamp (for example, 2026-08-10T12:00:00+03:00). Reconfirm the source direction "
+            "so the provenance records when and in which timezone it was checked.")})
+    return messages
+
+
+def check_deseq2_results_provenance(
+    config: dict, base: Path | None = None
+) -> list[dict[str, str]]:
+    """Require a complete, unchanged import-time record for the project copy.
+
+    The GUI validates all rows before copying the file, then records its SHA-256 and schema facts.
+    The workflow may also be launched directly, so it independently refuses a missing/legacy
+    record or a project copy whose bytes changed after that validation. The R ingest repeats the
+    row-level scientific checks; this function establishes that it is reading those same bytes.
+    """
+    inp = config.get("input") or {}
+    if inp.get("type") != "deseq2_results":
+        return []
+    record = inp.get("deseq2_results_provenance")
+    if not isinstance(record, dict):
+        record = {}
+    missing = [key for key in _RESULTS_PROVENANCE_REQUIRED if record.get(key) in (None, "", [])]
+    if missing:
+        return [{"status": "FAIL", "message": (
+            "The external-results project copy has no complete import-time provenance record "
+            f"(missing: {', '.join(missing)}). Re-import the original table before running.")}]
+
+    messages: list[dict[str, str]] = []
+    configured = str(inp.get("deseq2_results") or "").strip()
+    if str(record.get("project_copy") or "").strip() != configured:
+        messages.append({"status": "FAIL", "message": (
+            "The configured external-results project-copy path differs from the path recorded at "
+            "import. Re-import the original table instead of redirecting the verified record.")})
+    original = str(record.get("original_basename") or "")
+    if original.replace("\\", "/").rsplit("/", 1)[-1] != original:
+        messages.append({"status": "FAIL", "message": (
+            "External-results original_basename must contain only the source file name, not its "
+            "original directory. Re-import the table to create a privacy-safe record.")})
+    if not _timezone_aware_iso(record.get("imported_at")):
+        messages.append({"status": "FAIL", "message": (
+            "External-results imported_at must be a timezone-aware ISO 8601 timestamp. Re-import "
+            "the original table so the project copy has an auditable import time.")})
+    if record.get("lfc_shrinkage") not in {"unknown", "applied", "not_applied"}:
+        messages.append({"status": "FAIL", "message": (
+            "External-results lfc_shrinkage must be unknown, applied, or not_applied. Reconfirm "
+            "the import metadata before running.")})
+    for key in ("byte_size", "row_count"):
+        value = record.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            messages.append({"status": "FAIL", "message": (
+                f"External-results {key} must be a positive recorded integer. Re-import the table.")})
+
+    columns = record.get("column_names")
+    if isinstance(columns, list):
+        missing_columns = [
+            str(record.get(key)) for key in
+            ("gene_id_column", "log2fc_column", "adjusted_p_column")
+            if str(record.get(key)) not in columns
+        ]
+        if missing_columns:
+            messages.append({"status": "FAIL", "message": (
+                "The recorded selected column(s) are absent from the import-time schema: "
+                f"{', '.join(missing_columns)}. Re-import the original table.")})
+    else:
+        messages.append({"status": "FAIL", "message": (
+            "External-results column_names must be a recorded list. Re-import the original table.")})
+
+    path = Path(configured) if configured else None
+    if path is not None and base is not None and not path.is_absolute():
+        path = Path(base) / path
+    if path is None or not path.is_file():
+        # check_gating_paths reports the missing configured file with the setting name.
+        return messages
+    try:
+        actual_size = path.stat().st_size
+        actual_sha = _sha256(path)
+        dataframe = _read_external_table(path)
+    except OSError as exc:
+        messages.append({"status": "FAIL", "message": (
+            f"Could not verify the external-results project copy: {exc}")})
+        return messages
+    except Exception as exc:
+        messages.append({"status": "FAIL", "message": (
+            f"Could not read the external-results project copy while verifying provenance: {exc}")})
+        return messages
+    if record.get("byte_size") != actual_size:
+        messages.append({"status": "FAIL", "message": (
+            "The external-results project-copy byte size changed after import.")})
+    if str(record.get("sha256") or "").casefold() != actual_sha:
+        messages.append({"status": "FAIL", "message": (
+            "The external-results project copy changed after import (SHA-256 mismatch). Re-import "
+            "the original table; do not run against unvalidated bytes.")})
+    if record.get("row_count") != len(dataframe.index):
+        messages.append({"status": "FAIL", "message": (
+            "The external-results project-copy row count differs from the import-time record.")})
+    actual_columns = [str(column) for column in dataframe.columns]
+    if record.get("column_names") != actual_columns:
+        messages.append({"status": "FAIL", "message": (
+            "The external-results project-copy column schema differs from the import-time record.")})
+    return messages
+
+
+def check_samples(config: dict, samples_path: Path) -> list[dict[str, str]]:
+    """Validate the empty-sheet exception used by the results-only route.
+
+    The Snakefile indexes ``sample_id`` while parsing, even when there are no rows.  Accepting an
+    arbitrary empty TSV would therefore let validation pass and then fail before the DAG exists.
+    The application emits this exact minimal schema for results-only projects.  Ordinary routes
+    still require at least one biological sample.
+    """
+    if not samples_path.exists():
+        return []
+    try:
+        with samples_path.open(encoding="utf-8", newline="") as fh:
+            reader = csv.DictReader(fh, delimiter="\t")
+            rows = list(reader)
+            columns = tuple(reader.fieldnames or ())
+    except (OSError, csv.Error) as exc:
+        return [{"status": "FAIL", "message": f"Could not read samples table {samples_path}: {exc}"}]
+    if rows:
+        return []
+    if (config.get("input") or {}).get("type") == "deseq2_results":
+        if columns == _RESULTS_ONLY_SAMPLE_COLUMNS:
+            return []
+        expected = "\\t".join(_RESULTS_ONLY_SAMPLE_COLUMNS)
+        observed = "\\t".join(columns) if columns else "(no header)"
+        return [{"status": "FAIL", "message": (
+            "A results-only project may use a header-only samples table only with the exact "
+            f"minimal schema '{expected}'. Found '{observed}'. Recreate the results-only sample "
+            "sheet before running so the workflow can parse it safely.")}]
+    return [{"status": "FAIL", "message": (
+        f"Sample sheet '{samples_path}' has no sample rows. Add at least one sample before running.")}]
 
 
 # R / Bioconductor packages a standard run loads regardless of organism or DE engine. Load-
@@ -240,7 +465,11 @@ def main() -> int:
         messages.extend(check_gating_paths(payload))
     if not samples_path.exists():
         messages.append({"status": "FAIL", "message": f"Missing samples table: {samples_path}"})
+    messages.extend(check_samples(payload, samples_path))
     messages.extend(check_design(payload, samples_path))
+    messages.extend(check_deseq2_results_direction(payload))
+    project_root = config_path.resolve().parent.parent if config_path.exists() else Path.cwd()
+    messages.extend(check_deseq2_results_provenance(payload, base=project_root))
     messages.extend(check_r_packages(payload))
     if not messages:
         messages.append({"status": "PASS", "message": "Project setup files are present."})

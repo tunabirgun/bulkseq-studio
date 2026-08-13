@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from app.core.config_models import WorkflowConfig, default_config
+from app.core.config_models import ReferenceConfig, WorkflowConfig, default_config
 from app.core.project import ProjectManager
 
 
@@ -36,6 +36,23 @@ def test_deseq2_shrinkage_method_validation():
         assert Deseq2Config(shrinkage_method=ok).shrinkage_method == ok
     with pytest.raises(ValidationError):
         Deseq2Config(shrinkage_method="bogus")
+
+
+def test_reference_md5_values_are_normalized_and_fail_closed():
+    import pytest
+    from pydantic import ValidationError
+
+    config = ReferenceConfig(
+        genome_md5=" CAE7E8B3702A8EE180F32C787D007D50 ",
+        annotation_md5="8378D5D069FDAC25744889A66CF5700E",
+    )
+    assert config.genome_md5 == "cae7e8b3702a8ee180f32c787d007d50"
+    assert config.annotation_md5 == "8378d5d069fdac25744889a66cf5700e"
+    assert ReferenceConfig(genome_md5="").genome_md5 is None
+
+    for invalid in ("not-a-checksum", "0" * 31, "g" * 32):
+        with pytest.raises(ValidationError):
+            ReferenceConfig(genome_md5=invalid)
 
 
 def test_organellar_genes_default_and_round_trip():

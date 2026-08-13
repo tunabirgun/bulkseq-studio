@@ -62,7 +62,7 @@ def _sym_or_blank(val: str | None) -> str:
 GLOSS = {
  "padj":     "Adjusted p-value (FDR, Benjamini–Hochberg). The chance a gene looks changed just by luck after testing thousands at once. Smaller is stronger; below the run's cutoff is significant.",
  "pvalue":   "Raw p-value, before correcting for testing thousands of genes. Use padj — not this — to decide significance.",
- "log2fc":   "Log2 fold change: how much and which way a gene shifted. +1 = doubled, −1 = halved, +2 = four-fold. The sign is the direction; positive = higher in the treated group.",
+ "log2fc":   "Log2 fold change: how much and which way a gene shifted. +1 = doubled, −1 = halved, +2 = four-fold. The sign is the direction; positive = higher in the numerator group.",
  "basemean": "Average normalised read count across all samples — how strongly the gene is expressed overall. Very low values make fold changes noisy.",
  "biotype":  "Gene category from the annotation (protein_coding, lncRNA, transposable_element, …) — context, not a result.",
  "alpha":    "The FDR cutoff for calling a gene significant (here the run's α).",
@@ -76,7 +76,7 @@ GLOSS = {
  "foldenr":  "Fold enrichment (ORA). How many more of your changed genes fall in this category than chance predicts.",
  "padjust":  "Adjusted p-value for the term — the expected false-alarm share if you trust it. Corrected by Benjamini–Hochberg on the clusterProfiler route (shown as 'p.adjust (BH)') and by g:SCS, g:Profiler's own graph-aware method, on the g:Profiler route (shown as 'p (g:SCS)'). Both are already corrected for multiple testing; they are not comparable to each other term-for-term.",
  "setsize":  "How many measured genes belong to that set or category.",
- "ppi":      "Known protein–protein interactions among your changed genes (STRING). Tight clusters suggest genes acting together; highly connected nodes are hubs.",
+ "ppi":      "STRING-supported functional and physical protein associations among your changed genes. The combined score integrates multiple evidence channels; an edge does not necessarily mean direct physical binding.",
  "wilcoxon": "A rank-based cross-check, not used to call genes. With few replicates it is underpowered — read it only as a rank-concordance check.",
 }
 
@@ -98,12 +98,12 @@ FIG = {
  "pvalue_histogram":          ("quality", "p-value histogram (diagnostic)", "Is there real signal, and is the model well-behaved?", "Distribution of raw p-values across all tested genes.", "A tall spike near zero on an otherwise flat background means real differences are present. A hump in the middle, or a spike at one, warns that the statistical model may not fit."),
  "volcano":                   ("de", "Volcano plot", "Which genes changed, and how confidently?", "x: log2 fold change; y: −log10 adjusted p-value. Dashed guides mark the significance and fold-change cut-offs.", "Every dot is a gene. Left–right is how much it changed; up is statistical confidence. The top corners hold large, reliable changes — the headline hits. Height is confidence, not effect size."),
  "ma_plot":                   ("de", "MA plot", "Are the changes independent of expression level?", "x: mean normalised counts (log); y: shrunken log2 fold change. Coloured points are significant.", "Fold change is plotted against overall expression. A healthy result shows significant genes across the whole expression range, not only among the lowest-count genes on the left."),
- "top_deg_heatmap":           ("de", "Top differentially-expressed genes", "The strongest genes, sample by sample.", "Z-scored variance-stabilised counts for the top genes by significance.", "Rows are genes, columns are samples; warm = high, cool = low relative to the row mean. Samples of one condition should share a colour pattern, and the two conditions should look different."),
- "top_upregulated_heatmap":   ("de", "Top up-regulated genes", "The strongest increases across samples.", "Z-scored variance-stabilised counts, top up-regulated by significance.", "The most confidently increased genes. Warm cells should concentrate in the treated group; a gene warm in both groups is worth a second look."),
- "top_downregulated_heatmap": ("de", "Top down-regulated genes", "The strongest decreases across samples.", "Z-scored variance-stabilised counts, top down-regulated by significance.", "The most confidently decreased genes. Cool cells should concentrate in the treated group; a gene cool in both groups is worth a second look."),
+ "top_deg_heatmap":           ("de", "Top differentially-expressed genes", "The most statistically supported genes, sample by sample.", "Z-scored variance-stabilised counts for the top genes by significance.", "Rows are genes, columns are samples; warm = high, cool = low relative to the row mean. Samples of one condition should share a colour pattern, and the two conditions should look different."),
+ "top_upregulated_heatmap":   ("de", "Top up-regulated genes", "The most statistically supported increases across samples.", "Z-scored variance-stabilised counts, top up-regulated by significance.", "The most confidently increased genes. Warm cells should concentrate in the numerator group; a gene warm in both groups is worth a second look."),
+ "top_downregulated_heatmap": ("de", "Top down-regulated genes", "The most statistically supported decreases across samples.", "Z-scored variance-stabilised counts, top down-regulated by significance.", "The most confidently decreased genes. Cool cells should concentrate in the numerator group; a gene cool in both groups is worth a second look."),
  "enrichment_dotplot":        ("function", "GO enrichment", "Which biological themes are over-represented?", "Dot size: gene count; colour: adjusted p-value; position: fold enrichment.", "Each dot is a biological category enriched among the changed genes. Bigger, further-right, darker dots are the stronger, more reliable themes."),
  "enrichment_kegg_dotplot":   ("function", "KEGG pathway enrichment", "Which pathways are over-represented?", "Dot size: gene count; colour: adjusted p-value.", "Each dot is a KEGG pathway over-represented among the changed genes. Bigger and darker dots are the stronger, more reliable pathways."),
- "ppi_network":               ("function", "STRING protein–protein interaction network", "Which changed proteins are known to interact?", "STRING edges above the confidence cut-off; nodes are seed genes, clusters are modules.", "Nodes are your changed genes; edges are known interactions from STRING. Tight clusters suggest proteins acting together, and highly connected hubs are candidates worth prioritising."),
+ "ppi_network":               ("function", "STRING protein-association network", "Which changed proteins have STRING-supported functional or physical associations?", "STRING combined-score associations above the confidence cut-off; nodes are seed genes, clusters are modules.", "Nodes are your changed genes; edges are STRING-supported functional or physical associations, not necessarily direct binding. Tight clusters suggest related proteins, and highly connected hubs are candidates worth prioritising."),
 }
 FIG_GROUPS = [
  ("quality",  "Quality &amp; sample structure", "Do replicates group together, and do the conditions separate? These panels answer that before any gene is called."),
@@ -112,10 +112,10 @@ FIG_GROUPS = [
 ]
 
 
-def _term(key: str, label: str) -> str:
+def _term(key: str, label: str, definition: str | None = None) -> str:
     # Inline glossable term — focusable <button> (never title=); the same GLOSS entry
     # is restated in the §10 glossary so nothing load-bearing lives only on hover.
-    tip = html.escape(GLOSS.get(key, ""))
+    tip = html.escape(GLOSS.get(key, "") if definition is None else definition)
     return (f'<button class="term" type="button">{label}'
             f'<span class="tip" role="tooltip">{tip}</span></button>')
 
@@ -140,6 +140,10 @@ def _load_json(path: Path) -> dict:
 
 
 SVG_MAX_BYTES = 2_000_000  # embed SVG (lossless zoom) unless it balloons; then PNG
+# Dense keyed figures need this rendered width to keep their smallest measured
+# labels legible. Narrow reports expose a contained scroll viewport instead.
+DENSE_FIGURE_MIN_WIDTH_PX = 760
+DENSE_FIGURE_BASENAMES = frozenset({"ppi_network", "volcano"})
 
 
 def _fig_src(figs: Path, basename: str) -> str:
@@ -155,14 +159,46 @@ def _fig_src(figs: Path, basename: str) -> str:
     return ""
 
 
+def _panel_slug(basename: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", basename.casefold()).strip("-") or "figure"
+
+
+def _panel_attrs(basename: str) -> str:
+    """Return stable, escaped figure identity and derived layout attributes."""
+    slug = _panel_slug(basename)
+    identity = html.escape(basename, quote=True)
+    dense = ' data-panel-layout="dense"' if basename in DENSE_FIGURE_BASENAMES else ""
+    return f'class="panel panel--{slug}" data-figure="{identity}"{dense}'
+
+
+def _panel_frame_open(basename: str, title: str) -> str:
+    if basename not in DENSE_FIGURE_BASENAMES:
+        return '<div class="frame">'
+    label = html.escape(title, quote=True)
+    hint_id = f"{_panel_slug(basename)}-scroll-hint"
+    return (
+        '<div class="frame dense-figure-viewport" tabindex="0" role="region" '
+        f'aria-label="Scrollable {label} preview" aria-describedby="{hint_id}" '
+        f'data-min-content-width="{DENSE_FIGURE_MIN_WIDTH_PX}" '
+        f'style="--dense-min-width:{DENSE_FIGURE_MIN_WIDTH_PX}px">'
+        f'<span class="sr-only" id="{hint_id}">Use Left and Right Arrow keys to inspect '
+        'this dense figure preview. Activate the figure button to open it full size.</span>'
+    )
+
+
 def _fig(figs: Path, basename: str, title: str) -> str:
     src = _fig_src(figs, basename)
     if not src:
         return ""
     cap = html.escape(title)
-    return (f'<figure><button class="figbtn" type="button" onclick="bsqZoom(this)" '
-            f'aria-label="Open {cap} full size"><img alt="{cap}" src="{src}"/></button>'
-            f'<figcaption>{cap}</figcaption></figure>')
+    panel_attrs = _panel_attrs(basename)
+    frame_open = _panel_frame_open(basename, title)
+    return (
+        f'<figure {panel_attrs}>{frame_open}'
+        f'<button class="figbtn" type="button" onclick="bsqZoom(this)" '
+        f'aria-label="Open {cap} full size"><img alt="{cap}" src="{src}"/></button></div>'
+        f'<figcaption><div class="cap-lead">{cap}</div></figcaption></figure>'
+    )
 
 
 def _count_csv_rows(path: Path) -> int | None:
@@ -175,7 +211,13 @@ def _count_csv_rows(path: Path) -> int | None:
         return None
 
 
-def _de_table(results_csv: Path, top: int = 25, empty_msg: str = "No differential-expression table.") -> str:
+def _de_table(
+    results_csv: Path,
+    top: int = 25,
+    empty_msg: str = "No differential-expression table.",
+    *,
+    base_mean_kind: str = "count",
+) -> str:
     if not results_csv.exists():
         return f"<p class='muted small'>{html.escape(empty_msg)}</p>"
     rows: list[dict[str, str]] = []
@@ -193,13 +235,15 @@ def _de_table(results_csv: Path, top: int = 25, empty_msg: str = "No differentia
     numeric = ("log2FoldChange", "padj", "baseMean")
 
     def cell(col: str, val: str) -> str:
-        # baseMean is an average read count: a thousands-separated integer reads far better than
-        # 1.23e+03. data-sort-value carries the raw float so the numeric sort is not fooled by the
-        # comma grouping (parseFloat('1,234') would otherwise be 1).
+        # For count-based routes, a thousands-separated integer is easier to read than 1.23e+03.
+        # Microarray and externally supplied routes use an expression-scale value that can be
+        # fractional or negative, so preserve its numeric scale instead of rounding it to a count.
+        # data-sort-value keeps sorting numeric when comma grouping is used.
         if col == "baseMean":
             try:
                 f = float(val)
-                return f"<td class='num' data-sort-value='{f}'>{int(round(f)):,}</td>"
+                shown = f"{int(round(f)):,}" if base_mean_kind == "count" else f"{f:.3g}"
+                return f"<td class='num' data-sort-value='{f}'>{shown}</td>"
             except (ValueError, TypeError):
                 return f"<td class='num'>{html.escape(val or '')}</td>"
         if col in numeric:
@@ -224,15 +268,21 @@ def _de_table(results_csv: Path, top: int = 25, empty_msg: str = "No differentia
             f"<tbody>{body}</tbody></table></div>")
 
 
-def _de_split(project: Path, top: int = 50) -> str:
+def _de_split(project: Path, top: int = 50, *, base_mean_kind: str = "count") -> str:
     # Up- and down-regulated genes shown separately, from the canonical DEG sets
     # (run_deseq2.R: padj-significant, raw |log2FC| >= threshold), each ordered by
     # fold change. Empty when a direction has no genes or DE has not run.
     deseq = project / "results" / "deseq2"
-    up = _de_table(deseq / "upregulated_genes.csv", top,
-                   empty_msg="No up-regulated genes passed the significance and fold-change thresholds.")
-    down = _de_table(deseq / "downregulated_genes.csv", top,
-                     empty_msg="No down-regulated genes passed the significance and fold-change thresholds.")
+    up = _de_table(
+        deseq / "upregulated_genes.csv", top,
+        empty_msg="No up-regulated genes passed the significance and fold-change thresholds.",
+        base_mean_kind=base_mean_kind,
+    )
+    down = _de_table(
+        deseq / "downregulated_genes.csv", top,
+        empty_msg="No down-regulated genes passed the significance and fold-change thresholds.",
+        base_mean_kind=base_mean_kind,
+    )
     if not (deseq / "upregulated_genes.csv").exists() and not (deseq / "downregulated_genes.csv").exists():
         return ""
     return (f"<div class='de-split'>"
@@ -249,8 +299,40 @@ def _org_clean(ref: dict):
     return o if o and o.lower() not in ("unset", "none", "na") else None
 
 
+def _is_external_results(run: dict) -> bool:
+    return (run.get("input", {}) or {}).get("type") == "deseq2_results"
+
+
+def _external_provenance(run: dict) -> dict:
+    provenance = (run.get("input", {}) or {}).get("deseq2_results_provenance") or {}
+    return provenance if isinstance(provenance, dict) else {}
+
+
+def _recorded_method(run: dict, key: str) -> str:
+    value = str(_external_provenance(run).get(key) or "").strip()
+    return value if value and value.casefold() != "unknown" else "unknown"
+
+
+def _adjusted_p_name(run: dict) -> str:
+    """Use a generic name unless the upstream correction method was recorded."""
+    if not _is_external_results(run):
+        return "FDR"
+    method = _recorded_method(run, "p_adjustment_method")
+    return "adjusted p-value" if method == "unknown" else f"adjusted p-value ({method})"
+
+
 def _contrast_pair(run: dict):
-    # (numerator, denominator) from the first contrast; BYO mode splits the name on _vs_.
+    # Imported results need their own source-table provenance. Do not fall back to a
+    # potentially stale local-model contrast: BulkSeq Studio did not fit one on this route.
+    inp = run.get("input", {}) or {}
+    if inp.get("type") == "deseq2_results":
+        direction = inp.get("deseq2_results_direction") or {}
+        if isinstance(direction, dict) and direction.get("confirmed") is True:
+            numerator = str(direction.get("numerator") or "").strip()
+            denominator = str(direction.get("denominator") or "").strip()
+            return numerator or None, denominator or None
+        return None, None
+    # (numerator, denominator) from the first local-model contrast.
     de = run.get("deseq2", {}) or {}
     contrasts = de.get("contrasts")
     c = contrasts[0] if isinstance(contrasts, list) and contrasts else {}
@@ -260,10 +342,84 @@ def _contrast_pair(run: dict):
     return num, den
 
 
+def _route_gloss(run: dict) -> dict[str, str]:
+    """Return report definitions that do not infer external statistical methods."""
+    definitions = dict(GLOSS)
+    input_type = (run.get("input", {}) or {}).get("type")
+    num, den = _contrast_pair(run)
+    if num and den:
+        definitions["log2fc"] = (
+            "Log2 fold change: how much and which way a gene shifted. "
+            f"+1 = doubled, −1 = halved, +2 = four-fold. Positive values mean higher "
+            f"expression in {num} (the numerator) than in {den} (the denominator)."
+        )
+    if input_type == "microarray":
+        definitions["basemean"] = (
+            "Mean normalized log2 expression intensity across all samples. Fractional and negative "
+            "values are valid on this array-expression scale; lower values indicate lower overall "
+            "measured expression, not negative molecule counts."
+        )
+        definitions["ma"] = (
+            "Fold change (y) against overall normalized log2 expression intensity (x). Confirms "
+            "changes are not confined to genes with low measured expression."
+        )
+        return definitions
+    if not _is_external_results(run):
+        return definitions
+    method = _recorded_method(run, "p_adjustment_method")
+    if method == "unknown":
+        adjustment = ("The upstream multiple-testing correction method was not recorded; "
+                      "do not infer one from the column name.")
+    else:
+        adjustment = f"The recorded upstream correction method is {method}."
+    definitions["padj"] = (
+        "Adjusted p-value supplied by the source analysis. Smaller values provide stronger "
+        f"evidence after the source analysis' multiple-testing adjustment. {adjustment}"
+    )
+    definitions["alpha"] = (
+        "The threshold this report applies to the source-supplied adjusted p-values. "
+        "It does not identify an unrecorded upstream correction method."
+    )
+    if num and den:
+        direction = (f"Positive values mean higher expression in {num} (the confirmed numerator) "
+                     f"than {den} (the confirmed denominator).")
+    else:
+        direction = "The positive and negative directions must not be assigned to groups without confirmed labels."
+    definitions["log2fc"] = (
+        "Source-supplied log2 fold change: how much and which way a gene shifted. "
+        f"+1 = doubled, −1 = halved, +2 = four-fold. {direction}"
+    )
+    definitions["pvalue"] = (
+        "Raw p-value supplied by the source analysis, before its multiple-testing adjustment. "
+        "Use the supplied adjusted p-value for this report's threshold."
+    )
+    definitions["basemean"] = (
+        "Source-supplied mean-expression measure, when present. Its exact scale and normalization "
+        "come from the upstream analysis and are not inferred here."
+    )
+    return definitions
+
+
+def _directional_figure_copy(basename: str, howto: str, run: dict) -> str:
+    """Name the recorded numerator in directional heatmap guidance."""
+    if basename not in {"top_upregulated_heatmap", "top_downregulated_heatmap"}:
+        return howto
+    num, _den = _contrast_pair(run)
+    if not num:
+        return howto
+    return howto.replace(
+        "the numerator group", f"{html.escape(str(num))}, the numerator group"
+    )
+
+
 def _engine_name(run: dict) -> str:
-    # Microarray always runs limma (the 09 sanity line confirms it); else the configured engine.
-    if (run.get("input", {}) or {}).get("type") == "microarray":
+    # Microarray always runs limma (the 09 sanity line confirms it). Imported results
+    # are not fitted locally, so never label them as a BulkSeq Studio DESeq2 run.
+    input_type = (run.get("input", {}) or {}).get("type")
+    if input_type == "microarray":
         return "limma"
+    if input_type == "deseq2_results":
+        return "externally supplied results (no local DE model)"
     return (run.get("workflow", {}) or {}).get("de_engine") or "DESeq2"
 
 
@@ -360,7 +516,9 @@ def _key_finding(run: dict, project: Path, sanity_text: str) -> str:
     organism = _org_clean(ref)
     alpha = de.get("alpha", 0.05)
     lfc_t = _lfc_threshold(run, sanity_text)
-    unit = "probes" if inp.get("type") == "microarray" else "genes"
+    # The microarray ingest collapses probes to unique gene-level rows before
+    # limma; calling the resulting 22,180-row table "probes" misstates its unit.
+    unit = "genes/features" if inp.get("type") == "microarray" else "genes"
     up, down, tested, top_up, top_down = _de_headline_stats(project, float(alpha), lfc_t)
     total = up + down
 
@@ -370,7 +528,10 @@ def _key_finding(run: dict, project: Path, sanity_text: str) -> str:
             lead += f" in <i>{html.escape(str(organism))}</i>"
     else:
         lead = "In this comparison"
-    thr = f"FDR &lt; {alpha}"
+    if _is_external_results(run):
+        thr = f"{html.escape(_adjusted_p_name(run))} &lt; {html.escape(str(alpha))}"
+    else:
+        thr = f"FDR &lt; {alpha}"
     fold = _fold_phrase(lfc_t)
     if fold:
         thr += f" and {fold}"
@@ -384,9 +545,9 @@ def _key_finding(run: dict, project: Path, sanity_text: str) -> str:
     s = (f"{lead}, <b>{total:,}</b>{of_m} {unit} changed significantly ({thr}): "
          f"<b class='up'>{up:,}</b> were higher and <b class='down'>{down:,}</b> lower.")
     if top_up:
-        s += f" The strongest increases were {_fmt_genes(top_up)}."
+        s += f" The most statistically supported increases were {_fmt_genes(top_up)}."
     if top_down:
-        s += f" The strongest decreases were {_fmt_genes(top_down)}."
+        s += f" The most statistically supported decreases were {_fmt_genes(top_down)}."
     return s
 
 
@@ -395,7 +556,7 @@ def _status_sentence(sanity_text: str) -> str:
     if not checks:
         return ""
     n = len(checks)
-    non = [c["name"].replace("_", " ") for c in checks if c["status"] != "PASS"]
+    non = [_pretty_check_name(c["name"]) for c in checks if c["status"] != "PASS"]
     if not non:
         return f"All {n} automated quality checks passed."
     has_fail = any(c["status"] == "FAIL" for c in checks)
@@ -481,6 +642,139 @@ def _enrich_block(title: str, csv_path: Path, mode: str, top: int = 10,
             f"<tbody>{body}</tbody></table></div></div>")
 
 
+def _enrich_table_state(csv_path: Path, mode: str) -> str:
+    """Classify an optional enrichment table without treating damage as a null result."""
+    if not csv_path.exists():
+        return "missing"
+    try:
+        with csv_path.open(encoding="utf-8", errors="replace", newline="") as fh:
+            reader = csv.DictReader(fh, strict=True)
+            fieldnames = reader.fieldnames or []
+            has_row = False
+            for row in reader:
+                has_row = has_row or any(
+                    value is not None and str(value).strip() for value in row.values())
+    except (OSError, csv.Error):
+        return "malformed"
+    if not fieldnames:
+        # run_custom_enrichment.R deliberately creates a blank file when no result passes.
+        return "empty"
+    candidates = _GSEA_COLS if mode == "gsea" else _ORA_COLS
+    recognized = any(key in fieldnames for _, keys, _ in candidates for key in keys)
+    if not recognized:
+        return "malformed"
+    return "data" if has_row else "empty"
+
+
+def _custom_source_evidence(project: Path) -> tuple[bool | None, list[str]]:
+    """Return the recorded route state and configured custom-set sources, when available."""
+    run_path = project / "results" / "reports" / "run_summary.json"
+    if not run_path.exists():
+        return None, []
+    run = _load_json(run_path)
+    if "gene_sets" not in run or not isinstance(run.get("gene_sets"), dict):
+        return None, []
+    gene_sets = run["gene_sets"]
+    specs = (
+        ("Configured GMT source", "custom_gene_sets"),
+        ("Configured annotation-table source", "functional_annotation_table"),
+        ("Configured ORA background source", "background_gene_list"),
+    )
+    route_keys = {"custom_gene_sets", "functional_annotation_table"}
+    configured = False
+    lines = []
+    for label, key in specs:
+        value = gene_sets.get(key)
+        if isinstance(value, str) and value.strip():
+            lines.append(f"{label}: {value.strip()}")
+            configured = configured or key in route_keys
+    return configured, lines
+
+
+def _custom_enrich_block(title: str, csv_path: Path, mode: str, empty_msg: str) -> str:
+    state = _enrich_table_state(csv_path, mode)
+    if state == "data":
+        return _enrich_block(title, csv_path, mode)
+    if state == "empty":
+        msg = empty_msg
+    elif state == "missing":
+        msg = (f"The {mode.upper()} result table is unavailable; do not interpret the missing "
+               "artifact as an empty custom-enrichment result.")
+    else:
+        msg = (f"The {mode.upper()} result table could not be interpreted; review the custom "
+               "enrichment log and source artifact before drawing conclusions.")
+    return (f"<div class='enr-block empty'><h3>{html.escape(title)}</h3>"
+            f"<p class='muted small'>{html.escape(msg)}</p></div>")
+
+
+def _custom_enrichment_section(project: Path) -> str:
+    enr = project / "results" / "enrichment"
+    figs = project / "results" / "figures"
+    summary_path = enr / "custom_enrichment_summary.txt"
+    artifacts = (
+        enr / "custom_ora.csv", enr / "custom_gsea.csv", summary_path,
+        figs / "custom_enrichment_dotplot.png", figs / "custom_enrichment_dotplot.svg",
+    )
+    if not any(path.exists() for path in artifacts):
+        return ""
+
+    configured, source_lines = _custom_source_evidence(project)
+    # A current run summary is authoritative: suppress stale optional artifacts when it explicitly
+    # records that neither a GMT nor an annotation-table source was configured for this run.
+    if configured is False:
+        return ""
+
+    summary_raw = _read(summary_path)
+    evidence_prefixes = (
+        "Custom gene sets (terms):", "Universe:", "Significant genes (ORA input):",
+        "Custom GSEA ranking order:", "Custom GSEA exact-score ties:",
+        "Custom GSEA duplicate canonical-ID collapse:", "Custom ORA terms:",
+        "Custom GSEA sets:", "Custom enrichment failed:",
+    )
+    summary_lines = [line.strip() for line in summary_raw.splitlines()
+                     if line.strip().startswith(evidence_prefixes)]
+    if not summary_path.exists():
+        summary_lines.append(
+            "Custom enrichment reproducibility summary: unavailable; review "
+            "results/enrichment/custom_enrichment_summary.txt before interpretation.")
+    elif not summary_lines:
+        summary_lines.append(
+            "Custom enrichment reproducibility summary: present but no recognized set, source, "
+            "result, or deterministic-ranking evidence could be read.")
+    elif not all(any(line.startswith(prefix) for line in summary_lines) for prefix in (
+            "Custom GSEA ranking order:", "Custom GSEA exact-score ties:",
+            "Custom GSEA duplicate canonical-ID collapse:")):
+        summary_lines.append(
+            "Custom GSEA reproducibility evidence: the ranking, exact-tie, or duplicate-collapse "
+            "record is incomplete in custom_enrichment_summary.txt.")
+    evidence = source_lines + summary_lines
+    evidence_html = ""
+    if evidence:
+        items = "".join(f"<li>{html.escape(line)}</li>" for line in evidence)
+        evidence_html = ("<details class='howto enrichment-coverage' open>"
+                         "<summary>Configured sources and reproducibility evidence</summary>"
+                         f"<ul>{items}</ul></details>")
+
+    figure = _fig(figs, "custom_enrichment_dotplot",
+                  "Custom gene-set over-representation (ORA)")
+    figure_html = f"<div class='panels'>{figure}</div>" if figure else ""
+    ora = _custom_enrich_block(
+        "Custom gene sets — over-representation (ORA)", enr / "custom_ora.csv", "ora",
+        "No supplied custom gene set met the adjusted ORA criterion. This result is limited "
+        "to the configured collection and tested-gene universe.",
+    )
+    gsea = _custom_enrich_block(
+        "Custom gene sets — ranked-list enrichment (GSEA)", enr / "custom_gsea.csv", "gsea",
+        "No supplied custom gene set met the adjusted GSEA criterion. This result is limited "
+        "to the configured collection and ranked genes.",
+    )
+    return ("<section class='custom-enrichment' aria-labelledby='custom-enrichment-title'>"
+            "<h3 id='custom-enrichment-title'>Custom gene-set enrichment</h3>"
+            "<p class='muted small'>These analyses test only the gene sets supplied for this run; "
+            "an empty result does not establish biological absence outside that collection.</p>"
+            f"{evidence_html}{figure_html}{ora}{gsea}</section>")
+
+
 def _enrichment_section(project: Path) -> str:
     enr = project / "results" / "enrichment"
     if not enr.exists():
@@ -491,17 +785,63 @@ def _enrichment_section(project: Path) -> str:
     # GO block reads "not run for this organism" instead of the misleading "nothing passed the threshold"
     # (KEGG, which runs off a KEGG organism code, is unaffected and keeps the default wording).
     summ = enr / "enrichment_summary.txt"
-    summary_txt = summ.read_text(encoding="utf-8", errors="replace").lower() if summ.exists() else ""
+    summary_raw = summ.read_text(encoding="utf-8", errors="replace") if summ.exists() else ""
+    summary_txt = summary_raw.lower()
     go_skipped = "skip" in summary_txt and any(
         s in summary_txt for s in ("orgdb", "annotation database", "no bioconductor", "no orgdb"))
     go_msg = ("GO enrichment was not run for this organism — no annotation database is available."
               if go_skipped else "No terms passed the significance threshold.")
+    evidence_prefixes = (
+        "Eligible ID mapping keytypes:", "Identifier routing policy:",
+        "Accepted ID mapping routes:",
+        "Tested input IDs retained after mapping/exclusion:",
+        "Significant input IDs retained after mapping/exclusion:",
+        "Up-regulated input IDs retained after mapping/exclusion:",
+        "Down-regulated input IDs retained after mapping/exclusion:",
+        "Mapped tested-gene universe", "GO effective annotated ORA universes:",
+        "DO effective annotated ORA universe:", "OrgDb annotation identity:",
+        "KEGG identity verification:", "KEGG retrieval:",
+        "KEGG effective resource universe:", "KEGG supported foreground:",
+        "KEGG eligible hypotheses/gene sets:", "KEGG adjusted results:",
+        "KEGG resource status:", "Unmapped input IDs excluded:",
+        "Ambiguous input IDs excluded:", "One-to-many mappings observed:",
+        "Cross-keytype discordance observed:", "Many-to-one Entrez groups collapsed",
+        "Direction-conflict Entrez IDs excluded:",
+        "Source IDs present in both up/down inputs:",
+        "Foreground intersection (up/down Entrez)", "Mapping interpretation gate:",
+        "Direction-conflict gate:", "GO/DO annotation-resource status:",
+        "Universe policy:", "ORA parameters:", "ORA multiple-testing families:",
+        "GSEA parameters:", "GSEA ranking order:", "GSEA exact-score ties:",
+        "GSEA duplicate canonical-ID collapse:",
+        "Mapping limitation:",
+    )
+    evidence_lines = [line.strip() for line in summary_raw.splitlines()
+                      if line.strip().startswith(evidence_prefixes)]
+    coverage = ""
+    if evidence_lines:
+        items = "".join(f"<li>{html.escape(line)}</li>" for line in evidence_lines)
+        coverage = ("<details class='howto enrichment-coverage' open>"
+                    "<summary>Identifier mapping coverage and limitations</summary>"
+                    f"<ul>{items}</ul></details>")
     # The per-ontology GO dotplot trio (BP/MF/CC) is meaningful only on the OrgDb/clusterProfiler
     # route. On the g:Profiler route only GO:BP is queried and it is already shown as the main
     # enrichment dotplot (the MF/CC tiles are "not queried" placeholders); on a no-OrgDb route the
     # whole trio is empty. Suppress it in both cases so the report never shows redundant or
     # placeholder GO panels next to the real dotplot.
     is_gprofiler = any(s in summary_txt for s in ("gost", "g:profiler", "gprofiler"))
+    if "kegg resource status: not_interpretable" in summary_txt:
+        kegg_msg = ("KEGG is not interpretable for this run; review the resource-integrity "
+                    "evidence above before drawing pathway conclusions.")
+    elif "kegg resource status: not_run" in summary_txt:
+        kegg_msg = "KEGG was not run because no KEGG organism code was configured."
+    elif any(status in summary_txt for status in (
+            "kegg resource status: pass", "kegg resource status: limited_annotation")):
+        kegg_msg = ("No supported KEGG pathways met the adjusted criterion. This does not "
+                    "establish that no pathway biology is present.")
+    else:
+        # Backward-compatible wording for reports produced before the resource
+        # integrity audit existed; do not invent an audit status from old files.
+        kegg_msg = "No terms passed the significance threshold."
     if is_gprofiler or go_skipped:
         go_trio = ""
     else:
@@ -520,14 +860,24 @@ def _enrichment_section(project: Path) -> str:
         blocks += _enrich_block("GO terms — over-represented among up-regulated genes", enr / "go_ora_up.csv", "ora", empty_msg=go_msg)
         blocks += _enrich_block("GO terms — over-represented among down-regulated genes", enr / "go_ora_down.csv", "ora", empty_msg=go_msg)
     blocks += _enrich_block("GO gene-set enrichment (GSEA)", enr / "gsea.csv", "gsea", empty_msg=go_msg)
-    blocks += _enrich_block("KEGG pathways — over-representation", enr / "kegg_ora.csv", "ora")
-    blocks += _enrich_block("KEGG pathways — gene-set enrichment (GSEA)", enr / "kegg_gsea.csv", "gsea")
+    blocks += _enrich_block("KEGG pathways — over-representation", enr / "kegg_ora.csv", "ora", empty_msg=kegg_msg)
+    blocks += _enrich_block("KEGG pathways — gene-set enrichment (GSEA)", enr / "kegg_gsea.csv", "gsea", empty_msg=kegg_msg)
+    blocks += _custom_enrichment_section(project)
     if not blocks:
         if not summ.exists():
             return ""
-        msg = ("Functional enrichment was not run for this organism — no annotation database is available."
-               if go_skipped else "No GO or KEGG terms passed the significance threshold for this run.")
-        return (f"<section id='enrichment'><h2>Functional enrichment</h2>"
+        has_kegg_audit = "kegg resource status:" in summary_txt
+        if go_skipped and has_kegg_audit:
+            msg = ("GO enrichment was not run because no annotation database was available. "
+                   f"{kegg_msg}")
+        elif has_kegg_audit:
+            msg = f"No GO terms met the adjusted criterion. {kegg_msg}"
+        elif go_skipped:
+            msg = ("Functional enrichment was not run for this organism — no annotation "
+                   "database is available.")
+        else:
+            msg = "No GO terms or supported KEGG pathways met their adjusted criteria for this run."
+        return (f"<section id='enrichment'><h2>Functional enrichment</h2>{coverage}"
                 f"<p class='muted'>{msg}</p></section>")
     # The "over-represented among the changed genes" framing is only accurate if some category
     # actually returned terms; when every block is empty/not-run, soften it to avoid implying a result.
@@ -537,7 +887,7 @@ def _enrichment_section(project: Path) -> str:
              '<p class="finding" style="font-size:1rem">These are the biological themes and pathways '
              'over-represented among the changed genes — they point to <i>what</i> the changes affect. '
              'Read each as a hypothesis to check, not a settled conclusion.</p></div>') if any_real else ""
-    return (f"<section id='enrichment'><h2>Functional enrichment</h2>{plain}{blocks}"
+    return (f"<section id='enrichment'><h2>Functional enrichment</h2>{plain}{coverage}{blocks}"
             f"<p class='muted small'>Top terms by adjusted p-value. Full tables (all terms, "
             f"gene members, GSEA leading edges): <code>results/enrichment/</code>.</p></section>")
 
@@ -575,6 +925,13 @@ def _parse_sanity(text: str) -> tuple[str, list[dict]]:
     return overall, checks
 
 
+def _pretty_check_name(name: str) -> str:
+    """Return a route-neutral display label for an internal check identifier."""
+    if name == "09_deseq2_qc":
+        return "09 differential-expression QC"
+    return name.replace("_", " ")
+
+
 def _sanity_section(text: str) -> str:
     if not text.strip():
         return ""
@@ -584,7 +941,7 @@ def _sanity_section(text: str) -> str:
     rows = ""
     for c in checks:
         msgs = "".join(f"<li>{html.escape(m)}</li>" for m in c["messages"])
-        pretty = c["name"].replace("_", " ")
+        pretty = _pretty_check_name(c["name"])
         rows += (f"<tr><td class='chk-status'>{_badge(c['status'])}</td>"
                  f"<td><div class='chk-name'>{html.escape(pretty)}</div>"
                  f"<ul class='chk-msgs'>{msgs}</ul></td></tr>")
@@ -593,7 +950,7 @@ def _sanity_section(text: str) -> str:
             "diagnostic). Only a <b>FAIL</b> blocks a run.</p>")
     return (f"<section id='sanity'><div class='sec-head'><h2>Sanity checks</h2>"
             f"{_badge(overall) if overall else ''}</div>{note}"
-            f"<table class='checks'>{rows}</table></section>")
+            f"<div class='tablewrap'><table class='checks'>{rows}</table></div></section>")
 
 
 def _timing_section(t: dict) -> str:
@@ -609,11 +966,11 @@ def _timing_section(t: dict) -> str:
 
     facts = []
     if wall:
-        facts.append(("Wall-clock (approx.)", wall))
+        facts.append(("Analysis job window (approx.)", wall))
     if cumulative:
-        facts.append(("Cumulative job time", cumulative))
+        facts.append(("Cumulative analysis-job time", cumulative))
     if conf.get("snakemake_cores") is not None:
-        facts.append(("Cores", str(conf.get("snakemake_cores"))))
+        facts.append(("CPU workers", str(conf.get("snakemake_cores"))))
     if conf.get("memory_gb") is not None:
         facts.append(("Memory (GB)", str(conf.get("memory_gb"))))
     if det.get("logical_threads") is not None:
@@ -648,6 +1005,14 @@ def _timing_section(t: dict) -> str:
                       f"<code>benchmarks/*.tsv</code>. Steps run in parallel, so the phase and "
                       f"per-step times sum to more than the overall wall-clock.</p></details>")
 
+    scope_html = ""
+    if t.get("timing_scope"):
+        scope_html = (
+            "<p class='muted small'>"
+            + html.escape(str(t["timing_scope"]))
+            + " The GUI elapsed timer is the authority for the complete end-to-end run.</p>"
+        )
+
     # Machine the run executed on — recorded for reproducibility.
     machine = []
     if det.get("cpu_model"):
@@ -678,12 +1043,17 @@ def _timing_section(t: dict) -> str:
     return (f"<section id='runtime'><h2>Runtime</h2>"
             f"<div class='stats'>{fact_html}</div>"
             f"{machine_html}"
-            f"<h3>Time by phase</h3>{bars_html}{steps_html}</section>")
+            f"{scope_html}<h3>Time by phase</h3>{bars_html}{steps_html}</section>")
 
 
 def _versions_table(run: dict) -> str:
     sw = run.get("software_versions", {}) or {}
     rp = run.get("r_packages", {}) or {}
+    if _is_external_results(run):
+        sw = {key: value for key, value in sw.items()
+              if key in {"snakemake", "python", "Rscript"}}
+        local_model_packages = {"DESeq2", "limma", "apeglm", "ashr", "edgeR", "tximport"}
+        rp = {key: value for key, value in rp.items() if key not in local_model_packages}
     if not sw and not rp:
         return ""
 
@@ -712,22 +1082,28 @@ def _versions_table(run: dict) -> str:
             f"<div class='vgrid'>{blocks}</div>{prov_html}</section>")
 
 
-def _sample_composition(project: Path, num, den) -> str | None:
-    """'N den * M num' replicate counts from config/samples.tsv, matched to the two contrast levels.
+def _sample_composition(project: Path, num, den, run: dict | None = None) -> str | None:
+    """Return replicate counts from configured input.samples for a local two-group analysis.
 
     Returns None (card omitted) when the file or the 'condition' column is missing, or when the two
-    contrast levels are not both present as conditions — microarray, BYO-DESeq2-results, and
+    contrast levels are not both present as conditions — microarray, imported-results, and
     covariate/multi-level designs do not map cleanly to a single two-group count, so they degrade
     silently rather than show a wrong or partial number.
     """
+    run = run or {}
+    if _is_external_results(run):
+        return None
     if not (num and den):
         return None
-    tsv = project / "config" / "samples.tsv"
+    configured = str((run.get("input", {}) or {}).get("samples") or "config/samples.tsv").strip()
+    tsv = Path(configured)
+    if not tsv.is_absolute():
+        tsv = project / tsv
     if not tsv.exists():
         return None
     counts: dict[str, int] = {}
     try:
-        with tsv.open(encoding="utf-8", errors="replace", newline="") as fh:
+        with tsv.open(encoding="utf-8-sig", errors="replace", newline="") as fh:
             reader = csv.DictReader(fh, delimiter="\t")
             if not reader.fieldnames or "condition" not in reader.fieldnames:
                 return None
@@ -735,7 +1111,7 @@ def _sample_composition(project: Path, num, den) -> str | None:
                 c = (row.get("condition") or "").strip()
                 if c:
                     counts[c] = counts.get(c, 0) + 1
-    except OSError:
+    except (OSError, csv.Error):
         return None
     n_num, n_den = counts.get(str(num)), counts.get(str(den))
     if not n_num or not n_den:
@@ -751,6 +1127,7 @@ def _meta_cards(run: dict, project: Path) -> str:
 
     micro = run.get("microarray", {}) or {}
     is_micro = (run.get("input", {}) or {}).get("type") == "microarray"
+    is_external = _is_external_results(run)
     cards: list[tuple[str, str]] = []
 
     organism = _org_clean(ref)
@@ -762,25 +1139,50 @@ def _meta_cards(run: dict, project: Path) -> str:
     num, den = _contrast_pair(run)
     if num and den:
         cards.append(("Contrast", f"{num} vs {den}"))
-    else:
+    elif not is_external:
         contrasts = de.get("contrasts") or []
         if contrasts and isinstance(contrasts, list):
             cards.append(("Contrast", str(contrasts[0].get("name", "—"))))
-    if de.get("design_formula"):
+    if not is_external and de.get("design_formula"):
         cards.append(("Design", str(de.get("design_formula"))))
-    comp = _sample_composition(project, num, den)
+    comp = _sample_composition(project, num, den, run)
     if comp:
         cards.append(("Sample composition", comp))
 
-    de_engine = _engine_name(run)
     alpha = de.get("alpha")
     lfc = de.get("lfc_threshold")
-    thresholds = ""
-    if alpha is not None:
-        thresholds += f" · α={alpha}"
-    if lfc is not None:
-        thresholds += f" · |log2FC|≥{lfc}"
-    cards.append(("DE method", f"{de_engine}{thresholds}"))
+    if is_external:
+        provenance = _external_provenance(run)
+        filters: list[str] = []
+        if alpha is not None:
+            filters.append(f"{_adjusted_p_name(run)} < {alpha}")
+        if lfc is not None:
+            filters.append(f"|log2FC|≥{lfc}")
+        cards.append(("Result route", "Externally supplied differential-expression table"))
+        if filters:
+            cards.append(("Result filter", " · ".join(filters)))
+        cards.append(("Upstream DE method", str(provenance.get("upstream_method") or "unknown")))
+        cards.append(("Upstream LFC shrinkage", str(provenance.get("lfc_shrinkage") or "unknown")))
+        cards.append(("Upstream p-adjustment", str(provenance.get("p_adjustment_method") or "unknown")))
+    else:
+        de_engine = _engine_name(run)
+        thresholds = ""
+        if alpha is not None:
+            thresholds += f" · α={alpha}"
+        effect_semantics = _effect_size_semantics(run)
+        if lfc is not None and not effect_semantics:
+            thresholds += f" · |log2FC|≥{lfc}"
+        cards.append(("DE method", f"{de_engine}{thresholds}"))
+        if effect_semantics:
+            cutoff = effect_semantics.get("configured_absolute_log2fc_cutoff")
+            estimate = effect_semantics.get("threshold_estimate")
+            shrinkage = effect_semantics.get("shrinkage") or {}
+            cards.append(("Configured effect cutoff", f"absolute {estimate} >= {cutoff}"))
+            cards.append((
+                "Realized LFC shrinkage",
+                f"{shrinkage.get('realized_method') or 'not recorded'}; "
+                f"{shrinkage.get('role') or 'role not recorded'}",
+            ))
 
     # Microarray runs have no aligner/quantifier; surface the GEO platform + series instead.
     if is_micro:
@@ -790,7 +1192,7 @@ def _meta_cards(run: dict, project: Path) -> str:
             cards.append(("Platform", str(platform)))
         if gse:
             cards.append(("GEO series", str(gse)))
-    else:
+    elif not is_external:
         aligner = wf.get("aligner")
         quant = wf.get("quantifier")
         if aligner or quant:
@@ -803,7 +1205,7 @@ def _meta_cards(run: dict, project: Path) -> str:
 
     wall = timing.get("wall_clock_approx_hms")
     if wall:
-        cards.append(("Wall-clock", wall))
+        cards.append(("Analysis window", wall))
 
     di = run.get("download_integrity") or {}
     if di.get("total"):
@@ -902,7 +1304,8 @@ main{max-width:1080px;margin:0 auto;padding:8px clamp(16px,5vw,40px) 8px}
 .hero{padding:26px 0 4px}
 .hero .kicker{font-family:var(--sans);text-transform:uppercase;letter-spacing:.12em;font-size:.7rem;
   font-weight:700;color:var(--brand-blue)}
-.hero h1{font-family:var(--serif);font-size:clamp(1.9rem,4vw,2.5rem);line-height:1.1;margin:.35rem 0 .15rem}
+.hero h1{font-family:var(--serif);font-size:clamp(1.9rem,4vw,2.5rem);line-height:1.1;margin:.35rem 0 .15rem;
+  overflow-wrap:anywhere}
 .hero .sub{margin:0;color:var(--muted);font-family:var(--sans)}
 .hero .sub b{color:var(--text);font-weight:600}
 .hero .lede{margin:.35rem 0 0;color:var(--muted);font-family:var(--sans);font-size:.9rem;max-width:var(--measure)}
@@ -921,9 +1324,9 @@ main{max-width:1080px;margin:0 auto;padding:8px clamp(16px,5vw,40px) 8px}
 .term .tip{position:absolute;left:0;top:calc(100% + 9px);z-index:60;width:max-content;max-width:min(320px,82vw);
   background:var(--tip-bg);color:var(--tip-text);font-family:var(--sans);font-weight:400;font-size:.8rem;
   line-height:1.5;text-align:left;padding:10px 12px;border-radius:10px;box-shadow:var(--sh2);
-  opacity:0;visibility:hidden;transition:opacity .12s;pointer-events:none}
-.term:hover .tip,.term:focus-visible .tip{opacity:1;visibility:visible}
-@media(max-width:560px){.term .tip{left:auto;right:0}}
+  display:none;pointer-events:none}
+.term:hover .tip,.term:focus-visible .tip{display:block}
+.legend .li:nth-last-child(-n+2) .tip{left:auto;right:0}
 /* "How to read this" — elaboration only, never the primary result */
 .howto{margin-top:.6rem}
 .howto>summary{cursor:pointer;list-style:none;font-family:var(--sans);font-weight:600;font-size:.82rem;
@@ -934,6 +1337,7 @@ main{max-width:1080px;margin:0 auto;padding:8px clamp(16px,5vw,40px) 8px}
 .howto>summary:focus-visible{outline:2px solid var(--brand-blue);outline-offset:2px;border-radius:3px}
 .howto p{font-family:var(--sans);font-size:.82rem;color:var(--muted);line-height:1.55;margin:.45rem 0 0;
   border-left:3px solid var(--plain-border);background:var(--plain-bg);padding:.5rem .7rem;border-radius:0 6px 6px 0}
+.enrichment-coverage li{overflow-wrap:anywhere}
 /* 3 headline stats + up/down mini-bar (the 10-second scan) */
 .headline-stats{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0;max-width:var(--measure)}
 .hstat{flex:1 1 120px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);
@@ -961,9 +1365,17 @@ section h3{font-family:var(--sans);font-size:.95rem;font-weight:600;color:var(--
 .sec-head h2{border:none;margin-bottom:0}
 .figgroup{font-family:var(--serif);font-size:1.06rem;font-weight:600;color:var(--brand-blue-deep);margin:22px 0 .1rem}
 .figgroup-sub{font-family:var(--sans);font-size:.84rem;color:var(--muted);max-width:var(--measure);margin:0 0 12px}
-.panels{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.panels{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr))}
 figure.panel{margin:0;border:1px solid var(--border);border-radius:var(--r2);overflow:hidden;
   background:var(--surface);display:flex;flex-direction:column;box-shadow:var(--sh)}
+.panels>.panel[data-panel-layout="dense"]{grid-column:1/-1;min-width:0;width:100%;max-width:100%}
+.panels>.panel[data-panel-layout="dense"] .frame{min-width:0;max-width:100%}
+.panel[data-panel-layout="dense"] .dense-figure-viewport{overflow-x:auto;overflow-y:hidden;overscroll-behavior-inline:contain}
+.panel[data-panel-layout="dense"] .dense-figure-viewport:focus-visible{outline:2px solid var(--brand-blue);outline-offset:-2px}
+.panel[data-panel-layout="dense"] .dense-figure-viewport>.figbtn,
+.panel[data-panel-layout="dense"] .dense-figure-viewport>.figbtn>img{min-width:var(--dense-min-width);max-width:none}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .panel .frame{position:relative;background:#fff;border-bottom:1px solid var(--border)}
 .panel .lab{position:absolute;top:8px;left:8px;z-index:2;font-family:var(--sans);font-weight:800;font-size:.78rem;
   color:var(--text);background:#fff;border:2px solid var(--border-strong);border-radius:5px;
@@ -980,21 +1392,43 @@ figure.panel figcaption{padding:12px 14px}
 .legend .li{display:flex;align-items:center;gap:7px;font-family:var(--sans);font-size:.82rem;color:var(--text)}
 .legend .sw{width:12px;height:12px;border-radius:3px;flex:0 0 12px}
 .legend .sw.up{background:var(--up)} .legend .sw.down{background:var(--down)}
+/* Compact legends can wrap any term to the left edge. Anchor every tooltip to the
+   current legend box instead of guessing from term order, then centre a width that
+   is derived from the available container space. */
+@media(max-width:800px){
+  .legend{position:relative}
+  .legend .term{position:static}
+  .legend .li .term .tip{left:50%;right:auto;top:calc(100% + 9px);
+    width:min(320px,calc(100% - 24px));max-width:none;transform:translateX(-50%)}
+}
+@media(max-width:560px){
+  .legend .li .term .tip{top:auto;bottom:calc(100% + 9px)}
+}
 /* glossary */
 .glossary dl{margin:0;display:grid;gap:12px 18px;grid-template-columns:1fr}
 .gterm{font-family:var(--sans);font-weight:700;font-size:.9rem;color:var(--brand-blue-deep)}
 .gdef{font-family:var(--sans);font-size:.86rem;color:var(--text);line-height:1.5;margin:.15rem 0 0}
 @media(min-width:720px){.glossary dl{grid-template-columns:180px 1fr;align-items:baseline}
   .gterm{grid-column:1} .gdef{grid-column:2;margin:0}}
-.lb{display:none;position:fixed;inset:0;background:rgba(12,13,26,.86);z-index:9999;padding:28px;overflow:auto;cursor:zoom-out}
-.lb.open{display:flex;align-items:center;justify-content:center}
-.lb img{max-width:100%;max-height:100%;background:#fff;border-radius:10px;box-shadow:0 12px 48px rgba(0,0,0,.5);cursor:zoom-in}
-.lb img.zoomed{max-width:none;max-height:none;width:170%;cursor:zoom-out}
-.lb .hint{position:fixed;top:14px;left:0;right:0;text-align:center;color:#e8e8f5;font-family:var(--sans);font-size:.78rem;opacity:.85;pointer-events:none}
+.lb{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;border:0;
+  padding:52px 28px 28px;background:transparent;overflow:auto;color:#e8e8f5;cursor:zoom-out}
+.lb::backdrop{background:rgba(12,13,26,.86)}
+.lb[open]{display:block}
+.lb-stage{min-width:100%;min-height:calc(100dvh - 80px);display:grid;place-items:center}
+.lb.is-zoomed .lb-stage{display:block;min-height:0;place-items:start}
+.lb img{display:block;max-width:100%;max-height:calc(100dvh - 80px);margin:auto;background:#fff;
+  border-radius:10px;box-shadow:0 12px 48px rgba(0,0,0,.5);cursor:zoom-in}
+.lb img:focus-visible{outline:3px solid #fff;outline-offset:3px}
+.lb img.zoomed{max-width:none;max-height:none;width:170%;margin:0;cursor:zoom-out}
+.lb .hint{position:fixed;top:14px;left:52px;right:52px;text-align:center;color:#e8e8f5;
+  font-family:var(--sans);font-size:.78rem;opacity:.85;pointer-events:none}
+.lb-close{position:fixed;top:9px;right:12px;z-index:1;width:36px;height:36px;border:1px solid rgba(255,255,255,.55);
+  border-radius:999px;background:#fff;color:#14151b;font:700 1.2rem/1 var(--sans);cursor:pointer}
+.lb-close:focus-visible{outline:3px solid #fff;outline-offset:3px}
 .enr-block{margin:0 0 1.3rem}
 .enr-block h3{margin:.2rem 0 .5rem}
 table.enr th.desc,table.enr td.desc{white-space:normal;min-width:190px;max-width:460px;text-align:left;font-family:var(--sans)}
-.de-split{display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.de-split{display:grid;gap:20px;grid-template-columns:minmax(0,1fr)}
 .de-split h3{display:flex;align-items:center;gap:8px;margin-top:0}
 .pill{font-family:var(--sans);font-size:.66rem;font-weight:700;padding:.1rem .45rem;border-radius:999px}
 /* up=red, down=blue — echoes the volcano/figure direction palette (#C0392B / #2C7BB6). */
@@ -1052,6 +1486,9 @@ footer .flinks{display:flex;flex-wrap:wrap;gap:16px;margin-bottom:8px}
   details{display:block!important} details>summary{display:none!important}
   .tablewrap{overflow:visible!important}
   table.data th,table.data td{white-space:normal!important}
+  .panel[data-panel-layout="dense"] .dense-figure-viewport{overflow:visible!important;max-width:none!important}
+  .panel[data-panel-layout="dense"] .dense-figure-viewport>.figbtn,
+  .panel[data-panel-layout="dense"] .dense-figure-viewport>.figbtn>img{width:100%!important;min-width:0!important;max-width:100%!important}
   section,figure.panel,.enr-block,.hstat,.card,.stat,tr{break-inside:avoid}
   .dirbar,.pill,.badge,.plain,.hstat .v,table.data thead th{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   a[href]{color:inherit}
@@ -1069,7 +1506,7 @@ def section(title: str, body: str, pre: bool = False, sid: str = "") -> str:
 
 
 _MODE_LABEL = {"microarray": "Microarray", "fastq": "RNA-seq",
-               "count_matrix": "Count matrix", "deseq2_results": "Provided DESeq2 results"}
+               "count_matrix": "Count matrix", "deseq2_results": "Provided differential-expression results"}
 
 
 def _hero_findings(run: dict, project: Path, sanity_text: str, name: str) -> str:
@@ -1077,12 +1514,13 @@ def _hero_findings(run: dict, project: Path, sanity_text: str, name: str) -> str
     # stat chips + up/down mini-bar, status badge + sentence, and the "how to read" details.
     inp = run.get("input", {}) or {}
     de = run.get("deseq2", {}) or {}
-    unit = "probes" if inp.get("type") == "microarray" else "genes"
+    unit = "genes/features" if inp.get("type") == "microarray" else "genes"
     alpha = float(de.get("alpha") or 0.05)
     lfc_t = _lfc_threshold(run, sanity_text)
     up, down, tested, top_up, top_down = _de_headline_stats(project, alpha, lfc_t)
     total = up + down
     num, den = _contrast_pair(run)
+    is_external = _is_external_results(run)
 
     mode = _MODE_LABEL.get(inp.get("type"), "")
     organism = _org_clean(run.get("reference", {}) or {})
@@ -1097,6 +1535,11 @@ def _hero_findings(run: dict, project: Path, sanity_text: str, name: str) -> str
         up_pct = up / total * 100
         down_pct = 100 - up_pct
         num_lbl = html.escape(str(num)) if num else "treated"
+        up_label = f"Higher in {num_lbl}"
+        down_label = f"Lower in {num_lbl}"
+        if is_external and not (num and den):
+            up_label = "Positive log2FC"
+            down_label = "Negative log2FC"
         chips = (
             '<div class="headline-stats">'
             f'<div class="hstat"><div class="v">{total:,}</div>'
@@ -1105,9 +1548,9 @@ def _hero_findings(run: dict, project: Path, sanity_text: str, name: str) -> str
             f'<span class="up" style="width:{up_pct:.1f}%"></span>'
             f'<span class="down" style="width:{down_pct:.1f}%"></span></div></div>'
             f'<div class="hstat up"><div class="v">&#9650;&nbsp;{up:,}</div>'
-            f'<div class="k">Higher in {num_lbl}</div></div>'
+            f'<div class="k">{up_label}</div></div>'
             f'<div class="hstat down"><div class="v">&#9660;&nbsp;{down:,}</div>'
-            f'<div class="k">Lower in {num_lbl}</div></div></div>')
+            f'<div class="k">{down_label}</div></div></div>')
 
     overall, _ = _parse_sanity(sanity_text)
     status = _status_sentence(sanity_text)
@@ -1116,6 +1559,8 @@ def _hero_findings(run: dict, project: Path, sanity_text: str, name: str) -> str
         badge = _badge(overall) if overall else ""
         status_line = f'<div class="status-line">{badge}<span>{html.escape(status)}</span></div>'
 
+    direction_context = (f"in {html.escape(str(num))} relative to {html.escape(str(den))}"
+                         if num and den else "for the recorded comparison")
     howto = (
         '<details class="howto"><summary>How to read this report</summary>'
         '<p>Each section opens with a <b>teal box</b> explaining the finding in plain language; the '
@@ -1123,8 +1568,8 @@ def _hero_findings(run: dict, project: Path, sanity_text: str, name: str) -> str
         '<span style="border-bottom:1px dotted var(--brand-teal);color:var(--plain-ink);font-weight:600">'
         'Dotted-underlined</span> terms show a definition on hover or keyboard focus, and every one is '
         'collected in the Glossary at the end. Direction is colour-coded throughout: '
-        '<b style="color:var(--up-ink)">&#9650; red = higher</b>, '
-        '<b style="color:var(--down-ink)">&#9660; blue = lower</b> in the treated group.</p></details>')
+        f'<b style="color:var(--up-ink)">&#9650; red = higher</b>, '
+        f'<b style="color:var(--down-ink)">&#9660; blue = lower</b> {direction_context}.</p></details>')
 
     return (
         '<div class="hero"><div class="kicker">Guided results report</div>'
@@ -1139,13 +1584,94 @@ def _hero_findings(run: dict, project: Path, sanity_text: str, name: str) -> str
         f'{chips}{status_line}{howto}</section>')
 
 
+_STRANDEDNESS_LABELS = {0: "unstranded", 1: "forward", 2: "reverse"}
+
+
+def _realized_strandedness_text(run: dict) -> str | None:
+    """Render only the validated realized record; never fall back to configuration."""
+    provenance = run.get("strandedness")
+    realized = provenance.get("realized") if isinstance(provenance, dict) else None
+    if not isinstance(realized, dict):
+        return None
+    code = realized.get("code")
+    label = realized.get("label")
+    path = realized.get("path")
+    if (isinstance(code, bool) or code not in _STRANDEDNESS_LABELS
+            or label != _STRANDEDNESS_LABELS[code] or not isinstance(path, str)
+            or not path.strip()):
+        return None
+    return f"{label} ({code}; realized from {path})"
+
+
+def _effect_size_semantics(run: dict) -> dict | None:
+    """Return the recorded raw-cutoff/shrinkage contract when it is complete."""
+    semantics = run.get("effect_size_semantics")
+    if not isinstance(semantics, dict):
+        return None
+    estimate = semantics.get("threshold_estimate")
+    shrinkage = semantics.get("shrinkage")
+    if not estimate or not isinstance(shrinkage, dict):
+        return None
+    return semantics
+
+
 def _study_design_section(run: dict) -> str:
     de = run.get("deseq2", {}) or {}
     ref = run.get("reference", {}) or {}
-    is_micro = (run.get("input", {}) or {}).get("type") == "microarray"
+    inp = run.get("input", {}) or {}
+    is_micro = inp.get("type") == "microarray"
+    is_uploaded_results = inp.get("type") == "deseq2_results"
     num, den = _contrast_pair(run)
     engine = _engine_name(run)
     design = de.get("design_formula")
+    if is_uploaded_results:
+        provenance = _external_provenance(run)
+        direction = inp.get("deseq2_results_direction") or {}
+        confirmed = isinstance(direction, dict) and direction.get("confirmed") is True
+        confirmed_at = (str(direction.get("confirmed_at") or "").strip()
+                        if isinstance(direction, dict) else "")
+        semantics_confirmed = confirmed and bool(num and den)
+        if semantics_confirmed:
+            sentence = ("This report uses externally supplied differential-expression results. "
+                        f"Positive log2 fold change means higher expression in "
+                        f"<b>{html.escape(str(num))}</b> (the confirmed numerator) than "
+                        f"<b>{html.escape(str(den))}</b> (the confirmed denominator).")
+        else:
+            sentence = ("This report uses externally supplied differential-expression results; "
+                        "group labels are not interpreted because numerator/denominator semantics "
+                        "were not confirmed.")
+        confirmation = "confirmed" if semantics_confirmed else "not confirmed"
+        if semantics_confirmed and confirmed_at:
+            confirmation += f" at {html.escape(confirmed_at)}"
+        columns = provenance.get("column_names")
+        column_text = ", ".join(str(value) for value in columns) if isinstance(columns, list) else ""
+        selected = (
+            f"gene ID={provenance.get('gene_id_column') or 'not recorded'}; "
+            f"log2 fold change={provenance.get('log2fc_column') or 'not recorded'}; "
+            f"adjusted p-value={provenance.get('adjusted_p_column') or 'not recorded'}"
+        )
+        rows = [
+            ("Original basename", provenance.get("original_basename") or "not recorded"),
+            ("Import timestamp", provenance.get("imported_at") or "not recorded"),
+            ("Project copy", provenance.get("project_copy") or inp.get("deseq2_results") or "not recorded"),
+            ("Project-copy SHA-256", provenance.get("sha256") or "not recorded"),
+            ("Project-copy byte size", provenance.get("byte_size") if provenance.get("byte_size") is not None else "not recorded"),
+            ("Imported rows", provenance.get("row_count") if provenance.get("row_count") is not None else "not recorded"),
+            ("Imported columns", column_text or "not recorded"),
+            ("Selected columns", selected),
+            ("Upstream differential-expression method", provenance.get("upstream_method") or "unknown"),
+            ("Upstream LFC shrinkage", provenance.get("lfc_shrinkage") or "unknown"),
+            ("Upstream p-adjustment method", provenance.get("p_adjustment_method") or "unknown"),
+            ("Numerator/denominator semantics", confirmation),
+            ("Local route behavior", "No read processing, alignment, count quantification, local DE model, or local LFC shrinkage was run"),
+        ]
+        body = "".join(
+            f"<tr><td>{html.escape(str(k))}</td><td class='mono'>{html.escape(str(v))}</td></tr>"
+            for k, v in rows)
+        details = ("<details class='howto'><summary>Imported-results provenance</summary>"
+                   "<div class='tablewrap' style='margin-top:.5rem'><table class='data'>"
+                   f"<tbody>{body}</tbody></table></div></details>")
+        return section("Imported-results provenance", f"<p>{sentence}</p>{details}", sid="design")
     if not (num and den) and not design:
         return ""
 
@@ -1168,8 +1694,18 @@ def _study_design_section(run: dict) -> str:
     add("Reference mode", ref.get("mode"))
     add("Reference source", ref.get("source"))
     add("Reference release", ref.get("release"))
-    if de.get("lfc_shrinkage"):
-        add("LFC shrinkage", de.get("shrinkage_method") or "enabled")
+    effect_semantics = _effect_size_semantics(run)
+    if effect_semantics:
+        cutoff = effect_semantics.get("configured_absolute_log2fc_cutoff")
+        estimate = effect_semantics.get("threshold_estimate")
+        shrinkage = effect_semantics.get("shrinkage") or {}
+        add("Configured effect cutoff", f"absolute {estimate} >= {cutoff}")
+        add(
+            "Effect-cutoff scope",
+            "up/down differential-expression gene sets and enrichment input sets derived from them",
+        )
+        add("Realized LFC shrinkage", shrinkage.get("realized_method") or "not recorded")
+        add("Shrinkage role", shrinkage.get("role") or "not recorded")
     # DESeq2 and limma both control the false-discovery rate with Benjamini-Hochberg by default;
     # state it so the multiple-testing method is on the record, not only in the glossary.
     # Scoped to differential expression on purpose: the enrichment tables are corrected
@@ -1177,13 +1713,16 @@ def _study_design_section(run: dict) -> str:
     # column headers, so an unqualified label here would misstate one of them.
     add("Multiple-testing correction (differential expression)", "Benjamini-Hochberg (FDR)")
     if not is_micro:
-        fc = run.get("featurecounts", {}) or {}
-        if fc.get("strandedness") is not None:
-            add("Strandedness", fc.get("strandedness"))
+        strandedness_text = _realized_strandedness_text(run)
+        if strandedness_text:
+            add("Realized strandedness", strandedness_text)
     custom = run.get("customized_parameters", {}) or {}
     for pkey, pv in custom.items():
         if isinstance(pv, dict) and not isinstance(pv.get("used"), (list, dict)):
-            add(pkey, pv.get("used"))
+            label = pkey
+            if is_micro and pkey == "deseq2.reference_level.condition":
+                label = "Comparison reference level"
+            add(label, pv.get("used"))
 
     details = ""
     if rows:
@@ -1205,6 +1744,11 @@ _MICRO_TECH_SUBS = (
     ("shrunken log2 fold change", "log2 fold change (limma, unshrunken)"),
 )
 
+_MICRO_HOWTO_SUBS = (
+    ("lowest-count genes", "genes with the lowest measured expression"),
+    ("low-count genes", "genes with low measured expression"),
+)
+
 
 def _micro_tech(tech: str) -> str:
     for old, new in _MICRO_TECH_SUBS:
@@ -1212,7 +1756,53 @@ def _micro_tech(tech: str) -> str:
     return tech
 
 
-def _panel(figs: Path, basename: str, letter: str, cap_lead: str = "", is_micro: bool = False) -> str:
+def _micro_howto(howto: str) -> str:
+    for old, new in _MICRO_HOWTO_SUBS:
+        howto = howto.replace(old, new)
+    return howto
+
+
+def _external_figure_copy(basename: str, tech: str, howto: str, run: dict) -> tuple[str, str]:
+    """Describe source-supplied statistics without assigning a local model or method."""
+    if basename == "pvalue_histogram":
+        return (
+            "Distribution of source-supplied raw p-values across genes in the project copy.",
+            "This distribution describes the supplied table. A spike near zero can reflect upstream "
+            "signal; irregular shapes can reflect upstream modelling or filtering. BulkSeq Studio "
+            "did not fit that model.",
+        )
+    if basename == "volcano":
+        p_name = html.escape(_adjusted_p_name(run))
+        return (
+            f"x: source-supplied log2 fold change; y: −log10 {p_name}. Dashed guides mark "
+            "the report's adjusted-p and fold-change cut-offs.",
+            "Every dot is a source-table gene. Left–right is the supplied effect direction and "
+            "height reflects the supplied adjusted p-value; the upstream model is not inferred.",
+        )
+    if basename == "ma_plot":
+        shrinkage = _recorded_method(run, "lfc_shrinkage")
+        if shrinkage == "applied":
+            effect = "source-supplied log2 fold change (upstream shrinkage recorded as applied)"
+        elif shrinkage == "not_applied":
+            effect = "source-supplied log2 fold change (upstream shrinkage recorded as not applied)"
+        else:
+            effect = "source-supplied log2 fold change (upstream shrinkage state unknown)"
+        return (
+            f"x: source-supplied mean-expression measure (log scale); y: {effect}.",
+            "This plots supplied effect sizes against the supplied mean-expression measure. "
+            "BulkSeq Studio did not fit the upstream model or alter the effect signs.",
+        )
+    return tech, howto
+
+
+def _panel(
+    figs: Path,
+    basename: str,
+    letter: str,
+    cap_lead: str = "",
+    is_micro: bool = False,
+    run: dict | None = None,
+) -> str:
     # One grouped, letter-chipped figure panel. Preserves the exact zoom contract:
     # button.figbtn > img, onclick bsqZoom(this) reads querySelector('img').
     src = _fig_src(figs, basename)
@@ -1221,10 +1811,17 @@ def _panel(figs: Path, basename: str, letter: str, cap_lead: str = "", is_micro:
     _grp, title, lead, tech, howto = FIG[basename]
     if is_micro:
         tech = _micro_tech(tech)
+        howto = _micro_howto(howto)
+    if run and _is_external_results(run):
+        tech, howto = _external_figure_copy(basename, tech, howto, run)
+    if run:
+        howto = _directional_figure_copy(basename, howto, run)
     lead = cap_lead or lead
     alt = html.escape(title)
+    panel_attrs = _panel_attrs(basename)
+    frame_open = _panel_frame_open(basename, title)
     return (
-        '<figure class="panel"><div class="frame">'
+        f'<figure {panel_attrs}>{frame_open}'
         f'<span class="lab" aria-hidden="true">{letter}</span>'
         f'<button class="figbtn" type="button" onclick="bsqZoom(this)" '
         f'aria-label="Open {alt} full size"><img alt="{alt}" src="{src}"/></button></div>'
@@ -1234,13 +1831,24 @@ def _panel(figs: Path, basename: str, letter: str, cap_lead: str = "", is_micro:
         '</figcaption></figure>')
 
 
-def _figure_groups(figs: Path, up: int, down: int, unit: str, is_micro: bool = False) -> str:
+def _figure_groups(
+    figs: Path,
+    up: int,
+    down: int,
+    unit: str,
+    is_micro: bool = False,
+    run: dict | None = None,
+) -> str:
     total = up + down
     dyn = {}
     if total > 0:
         dyn["volcano"] = f"{up:,} {unit} rose and {down:,} fell past the cut-off."
-        dyn["top_upregulated_heatmap"] = f"The {min(up, 50):,} strongest increases, sample by sample."
-        dyn["top_downregulated_heatmap"] = f"The {min(down, 50):,} strongest decreases, sample by sample."
+        dyn["top_upregulated_heatmap"] = (
+            f"The {min(up, 50):,} most statistically supported increases, sample by sample."
+        )
+        dyn["top_downregulated_heatmap"] = (
+            f"The {min(down, 50):,} most statistically supported decreases, sample by sample."
+        )
     letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     idx = 0
     out: list[str] = []
@@ -1249,8 +1857,14 @@ def _figure_groups(figs: Path, up: int, down: int, unit: str, is_micro: bool = F
         for basename, meta in FIG.items():
             if meta[0] != gkey:
                 continue
+            if run and _is_external_results(run) and basename not in {
+                "pvalue_histogram", "volcano", "ma_plot", "enrichment_dotplot",
+                "enrichment_kegg_dotplot", "ppi_network",
+            }:
+                continue
             letter = letters[idx] if idx < len(letters) else str(idx + 1)
-            p = _panel(figs, basename, letter, dyn.get(basename, ""), is_micro=is_micro)
+            p = _panel(
+                figs, basename, letter, dyn.get(basename, ""), is_micro=is_micro, run=run)
             if not p:
                 continue
             panels.append(p)
@@ -1267,33 +1881,73 @@ def _figure_groups(figs: Path, up: int, down: int, unit: str, is_micro: bool = F
     return f'<section id="figures"><h2>Figures</h2>{intro}{"".join(out)}</section>'
 
 
-def _de_section(project: Path, up: int, down: int, num, den, unit: str) -> str:
-    split = _de_split(project)
+def _de_section(
+    project: Path,
+    up: int,
+    down: int,
+    num,
+    den,
+    unit: str,
+    run: dict | None = None,
+) -> str:
+    input_type = (run or {}).get("input", {}).get("type")
+    base_mean_kind = "expression" if input_type in {"microarray", "deseq2_results"} else "count"
+    split = _de_split(project, base_mean_kind=base_mean_kind)
     if not split:
         return ""
     total = up + down
     one = unit[:-1] if unit.endswith("s") else unit
     badge = f'<span class="badge muted">{total:,} {unit}</span>' if total else ""
+    run = run or {}
+    is_external = _is_external_results(run)
+    gloss = _route_gloss(run)
     num_lbl = html.escape(str(num)) if num else "the treated group"
     den_lbl = html.escape(str(den)) if den else "the control group"
+    if is_external and not (num and den):
+        plain_finding = (
+            f"Of the {unit} tested, <b>{up:,}</b> had <b class='up'>positive log2FC</b> and "
+            f"<b>{down:,}</b> had <b class='down'>negative log2FC</b> in the supplied table. "
+            "Group labels are not assigned because numerator/denominator semantics were not confirmed."
+        )
+        direction_legend = (
+            '<span class="li"><span class="sw up"></span>&#9650; positive log2FC</span>'
+            '<span class="li"><span class="sw down"></span>&#9660; negative log2FC</span>'
+        )
+    else:
+        plain_finding = (
+            f"Of the {unit} tested, <b>{up:,}</b> were clearly <b class='up'>higher</b> and "
+            f"<b>{down:,}</b> clearly <b class='down'>lower</b> in {num_lbl} than in {den_lbl}. "
+            "The biggest movers in each direction are listed below — useful as leads to follow up."
+        )
+        direction_legend = (
+            f'<span class="li"><span class="sw up"></span>&#9650; higher in {num_lbl}</span>'
+            f'<span class="li"><span class="sw down"></span>&#9660; lower in {num_lbl}</span>'
+        )
     plain = (
         '<div class="plain"><span class="tag">In plain terms</span>'
-        f'<p class="finding" style="font-size:1rem">Of the {unit} tested, <b>{up:,}</b> were clearly '
-        f'<b class="up">higher</b> and <b>{down:,}</b> clearly <b class="down">lower</b> in '
-        f'{num_lbl} than in {den_lbl}. The biggest movers in each direction are listed below — '
-        'useful as leads to follow up.</p></div>')
+        f'<p class="finding" style="font-size:1rem">{plain_finding}</p></div>')
+    p_label = "FDR (padj)" if not is_external else f"{_adjusted_p_name(run)} (padj)"
     legend = (
         '<div class="legend" aria-label="How to read the columns">'
-        f'<span class="li"><span class="sw up"></span>&#9650; higher in {num_lbl}</span>'
-        f'<span class="li"><span class="sw down"></span>&#9660; lower in {num_lbl}</span>'
-        f'<span class="li">{_term("log2fc", "log2 fold change")}</span>'
-        f'<span class="li">{_term("padj", "FDR (padj)")}</span>'
-        f'<span class="li">{_term("basemean", "baseMean")}</span></div>')
+        f'{direction_legend}'
+        f'<span class="li">{_term("log2fc", "log2 fold change", gloss["log2fc"])}</span>'
+        f'<span class="li">{_term("padj", html.escape(p_label), gloss["padj"])}</span>'
+        f'<span class="li">{_term("basemean", "baseMean", gloss["basemean"])}</span></div>')
+    adjusted_explanation = (
+        "<b>padj</b> is the source-supplied adjusted p-value"
+        if is_external else "<b>padj</b> is confidence"
+    )
+    if is_external:
+        mean_explanation = "<b>baseMean</b> is a source-supplied mean-expression measure"
+    elif input_type == "microarray":
+        mean_explanation = "<b>baseMean</b> is mean normalized log2 expression intensity"
+    else:
+        mean_explanation = "<b>baseMean</b> is the mean normalized read count"
     howto = (
         '<details class="howto"><summary>How to read this table</summary>'
         f'<p>Each row is one {one}. <b>log2FC</b> is the size and direction of the change '
-        '(red + = higher, blue &minus; = lower); <b>padj</b> is confidence (smaller = stronger, '
-        f'and every {one} here is below &alpha;); <b>baseMean</b> is overall expression — a big fold '
+        f'(red + = higher, blue &minus; = lower); {adjusted_explanation} (smaller = stronger, '
+        f'and every {one} here is below &alpha;); {mean_explanation} — a big fold '
         'change on a very low baseMean is worth checking before trusting it. Click or press Enter on a header to sort. '
         'Full lists: <code>results/deseq2/upregulated_genes.csv</code> and '
         '<code>downregulated_genes.csv</code>.</p></details>')
@@ -1301,33 +1955,46 @@ def _de_section(project: Path, up: int, down: int, num, den, unit: str) -> str:
             f'{plain}{legend}{split}{howto}</section>')
 
 
-def _goi_section(project: Path) -> str:
+def _goi_section(project: Path, run: dict | None = None) -> str:
     # Custom gene-of-interest list (config/gene_sets.custom_gene_list): focused heatmap,
     # per-gene expression, log2FC bar chart, and a DESeq2 slice table. Every piece is optional
     # (the rule only runs when a gene list is configured), so each embeds only if present and
     # the whole section vanishes via section()'s empty-body check when nothing exists.
+    run = run or {}
+    is_external = _is_external_results(run)
     figs = project / "results" / "figures"
-    figures = "".join(f for f in (
-        _fig(figs, "goi_heatmap", "Genes of interest — focused heatmap across samples"),
-        _fig(figs, "goi_expression", "Genes of interest — per-gene expression across conditions"),
-        _fig(figs, "goi_log2fc", "Genes of interest — log2 fold change"),
-    ) if f)
+    figure_specs = [("goi_log2fc", "Genes of interest — source-supplied log2 fold change")]
+    if not is_external:
+        figure_specs = [
+            ("goi_heatmap", "Genes of interest — focused heatmap across samples"),
+            ("goi_expression", "Genes of interest — per-gene expression across conditions"),
+            ("goi_log2fc", "Genes of interest — log2 fold change"),
+        ]
+    figures = "".join(
+        figure for basename, caption in figure_specs
+        if (figure := _fig(figs, basename, caption)))
     fig_html = f"<div class='panels'>{figures}</div>" if figures else ""
+    result_label = "differential-expression" if is_external else "DESeq2"
     table = _de_table(project / "results" / "genes_of_interest" / "goi_deseq2_results.csv", top=25,
-                      empty_msg="No genes-of-interest DESeq2 results available.")
+                      empty_msg=f"No genes-of-interest {result_label} results available.")
     table_html = "" if table.startswith("<p class='muted small'>No genes-of-interest") else (
-        f"<h3>Genes of interest — DESeq2 results</h3>{table}"
+        f"<h3>Genes of interest — {result_label} results</h3>{table}"
         f"<p class='muted small'>Full table: "
         f"<code>results/genes_of_interest/goi_deseq2_results.csv</code>.</p>")
     body = fig_html + table_html
     return body
 
 
-def _glossary_section() -> str:
+def _glossary_section(run: dict | None = None) -> str:
+    run = run or {}
+    definitions = _route_gloss(run)
+    order = list(GLOSS_ORDER)
+    if _is_external_results(run):
+        order[0] = (f"{_adjusted_p_name(run)} (padj)", "padj")
     items = "".join(
         f'<div class="gterm">{html.escape(label)}</div>'
-        f'<div class="gdef">{html.escape(GLOSS[key])}</div>'
-        for label, key in GLOSS_ORDER if key in GLOSS)
+        f'<div class="gdef">{html.escape(definitions[key])}</div>'
+        for label, key in order if key in definitions)
     if not items:
         return ""
     return ('<section id="glossary" class="glossary"><h2>Glossary</h2>'
@@ -1357,7 +2024,7 @@ def build(project: Path) -> str:
     inp = run.get("input", {}) or {}
     de = run.get("deseq2", {}) or {}
     is_micro = inp.get("type") == "microarray"
-    unit = "probes" if is_micro else "genes"
+    unit = "genes/features" if is_micro else "genes"
     alpha = float(de.get("alpha") or 0.05)
     lfc_t = _lfc_threshold(run, sanity)
     up, down, _tested, _tu, _td = _de_headline_stats(project, alpha, lfc_t)
@@ -1365,16 +2032,16 @@ def build(project: Path) -> str:
 
     hero_findings = _hero_findings(run, project, sanity, name)
     meta_cards = _meta_cards(run, project)
-    meta_link = _meta_analysis_link(project)
+    meta_link = "" if _is_external_results(run) else _meta_analysis_link(project)
     study = _study_design_section(run)
-    figures = _figure_groups(figs, up, down, unit, is_micro=is_micro)
-    de_html = _de_section(project, up, down, num, den, unit)
-    goi_html = section("Genes of interest", _goi_section(project), sid="goi")
+    figures = _figure_groups(figs, up, down, unit, is_micro=is_micro, run=run)
+    de_html = _de_section(project, up, down, num, den, unit, run=run)
+    goi_html = section("Genes of interest", _goi_section(project, run), sid="goi")
     enrichment = _enrichment_section(project)
     runtime = _timing_section(timing)
     sanity_html = _sanity_section(sanity)
     versions = _versions_table(run)
-    glossary = _glossary_section()
+    glossary = _glossary_section(run)
 
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1412,13 +2079,22 @@ def build(project: Path) -> str:
 free and open-source under the MIT License. This report is fully self-contained —
 figures, tables and the logo are embedded, so no internet or external files are needed to view it.</p>
 </footer>
-<div id="bsq-lb" class="lb" role="dialog" aria-modal="true" aria-label="Figure viewer" onclick="bsqClose()"><span class="hint">Click image to zoom · click background or press Esc to close</span><img id="bsq-lb-img" alt="" tabindex="-1"></div>
+<dialog id="bsq-lb" class="lb" aria-label="Figure viewer">
+<button id="bsq-lb-close" class="lb-close" type="button" autofocus aria-label="Close figure viewer">&times;</button>
+<span class="hint">Click image to zoom · click background or press Esc to close</span>
+<div class="lb-stage"><img id="bsq-lb-img" alt="" tabindex="0"></div></dialog>
 <script>
-function bsqZoom(btn){{var img=btn.querySelector('img');var li=document.getElementById('bsq-lb-img');li.className='';li.src=img.src;li.alt=img.alt||'';li.setAttribute('aria-label',img.alt||'Figure');window._bsqTrig=btn;document.getElementById('bsq-lb').classList.add('open');li.focus();}}
-function bsqClose(){{document.getElementById('bsq-lb').classList.remove('open');if(window._bsqTrig){{window._bsqTrig.focus();window._bsqTrig=null;}}}}
-(function(){{var li=document.getElementById('bsq-lb-img');
-li.addEventListener('click',function(e){{this.classList.toggle('zoomed');e.stopPropagation();}});
-document.addEventListener('keydown',function(e){{if(e.key==='Escape')bsqClose();}});}})();
+function bsqResetZoom(){{var lb=document.getElementById('bsq-lb');var li=document.getElementById('bsq-lb-img');li.classList.remove('zoomed');lb.classList.remove('is-zoomed');lb.scrollLeft=0;lb.scrollTop=0;}}
+function bsqFinishClose(){{var lb=document.getElementById('bsq-lb');if(lb.open)return;var li=document.getElementById('bsq-lb-img');var trigger=window._bsqTrig;window._bsqTrig=null;bsqResetZoom();li.removeAttribute('src');if(trigger&&trigger.isConnected)trigger.focus();}}
+function bsqZoom(btn){{var img=btn.querySelector('img');var lb=document.getElementById('bsq-lb');var li=document.getElementById('bsq-lb-img');if(!img||!lb||typeof lb.showModal!=='function')return;bsqResetZoom();li.src=img.src;li.alt=img.alt||'';li.setAttribute('aria-label',img.alt||'Figure');window._bsqTrig=btn;lb.showModal();document.getElementById('bsq-lb-close').focus();}}
+function bsqClose(){{var lb=document.getElementById('bsq-lb');if(lb.open)lb.close();bsqFinishClose();}}
+(function(){{var lb=document.getElementById('bsq-lb');var li=document.getElementById('bsq-lb-img');var close=document.getElementById('bsq-lb-close');
+close.addEventListener('click',bsqClose);
+lb.addEventListener('click',function(e){{if(e.target===lb)bsqClose();}});
+li.addEventListener('click',function(e){{var zoomed=this.classList.toggle('zoomed');lb.classList.toggle('is-zoomed',zoomed);lb.scrollLeft=0;lb.scrollTop=0;e.stopPropagation();}});
+lb.addEventListener('keydown',function(e){{if(e.key!=='Tab')return;var items=[close,li];var first=items[0],last=items[items.length-1];if(e.shiftKey&&(document.activeElement===first||!lb.contains(document.activeElement))){{e.preventDefault();last.focus();}}else if(!e.shiftKey&&(document.activeElement===last||!lb.contains(document.activeElement))){{e.preventDefault();first.focus();}}}});
+lb.addEventListener('close',bsqFinishClose);
+}})();
 // Sortable tables: click a header to sort; numeric columns sort numerically. Third
 // click restores the original order. Purely client-side, no dependencies.
 (function(){{

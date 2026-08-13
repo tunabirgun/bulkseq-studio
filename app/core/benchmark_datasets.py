@@ -52,6 +52,7 @@ def create_benchmark_project(benchmark_id: str, working_directory: Path, project
         cfg.enrichment.orgdb = entry.get("orgdb") or None
         cfg.enrichment.kegg_organism = entry.get("kegg_organism") or None
         cfg.enrichment.gprofiler_organism = entry.get("gprofiler_organism") or None
+        cfg.enrichment.taxon_id = entry.get("taxon_id")
         cfg.ppi.taxon = entry.get("string_taxon")
     if is_micro:
         # Microarray: GEO intensities -> limma; no alignment or genome reference. Probes map
@@ -80,6 +81,8 @@ def create_benchmark_project(benchmark_id: str, working_directory: Path, project
             cfg.reference.annotation_file = "references/annotation.gtf"
             cfg.reference.genome_fasta_url = ref.get("genome_fasta_url")
             cfg.reference.annotation_gtf_url = ref.get("annotation_gtf_url")
+            cfg.reference.genome_md5 = ref.get("genome_md5")
+            cfg.reference.annotation_md5 = ref.get("annotation_md5")
         cfg.workflow.aligner = "STAR"
         cfg.workflow.quantifier = "featureCounts"
     # Differential-expression contrast from the benchmark entry (not hardcoded), so
@@ -153,6 +156,9 @@ def _samples_dataframe(benchmark: dict[str, Any]) -> pd.DataFrame:
                 "base_count": sample.get("base_count", ""),
                 "fastq_1_url": sample["fastq_1_url"],
                 "fastq_2_url": sample.get("fastq_2_url", "") if paired else "",
+                "fastq_1_md5": sample.get("fastq_1_md5", ""),
+                "fastq_2_md5": sample.get("fastq_2_md5", "") if paired else "",
+                "download_bytes": sample.get("download_bytes", ""),
             }
         )
     return pd.DataFrame(rows)

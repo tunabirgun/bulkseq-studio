@@ -62,6 +62,44 @@ palette_spec <- function(name) {
   }
 }
 
+# ---- Contrast-aware categorical colours ------------------------------------
+# Differential-expression figures use a semantic two-colour contract instead
+# of whichever order happens to occur in the metadata: denominator/reference is
+# the first (cool) colour and numerator/comparison is the second (warm) colour.
+# Remaining levels are assigned deterministically by name. This keeps PCA,
+# annotation strips and every DEG heatmap consistent even when rows/columns are
+# reordered by clustering or a sample sheet is rewritten in a different order.
+contrast_color_map <- function(levels, contrast = NULL, discrete) {
+  levels <- unique(as.character(levels))
+  levels <- levels[!is.na(levels) & nzchar(levels)]
+  if (!length(levels)) return(setNames(character(0), character(0)))
+  if (length(discrete) < 2) stop("contrast_color_map needs at least two discrete colours")
+
+  numerator <- tryCatch(trimws(as.character(contrast[["numerator"]])[1]),
+                        error = function(e) "")
+  denominator <- tryCatch(trimws(as.character(contrast[["denominator"]])[1]),
+                          error = function(e) "")
+  semantic <- nzchar(numerator) && nzchar(denominator) &&
+    !identical(numerator, denominator) &&
+    numerator %in% levels && denominator %in% levels
+
+  ans <- setNames(rep(NA_character_, length(levels)), levels)
+  if (semantic) {
+    ans[denominator] <- discrete[1]
+    ans[numerator] <- discrete[2]
+  }
+  remaining <- sort(names(ans)[is.na(ans)], method = "radix")
+  if (length(remaining)) {
+    available <- if (semantic) discrete[-c(1, 2)] else discrete
+    if (!length(available)) available <- discrete
+    if (length(remaining) > length(available)) {
+      available <- grDevices::colorRampPalette(available)(length(remaining))
+    }
+    ans[remaining] <- available[seq_along(remaining)]
+  }
+  ans
+}
+
 # ---- Font resolver ----------------------------------------------------------
 # Map a requested font family to one actually installed in the pipeline environment.
 # Windows font names (Times New Roman, Arial, Courier New, ...) are not present on a stock
@@ -124,6 +162,79 @@ heatmap_cell_w_fit <- function(ncol, want_cell_w = 10, budget_in = 44,
   min(want_cell_w, usable / max(ncol, 1))
 }
 
+# Fill the available heatmap canvas for small matrices without turning cells
+# into oversized blocks. The returned width is deterministic and remains capped
+# for large sample sets; explicit per-figure size overrides still take priority.
+heatmap_cell_w_fill <- function(ncol, canvas_w, row_label_chars = 8,
+                                 legend_in = 1.7, min_cell_w = 12,
+                                 max_cell_w = 34) {
+  label_gutter <- min(2.6, 0.6 + 0.070 * max(row_label_chars, 1))
+  usable_pt <- max(canvas_w - label_gutter - legend_in, 1) * 72
+  min(max(usable_pt / max(ncol, 1), min_cell_w), max_cell_w)
+}
+
+# pheatmap places its continuous and annotation legends in two side-by-side
+# columns even when the heatmap is tall. For a 30 x 6 DEG heatmap this spends
+# roughly an inch on empty horizontal space. Stack those guides when they fit
+# vertically; short heatmaps keep pheatmap's original side-by-side layout.
+stack_heatmap_legends <- function(gtable, gap_pt = 10) {
+  i_heat <- which(gtable$layout$name == "legend")
+  i_ann <- which(gtable$layout$name == "annotation_legend")
+  if (length(i_heat) != 1L || length(i_ann) != 1L) return(gtable)
+
+  heat_col <- gtable$layout$l[i_heat]
+  ann_col <- gtable$layout$l[i_ann]
+  heat_grob <- gtable$grobs[[i_heat]]
+  ann_grob <- gtable$grobs[[i_ann]]
+  legend_w <- grid::unit.pmax(gtable$widths[heat_col], gtable$widths[ann_col])
+  stacked <- gtable::gtable(
+    widths = legend_w,
+    heights = grid::unit.c(grid::grobHeight(heat_grob),
+                           grid::unit(gap_pt, "pt"),
+                           grid::grobHeight(ann_grob))
+  )
+  stacked <- gtable::gtable_add_grob(stacked, heat_grob, t = 1, l = 1,
+                                     clip = "off")
+  stacked <- gtable::gtable_add_grob(stacked, ann_grob, t = 3, l = 1,
+                                     clip = "off")
+  row_top <- min(gtable$layout$t[c(i_heat, i_ann)])
+  row_bottom <- max(gtable$layout$b[c(i_heat, i_ann)])
+  available_h <- grid::convertHeight(
+    sum(gtable$heights[seq.int(row_top, row_bottom)]), "in", valueOnly = TRUE
+  )
+  stacked_h <- grid::convertHeight(grid::grobHeight(stacked), "in",
+                                   valueOnly = TRUE)
+  if (!is.finite(stacked_h) || stacked_h > available_h) return(gtable)
+
+  keep <- setdiff(seq_along(gtable$grobs), c(i_heat, i_ann))
+  gtable$grobs <- gtable$grobs[keep]
+  gtable$layout <- gtable$layout[keep, , drop = FALSE]
+  gtable <- gtable::gtable_add_grob(
+    gtable, stacked, t = row_top, b = row_bottom,
+    l = heat_col, r = heat_col, clip = "off", name = "stacked_legends"
+  )
+  gtable$widths[heat_col] <- legend_w
+  gtable$widths[ann_col] <- grid::unit(0, "pt")
+  gtable
+}
+
+# pheatmap uses fixed grid units when cell width/height are supplied. Drawing a
+# gtable wider than its device silently clips both dendrogram strokes and the
+# rightmost annotation legend. Add a real white gutter to the gtable and derive
+# the output size from the rendered object, not an estimate of its contents.
+finalize_heatmap_gtable <- function(gtable, min_w = 6, min_h = 5,
+                                    padding_pt = 8) {
+  gtable <- stack_heatmap_legends(gtable)
+  padded <- gtable::gtable_add_padding(
+    gtable, grid::unit(as.numeric(padding_pt), "pt")
+  )
+  intrinsic <- c(
+    grid::convertWidth(sum(padded$widths), "in", valueOnly = TRUE),
+    grid::convertHeight(sum(padded$heights), "in", valueOnly = TRUE)
+  )
+  list(gtable = padded, dim = pmax(c(min_w, min_h), intrinsic))
+}
+
 # ---- Gene-symbol italic row labels (pheatmap) -------------------------------
 # pheatmap has no per-row fontface, so italicise gene-symbol row names via a
 # plotmath expression vector for `labels_row`. Quotes inside italic("...") keep
@@ -173,7 +284,11 @@ make_style_theme <- function(base_size = 12, base_family = NULL,
 # dpi raster-only.
 make_save_gg <- function(fig_w = 6, fig_h = 5, fig_dpi = 300) {
   function(plot, png_path, svg_path, w = fig_w, h = fig_h) {
-    ggsave(png_path, plot, width = w, height = h, units = "in", dpi = fig_dpi)
-    ggsave(svg_path, plot, width = w, height = h, units = "in")
+    # An explicit white device background makes PNG/SVG exports independent of
+    # the desktop theme and prevents transparent placeholders from rendering as
+    # black panels in browsers and image viewers.
+    ggsave(png_path, plot, width = w, height = h, units = "in", dpi = fig_dpi,
+           bg = "white")
+    ggsave(svg_path, plot, width = w, height = h, units = "in", bg = "white")
   }
 }

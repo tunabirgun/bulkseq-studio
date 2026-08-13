@@ -2,9 +2,9 @@
 
 BulkSeq Studio is a cross-platform desktop application for reproducible bulk RNA-seq and microarray analysis. Its PySide6 interface drives a transparent Snakemake workflow from raw reads or processed inputs through differential expression, enrichment, protein-interaction networks, figures, reports, and route-aware provenance.
 
-> **Release status — 11 August 2026.** Version 0.26.6 is the current public release. Use only the checksummed packages published on GitHub Releases; the matching validation archive is deposited on Zenodo.
+> **Release status — 13 August 2026.** Version 0.28.0 is the current public release. Use only the checksummed packages published on GitHub Releases. The separately versioned B1–B20 validation archive remains deposited as version 0.26.6 on Zenodo.
 
-[Read the complete documentation](https://tunabirgun.github.io/bulkseq-studio/) · [Download public v0.26.6](https://github.com/tunabirgun/bulkseq-studio/releases/latest) · [View source](https://github.com/tunabirgun/bulkseq-studio) · [Report an issue](https://github.com/tunabirgun/bulkseq-studio/issues)
+[Read the complete documentation](https://tunabirgun.github.io/bulkseq-studio/) · [Download public v0.28.0](https://github.com/tunabirgun/bulkseq-studio/releases/latest) · [View source](https://github.com/tunabirgun/bulkseq-studio) · [Report an issue](https://github.com/tunabirgun/bulkseq-studio/issues)
 
 ![BulkSeq Studio in light mode with the four-stage task navigator and the Analysis settings page](docs/screenshot-overview-light.png)
 

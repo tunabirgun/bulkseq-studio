@@ -10,7 +10,7 @@
 ; app/constants.py so the installer name never drifts from APP_VERSION; the
 ; fallback below is only used when compiling installer.iss by hand.
 #ifndef MyAppVersion
-  #define MyAppVersion "0.24.0"
+  #define MyAppVersion "0.28.0"
 #endif
 #define MyAppPublisher "Tuna Birgün"
 #define MyAppExeName "BulkSeqStudio.exe"
@@ -20,6 +20,11 @@ AppId={{B7E4B2A1-6F1C-4E1A-9C2A-BULKSEQSTUDIO}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+VersionInfoVersion={#MyAppVersion}
+VersionInfoProductVersion={#MyAppVersion}
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoDescription={#MyAppName} Setup
+VersionInfoProductName={#MyAppName}
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DisableProgramGroupPage=yes
 DefaultGroupName={#MyAppName}
@@ -109,12 +114,19 @@ begin
   else
     verText := '';
 
-  choice := MsgBox(
-    'BulkSeq Studio' + verText + ' is already installed.' + #13#10#13#10 +
-    'Yes - remove it completely and install version {#MyAppVersion} fresh' + #13#10 +
-    'No - uninstall BulkSeq Studio and exit' + #13#10 +
-    'Cancel - do nothing',
-    mbConfirmation, MB_YESNOCANCEL);
+  { A caller that explicitly requested /SILENT or /VERYSILENT cannot answer a
+    custom MsgBox. Treat that mode as the normal fresh-update choice; otherwise
+    the setup process waits forever behind an invisible prompt. Interactive
+    launches retain the explicit update / uninstall / cancel decision. }
+  if WizardSilent then
+    choice := IDYES
+  else
+    choice := MsgBox(
+      'BulkSeq Studio' + verText + ' is already installed.' + #13#10#13#10 +
+      'Yes - remove it completely and install version {#MyAppVersion} fresh' + #13#10 +
+      'No - uninstall BulkSeq Studio and exit' + #13#10 +
+      'Cancel - do nothing',
+      mbConfirmation, MB_YESNOCANCEL);
 
   if choice = IDCANCEL then
   begin

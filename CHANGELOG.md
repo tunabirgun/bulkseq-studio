@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.28.0 — 2026-08-13
+
+### Added
+
+- Added a recomputed `SHA256SUMS.txt` covering every Windows and Linux release artifact, with a fail-closed digest verification before tagging or upload.
+
+- **Five same-source-snapshot graphical-interface acceptance runs now cover every bundled preset.** The retained Pasilla, UME6, rice CY1000 salt, Arabidopsis hub2-3, and yeast cbc2 runs passed source, workflow, artifact, and responsive-rendering gates. Sample-structure and limited-annotation findings remain visible as descriptive warnings rather than being converted into biological claims.
+- **Reports expose route-specific audit evidence.** Outputs now distinguish configured from realized strandedness, report deterministic GSEA ordering and duplicate collapse, retain custom-gene-set evidence when configured, and state when dense static PPI topology is replaced by the interactive network and exported identity tables.
+
+### Changed
+
+- **Resource profiles use the WSL logical-CPU allocation that actually constrains Snakemake.** Low, balanced, and high profiles derive 45%, 75%, and 90% of the available guest logical CPUs, while host and guest physical-core counts remain diagnostic. CPU and memory probe fallbacks are reported independently, and custom profiles are verified against both the graphical controls and the freshly reloaded project configuration.
+- **Scientific figures and reports use deterministic, fail-closed layout contracts.** Sample-distance and correlation heatmaps allocate measured label and cell geometry, standalone GSEA plots name the selected term, volcano highlights use a ranked key instead of ambiguous crossing leaders, responsive reports contain wide figures and tables without page spill, and static PPI layouts either satisfy explicit topology/visibility bounds or return a labelled fallback.
+- **The runtime dependency declarations and readiness checks now follow direct imports and executable use.** NumPy and the direct R namespaces are declared explicitly, setup verifies the selected environment profile and companion commands, and ordinary repair no longer deletes an environment unless rebuild was explicitly requested.
+
+### Fixed
+
+- **Reference staging, input validation, and resume gates now bind the files the workflow actually consumes.** Content fingerprints cover reference material, sample sheets, copied external-result tables, and generated indexes; unsafe paths, malformed tables, missing realized inputs, and stale validation records fail before execution.
+- **Organism-specific enrichment and identifier mapping no longer assume a universal `SYMBOL` namespace.** Yeast uses its effective OrgDb namespaces, KEGG identity distinguishes species codes from strain taxon metadata, attempted-but-missing GO output is review-required, and readable labels are requested only when the OrgDb supports them.
+- **STRING identifiers preserve source-case nomenclature across one-to-many mappings.** Exported node and hub identities retain canonical input spelling while joins remain case-normalized, and dense-network exports survive even when a static layout cannot meet its bounded search contract.
+- **STAR sorting memory is now bounded by each job's declared reservation.** The generated `--limitBAMsortRAM` receives half of the effective `mem_mb`, leaving explicit headroom for alignment and making scheduler accounting honest.
+
+## 0.27.0 — 2026-08-10
+
+> **Release status:** 0.27.0 is a local acceptance-test candidate. Its Windows installer and portable archive, Linux AppImage and zsync metadata, and Linux portable archive have not been published. The current public GitHub release and latest deposited Zenodo benchmark snapshot remain 0.26.6 until explicit release approval.
+
+### Changed
+
+- **The desktop interface is reorganized around four scientific stages rather than a twelve-tab strip.** Project and data, Analysis setup, Validate and run, and Explore results each expose only their relevant pages; wide windows use a stage rail and page buttons, while windows below the derived 1366-pixel breakpoint use stage and page selectors without losing access to any task. Dense secondary controls move behind purposeful disclosures, the Run Monitor separates primary actions from options and execution detail, and Outputs and PPI inspectors remain usable at compact desktop sizes.
+- **Light and dark appearance is now one live application theme.** The persistent header control repaints the main window, readiness dialog, plots, progress surfaces, empty states, and embedded protein network without restart, while preserving the current project, page, focus, and dialog actions. PPI nodes can also be traversed by keyboard with their selected-node details exposed to assistive technology.
+- **Windows and Linux packaging are reproducible at the build-tool layer.** `requirements-build.txt` pins PyInstaller 6.21.0 and Pillow 12.2.0 exactly; the application, workflow, Python package metadata, Inno Setup fallback, Windows executable resource, and all five artifact names derive from the application version. Both platform builds must pass the frozen QtWebEngine/Cytoscape probe before packaging; Linux additionally requires verified zsync metadata and a conventional portable archive, and CI verifies a checksum-pinned AppImage tool.
+
+### Fixed
+
+- **A saved pre-run pass could outlive the inputs it described.** Input validation now stores a content fingerprint over the configuration, configured sample sheet, local input files, reference locks, and index contents. Launch and resume compare that state with the current project, including same-size file replacements and index-shard changes; missing or unreadable inputs, unsupported direct URLs, unsafe symlink or junction escapes, malformed manifests, and over-broad directory materialization fail closed. Unchanged files reuse recorded content digests, and initial hashing and revalidation are cancellable without blocking the GUI thread.
+- **Imported differential-expression tables could be accepted from a short preview and later be reinterpreted by the workflow.** The GUI and R ingest now validate the complete CSV/TSV with matched field counts and aligned UTF-8, Windows-1252, and Latin-1 handling; require unique, nonblank, whitespace-safe gene IDs; reject malformed, non-finite, or out-of-range numeric fields; accept canonical missing values only where finite data remain; and reject a supplied statistic whose sign contradicts the confirmed log2-fold-change direction. The verified project copy is bound to its SHA-256, byte size, row count, column schema, selected columns, import timestamp, and source-direction record before Snakemake can ingest it.
+- **Imported-result provenance could incorrectly inherit a local contrast, DESeq2 model, shrinkage method, or adjustment label.** Direction now comes only from the explicitly confirmed source numerator and denominator; stale local design fields cannot change it. Reports and exports state that no local differential-expression model or shrinkage ran, identify the upstream method and p-adjustment only when recorded, omit inactive read-processing and local-model settings, and exclude stale count-dependent figures. Unknown adjustment methods remain generic rather than being called Benjamini–Hochberg.
+- **The imported-results preranked export could use an undocumented upstream statistic.** `ranked_genes.rnk` now ranks imported rows by the confirmed `log2FoldChange`; locally fitted routes retain their model statistic. This is the only intentional scientific-output change in 0.27.0: it affects the exported ranking for results-only projects and may cause previously tolerated malformed or provenance-incomplete imports to stop. The local FASTQ, count-matrix, and microarray statistical routes and the deposited 0.26.6 benchmark claims are unchanged.
+- **Run provenance could list tools and inputs that were configured but inactive.** Run summaries now report the selected trimmer, rRNA tool, contamination screen, DE engine, operating system and architecture, and recorded R/BLAS/LAPACK details for the route that actually ran; study-design export follows the configured sample-sheet path instead of assuming `config/samples.tsv`.
+- **A successful frozen WebEngine probe could terminate with a Windows fast-fail during interpreter shutdown.** The self-test now closes and deferred-deletes its Chromium views while the Qt event loop is still alive, then exits after deferred destruction; a passing sentinel and a zero process exit are both required.
+- **Silent upgrades could wait indefinitely behind an invisible existing-version prompt.** Explicit `/SILENT` and `/VERYSILENT` installs now take the normal fresh-update path without opening the interactive three-way dialog; interactive installs retain the update, uninstall, and cancel choices.
+
 ## 0.26.6 — 2026-08-07
 
 ### Fixed

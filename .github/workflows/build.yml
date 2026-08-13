@@ -1,9 +1,8 @@
 ﻿name: Build packages
 
-# Packaging build for both supported platforms: a Windows installer + portable ZIP
-# (Inno Setup, via scripts/build_release.ps1) and a Linux AppImage
-# (packaging/build_appimage.sh). Each job uploads its artifacts for a release to
-# attach.
+# Packaging build for both supported package targets: a Windows installer + portable
+# ZIP and a Linux AppImage + portable archive. Each job runs the frozen QtWebEngine
+# self-test before uploading release artifacts.
 on:
   push:
     branches: [main]
@@ -72,6 +71,14 @@ jobs:
             requirements.txt
             requirements-build.txt
 
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon-x11-0 libdbus-1-3 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-cursor0
+
       - name: Create venv and install dependencies
         run: |
           python3 -m venv .venv
@@ -81,11 +88,31 @@ jobs:
       - name: Build onedir with PyInstaller
         run: .venv/bin/python -m PyInstaller packaging/BulkSeqStudio.spec --noconfirm
 
+      - name: Verify frozen onedir
+        run: |
+          set -euo pipefail
+          SENTINEL="$RUNNER_TEMP/bulkseq-onedir-selftest.json"
+          timeout 90s env \
+            QT_QPA_PLATFORM=offscreen \
+            BULKSEQ_SKIP_READINESS_DIALOG=1 \
+            BULKSEQ_SELFTEST=1 \
+            BULKSEQ_SELFTEST_OUT="$SENTINEL" \
+            "dist/BulkSeq Studio/BulkSeqStudio"
+          .venv/bin/python - "$SENTINEL" <<'PY'
+          import json, pathlib, sys
+          result = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert result.get("pass") is True, result
+          assert result.get("webengine") is True, result
+          assert result.get("nodes") == 3, result
+          PY
+
       - name: Fetch appimagetool
         run: |
           set -euo pipefail
           curl -fL -o "$RUNNER_TEMP/appimagetool" \
             "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          echo "a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0  $RUNNER_TEMP/appimagetool" \
+            | sha256sum --check --strict
           chmod +x "$RUNNER_TEMP/appimagetool"
           echo "APPIMAGETOOL=$RUNNER_TEMP/appimagetool" >> "$GITHUB_ENV"
 
@@ -101,6 +128,42 @@ jobs:
           # Windows with core.filemode=false, so shell scripts are committed 100644 and
           # executing them directly fails with "permission denied" on the runner.
           bash packaging/build_appimage.sh "dist/BulkSeq Studio" "$VERSION" installer_output
+
+      - name: Verify AppImage and zsync metadata
+        run: |
+          set -euo pipefail
+          VERSION="$(.venv/bin/python -c 'from app.constants import APP_VERSION; print(APP_VERSION)')"
+          APPIMAGE="installer_output/BulkSeqStudio-${VERSION}-x86_64.AppImage"
+          SENTINEL="$RUNNER_TEMP/bulkseq-appimage-selftest.json"
+          timeout 90s env \
+            APPIMAGE_EXTRACT_AND_RUN=1 \
+            QT_QPA_PLATFORM=offscreen \
+            BULKSEQ_SKIP_READINESS_DIALOG=1 \
+            BULKSEQ_SELFTEST=1 \
+            BULKSEQ_SELFTEST_OUT="$SENTINEL" \
+            "$APPIMAGE"
+          .venv/bin/python - "$SENTINEL" "$APPIMAGE" <<'PY'
+          import hashlib, json, pathlib, sys
+          result = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert result.get("pass") is True, result
+          assert result.get("webengine") is True, result
+          assert result.get("nodes") == 3, result
+          appimage = pathlib.Path(sys.argv[2])
+          zsync = pathlib.Path(f"{appimage}.zsync")
+          version = appimage.name.removeprefix("BulkSeqStudio-").removesuffix("-x86_64.AppImage")
+          portable = appimage.with_name(f"BulkSeqStudio-Portable-{version}-linux-x86_64.tar.gz")
+          assert appimage.is_file() and appimage.stat().st_size > 0
+          assert zsync.is_file() and zsync.stat().st_size > 0
+          assert portable.is_file() and portable.stat().st_size > 0
+          header = zsync.read_text(encoding="utf-8", errors="replace")
+          assert f"Filename: {appimage.name}" in header
+          assert f"Length: {appimage.stat().st_size}" in header
+          digest = hashlib.sha1()
+          with appimage.open("rb") as handle:
+              for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+                  digest.update(chunk)
+          assert digest.hexdigest() in header.lower()
+          PY
 
       - uses: actions/upload-artifact@v4
         with:

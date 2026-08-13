@@ -38,5 +38,8 @@ dependencies:
   - rseqc
   - ucsc-gtftogenepred
   - ucsc-genepredtobed
+  # Direct imports in the workflow's Python helpers. Keep these explicit rather than relying
+  # on Snakemake/pandas to retain a transitive NumPy installation during a float solve.
+  - numpy
   - pandas
   - pyyaml

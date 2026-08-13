@@ -13,6 +13,29 @@ input:
   # (diff_configs skips any key absent from this bundled reference).
   count_matrix: null
   deseq2_results: null
+  # For input.type: deseq2_results, record what a positive uploaded log2FC means.
+  # A new imported-results run requires two distinct labels and explicit confirmation.
+  deseq2_results_direction:
+    numerator: null
+    denominator: null
+    confirmed: false
+    confirmed_at: null
+  # The project keeps only the original basename, never the source directory.
+  # Integrity and schema fields are populated automatically after a full-table import.
+  deseq2_results_provenance:
+    original_basename: null
+    imported_at: null
+    project_copy: null
+    sha256: null
+    byte_size: null
+    row_count: null
+    column_names: []
+    gene_id_column: null
+    log2fc_column: null
+    adjusted_p_column: null
+    upstream_method: unknown
+    lfc_shrinkage: unknown
+    p_adjustment_method: unknown
   estimated_counts: false
 microarray:
   # Only used when input.type == microarray (GEO/GSE). limma replaces DESeq2.
@@ -129,6 +152,7 @@ enrichment:
   orgdb: null
   keytype: null
   kegg_organism: null
+  taxon_id: null
   # backend: clusterprofiler keeps the auto OrgDb->gprofiler->none chain; set to
   # gprofiler to force the g:Profiler GO route. gprofiler_organism is the g:Profiler
   # id (e.g. hsapiens), distinct from the KEGG code; null falls back to the catalog.

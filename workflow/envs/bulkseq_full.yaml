@@ -38,6 +38,9 @@ dependencies:
   - rseqc
   - ucsc-gtftogenepred
   - ucsc-genepredtobed
+  # Direct imports in the workflow's Python helpers. The linux-64 lock pins the resolved builds;
+  # these unpinned entries keep the cross-platform fallback spec complete.
+  - numpy
   - pandas
   - pyyaml
   # R / Bioconductor. r-base is pinned to 4.5.2: bumping it to 4.5.3 (what many conda-forge r45
@@ -58,6 +61,7 @@ dependencies:
   # GO.db is a hard dependency of clusterProfiler / DOSE / enrichplot (the GO term database).
   # Pin it explicitly so a solve that drops it can't leave the env unable to load clusterProfiler.
   - bioconductor-go.db
+  - bioconductor-dose
   - bioconductor-enrichplot
   - bioconductor-fgsea
   # GSVA sample-level gene-set activity (optional, organism-safe on user gene sets).
@@ -80,7 +84,12 @@ dependencies:
   - r-metafor
   - bioconductor-htsfilter
   - bioconductor-affy
+  # Direct S4/annotation namespaces loaded by ingestion, DE wrappers, correlation, and exports.
+  # They are transitive in the lock today but must remain explicit in the fallback specification.
+  - bioconductor-annotationdbi
   - bioconductor-biobase
+  - bioconductor-s4vectors
+  - bioconductor-summarizedexperiment
   - bioconductor-org.hs.eg.db
   - bioconductor-org.mm.eg.db
   # OrgDbs for the other organism presets that enrichment.smk _ENRICH_MAP maps to a
@@ -93,8 +102,11 @@ dependencies:
   - bioconductor-org.dr.eg.db
   - r-ggplot2
   - r-ggrepel
+  - r-ggnewscale
   - r-ggridges
   - r-ggtext
+  - r-gtable
+  - r-matrixstats
   - r-pheatmap
   - r-rcolorbrewer
   - r-svglite
@@ -103,6 +115,7 @@ dependencies:
   # way GO.db was once dropped and then crash the mandatory figures rule mid-run.
   - r-scales
   - r-msigdbr
+  - r-systemfonts
   # g:Profiler GO/KEGG/Reactome ORA + ID conversion for organisms without a
   # Bioconductor OrgDb (fungi, bacteria, yeast/worm/zebrafish/Arabidopsis) (0.7.0).
   - r-gprofiler2

@@ -7,7 +7,7 @@
 <meta name="description" content="Frequently asked questions and troubleshooting for BulkSeq Studio, plus how to cite the software and its benchmark archive, and the MIT license.">
 <link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
 <link rel="stylesheet" href="assets/site.css?v=9">
-<link rel="stylesheet" href="assets/product-v026.css?v=2">
+<link rel="stylesheet" href="assets/product-v028.css?v=2">
 <script>
 try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (error) {}
 </script>
@@ -18,7 +18,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="BulkSeq Studio logo">
-      <span class="brand-copy"><span class="brand-title">BulkSeq Studio</span><span class="ver">v0.26.6</span></span>
+      <span class="brand-copy"><span class="brand-title">BulkSeq Studio</span><span class="ver">v0.28.0</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu</button>
     <nav aria-label="Documentation">
@@ -32,7 +32,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
       </ul>
       <div class="ext">
         <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
-        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.26.6 ↗</a>
+        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.28.0 ↗</a>
       </div>
     </nav>
   </aside>
@@ -42,7 +42,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
     <section id="faq"><p class="kicker">Help</p>
 <h2>FAQ & troubleshooting</h2>
 <p class="lead">Short answers to the questions that come up most often.</p>
-<div class="note"><span class="t">Release status</span> Version 0.26.6 is the current public release. Use only the checksummed packages published on GitHub Releases.</div>
+<div class="note"><span class="t">Release status</span> Version 0.28.0 is the current public release. Use only the checksummed packages published on GitHub Releases.</div>
 
 <h3>Do I need to know how to code?</h3>
 <p>No. The whole pipeline runs from a guided graphical interface. Project and data, Analysis setup, Validate and run, and Explore results group the same tasks into four stages; wide windows use a stage rail and compact windows use stage and page selectors. No command line is required.</p>
@@ -60,7 +60,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 <p>Yes. On Linux the same GUI drives the same Snakemake pipeline natively in a local micromamba environment, with no WSL involved, and produces identical results. There is no WSL setup step and no memory cap below the host's RAM.</p>
 
 <h3>How do I update to a new version?</h3>
-<p>Use only an approved artifact. The current public release is 0.26.6. On Windows, a newer approved installer detects the existing install and offers to update or uninstall first; a portable ZIP is replaced by unpacking the new archive. On Linux, after a newer version is publicly released, download its AppImage or use <a href="https://github.com/AppImageCommunity/AppImageUpdate">AppImageUpdate</a> with the published companion zsync information.</p>
+<p>Use only an approved artifact. The current public release is 0.28.0. On Windows, the installer detects an existing install and offers to update or uninstall first; a portable ZIP is replaced by unpacking the new archive. On Linux, download the AppImage or use <a href="https://github.com/AppImageCommunity/AppImageUpdate">AppImageUpdate</a> with the published companion zsync information.</p>
 
 <h3>Which trimmer, rRNA tool, and DE engine should I use?</h3>
 <p>The defaults are chosen to work for a standard study: fastp for trimming, SortMeRNA if you turn on rRNA removal, and DESeq2 for differential expression. Change them only when you have a reason. Prefer Trim Galore or Trimmomatic if your lab standardizes on one; use RiboDetector when no rRNA reference is available for your organism; and run limma-voom or edgeR quasi-likelihood as a cross-check, especially on larger designs. All the alternatives produce the same tables and figures, so downstream steps do not change.</p>
@@ -120,7 +120,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 }</code></pre>
 
 <h3>Links</h3>
-<p><a class="btn btn-solid" href="https://github.com/tunabirgun/bulkseq-studio">GitHub repository</a> <a class="btn btn-solid" href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">Public release (0.26.6)</a> <a class="btn btn-solid" href="https://doi.org/10.5281/zenodo.20955660">Zenodo archive</a></p>
+<p><a class="btn btn-solid" href="https://github.com/tunabirgun/bulkseq-studio">GitHub repository</a> <a class="btn btn-solid" href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">Public release (0.28.0)</a> <a class="btn btn-solid" href="https://doi.org/10.5281/zenodo.20955660">Zenodo archive</a></p>
 <ul>
   <li><strong>Source code:</strong> <a href="https://github.com/tunabirgun/bulkseq-studio">github.com/tunabirgun/bulkseq-studio</a></li>
   <li><strong>Downloads:</strong> <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">github.com/tunabirgun/bulkseq-studio/releases/latest</a> (Windows installer, portable ZIP, Linux build)</li>
@@ -134,7 +134,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   </main>
 </div>
 
-<script src="assets/product-v026.js" defer></script>
+<script src="assets/product-v028.js" defer></script>
 <script src="assets/lightbox.js" defer></script>
 <script src="assets/toc.js" defer></script>
 </body>

@@ -49,6 +49,99 @@ read_ids_csv <- function(p) {
   unique(strip_version(as.character(d$gene_id)))
 }
 
+# Custom GSEA uses the same explicit reproducibility contract as the built-in
+# enrichment routes. Invalid ids and non-finite scores are removed first, then
+# repeated canonical ids are collapsed by their median score so the result does
+# not depend on source-row order. Statistics are ordered decreasingly and exact
+# ties use canonical-id byte order after UTF-8 encoding.
+build_custom_deterministic_rank <- function(statistic, canonical_id) {
+  if (length(statistic) != length(canonical_id)) {
+    stop("Custom GSEA statistics and canonical ids must have equal lengths")
+  }
+  statistic <- suppressWarnings(as.numeric(statistic))
+  canonical_id <- enc2utf8(as.character(canonical_id))
+  valid_id <- !is.na(canonical_id) & nzchar(canonical_id)
+  invalid_id_removed <- sum(!valid_id)
+  statistic <- statistic[valid_id]
+  canonical_id <- canonical_id[valid_id]
+
+  finite <- is.finite(statistic)
+  nonfinite_removed <- sum(!finite)
+  statistic <- statistic[finite]
+  canonical_id <- canonical_id[finite]
+
+  canonical_ids <- unique(canonical_id)
+  groups <- lapply(canonical_ids, function(id) which(canonical_id == id))
+  group_sizes <- lengths(groups)
+  duplicate_groups <- group_sizes > 1L
+  duplicate_id_group_n <- sum(duplicate_groups)
+  duplicate_source_row_n <- sum(group_sizes[duplicate_groups])
+  duplicate_rows_collapsed <- sum(pmax(group_sizes - 1L, 0L))
+  statistic <- vapply(groups, function(idx) stats::median(statistic[idx]), numeric(1))
+  canonical_id <- canonical_ids
+
+  rank_order <- order(-statistic, canonical_id, method = "radix")
+  values <- statistic[rank_order]
+  names(values) <- canonical_id[rank_order]
+  tie_sizes <- if (length(values)) {
+    runs <- rle(unname(values))$lengths
+    runs[runs > 1L]
+  } else integer(0)
+
+  list(
+    values = values,
+    ranked_gene_n = length(values),
+    tie_group_n = length(tie_sizes),
+    tie_pair_n = sum(as.double(tie_sizes) * (tie_sizes - 1) / 2),
+    tied_gene_n = sum(tie_sizes),
+    duplicate_id_group_n = as.integer(duplicate_id_group_n),
+    duplicate_source_row_n = as.integer(duplicate_source_row_n),
+    duplicate_rows_collapsed = as.integer(duplicate_rows_collapsed),
+    invalid_id_removed = as.integer(invalid_id_removed),
+    nonfinite_removed = as.integer(nonfinite_removed),
+    policy = paste0("invalid IDs and non-finite statistics removed; duplicate canonical IDs ",
+                    "collapsed by median; finite statistic descending; exact ties by canonical ",
+                    "gene ID ascending in bytewise UTF-8/C-locale order")
+  )
+}
+
+custom_rank_evidence_lines <- function(rank_info) {
+  c(
+    sprintf("Custom GSEA ranking order: %s.", rank_info$policy),
+    sprintf(paste0("Custom GSEA exact-score ties: %.0f pair(s) across %d tie group(s), ",
+                   "involving %d/%d ranked genes."),
+            rank_info$tie_pair_n, rank_info$tie_group_n,
+            rank_info$tied_gene_n, rank_info$ranked_gene_n),
+    sprintf(paste0("Custom GSEA duplicate canonical-ID collapse: %d group(s) containing %d ",
+                   "finite source row(s); %d row(s) collapsed by median; %d invalid-ID ",
+                   "and %d non-finite-score row(s) removed before collapse."),
+            rank_info$duplicate_id_group_n, rank_info$duplicate_source_row_n,
+            rank_info$duplicate_rows_collapsed, rank_info$invalid_id_removed,
+            rank_info$nonfinite_removed)
+  )
+}
+
+# Pinned fgsea 1.36.2 re-sorts a decreasing vector stably, so the canonical-id
+# secondary order reaches its enrichment calculation. Replace only fgsea's
+# generic arbitrary-order notice with evidence; every unrelated warning passes.
+with_deterministic_custom_gsea_ties <- function(expr, rank_info) {
+  withCallingHandlers(expr, warning = function(w) {
+    warning_text <- conditionMessage(w)
+    is_fgsea_tie_notice <-
+      grepl("There are ties in the preranked stats", warning_text, fixed = TRUE) &&
+      grepl("order of those tied genes will be arbitrary", tolower(warning_text),
+            fixed = TRUE)
+    if (is_fgsea_tie_notice) {
+      message(sprintf(paste0("Custom GSEA deterministic tie handling: %.0f exact-score ",
+                             "pair(s) across %d group(s), involving %d/%d ranked genes; %s."),
+                      rank_info$tie_pair_n, rank_info$tie_group_n,
+                      rank_info$tied_gene_n, rank_info$ranked_gene_n,
+                      rank_info$policy))
+      invokeRestart("muffleWarning")
+    }
+  })
+}
+
 # Always create outputs first so the rule succeeds even on failure.
 writeLines("", out[["ora"]]); writeLines("", out[["gsea"]])
 saveRDS(list(), out[["objects"]])
@@ -86,8 +179,10 @@ result <- tryCatch({
   all_sig <- unique(c(read_ids_csv(up_file), read_ids_csv(down_file)))
   res2 <- res[!is.na(res$padj) & !is.na(res$log2FoldChange), ]
   res2$base_id <- strip_version(as.character(res2$gene_id))
-  ranked <- res2$log2FoldChange; names(ranked) <- res2$base_id
-  ranked <- sort(ranked[!duplicated(names(ranked))], decreasing = TRUE)
+  rank_info <- build_custom_deterministic_rank(res2$log2FoldChange, res2$base_id)
+  ranked <- rank_info$values
+  rank_evidence <- custom_rank_evidence_lines(rank_info)
+  message(paste(rank_evidence, collapse = "\n"))
 
   overlap <- length(intersect(unique(t2g$gene), c(all_sig, names(ranked))))
   args_t2n <- if (is.null(t2n)) list() else list(TERM2NAME = t2n)
@@ -101,8 +196,10 @@ result <- tryCatch({
   egse <- NULL
   if (length(ranked) > 0) {
     set.seed(42)
-    egse <- tryCatch(do.call(GSEA, c(list(geneList = ranked, TERM2GENE = t2g, pvalueCutoff = alpha,
-              pAdjustMethod = "BH", minGSSize = 10, maxGSSize = 500, eps = 0, seed = TRUE, verbose = FALSE), args_t2n)),
+    egse <- tryCatch(with_deterministic_custom_gsea_ties(
+              do.call(GSEA, c(list(geneList = ranked, TERM2GENE = t2g, pvalueCutoff = alpha,
+                pAdjustMethod = "BH", minGSSize = 10, maxGSSize = 500, eps = 0,
+                seed = TRUE, verbose = FALSE), args_t2n)), rank_info),
             error = function(e) { message("GSEA failed: ", conditionMessage(e)); NULL })
   }
   if (nrows(egse) > 0) write.csv(as.data.frame(egse), out[["gsea"]], row.names = FALSE)
@@ -112,6 +209,7 @@ result <- tryCatch({
     sprintf("Custom gene sets (terms): %d", length(unique(t2g$term))),
     sprintf("Universe: %d (%s)", length(universe), if (nzchar(bg)) "background file" else "tested genes"),
     sprintf("Significant genes (ORA input): %d", length(all_sig)),
+    rank_evidence,
     sprintf("Custom ORA terms: %d", nrows(eora)),
     sprintf("Custom GSEA sets: %d", nrows(egse)))
   if (overlap == 0)

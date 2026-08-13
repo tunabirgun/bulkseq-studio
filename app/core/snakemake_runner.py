@@ -13,9 +13,9 @@ from app.constants import WSL_ENV_NAME, WSL_MAMBA_ROOT, WSL_MICROMAMBA
 from app.core.config_models import AppConfig
 from app.core.paths import windows_to_wsl_path
 
-# Marker prefix embedded in the WSL `bash -lc` argv so the whole process tree can
-# be found and killed from a separate `wsl` invocation (terminating the Windows
-# wsl.exe relay alone leaves snakemake/STAR running inside the WSL VM).
+# Marker prefix exported into the WSL process environment so the whole process
+# tree can be found and killed from a separate `wsl` invocation (terminating the
+# Windows wsl.exe relay alone leaves snakemake/STAR running inside the WSL VM).
 RUN_TAG_PREFIX = "BULKSEQ_RUN_TAG"
 
 
@@ -258,8 +258,8 @@ def build_snakemake_args(
 def _wrap_wsl(args: list[str], wsl_root: str, run_tag: str | None) -> str:
     """Inner `bash -lc` string that activates the env and runs snakemake.
 
-    The optional run tag is exported (and therefore present in the argv of this
-    login shell) so stop() can locate and kill the whole tree with `pkill -f`.
+    The optional run tag is exported so stop() can locate every inheriting process
+    through `/proc/<pid>/environ`, even when bash replaces itself with micromamba.
     """
     tag_prefix = f"export {run_tag}=1 && " if run_tag else ""
     # Put the env bin on PATH in the parent snakemake process so EVERY child inherits it:
@@ -343,18 +343,35 @@ def build_unlock_command(
 
 
 def build_wsl_kill_command(run_tag: str, distro: str | None = None, signal: str = "TERM") -> list[str]:
-    """`wsl` invocation that kills the tagged login shell and all descendants.
+    """`wsl` invocation that kills every process inheriting the unique run tag.
 
-    The tag is unique per launch and present in the launching shell's argv, so
-    `pkill -<sig> -f <tag>` reliably targets that shell; killing it terminates
-    micromamba -> snakemake -> STAR/featureCounts as its child tree. Runs inside
-    the same WSL distro as the launch so it shares the VM and its process table.
+    A non-interactive bash may replace itself with its final command, so the tag
+    is not guaranteed to remain in any command line. The exported environment
+    variable is inherited by micromamba, Snakemake, and rule processes; scanning
+    `/proc/*/environ` therefore remains valid after that exec optimisation.
     """
-    inner = f"pkill -{signal} -f {shlex.quote(run_tag)} || true"
+    if signal not in {"TERM", "KILL"}:
+        raise ValueError(f"Unsupported WSL stop signal: {signal!r}")
+    if not run_tag.startswith(f"{RUN_TAG_PREFIX}_") or not run_tag.replace("_", "").isalnum():
+        raise ValueError("Invalid WSL run tag")
+    tag_assignment = shlex.quote(f"{run_tag}=1")
+    inner = (
+        "pids=''; "
+        "for env_file in /proc/[0-9]*/environ; do "
+        "pid=${env_file#/proc/}; pid=${pid%/environ}; "
+        f"if (tr '\\0' '\\n' < \"$env_file\") 2>/dev/null | "
+        f"grep -Fqx -- {tag_assignment}; then pids=\"$pids $pid\"; fi; "
+        "done; "
+        f"if [ -n \"$pids\" ]; then kill -{signal} $pids 2>/dev/null || true; fi"
+    )
     cmd = ["wsl"]
     if distro:
         cmd += ["-d", distro]
-    cmd += ["--", "bash", "-lc", inner]
+    # Use WSL exec mode. With the legacy ``-- bash -lc`` form, wsl.exe routes
+    # the command through an outer shell on current WSL builds; that shell
+    # expands ``$env_file``/``$pids`` before the intended Bash sees them and
+    # silently turns Stop into a no-op.
+    cmd += ["--exec", "bash", "-lc", inner]
     return cmd
 
 

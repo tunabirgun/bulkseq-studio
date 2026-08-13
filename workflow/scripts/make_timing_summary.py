@@ -54,10 +54,10 @@ PHASES = [
     ("salmon_tximport", "Quantification"),
     ("featurecounts", "Quantification"),
     ("07_quantification", "Quantification"),
-    # differential expression
-    ("deseq2", "DESeq2"),
-    ("limma", "DESeq2"),
-    ("edger", "DESeq2"),
+    # differential expression (the active engine is route-specific)
+    ("deseq2", "Differential expression"),
+    ("limma", "Differential expression"),
+    ("edger", "Differential expression"),
     # enrichment (includes enrichment_figures)
     ("enrichment", "Enrichment"),
     # DE figures
@@ -76,6 +76,11 @@ PHASES = [
     ("export_matrices", "Reports"),
 ]
 
+# These benchmark files are written by report-assembly jobs. A stale copy may still
+# exist while Snakemake reruns the job, so the scanner must exclude them by identity
+# rather than relying on output deletion timing.
+REPORT_ASSEMBLY_STEPS = frozenset({"final_reports", "html_report"})
+
 
 def phase_for(step: str) -> str:
     for prefix, phase in PHASES:
@@ -88,6 +93,22 @@ def hms(seconds: float) -> str:
     return str(timedelta(seconds=round(seconds)))
 
 
+def analysis_job_window(mtimes: list[float], steps: list[dict]) -> float:
+    """Estimate analysis wall time from benchmark completion times and durations."""
+    starts = [mtime - step["seconds"] for mtime, step in zip(mtimes, steps)]
+    return (max(mtimes) - min(starts)) if mtimes and starts else sum(
+        step["seconds"] for step in steps
+    )
+
+
+def analysis_benchmark_paths(bench_dir: Path) -> list[Path]:
+    """Return benchmark files inside the declared scientific-analysis scope."""
+    return [
+        path for path in sorted(bench_dir.glob("*.tsv"))
+        if path.stem not in REPORT_ASSEMBLY_STEPS
+    ]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
@@ -97,7 +118,7 @@ def main() -> int:
 
     steps = []
     mtimes = []
-    for path in sorted(bench_dir.glob("*.tsv")):
+    for path in analysis_benchmark_paths(bench_dir):
         with path.open("r", encoding="utf-8") as handle:
             for row in csv.DictReader(handle, delimiter="\t"):
                 try:
@@ -108,7 +129,10 @@ def main() -> int:
                 mtimes.append(path.stat().st_mtime)
 
     cumulative = sum(s["seconds"] for s in steps)
-    wall = (max(mtimes) - min(mtimes)) if len(mtimes) >= 2 else cumulative
+    # Benchmark files are written when each job finishes. Estimate the analysis start
+    # by subtracting each job's measured duration from its completion time; using only
+    # the first/last completion timestamps systematically drops the first job's runtime.
+    wall = analysis_job_window(mtimes, steps)
     by_phase: dict[str, float] = {}
     for s in steps:
         by_phase[s["phase"]] = by_phase.get(s["phase"], 0.0) + s["seconds"]
@@ -152,6 +176,11 @@ def main() -> int:
         "run_finish_time": datetime.now().isoformat(timespec="seconds"),
         "wall_clock_approx_hms": hms(wall),
         "cumulative_job_hms": hms(cumulative),
+        "timing_scope": (
+            "Enabled scientific outputs through final report inputs; excludes the "
+            "final_reports and html_report assembly jobs."
+        ),
+        "includes_report_assembly": False,
         "detected_resources": detected,
         "configured_resources": {
             "snakemake_cores": resources.get("total_threads"),
@@ -166,13 +195,15 @@ def main() -> int:
     reports.mkdir(parents=True, exist_ok=True)
     (reports / "timing_summary.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-    lines = ["RNA-seq Analysis Timing Summary", "===============================", "",
+    title = "BulkSeq Studio Analysis Timing Summary"
+    lines = [title, "=" * len(title), "",
              f"Project name: {payload['project_name']}",
              f"Run finished: {payload['run_finish_time']}",
-             f"Overall wall-clock (approx): {payload['wall_clock_approx_hms']}",
-             f"Total cumulative job runtime: {payload['cumulative_job_hms']}", "",
+             f"Analysis job window (approx; excludes report assembly): {payload['wall_clock_approx_hms']}",
+             f"Cumulative measured analysis jobs: {payload['cumulative_job_hms']}",
+             f"Timing scope: {payload['timing_scope']}", "",
              "Configured resources", "--------------------",
-             f"Snakemake cores: {payload['configured_resources']['snakemake_cores']}",
+             f"Snakemake CPU workers: {payload['configured_resources']['snakemake_cores']}",
              f"Memory (GB): {payload['configured_resources']['memory_gb']}", "",
              "Per-phase timings", "-----------------"]
     lines += [f"{phase:16s} {hms_val}" for phase, hms_val in payload["per_phase_hms"].items()]

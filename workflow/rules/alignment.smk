@@ -10,6 +10,19 @@ _STAR_TWOPASS = "Basic" if _STAR.get("twopass_mode", False) else "None"
 _STAR_EXTRA = _STAR.get("extra", "")
 
 
+def _star_bam_sort_ram_bytes(_wildcards, resources):
+    # STAR defaults this extra sorting allocation to the genome-index size, which can be
+    # too small for the output BAM of a compact genome. Use half of the job's effective
+    # Snakemake reservation so the loaded index and mapping overhead retain equal headroom.
+    try:
+        mem_mb = int(resources.mem_mb)
+    except (AttributeError, TypeError, ValueError):
+        raise ValueError("star_align requires a positive mem_mb resource") from None
+    if mem_mb <= 0:
+        raise ValueError("star_align requires a positive mem_mb resource")
+    return mem_mb * 1_000_000 // 2
+
+
 if not USE_SALMON:
 
     if USE_HISAT2 and SINGLE_END:
@@ -79,6 +92,7 @@ if not USE_SALMON:
                 mismatch_nover=_STAR_MISMATCH_NOVER,
                 twopass=_STAR_TWOPASS,
                 extra=_STAR_EXTRA,
+                bam_sort_ram=_star_bam_sort_ram_bytes,
             benchmark:
                 "benchmarks/star_align_{sample}.tsv"
             log:
@@ -88,6 +102,7 @@ if not USE_SALMON:
                 "STAR --runMode alignReads --genomeDir {input.index} "
                 "--readFilesIn {input.fastqs} --readFilesCommand zcat "
                 "--outSAMtype BAM SortedByCoordinate --quantMode GeneCounts "
+                "--limitBAMsortRAM {params.bam_sort_ram} "
                 "--runThreadN {threads} "
                 "--outFilterMultimapNmax {params.multimap} "
                 "--outFilterMismatchNoverReadLmax {params.mismatch_nover} "

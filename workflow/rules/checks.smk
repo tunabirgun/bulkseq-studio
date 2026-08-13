@@ -23,7 +23,7 @@ elif COUNT_MATRIX_MODE:
         "checks/13_equivalence_qc.json",
     ]
 elif DE_RESULTS_MODE:
-    # DESeq2-results upload: only the ingest checks exist (no alignment, counts,
+    # External-results project copy: only the ingest checks exist (no alignment, counts,
     # DESeq2 model or equivalence test).
     ALL_CHECKS = [
         "checks/00_project_setup.json",
@@ -52,9 +52,12 @@ if ALT_DE_MODE and "checks/13_equivalence_qc.json" in ALL_CHECKS:
 if WF.get("enrichment", True):
     ALL_CHECKS.append("checks/10_enrichment_qc.json")
 # Wilcoxon sensitivity diagnostic reads the normalized matrix, which the
-# DESeq2-results upload mode does not have; it runs on every other mode.
+# External-results mode does not have; it runs on every other mode.
 if not DE_RESULTS_MODE:
     ALL_CHECKS.append("checks/14_wilcoxon_sensitivity.json")
+    # The correlation export is already produced from normalized expression for every
+    # non-external route. This advisory checks whether replicated conditions cluster locally.
+    ALL_CHECKS.append("checks/22_sample_structure_qc.json")
 # DE-vs-gene-set overlap (skips cleanly for organisms not covered by MSigDB).
 ALL_CHECKS.append("checks/15_set_overlap.json")
 # PPI network (STRING) when enabled; degrades to empty + PASS if unreachable.
@@ -73,7 +76,7 @@ ALL_CHECKS.append("checks/19_orientation_qc.json")
 if META_MODE:
     ALL_CHECKS.append("checks/20_duplicate_study_qc.json")
     # Per-study strandedness divergence from the featureCounts summary: only when the pipeline
-    # aligns + runs featureCounts (i.e. not count-matrix / microarray / DE-results uploads).
+    # aligns + runs featureCounts (i.e. not count-matrix / microarray / external results).
     if not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE):
         ALL_CHECKS.append("checks/21_strandedness_qc.json")
 
@@ -90,6 +93,12 @@ rule validate_project:
         "python workflow/scripts/validate_project.py --config {input.config} --samples {input.samples} --out {output}"
 
 
+_INPUT_CHECK_DIRECTION = (
+    (INPUT.get("deseq2_results_direction", {}) or {}) if DE_RESULTS_MODE
+    else ((config.get("deseq2", {}).get("contrasts") or [{}])[0])
+)
+
+
 rule input_check:
     input:
         samples=config["input"]["samples"],
@@ -99,8 +108,11 @@ rule input_check:
     params:
         # Pass the contrast so the multi-study confounding gate is enforced for CLI/benchmark runs
         # too (not just GUI pre-launch). Empty for single-condition/no-contrast configs.
-        num=((config.get("deseq2", {}).get("contrasts") or [{}])[0].get("numerator", "")),
-        den=((config.get("deseq2", {}).get("contrasts") or [{}])[0].get("denominator", "")),
+        # Results-only projects have no local model: never let stale local contrasts describe
+        # their metadata/direction. (The header-only sheet has no rows, but keeping this route-
+        # correct also protects legacy projects that retain irrelevant sample rows.)
+        num=_INPUT_CHECK_DIRECTION.get("numerator", ""),
+        den=_INPUT_CHECK_DIRECTION.get("denominator", ""),
     benchmark:
         "benchmarks/01_input_validation.tsv"
     shell:
@@ -158,6 +170,22 @@ if META_MODE:
             shell:
                 "python workflow/scripts/check_strandedness.py --summary {input.summary} "
                 "--samples {input.samples} --out {output}"
+
+
+if not DE_RESULTS_MODE:
+
+    rule sample_structure_check:
+        input:
+            correlations="results/export/sample_correlation_pearson.csv",
+            samples=config["input"]["samples"],
+            prev="checks/09_deseq2_qc.json",
+        output:
+            "checks/22_sample_structure_qc.json",
+        benchmark:
+            "benchmarks/22_sample_structure_qc.tsv"
+        shell:
+            "python workflow/scripts/check_sample_structure.py --correlations {input.correlations} "
+            "--samples {input.samples} --out {output}"
 
 
 rule aggregate_sanity_checks:

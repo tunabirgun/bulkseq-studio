@@ -10,7 +10,7 @@ local({
   assign("require", .m(base::require), envir = globalenv())
 })
 
-# Ingest a user-supplied DESeq2 results table (bring-your-own results mode). No
+# Ingest the verified project copy of a user-supplied differential-expression table. No
 # alignment, counts or DESeq2 are run: the table is normalized into the canonical
 # results/deseq2/deseq2_results.csv + up/down sets + a synthetic objects RDS that
 # carries no dds/vsd, so enrichment / figures / PPI run downstream unchanged.
@@ -22,36 +22,96 @@ sink(log_con, type = "message")
 table_file <- snakemake@input[["table"]]
 alpha <- suppressWarnings(as.numeric(snakemake@params[["alpha"]]))
 lfc_thr <- suppressWarnings(as.numeric(snakemake@params[["lfc_threshold"]]))
-con_factor <- tryCatch(as.character(snakemake@params[["contrast_factor"]]), error = function(e) "condition")
 numerator <- tryCatch(as.character(snakemake@params[["numerator"]]), error = function(e) "")
 denominator <- tryCatch(as.character(snakemake@params[["denominator"]]), error = function(e) "")
+upstream_method <- tryCatch(as.character(snakemake@params[["upstream_method"]]),
+                            error = function(e) "unknown")
+lfc_shrinkage <- tryCatch(as.character(snakemake@params[["lfc_shrinkage"]]),
+                          error = function(e) "unknown")
+p_adjustment_method <- tryCatch(as.character(snakemake@params[["p_adjustment_method"]]),
+                                error = function(e) "unknown")
+if (length(upstream_method) != 1 || !nzchar(trimws(upstream_method))) upstream_method <- "unknown"
+if (length(lfc_shrinkage) != 1 || !nzchar(trimws(lfc_shrinkage))) lfc_shrinkage <- "unknown"
+if (length(p_adjustment_method) != 1 || !nzchar(trimws(p_adjustment_method))) {
+  p_adjustment_method <- "unknown"
+}
 if (length(alpha) != 1 || is.na(alpha) || alpha <= 0 || alpha >= 1) alpha <- 0.05
 if (length(lfc_thr) != 1 || is.na(lfc_thr) || lfc_thr < 0) lfc_thr <- 1.0
+if (!nzchar(trimws(numerator)) || !nzchar(trimws(denominator)) ||
+    identical(tolower(trimws(numerator)), tolower(trimws(denominator)))) {
+  stop("Imported results require two distinct, non-blank source direction labels before ingest.")
+}
+if (!requireNamespace("jsonlite", quietly = TRUE)) {
+  stop("The required R package 'jsonlite' is not available; cannot write safe validation JSON.")
+}
 
 write_check <- function(path, name, status, messages) {
-  esc <- function(s) gsub('"', '\\\\"', s)
-  msg_json <- paste0(
-    sprintf('    {"status": "%s", "message": "%s"}', vapply(messages, `[[`, "", "status"),
-            vapply(lapply(messages, `[[`, "message"), esc, "")),
-    collapse = ",\n")
-  json <- sprintf('{\n  "check": "%s",\n  "status": "%s",\n  "messages": [\n%s\n  ]\n}',
-                  name, status, msg_json)
-  writeLines(json, path)
+  payload <- list(check = name, status = status, messages = messages)
+  jsonlite::write_json(payload, path, auto_unbox = TRUE, pretty = TRUE,
+                       null = "null", na = "null")
 }
 
 # Read CSV or TSV (by extension), falling back to the other delimiter when the
 # first parse yields a single column (a mis-detected separator).
+validate_field_counts <- function(counts) {
+  # A count of one usually means this is the wrong candidate delimiter; the caller will try the
+  # other one. Once the header establishes >=2 fields, every data record must match it. Without
+  # this guard read.table can reinterpret a first value as row names and shift scientific columns.
+  if (length(counts) > 1 && counts[[1]] >= 2) {
+    bad <- which(counts[-1] != counts[[1]]) + 1
+    if (length(bad)) {
+      stop(sprintf(paste(
+        "Data row field count does not match the %d-field header at record(s) %s.",
+        "Check for an extra delimiter (for example a decimal comma) or a missing value delimiter."
+      ), counts[[1]], paste(head(bad, 5), collapse = ", ")))
+    }
+  }
+}
+
+count_fields_encoded <- function(path, sep, encoding) {
+  con <- file(path, open = "rt", encoding = encoding)
+  on.exit(close(con))
+  count.fields(con, sep = sep, quote = "\"", comment.char = "", blank.lines.skip = TRUE)
+}
+
+read_delimited_encoded <- function(path, sep) {
+  for (encoding in c("UTF-8", "CP1252", "latin1")) {
+    counts <- tryCatch(
+      count_fields_encoded(path, sep, encoding),
+      warning = function(w) NULL, error = function(e) NULL
+    )
+    if (is.null(counts)) next
+    validate_field_counts(counts)
+    df <- tryCatch(
+      withCallingHandlers(
+        read.delim(path, sep = sep, header = TRUE, check.names = FALSE,
+                   stringsAsFactors = FALSE, colClasses = "character", comment.char = "",
+                   fileEncoding = encoding),
+        warning = function(w) {
+          if (grepl("incomplete final line", conditionMessage(w), ignore.case = TRUE)) {
+            invokeRestart("muffleWarning")
+          }
+          stop(w)
+        }
+      ),
+      error = function(e) NULL
+    )
+    if (!is.null(df)) return(df)
+  }
+  NULL
+}
+
 read_table_any <- function(path) {
   sep <- if (grepl("\\.tsv$|\\.txt$|\\.tab$", path, ignore.case = TRUE)) "\t" else ","
-  df <- tryCatch(read.delim(path, sep = sep, header = TRUE, check.names = FALSE,
-                            stringsAsFactors = FALSE, comment.char = ""),
-                 error = function(e) NULL)
+  df <- read_delimited_encoded(path, sep)
   if (is.null(df) || ncol(df) < 2) {
     alt <- if (sep == ",") "\t" else ","
-    df2 <- tryCatch(read.delim(path, sep = alt, header = TRUE, check.names = FALSE,
-                               stringsAsFactors = FALSE, comment.char = ""),
-                    error = function(e) NULL)
+    df2 <- read_delimited_encoded(path, alt)
     if (!is.null(df2) && ncol(df2) >= 2) df <- df2
+  }
+  if (!is.null(df) && ncol(df)) {
+    # UTF-8 BOM is metadata, not part of the first schema name.
+    colnames(df)[[1]] <- sub("^\ufeff", "", colnames(df)[[1]])
   }
   df
 }
@@ -67,7 +127,9 @@ pick <- function(df, cands) {
 }
 
 df <- read_table_any(table_file)
-if (is.null(df) || nrow(df) == 0) stop("DESeq2 results table is empty or unreadable.")
+if (is.null(df) || nrow(df) == 0) {
+  stop("The external differential-expression project copy is empty or unreadable.")
+}
 
 col_gene <- pick(df, c("gene_id", "gene", "geneid", "id", "ensembl", "ensembl_id"))
 col_lfc <- pick(df, c("log2FoldChange", "log2fc", "logFC", "log2_fold_change"))
@@ -83,46 +145,109 @@ col_se <- pick(df, c("lfcSE", "lfcse", "se"))
 col_bt <- pick(df, c("biotype", "gene_biotype", "gene_type"))
 
 # gene_id resolution. A named gene column wins. Otherwise, the common
-# write.csv(as.data.frame(res)) export has gene ids as ROW NAMES (its header is one
-# field short, so read.* assigns them to row.names and the first data column is
-# baseMean) — detect non-default row names and use them. Only then fall back to the
-# first column.
+# write.csv(as.data.frame(res)) export has gene ids as ROW NAMES. Depending on the
+# reader/version, that field is represented as non-default row names, an explicitly unnamed
+# column, or pandas' generated "Unnamed: ..." index header. An arbitrary named first column is
+# never guessed as an ID because it may be baseMean or another measurement.
 rn <- rownames(df)
 default_rn <- is.null(rn) || identical(rn, as.character(seq_len(nrow(df))))
+unnamed_cols <- which(!nzchar(trimws(colnames(df))))
 if (!is.na(col_gene)) {
   gene_id <- trimws(as.character(df[[col_gene]]))
 } else if (!default_rn) {
   gene_id <- trimws(rn)
-} else {
+} else if (length(unnamed_cols) == 1) {
+  gene_id <- trimws(as.character(df[[unnamed_cols]]))
+} else if (ncol(df) && grepl("^unnamed:", colnames(df)[[1]], ignore.case = TRUE)) {
   gene_id <- trimws(as.character(df[[1]]))
+} else {
+  stop(paste(
+    "Required gene identifier column not found.",
+    "Use gene_id/gene/id/ensembl, or an R row-name CSV with an unnamed first field."
+  ))
 }
-log2FoldChange <- suppressWarnings(as.numeric(df[[col_lfc]]))
-padj <- suppressWarnings(as.numeric(df[[col_padj]]))
 
-# Validate the required columns.
+# Validate identifiers before producing any output. Identifiers become row names and keys in
+# several downstream files, so embedded whitespace/control characters are not safe aliases.
 if (any(is.na(gene_id) | !nzchar(gene_id))) stop("gene_id column has empty / NA values.")
+bad_gene <- grepl("[[:space:][:cntrl:]]", gene_id)
+if (any(bad_gene)) {
+  examples <- paste(head(gene_id[bad_gene], 5), collapse = ", ")
+  stop(sprintf("gene_id values must not contain whitespace/control characters; examples: %s.",
+               examples))
+}
 if (anyDuplicated(gene_id)) {
   dups <- unique(gene_id[duplicated(gene_id)])
   stop(sprintf("gene_id values must be unique; %d duplicated (e.g. %s).",
                length(dups), paste(head(dups, 5), collapse = ", ")))
 }
-if (all(is.na(log2FoldChange))) stop("log2FoldChange column is non-numeric throughout.")
-if (all(is.na(padj))) stop("padj column is non-numeric throughout.")
 
-num_or_na <- function(col) if (is.na(col)) rep(NA_real_, length(gene_id)) else suppressWarnings(as.numeric(df[[col]]))
+# Convert a supplied numeric column without silently turning malformed tokens into NA. Genuine
+# missing values remain NA; every non-missing token must be numeric and finite. These checks all
+# run before the first scientific output is written.
+strict_numeric <- function(col, label, required = FALSE, lower = NULL, upper = NULL) {
+  if (is.na(col)) {
+    if (required) stop(sprintf("Required column not found: %s.", label))
+    return(rep(NA_real_, length(gene_id)))
+  }
+  raw_value <- df[[col]]
+  token <- trimws(as.character(raw_value))
+  missing <- is.na(raw_value) | token == "" | toupper(token) == "NA"
+  explicit_nan <- !is.na(raw_value) & toupper(token) %in% c("NAN", "+NAN", "-NAN")
+  value <- suppressWarnings(as.numeric(token))
+  malformed <- !missing & !explicit_nan & is.na(value)
+  if (any(malformed)) {
+    rows <- paste(head(which(malformed), 5), collapse = ", ")
+    examples <- paste(head(unique(token[malformed]), 5), collapse = ", ")
+    stop(sprintf("%s contains non-numeric token(s) at row(s) %s (examples: %s).",
+                 label, rows, examples))
+  }
+  value[missing] <- NA_real_
+  nonfinite <- explicit_nan | (!is.na(value) & !is.finite(value))
+  if (any(nonfinite)) {
+    stop(sprintf("%s contains non-finite value(s) at row(s) %s.", label,
+                 paste(head(which(nonfinite), 5), collapse = ", ")))
+  }
+  if (required && all(is.na(value))) {
+    stop(sprintf("%s column has no numeric values.", label))
+  }
+  outside <- rep(FALSE, length(value))
+  if (!is.null(lower)) outside <- outside | (!is.na(value) & value < lower)
+  if (!is.null(upper)) outside <- outside | (!is.na(value) & value > upper)
+  if (any(outside)) {
+    interval <- sprintf("%s%s, %s%s",
+                        if (is.null(lower)) "(" else "[", if (is.null(lower)) "-Inf" else lower,
+                        if (is.null(upper)) "Inf" else upper, if (is.null(upper)) ")" else "]")
+    stop(sprintf("%s contains value(s) outside %s at row(s) %s.", label, interval,
+                 paste(head(which(outside), 5), collapse = ", ")))
+  }
+  value
+}
+
+log2FoldChange <- strict_numeric(col_lfc, "log2FoldChange", required = TRUE)
+padj <- strict_numeric(col_padj, "adjusted p-value", required = TRUE, lower = 0, upper = 1)
+baseMean <- strict_numeric(col_base, "baseMean", lower = 0)
+lfcSE <- strict_numeric(col_se, "lfcSE", lower = 0)
+pvalue <- strict_numeric(col_pval, "pvalue", lower = 0, upper = 1)
+stat <- strict_numeric(col_stat, "stat")
+
+# A supplied test statistic may have a different scale, but its sign must agree with the source
+# log2FC direction. Reject contradictions rather than silently flipping either value. Missing
+# statistic entries use log2FC solely as a direction-safe placeholder; the external .rnk export
+# deliberately ranks all results-only rows by log2FC, not by a source statistic of unknown type.
+comparable <- !is.na(stat) & !is.na(log2FoldChange) & stat != 0 & log2FoldChange != 0
+contradiction <- comparable & sign(stat) != sign(log2FoldChange)
+if (any(contradiction)) {
+  stop(sprintf(paste(
+    "stat contradicts the confirmed log2FoldChange direction at row(s) %s.",
+    "Correct the source table; supplied signs are never changed during ingest."
+  ), paste(head(which(contradiction), 5), collapse = ", ")))
+}
+stat[is.na(stat)] <- log2FoldChange[is.na(stat)]
+
 chr_or_na <- function(col) if (is.na(col)) rep(NA_character_, length(gene_id)) else as.character(df[[col]])
-baseMean <- num_or_na(col_base)
-lfcSE <- num_or_na(col_se)
-pvalue <- num_or_na(col_pval)
-stat <- num_or_na(col_stat)
 symbol <- chr_or_na(col_sym)
 biotype <- chr_or_na(col_bt)
-
-# Synthesize a ranking statistic when absent (used by the .rnk export / GSEA):
-# signed -log10(padj), matching the fold-change direction.
-if (all(is.na(stat))) {
-  stat <- sign(log2FoldChange) * -log10(pmax(padj, .Machine$double.xmin))
-}
 
 # Canonical column order, identical to run_deseq2.R's results CSV so enrichment,
 # PPI and the figures consume it unchanged.
@@ -149,21 +274,34 @@ res_rds <- res_out[, c("baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", 
 rownames(res_rds) <- res_out$gene_id
 sm <- setNames(res_out$symbol, res_out$gene_id)
 saveRDS(list(dds = NULL, vsd = NULL, res = res_rds, resLFC = res_rds,
-             symbol_map = sm, assay_kind = "results_only"),
+             symbol_map = sm, assay_kind = "results_only",
+             external_rank_basis = "log2FoldChange"),
         snakemake@output[["rds"]])
 
 # Checks. 08 (design) is informational: no model is fit from a results table.
-coef_name <- if (nzchar(numerator) && nzchar(denominator))
-  paste0(con_factor, "_", numerator, "_vs_", denominator) else con_factor
+direction_label <- sprintf("positive log2FC = higher in '%s' than '%s'", numerator, denominator)
 write_check(snakemake@output[["design_check"]], "08_metadata_design_qc", "PASS",
             list(list(status = "PASS",
-              message = "Design taken as given: differential expression was computed externally and uploaded as a results table.")))
+              message = sprintf(paste(
+                "Design taken as given from the verified external-results project copy; no local",
+                "differential-expression model was fitted (upstream method: %s; LFC shrinkage: %s)."
+              ), upstream_method, lfc_shrinkage))))
 n_sig <- sum(sig)
+adjustment_label <- if (nzchar(trimws(p_adjustment_method)) &&
+                         tolower(trimws(p_adjustment_method)) != "unknown") {
+  sprintf("adjusted p-value (%s)", trimws(p_adjustment_method))
+} else {
+  "adjusted p-value (adjustment method not recorded)"
+}
 write_check(snakemake@output[["deseq_check"]], "09_deseq2_qc",
             if (n_sig > 0) "PASS" else "REVIEW_REQUIRED",
             list(list(status = if (n_sig > 0) "PASS" else "REVIEW_REQUIRED",
-              message = sprintf("Ingested %d genes from the uploaded results table; %d padj < %.3g (%s); %d up / %d down at |log2FC| >= %.2g.",
-                                nrow(res_out), n_sig, alpha, coef_name, nrow(up), nrow(down), lfc_thr))))
+              message = sprintf(paste(
+                "Ingested %d genes from the verified external-results project copy; %d genes with %s < %.3g",
+                "(%s); %d up / %d down",
+                "at |log2FC| >= %.2g."
+              ), nrow(res_out), n_sig, adjustment_label, alpha, direction_label,
+              nrow(up), nrow(down), lfc_thr))))
 
 writeLines(capture.output(sessionInfo()), snakemake@output[["session"]])
 sink(type = "message")

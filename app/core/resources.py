@@ -30,10 +30,13 @@ class SystemResources:
     conda_available: bool
     mamba_available: bool
     snakemake_available: bool
-    # The WSL2 VM's RAM/CPU caps (0 if WSL is unavailable). The pipeline runs in
-    # WSL, so these — not the Windows host totals — are the binding constraints.
+    # The WSL2 VM's RAM/logical-CPU caps (0 if WSL is unavailable). Snakemake's
+    # --cores budget is scheduled against these logical vCPUs.
     wsl_ram_gb: float = 0.0
     wsl_cpus: int = 0
+    # Diagnostic topology only; this does not bound Snakemake's logical CPU budget.
+    # Appended with a default so existing positional construction remains compatible.
+    wsl_physical_cores: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -42,11 +45,16 @@ class SystemResources:
 def detect_system(path: Path | None = None) -> SystemResources:
     disk_path = str(path or Path.cwd())
     vm = psutil.virtual_memory()
-    wsl_ram, wsl_cpus = _wsl_caps()
+    host_physical = psutil.cpu_count(logical=False) or 1
+    caps = _wsl_caps()
+    # Preserve compatibility with callers/tests that monkeypatch the historical
+    # private probe to return only RAM and logical CPUs.
+    wsl_ram, wsl_cpus = caps[:2]
+    wsl_physical = caps[2] if len(caps) >= 3 else 0
     return SystemResources(
         os=f"{psutil.WINDOWS and 'Windows' or 'POSIX'}",
         cpu_model=_cpu_name(),
-        physical_cores=psutil.cpu_count(logical=False) or 1,
+        physical_cores=host_physical,
         logical_threads=psutil.cpu_count(logical=True) or 1,
         total_ram_gb=round(vm.total / (1024**3), 1),
         available_ram_gb=round(vm.available / (1024**3), 1),
@@ -58,65 +66,135 @@ def detect_system(path: Path | None = None) -> SystemResources:
         snakemake_available=shutil.which("snakemake") is not None,
         wsl_ram_gb=wsl_ram,
         wsl_cpus=wsl_cpus,
+        wsl_physical_cores=wsl_physical,
     )
 
 
-def _wsl_caps() -> tuple[float, int]:
-    """RAM (GB) and CPU count actually available inside the WSL2 VM, or (0, 0).
+def _parse_lscpu_physical_cores(lines: list[str]) -> int:
+    """Count unique socket/core pairs from ``lscpu -p=CORE,SOCKET`` output."""
+    pairs: set[tuple[int, int]] = set()
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) != 2:
+            continue
+        try:
+            core, socket = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        if core < 0 or socket < 0:
+            continue
+        pairs.add((socket, core))
+    return len(pairs)
 
-    The pipeline runs in WSL, whose memory is capped (default ~50% of host) well
-    below the Windows total; recommending against the host RAM over-subscribes
-    memory-heavy jobs (STAR) and thrashes swap.
-    """
+
+def _parse_wsl_probe(stdout: str) -> tuple[float, int, int]:
+    """Parse labeled RAM/logical-CPU lines plus a guarded lscpu CSV block."""
+    ram_gb, cpus = 0.0, 0
+    lscpu_lines: list[str] = []
+    in_lscpu = False
+    for raw in (stdout or "").splitlines():
+        line = raw.strip()
+        if line == "LSCPU_BEGIN":
+            in_lscpu = True
+            continue
+        if line == "LSCPU_END":
+            in_lscpu = False
+            continue
+        if in_lscpu:
+            lscpu_lines.append(line)
+        elif line.startswith("RAM=") and line[4:].isdigit():
+            ram_gb = round(int(line[4:]) / (1024 ** 2), 1)  # kB -> GB
+        elif line.startswith("CPU=") and line[4:].isdigit():
+            cpus = int(line[4:])
+    physical = _parse_lscpu_physical_cores(lscpu_lines)
+    if cpus > 0 and physical > cpus:
+        physical = 0
+    return ram_gb, cpus, physical
+
+
+def _wsl_caps() -> tuple[float, int, int]:
+    """RAM, logical CPUs, and physical cores available inside WSL2."""
     if not sys.platform.startswith("win"):
-        return 0.0, 0
+        return 0.0, 0, 0
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    # Labeled lines so a login-shell banner/MOTD can't shift the parse.
-    probe = "echo RAM=$(awk '/MemTotal/{print $2}' /proc/meminfo); echo CPU=$(nproc)"
+    # Labeled boundaries make the parse immune to login-shell banners. Parseable
+    # lscpu emits one socket/core pair per logical CPU, so unique pairs count
+    # physical cores without assuming a fixed SMT ratio.
+    probe = (
+        "echo RAM=$(awk '/MemTotal/{print $2}' /proc/meminfo); "
+        "echo CPU=$(nproc); echo LSCPU_BEGIN; "
+        "lscpu -p=CORE,SOCKET 2>/dev/null || true; echo LSCPU_END"
+    )
     try:
         proc = subprocess.run(
             ["wsl", "--", "bash", "-lc", probe],
             capture_output=True, text=True, timeout=15, check=False, creationflags=flags,
         )
     except (OSError, subprocess.SubprocessError):
-        return 0.0, 0
-    ram_gb, cpus = 0.0, 0
-    for line in (proc.stdout or "").splitlines():
-        line = line.strip()
-        if line.startswith("RAM=") and line[4:].isdigit():
-            ram_gb = round(int(line[4:]) / (1024 ** 2), 1)  # kB -> GB
-        elif line.startswith("CPU=") and line[4:].isdigit():
-            cpus = int(line[4:])
-    return ram_gb, cpus
+        return 0.0, 0, 0
+    return _parse_wsl_probe(proc.stdout or "")
+
+
+def recommend_rule_threads(total_threads: int) -> dict[str, int]:
+    """Derive per-rule thread requests from the schedulable CPU pool.
+
+    Alignment is the long pole for the bundled sequencing benchmarks.  Give each
+    alignment at most half of the global pool so Snakemake can run two 24-GB STAR
+    jobs concurrently when the memory budget permits it.  Small pools retain the
+    established four-thread request, clamped to the pool by construction.
+    """
+    total = max(int(total_threads), 1)
+    half_pool = max(total // 2, 1)
+    alignment_threads = min(total, 12, max(4, half_pool))
+    secondary_alignment_threads = min(total, 8, max(4, half_pool))
+    return {
+        "fasterq_dump": min(4, total),
+        "fastqc": 1,
+        "fastp": min(4, total),
+        "sortmerna": min(4, total),
+        "star_index": min(12, total),
+        "star_align": alignment_threads,
+        "hisat2_align": secondary_alignment_threads,
+        "salmon_quant": secondary_alignment_threads,
+        "featurecounts": min(6, total),
+        "deseq2": min(2, total),
+        "multiqc": 1,
+    }
 
 
 def recommend_profile(system: SystemResources, profile: str = "balanced") -> dict[str, int | str]:
-    # The pipeline executes in WSL, so cap recommendations by the WSL2 limits when
-    # known — otherwise STAR's declared memory exceeds the VM and swaps.
-    threads = max(system.wsl_cpus or system.logical_threads, 1)
+    # Snakemake --cores counts schedulable logical CPUs. The pipeline executes in
+    # WSL, so use its vCPU allocation when known and the host logical count otherwise.
+    schedulable_cpus = max(int(system.wsl_cpus or system.logical_threads), 1)
+    # Keep memory capped by WSL when known so STAR does not exceed the VM and swap.
     ram = max(system.wsl_ram_gb or system.total_ram_gb, 1)
     if profile == "low":
-        total_threads = max(1, int(threads * 0.45))
+        total_threads = max(1, (schedulable_cpus * 45) // 100)
         total_memory_gb = max(2, int(ram * 0.55))
     elif profile == "high":
-        total_threads = max(1, int(threads * 0.9))
+        total_threads = max(1, (schedulable_cpus * 90) // 100)
         total_memory_gb = max(4, int(ram - 2))
     else:
-        total_threads = max(1, int(threads * 0.75))
+        total_threads = max(1, (schedulable_cpus * 75) // 100)
         reserve = 8 if ram >= 32 else 4
         total_memory_gb = max(4, int(min(ram * 0.75, ram - reserve)))
-    star_threads = min(total_threads, 12)
-    # STAR is the memory bottleneck, so it may use the whole allocated budget.
-    star_mem = total_memory_gb
+    rule_threads = recommend_rule_threads(total_threads)
+    # Match the workflow's declared 24-GB STAR reservation, clamped only when the
+    # entire selected pool is smaller.  Keeping this per-job value allows two
+    # alignments in a 60-GB pool while preserving headroom for the scheduler/UI.
+    star_mem = min(total_memory_gb, 24)
     return {
         "profile": profile,
         "total_threads": total_threads,
         "total_memory_gb": total_memory_gb,
-        "fastp_threads": min(4, total_threads),
-        "star_align_threads": star_threads,
+        "fastp_threads": rule_threads["fastp"],
+        "star_align_threads": rule_threads["star_align"],
         "star_align_memory_gb": star_mem,
-        "featurecounts_threads": min(6, total_threads),
-        "deseq2_threads": min(2, total_threads),
+        "featurecounts_threads": rule_threads["featurecounts"],
+        "deseq2_threads": rule_threads["deseq2"],
     }
 
 

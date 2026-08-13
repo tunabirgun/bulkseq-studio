@@ -121,8 +121,35 @@ def _ppi_self_test(app, window) -> None:
     import json as _json
 
     result = {"webengine": WEBENGINE_AVAILABLE, "version": None, "nodes": None}
+    reported = False
+    viewer = None
+
+    def _shutdown(code: int) -> None:
+        """Destroy WebEngine widgets while Qt's event loop is still alive.
+
+        Letting the interpreter tear down a live QWebEngineView after
+        QApplication has exited can trigger Chromium's Windows fast-fail
+        (0xC0000409), even after the rendered self-test itself passed.  Close and
+        queue-delete both the dedicated probe and the main window first, then
+        leave one event-loop turn for their deferred deletes to run.
+        """
+        for widget in (viewer, window):
+            if widget is None:
+                continue
+            try:
+                widget.hide()
+                widget.close()
+                widget.deleteLater()
+            except RuntimeError:
+                pass
+        app._selftest_viewer = None
+        QTimer.singleShot(250, lambda: app.exit(code))
 
     def _report(ok: bool, code: int) -> None:
+        nonlocal reported
+        if reported:
+            return
+        reported = True
         # A windowed (frozen) app has no stdout, so also write a sentinel file and
         # set the process exit code so a launcher can read PASS/FAIL.
         result["pass"] = ok
@@ -134,9 +161,9 @@ def _ppi_self_test(app, window) -> None:
             Path(out).write_text(_json.dumps(result), encoding="utf-8")
         except Exception:
             pass
-        # Defer the exit so it is delivered even when _report runs from the early
+        # Defer shutdown so it is delivered even when _report runs from the early
         # guard path (before app.exec() has started); a bare app.exit() there is lost.
-        QTimer.singleShot(0, lambda: app.exit(code))
+        QTimer.singleShot(0, lambda: _shutdown(code))
 
     def finish() -> None:
         ok = bool(result["version"]) and result["nodes"] == 3

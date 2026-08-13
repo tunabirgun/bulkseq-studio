@@ -121,13 +121,23 @@ fit2 <- contrasts.fit(fit, cmat)
 fit2 <- eBayes(fit2, trend = TRUE, robust = TRUE)
 # sort.by="none" keeps topTable in matrix row order (figures index assay(vsd) by
 # order(res$padj) positionally; a pre-sorted res would mis-index the heatmap).
-tt <- topTable(fit2, number = Inf, sort.by = "none")
+tt <- topTable(fit2, number = Inf, sort.by = "none", adjust.method = "BH")
+
+# Moderated coefficient standard error used by limma's t statistic. topTable does
+# not expose this column directly, but eBayes stores both factors needed to derive
+# it without approximation: stdev.unscaled * sqrt(posterior residual variance).
+lfc_se <- as.numeric(fit2$stdev.unscaled[, 1] * sqrt(fit2$s2.post))
+names(lfc_se) <- rownames(fit2$coefficients)
+lfc_se <- unname(lfc_se[rownames(tt)])
+if (length(lfc_se) != nrow(tt) || any(!is.finite(lfc_se)) || any(lfc_se <= 0)) {
+  stop("limma produced an invalid moderated log2-fold-change standard error.")
+}
 
 # Map limma columns onto the DESeq2 results schema.
 res <- data.frame(
   baseMean = tt$AveExpr,
   log2FoldChange = tt$logFC,
-  lfcSE = NA_real_,
+  lfcSE = lfc_se,
   stat = tt$t,
   pvalue = tt$P.Value,
   padj = tt$adj.P.Val,

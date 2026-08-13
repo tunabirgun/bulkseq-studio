@@ -17,6 +17,7 @@ rule network_string:
         nodes="results/networks/string_ppi_nodes.csv",
         edges="results/networks/string_ppi_edges.csv",
         hubs="results/networks/ppi_hub_genes.csv",
+        provenance="results/networks/string_ppi_provenance.json",
         png="results/figures/ppi_network.png",
         svg="results/figures/ppi_network.svg",
         check="checks/16_ppi_network.json",

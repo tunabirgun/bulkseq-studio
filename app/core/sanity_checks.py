@@ -21,7 +21,8 @@ def aggregate_status(messages: list[dict[str, str]]) -> str:
 
 
 def write_sanity_text(project_root: Path) -> Path:
-    lines = ["RNA-seq Sanity Checks", "====================", ""]
+    title = "BulkSeq Studio validation checks"
+    lines = [title, "=" * len(title), ""]
     for file in sorted((project_root / "checks").glob("*.json")):
         payload = json.loads(file.read_text(encoding="utf-8"))
         lines.append(f"{payload.get('check')}: {payload.get('status')}")

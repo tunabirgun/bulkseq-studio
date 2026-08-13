@@ -192,7 +192,6 @@ if (identical(source_kind, "affy_cel")) {
 if (!is.null(norm_mismatch)) {
   norm_messages <- c(norm_messages, list(list(status = "WARNING", message = norm_mismatch)))
 }
-write_check(out_norm_check, "11_normalization_qc", if (is.null(norm_mismatch)) "PASS" else "WARNING", norm_messages)
 
 # ---- 3. Probe -> gene symbol (synonym resolver) -----------------------------
 find_symbol_col <- function(df) {
@@ -276,6 +275,21 @@ if (length(missing)) {
 }
 gene_mat <- gene_mat[, ids, drop = FALSE]
 
+# Partial missingness is supported by limma and is common when a non-positive
+# submitter value becomes NA before log2 transformation. Record the realized
+# extent explicitly; the existing >50% row gate above prevents mostly missing
+# genes from reaching the model.
+n_missing_cells <- sum(is.na(gene_mat))
+n_genes_with_missing <- sum(rowSums(is.na(gene_mat)) > 0L)
+n_total_cells <- length(gene_mat)
+norm_messages <- c(norm_messages, list(list(
+  status = "PASS",
+  message = sprintf(
+    "Post-collapse missing intensities: %d/%d cells across %d/%d genes; %d gene(s) with >50%% missing intensity were excluded before limma.",
+    n_missing_cells, n_total_cells, n_genes_with_missing, nrow(gene_mat), n_dropped_na))))
+write_check(out_norm_check, "11_normalization_qc",
+            if (is.null(norm_mismatch)) "PASS" else "WARNING", norm_messages)
+
 # ---- 6. Write the gene x sample matrix + normalization provenance -----------
 out_df <- data.frame(gene_id = rownames(gene_mat), gene_mat, check.names = FALSE, stringsAsFactors = FALSE)
 write.table(out_df, out_expr, sep = "\t", quote = FALSE, row.names = FALSE)
@@ -283,10 +297,12 @@ write.table(out_df, out_expr, sep = "\t", quote = FALSE, row.names = FALSE)
 info <- sprintf(paste0('{\n  "gse": "%s",\n  "platform": "%s",\n  "source": "%s",\n',
                        '  "normalization": "%s",\n  "normalization_requested": "%s",\n  "log2_applied": %s,\n',
                        '  "n_probes": %d,\n  "n_genes": %d,\n  "n_samples": %d,\n',
+                       '  "missing_cells": %d,\n  "genes_with_missing": %d,\n  "genes_dropped_over_half_missing": %d,\n',
                        '  "probe_to_gene": "MaxMean collapse",\n  "symbol_map_rate": %.4f\n}'),
                 gse, platform, source_kind, norm_method, norm_kind,
                 if (applied_log2 || already_log2) "true" else "false",
-                n_probes, nrow(gene_mat), ncol(gene_mat), map_rate)
+                n_probes, nrow(gene_mat), ncol(gene_mat), n_missing_cells,
+                n_genes_with_missing, n_dropped_na, map_rate)
 writeLines(info, out_info)
 
 # Confirm every declared output was actually written (catches a silent partial write:

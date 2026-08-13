@@ -65,6 +65,8 @@ references:
     annotation_source: Ensembl
     genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/saccharomyces_cerevisiae/dna/Saccharomyces_cerevisiae.R64-1-1.dna.toplevel.fa.gz
     annotation_gtf_url: https://ftp.ensembl.org/pub/release-111/gtf/saccharomyces_cerevisiae/Saccharomyces_cerevisiae.R64-1-1.111.gtf.gz
+    genome_md5: 5ae49d2d22cd977abdd6b054b94c544d
+    annotation_md5: cc468f46d052afab93fb7c9c791cef22
     annotation_gff3_url: null
     transcriptome_fasta_url: null
     protein_fasta_url: null
@@ -249,6 +251,8 @@ references:
     annotation_source: NCBI RefSeq
     genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/001/433/935/GCF_001433935.1_IRGSP-1.0/GCF_001433935.1_IRGSP-1.0_genomic.fna.gz
     annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/001/433/935/GCF_001433935.1_IRGSP-1.0/GCF_001433935.1_IRGSP-1.0_genomic.gtf.gz
+    genome_md5: 52867770f33ef8847ae5c01d44e19996
+    annotation_md5: d2f0bdde92b9d749a826758d263b7777
     annotation_gff3_url: null
     transcriptome_fasta_url: null
     protein_fasta_url: null
@@ -468,6 +472,8 @@ references:
     annotation_source: Ensembl
     genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/drosophila_melanogaster/dna/Drosophila_melanogaster.BDGP6.46.dna.toplevel.fa.gz
     annotation_gtf_url: https://ftp.ensembl.org/pub/release-111/gtf/drosophila_melanogaster/Drosophila_melanogaster.BDGP6.46.111.gtf.gz
+    genome_md5: cae7e8b3702a8ee180f32c787d007d50
+    annotation_md5: 8378d5d069fdac25744889a66cf5700e
     annotation_gff3_url: null
     transcriptome_fasta_url: null
     protein_fasta_url: null

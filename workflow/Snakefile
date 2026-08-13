@@ -36,16 +36,21 @@ configfile: "config/config.yaml"
 # ---------------------------------------------------------------------------
 # Samples
 # ---------------------------------------------------------------------------
+_INPUT_AT_PARSE = config.get("input", {})
+_DE_RESULTS_AT_PARSE = _INPUT_AT_PARSE.get("type") == "deseq2_results"
 samples_df = pd.read_csv(config["input"]["samples"], sep="\t", dtype=str).fillna("")
 samples_df = samples_df.set_index("sample_id", drop=False)
 SAMPLES = samples_df["sample_id"].tolist()
-# Fail fast on an empty sample sheet rather than crashing deep in a rule.
-if not SAMPLES:
+# A results-only upload has no per-sample matrix, so its samples.tsv may legitimately be
+# header-only. Every other route needs sample rows for read/count processing and remains a
+# hard failure. FIRST_SAMPLE is None on the results-only route; sample-dependent rules are not
+# targets there and their guarded inputs never dereference it.
+if not SAMPLES and not _DE_RESULTS_AT_PARSE:
     raise ValueError(
         f"Sample sheet '{config['input']['samples']}' has no sample rows. "
         "Add at least one sample (Input Data tab) before running."
     )
-FIRST_SAMPLE = SAMPLES[0]
+FIRST_SAMPLE = SAMPLES[0] if SAMPLES else None
 
 # Constrain {sample} to known IDs so paired (..._1.trim) and single (...trim)
 # trimmed filenames parse unambiguously.
@@ -136,7 +141,7 @@ def aligner_fastqs(sample):
 # ---------------------------------------------------------------------------
 REF = config.get("reference", {})
 WF = config.get("workflow", {})
-INPUT = config.get("input", {})
+INPUT = _INPUT_AT_PARSE
 # Count-matrix mode: the user supplies a counts table, so the pipeline skips
 # download/QC/alignment/featureCounts and ingests it into results/counts/counts.txt.
 COUNT_MATRIX_MODE = INPUT.get("type") == "count_matrix"
@@ -149,7 +154,7 @@ MICROARRAY_MODE = INPUT.get("type") == "microarray"
 # skips download/QC/alignment/featureCounts/DESeq2 and ingests it into the canonical
 # results/deseq2/deseq2_results.csv, then runs enrichment/figures/PPI. Outputs that need
 # raw/normalized counts (PCA, sample correlation, count heatmaps, GOI) are gated off.
-DE_RESULTS_MODE = INPUT.get("type") == "deseq2_results"
+DE_RESULTS_MODE = _DE_RESULTS_AT_PARSE
 DE_RESULTS_TABLE = INPUT.get("deseq2_results")
 # Differential-expression engine (count-based routes only). DESeq2 is the default;
 # limma-voom is an opt-in cross-check that consumes the same counts.txt and emits the

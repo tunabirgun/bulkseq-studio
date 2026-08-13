@@ -11,6 +11,7 @@ from pathlib import Path
 # legacy \\wsl$\<distro>\... . Both already live on the Linux filesystem, so the
 # translation is just stripping the \\wsl...\<distro> prefix (not a /mnt mount).
 _WSL_UNC = re.compile(r"^//wsl(?:\.localhost|\$)/[^/]+/?(.*)$", re.IGNORECASE)
+_WSL_MOUNT = re.compile(r"^/mnt/([a-zA-Z])/(.*)$")
 
 
 def app_root() -> Path:
@@ -52,6 +53,16 @@ def user_data_dir() -> Path:
 
 def normalize_path(path: str | Path) -> Path:
     return Path(path).expanduser().resolve()
+
+
+def project_configured_path(project_root: str | Path, configured_path: str | Path) -> Path:
+    """Resolve a project config path on the desktop host without requiring it to exist."""
+    text = str(configured_path).strip()
+    match = _WSL_MOUNT.match(text)
+    if os.name == "nt" and match:
+        return Path(f"{match.group(1)}:/{match.group(2)}")
+    path = Path(text).expanduser()
+    return path if path.is_absolute() else Path(project_root) / path
 
 
 def windows_to_wsl_path(path: str | Path) -> str:

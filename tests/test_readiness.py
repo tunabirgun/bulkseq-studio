@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import sys
 
 import pytest
@@ -12,8 +13,38 @@ def test_readiness_check_reports_python() -> None:
     names = {item.name for item in items}
     assert "Python" in names
     assert "PySide6" in names
+    assert "numpy" in names
     assert isinstance(missing_python_packages(), list)
     assert "Python" in readiness_summary(items)
+
+
+def test_readiness_probes_direct_companion_commands() -> None:
+    from app.core.readiness import BIOINFORMATICS_TOOLS, WSL_TOOLS
+    for command in ("gtfToGenePred", "geneBody_coverage.py", "hisat2-build", "bowtie2", "perl"):
+        assert command in BIOINFORMATICS_TOOLS
+        assert command in WSL_TOOLS
+
+
+def test_run_wsl_base64_transport_round_trips_complex_probe(monkeypatch) -> None:
+    # wsl.exe mangles inline loops, quotes, and substitutions. The probe must cross that boundary
+    # only as a base64 payload and decode to the exact original script inside WSL.
+    import app.core.readiness as readiness
+
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        return _P(0, "OK")
+
+    monkeypatch.setattr(readiness.subprocess, "run", fake_run)
+    probe = 'for t in "a b" c; do printf "%s:%s\\n" "$t" "$(command -v "$t")"; done'
+    result = readiness._run_wsl("Ubuntu-24.04", probe)
+    assert result.returncode == 0
+    command = captured["command"]
+    assert probe not in command
+    inner = command[-1]
+    encoded = inner.removeprefix("echo ").split(" | base64 -d | bash", 1)[0]
+    assert base64.b64decode(encoded).decode("utf-8") == probe
 
 
 def test_wsl_readiness_probe_is_nonfatal() -> None:

@@ -136,6 +136,7 @@ class _StatusPill(QLabel):
         self.set_state(state)
 
     def set_state(self, state: str) -> None:
+        self._state = state
         color = _PILL_COLOR.get(state, MUTED)
         self.setText(_PILL_TEXT.get(state, state))
         self.setStyleSheet(
@@ -251,6 +252,25 @@ class _StatusCard(QFrame):
 
         self._handler = None
 
+    def apply_theme(self) -> None:
+        """Repaint this card without changing its readiness state or handler."""
+        self.setStyleSheet(
+            "#statusCard {"
+            f" background: {SURFACE};"
+            f" border: 1px solid {BORDER};"
+            " border-radius: 6px;"
+            "}"
+        )
+        self.title_label.setStyleSheet(
+            f"color: {TEXT}; font-size: 11pt; font-weight: 600; background: transparent;"
+        )
+        self.detail_label.setStyleSheet(
+            f"color: {MUTED}; font-size: 9.5pt; background: transparent;"
+        )
+        self.action_button.setStyleSheet(_primary_button_style())
+        if isinstance(self.pill, _StatusPill):
+            self.pill.set_state(self.pill._state)
+
     def update_state(
         self,
         state: str,
@@ -272,10 +292,12 @@ class _StatusCard(QFrame):
             self.action_button.setText(action_label)
             self.action_button.setEnabled(action_enabled)
             self.action_button.setVisible(True)
-            try:
-                self.action_button.clicked.disconnect()
-            except (RuntimeError, TypeError):
-                pass
+            if self._handler is not None:
+                try:
+                    self.action_button.clicked.disconnect(self._handler)
+                except (RuntimeError, TypeError):
+                    pass
+                self._handler = None
             if action_handler is not None:
                 self.action_button.clicked.connect(action_handler)
                 self._handler = action_handler
@@ -351,6 +373,7 @@ class ReadinessDialog(QDialog):
         self.wsl_install_thread: WslBioenvInstallThread | None = None
         self._check_thread: ReadinessCheckThread | None = None
         self._installing = False
+        self._summary_complete = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 16, 18, 16)
@@ -360,15 +383,15 @@ class ReadinessDialog(QDialog):
         header = QHBoxLayout()
         title_box = QVBoxLayout()
         title_box.setSpacing(2)
-        heading = QLabel("Environment setup")
-        heading.setStyleSheet(
+        self.heading_label = QLabel("Environment setup")
+        self.heading_label.setStyleSheet(
             f"color: {TEXT}; font-size: 15pt; font-weight: 600; background: transparent;"
         )
         self.summary_label = QLabel("Checking requirements…")
         self.summary_label.setStyleSheet(
             f"color: {MUTED}; font-size: 10pt; background: transparent;"
         )
-        title_box.addWidget(heading)
+        title_box.addWidget(self.heading_label)
         title_box.addWidget(self.summary_label)
         header.addLayout(title_box)
         header.addStretch(1)
@@ -434,6 +457,11 @@ class ReadinessDialog(QDialog):
             "}"
             "QPushButton:hover { text-decoration: underline; }"
         )
+        details_captions = ("▸ Show details / log", "▾ Hide details / log")
+        self.details_button.setMinimumWidth(
+            max(self.details_button.fontMetrics().horizontalAdvance(text)
+                for text in details_captions) + 20
+        )
         self.details_button.clicked.connect(self._toggle_details)
         details_row.addWidget(self.details_button)
         details_row.addStretch(1)
@@ -497,6 +525,54 @@ class ReadinessDialog(QDialog):
         self.refresh()
 
     # -- helpers -----------------------------------------------------------
+
+    def apply_theme(self, mode: str) -> None:
+        """Repaint an already-open dialog for ``mode`` in place.
+
+        Readiness text, visibility, enabled states, progress, and signal handlers
+        are deliberately left untouched. Only styles derived from the shared
+        palette are regenerated.
+        """
+        mode = mode if mode in theme.PALETTES else "light"
+        _use_mode(mode)
+        self.setStyleSheet(f"QDialog {{ background: {BACKGROUND}; font-family: {BASE_FONT}; }}")
+        self.heading_label.setStyleSheet(
+            f"color: {TEXT}; font-size: 15pt; font-weight: 600; background: transparent;"
+        )
+        summary_color = SUCCESS if self._summary_complete else MUTED
+        summary_weight = " font-weight: 600;" if self._summary_complete else ""
+        self.summary_label.setStyleSheet(
+            f"color: {summary_color}; font-size: 10pt;{summary_weight} background: transparent;"
+        )
+        self.refresh_button.setStyleSheet(_secondary_button_style())
+        self.check_progress.setStyleSheet(
+            f"QProgressBar {{ background: {SURFACE}; border: 1px solid {BORDER};"
+            f" border-radius: 3px; }} QProgressBar::chunk {{ background: {PRIMARY};"
+            " border-radius: 3px; }"
+        )
+        for card in (self.card_python, self.card_wsl, self.card_core, self.card_r):
+            card.apply_theme()
+        self.details_button.setStyleSheet(
+            "QPushButton {"
+            f" color: {PRIMARY}; background: transparent; border: none;"
+            " padding: 2px 0; font-size: 9.5pt; text-align: left;"
+            "}"
+            "QPushButton:hover { text-decoration: underline; }"
+        )
+        for button in (
+            self.stop_install_button, self.log_button, self.repair_button, self.rebuild_button,
+        ):
+            button.setStyleSheet(_secondary_button_style())
+        self.close_button.setStyleSheet(_primary_button_style())
+        self.text.setStyleSheet(
+            "QTextEdit {"
+            f" background: {SURFACE}; color: {TEXT};"
+            f" border: 1px solid {BORDER}; border-radius: 6px;"
+            " padding: 8px; font-family: Consolas, 'Cascadia Mono', monospace;"
+            " font-size: 9pt;"
+            "}"
+        )
+        self.update()
 
     def _toggle_details(self) -> None:
         self._details_visible = not self._details_visible
@@ -586,6 +662,7 @@ class ReadinessDialog(QDialog):
     def _update_summary(self) -> None:
         ready = self._ready_count()
         total = len(self._active_cards)
+        self._summary_complete = ready == total
         if ready == total:
             self.summary_label.setText(f"{ready} of {total} ready — setup complete")
             self.summary_label.setStyleSheet(

@@ -17,6 +17,8 @@ benchmarks:
       annotation_format: gtf
       genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/drosophila_melanogaster/dna/Drosophila_melanogaster.BDGP6.46.dna.toplevel.fa.gz
       annotation_gtf_url: https://ftp.ensembl.org/pub/release-111/gtf/drosophila_melanogaster/Drosophila_melanogaster.BDGP6.46.111.gtf.gz
+      genome_md5: cae7e8b3702a8ee180f32c787d007d50
+      annotation_md5: 8378d5d069fdac25744889a66cf5700e
     source_publication: Brooks et al. Genome Research 2011
     geo_series: GSE18508
     bioconductor_package: pasilla
@@ -42,6 +44,9 @@ benchmarks:
         base_count: 394229450
         fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR031/SRR031714/SRR031714_1.fastq.gz
         fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR031/SRR031714/SRR031714_2.fastq.gz
+        fastq_1_md5: f71bcf8cc122faa844062df25e3f3895
+        fastq_2_md5: 4524b18d1f6e347d89f17c0664c5ca60
+        download_bytes: 335847360
       - sample_id: untreated_4
         condition: untreated
         replicate: 2
@@ -54,6 +59,9 @@ benchmarks:
         base_count: 438206318
         fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR031/SRR031716/SRR031716_1.fastq.gz
         fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR031/SRR031716/SRR031716_2.fastq.gz
+        fastq_1_md5: ce5badb6a908bbc90e09750de46a705b
+        fastq_2_md5: 6efa59f7fbfb60bc0f0558b52733bdab
+        download_bytes: 423165203
       - sample_id: cg8144_rnai_3
         condition: cg8144_rnai
         replicate: 1
@@ -66,6 +74,9 @@ benchmarks:
         base_count: 441218932
         fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR031/SRR031724/SRR031724_1.fastq.gz
         fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR031/SRR031724/SRR031724_2.fastq.gz
+        fastq_1_md5: cb15cf8122c455a4d00bd0d72b7749e4
+        fastq_2_md5: 5190f949f5eeb1b4a9c1748737b1f77a
+        download_bytes: 429003069
       - sample_id: cg8144_rnai_4
         condition: cg8144_rnai
         replicate: 2
@@ -78,17 +89,20 @@ benchmarks:
         base_count: 471570994
         fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR031/SRR031726/SRR031726_1.fastq.gz
         fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR031/SRR031726/SRR031726_2.fastq.gz
+        fastq_1_md5: 0039206bba5f518e49524ba87b68923e
+        fastq_2_md5: 5e747920f38c61744d7351b74a896711
+        download_bytes: 426325821
   - id: sc_ume6_paired
-    name: Yeast WT vs ume6 delete paired-end subset
+    name: Yeast rpd3-delta Ume6 delta2-508 paired-end subset
     organism_name: Saccharomyces cerevisiae
     reference_preset: Saccharomyces cerevisiae
     genome_size_category: yeast
     contrast:
-      name: ume6_delta_vs_WT
+      name: rpd3_ume6_delta_2_508_vs_rpd3_delta
       factor: condition
-      numerator: ume6_delta
-      denominator: WT
-      reference_level: WT
+      numerator: rpd3_ume6_delta_2_508
+      denominator: rpd3_delta
+      reference_level: rpd3_delta
     reference:
       source: Ensembl
       release: "111"
@@ -96,69 +110,85 @@ benchmarks:
       annotation_format: gtf
       genome_fasta_url: https://ftp.ensembl.org/pub/release-111/fasta/saccharomyces_cerevisiae/dna/Saccharomyces_cerevisiae.R64-1-1.dna.toplevel.fa.gz
       annotation_gtf_url: https://ftp.ensembl.org/pub/release-111/gtf/saccharomyces_cerevisiae/Saccharomyces_cerevisiae.R64-1-1.111.gtf.gz
+      genome_md5: 5ae49d2d22cd977abdd6b054b94c544d
+      annotation_md5: cc468f46d052afab93fb7c9c791cef22
     source_study: PRJNA630199 (SRP260000)
     study_title: Basis of Specificity for a Conserved Promiscuous Chromatin Remodeling Protein [RNA-Seq]
     description: >
-      Four-sample paired-end subset of a Saccharomyces cerevisiae RNA-seq
-      experiment: two wild-type and two independent UME6 deletion isolates
-      (clones 2-479 and 2-508). Ume6 is a transcriptional repressor that recruits
-      the Rpd3L histone-deacetylase complex to early-meiotic gene promoters, so
-      ume6 deletion derepresses those genes, giving a strong, well-characterised
-      differential signal. The small (~12 Mb) genome makes this a fast end-to-end
-      benchmark on a different organism than the Drosophila pasilla set.
+      Four-sample paired-end subset of GSE149803: two rpd3-delta controls with
+      wild-type Ume6 and two rpd3-delta biological replicates carrying the Ume6
+      delta2-508 N-terminal truncation. This matches the study's mechanistic
+      contrast: rpd3 deletion removes Rpd3 repression, while Ume6 delta2-508 also
+      removes the Isw2-recruitment region, producing derepression at Ume6 target
+      genes. The small (~12 Mb) genome makes this a fast end-to-end benchmark on
+      a different organism than the Drosophila pasilla set.
     notes:
-      - One ENA run per biological sample (two WT, two ume6-delta isolates) for a quick benchmark; the full study also includes rpd3-delta and rpd3-delta ume6-delta genotypes.
-      - Yeast enrichment runs via g:Profiler (GO/Reactome) and KEGG (organism code sce); org.Sc.sgd.db is not installed in the WSL env, so the GO route falls through to g:Profiler rather than clusterProfiler.
+      - One ENA run per biological sample, with two biological replicates for each genotype. The contrast follows Donovan et al. (2021), eLife 10:e64061, DOI 10.7554/eLife.64061.
+      - Ume6 delta2-508 is an N-terminal truncation in an rpd3-delta background, not a complete UME6 gene deletion; biological interpretation must remain specific to this combined perturbation.
+      - Yeast enrichment uses org.Sc.sgd.db when available and translates the configured SYMBOL namespace to its GENENAME namespace; unresolved mappings remain excluded. KEGG uses organism code sce.
+      - GEO records strand-specific NuGEN Universal mRNA libraries. Catalog entries preserve each ENA archive mate designation; strand-orientation QC remains an execution gate.
       - Use allow_pending_sra validation until the FASTQ files are downloaded.
     samples:
-      - sample_id: WT_1
-        condition: WT
+      - sample_id: rpd3_delta_1
+        condition: rpd3_delta
         replicate: 1
         batch: srp260000
         layout: paired
-        original_accession: SRR11684203
-        geo_accession: GSM4512952
-        experiment_accession: SRX8244992
-        read_count: 13352420
-        base_count: 1121603280
-        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/003/SRR11684203/SRR11684203_1.fastq.gz
-        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/003/SRR11684203/SRR11684203_2.fastq.gz
-      - sample_id: WT_2
-        condition: WT
+        original_accession: SRR11684209
+        geo_accession: GSM4512958
+        experiment_accession: SRX8244998
+        read_count: 13173856
+        base_count: 1106603904
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/009/SRR11684209/SRR11684209_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/009/SRR11684209/SRR11684209_2.fastq.gz
+        fastq_1_md5: 54f6ad43cdf8b17f3a8072d6346458b4
+        fastq_2_md5: 6fe691238041a7cc65c89ff5727cfd7b
+        download_bytes: 623751693
+      - sample_id: rpd3_delta_2
+        condition: rpd3_delta
         replicate: 2
         batch: srp260000
         layout: paired
-        original_accession: SRR11684204
-        geo_accession: GSM4512953
-        experiment_accession: SRX8244993
-        read_count: 31714781
-        base_count: 2664041604
-        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/004/SRR11684204/SRR11684204_1.fastq.gz
-        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/004/SRR11684204/SRR11684204_2.fastq.gz
-      - sample_id: ume6_delta_1
-        condition: ume6_delta
+        original_accession: SRR11684210
+        geo_accession: GSM4512959
+        experiment_accession: SRX8244999
+        read_count: 11791211
+        base_count: 990461724
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/010/SRR11684210/SRR11684210_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/010/SRR11684210/SRR11684210_2.fastq.gz
+        fastq_1_md5: 2f688755626ac8ade47adb1d6669c2aa
+        fastq_2_md5: 4f8ca852b127de3748f48aae67ee5a15
+        download_bytes: 555483256
+      - sample_id: rpd3_ume6_delta_2_508_1
+        condition: rpd3_ume6_delta_2_508
         replicate: 1
         batch: srp260000
         layout: paired
-        original_accession: SRR11684205
-        geo_accession: GSM4512954
-        experiment_accession: SRX8244994
-        read_count: 10391059
-        base_count: 872848956
-        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/005/SRR11684205/SRR11684205_1.fastq.gz
-        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/005/SRR11684205/SRR11684205_2.fastq.gz
-      - sample_id: ume6_delta_2
-        condition: ume6_delta
+        original_accession: SRR11684213
+        geo_accession: GSM4512962
+        experiment_accession: SRX8245002
+        read_count: 10886913
+        base_count: 914500692
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/013/SRR11684213/SRR11684213_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/013/SRR11684213/SRR11684213_2.fastq.gz
+        fastq_1_md5: 2ee329c5f2141843df296e82b7c2da70
+        fastq_2_md5: 6114a89f45109402035ba616b77d35fe
+        download_bytes: 515588089
+      - sample_id: rpd3_ume6_delta_2_508_2
+        condition: rpd3_ume6_delta_2_508
         replicate: 2
         batch: srp260000
         layout: paired
-        original_accession: SRR11684207
-        geo_accession: GSM4512956
-        experiment_accession: SRX8244996
-        read_count: 12092808
-        base_count: 1015795872
-        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/007/SRR11684207/SRR11684207_1.fastq.gz
-        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/007/SRR11684207/SRR11684207_2.fastq.gz
+        original_accession: SRR11684214
+        geo_accession: GSM4512963
+        experiment_accession: SRX8245003
+        read_count: 11298921
+        base_count: 949109364
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/014/SRR11684214/SRR11684214_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR116/014/SRR11684214/SRR11684214_2.fastq.gz
+        fastq_1_md5: 2032ced00dce6c760c1ce1b46cf7be1d
+        fastq_2_md5: 5c520f18098fb29850b4b71547fd44ba
+        download_bytes: 534375089
   - id: rice_cy1000_salt_paired
     name: Rice CY1000 salt-stress paired-end subset
     organism_name: Oryza sativa Japonica Group
@@ -177,6 +207,8 @@ benchmarks:
       annotation_format: gtf
       genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/001/433/935/GCF_001433935.1_IRGSP-1.0/GCF_001433935.1_IRGSP-1.0_genomic.fna.gz
       annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/001/433/935/GCF_001433935.1_IRGSP-1.0/GCF_001433935.1_IRGSP-1.0_genomic.gtf.gz
+      genome_md5: 52867770f33ef8847ae5c01d44e19996
+      annotation_md5: d2f0bdde92b9d749a826758d263b7777
     source_study: PRJDB38133 (umbrella PRJCA018101)
     study_title: Molecular mechanism of heterosis and salt tolerance in super hybrid rice CY1000
     description: >
@@ -203,6 +235,9 @@ benchmarks:
         base_count: 7790778600
         fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805002/DRR805002_1.fastq.gz
         fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805002/DRR805002_2.fastq.gz
+        fastq_1_md5: 4eadd76b3975aea7ceb4f435c1d4c4a0
+        fastq_2_md5: 6f35dccceef136580a6e1fa3d93a435c
+        download_bytes: 3751567057
       - sample_id: rCY1000_2
         condition: control
         replicate: 2
@@ -213,6 +248,9 @@ benchmarks:
         base_count: 8481094500
         fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805003/DRR805003_1.fastq.gz
         fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805003/DRR805003_2.fastq.gz
+        fastq_1_md5: 8e500fa4a6da8c5e4e7e03f94fdfa1ce
+        fastq_2_md5: 9c750d55f237270ca144f98c92b2fa34
+        download_bytes: 4091845866
       - sample_id: rCY1000_3
         condition: control
         replicate: 3
@@ -223,6 +261,9 @@ benchmarks:
         base_count: 9375798300
         fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805004/DRR805004_1.fastq.gz
         fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805004/DRR805004_2.fastq.gz
+        fastq_1_md5: e3fa1a50999043cb65d8d1abcca884e4
+        fastq_2_md5: 6d80dfee37759ace64e39dae324114f7
+        download_bytes: 4550048264
       - sample_id: rCY1000_5d_1
         condition: salt
         replicate: 1
@@ -233,6 +274,9 @@ benchmarks:
         base_count: 5748431700
         fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805005/DRR805005_1.fastq.gz
         fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805005/DRR805005_2.fastq.gz
+        fastq_1_md5: bb99663a2f8bf87c3a99d15f742dc40e
+        fastq_2_md5: 378e2c197a53203864d0999b8e42c729
+        download_bytes: 2807766003
       - sample_id: rCY1000_5d_2
         condition: salt
         replicate: 2
@@ -243,6 +287,9 @@ benchmarks:
         base_count: 10733218200
         fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805006/DRR805006_1.fastq.gz
         fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805006/DRR805006_2.fastq.gz
+        fastq_1_md5: 21128ce9b84dabce8537ac54beec2e79
+        fastq_2_md5: cf0ec8b18b476ed0078ec9878b5ab30f
+        download_bytes: 5173219276
       - sample_id: rCY1000_5d_3
         condition: salt
         replicate: 3
@@ -253,6 +300,9 @@ benchmarks:
         base_count: 10236981900
         fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805007/DRR805007_1.fastq.gz
         fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/DRR805/DRR805007/DRR805007_2.fastq.gz
+        fastq_1_md5: ac6616306f242b4bf60fdce7eaf7226e
+        fastq_2_md5: 6a92bdbe0b382c9b126fe570d39a7e74
+        download_bytes: 4911502872
   - id: arabidopsis_hub2_microarray
     type: microarray
     name: Arabidopsis hub2-3 mutant vs Col-0 (ATH1 microarray)
@@ -275,13 +325,13 @@ benchmarks:
       Six-sample Affymetrix ATH1 microarray benchmark for the microarray (limma) route:
       three Col-0 wild-type and three hub2-3 loss-of-function mutant 12-day-old whole
       seedlings. HUB2 is a RING E3 ligase that monoubiquitinates histone H2B, so the hub2-3
-      knockout gives a clean single-gene-perturbation differential signature on a non-model
-      plant. No FASTQ or alignment: GEOquery ingests the submitter-normalized intensities and
+      knockout gives a clean single-gene-perturbation differential signature in the canonical
+      model plant Arabidopsis thaliana. No FASTQ or alignment: GEOquery ingests the submitter-normalized intensities and
       limma runs the differential test, mirroring the pasilla perturb-vs-control design.
     notes:
       - Microarray benchmark (no alignment or genome reference); GEOquery downloads the GSE30735 series matrix and GPL198 annotation. Probes map to gene symbols, so enrichment keys on SYMBOL.
       - Arabidopsis enrichment runs GO via clusterProfiler with org.At.tair.db (SYMBOL bitr), plus KEGG ath and g:Profiler athaliana as the organism-appropriate routes.
-      - Small download and 6 samples make this a fast end-to-end check of the microarray route on a non-model organism.
+      - Small download and 6 samples make this a fast end-to-end check of the microarray route in a plant model organism.
     samples:
       - {sample_id: GSM762823, condition: wild_type}
       - {sample_id: GSM762824, condition: wild_type}
@@ -311,13 +361,13 @@ benchmarks:
       Six-sample Affymetrix Yeast Genome S98 (YG-S98) microarray benchmark for the microarray
       (limma) route: three isogenic wild-type (Y255) and three cbc2-delta deletion (Y2685)
       strains. Cbc2 is the small subunit of the nuclear cap-binding complex; the deletion gives
-      a clean, high-signal knockout contrast on a second, fungal non-model organism. GEOquery
+      a clean, high-signal knockout contrast in the canonical fungal model organism Saccharomyces cerevisiae. GEOquery
       ingests the submitter-normalized intensities and limma runs the differential test; no
       alignment or reference.
     notes:
-      - Microarray benchmark (no alignment or genome reference); GEOquery downloads the GSE6705 series matrix and GPL90 annotation. Probes map to gene symbols, so enrichment keys on SYMBOL.
-      - Yeast enrichment runs GO via clusterProfiler with org.Sc.sgd.db (SYMBOL bitr), plus KEGG sce and g:Profiler scerevisiae.
-      - A different non-model organism than the Arabidopsis microarray benchmark, exercising the microarray route on a fungal genome.
+      - Microarray benchmark (no alignment or genome reference); GEOquery downloads the GSE6705 series matrix and GPL90 annotation. Probes map to gene names, and the configured SYMBOL namespace is translated explicitly to org.Sc.sgd.db GENENAME.
+      - Yeast enrichment runs GO via clusterProfiler with org.Sc.sgd.db (effective GENENAME mapping), plus KEGG sce and g:Profiler scerevisiae.
+      - A fungal model system distinct from the Arabidopsis benchmark, exercising the microarray route on a compact fungal genome.
     samples:
       - {sample_id: GSM154157, condition: wild_type}
       - {sample_id: GSM154623, condition: wild_type}
