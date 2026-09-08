@@ -1295,7 +1295,10 @@ def core_figure_render(tmp_path_factory) -> tuple[Path, dict]:
         capture_output=True, text=True, timeout=300, check=False,
     )
     if probe.returncode == 77:
-        _skip_or_fail("the R figure packages are unavailable in this environment")
+        # The full-figure render needs the Bioconductor stack (DESeq2); a plain R runner has only
+        # CRAN, so this stays a skip unless the caller asks for the full stack explicitly.
+        (pytest.fail if os.environ.get("BULKSEQ_REQUIRE_R_FULL") else pytest.skip)(
+            "the R figure packages (incl. DESeq2) are unavailable in this environment")
     assert probe.returncode == 0, probe.stderr
 
     work = tmp_path_factory.mktemp("core-figures")
