@@ -37,7 +37,9 @@ $checksumLines = foreach ($f in $packageAssets) {
     $hash = Get-Sha256Hex $f
     "$hash  $(Split-Path -Leaf $f)"
 }
-Set-Content -LiteralPath $checksumManifest -Value $checksumLines -Encoding ascii
+# LF line endings: the manifest is consumed by `sha256sum -c` on Linux and macOS, which
+# treats a trailing CR as part of the file name and verifies nothing.
+[System.IO.File]::WriteAllText($checksumManifest, (($checksumLines -join "`n") + "`n"), (New-Object System.Text.ASCIIEncoding))
 $recorded = Get-Content -LiteralPath $checksumManifest
 if ($recorded.Count -ne $packageAssets.Count) { throw "Checksum manifest entry count mismatch" }
 foreach ($f in $packageAssets) {

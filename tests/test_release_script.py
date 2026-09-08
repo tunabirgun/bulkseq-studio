@@ -126,3 +126,10 @@ def test_release_verification_fails_on_a_bad_published_asset(tmp_path: Path, bre
     completed, _ = _run_release(tmp_path, root, output, break_mode)
     assert completed.returncode != 0
     assert message in completed.stdout + completed.stderr
+
+
+def test_checksum_manifest_uses_lf_so_sha256sum_c_can_verify_it(tmp_path: Path) -> None:
+    """`sha256sum -c` reads a trailing CR as part of the file name and verifies nothing."""
+    release = (REPO_ROOT / "scripts" / "release.ps1").read_text(encoding="utf-8")
+    assert "Set-Content -LiteralPath $checksumManifest" not in release
+    assert "[System.IO.File]::WriteAllText($checksumManifest" in release
