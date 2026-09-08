@@ -10,8 +10,19 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.constants import WSL_MAMBA_ROOT
 from app.core.paths import app_root, wsl_has_working_distro
 
+
+# Environment profile ('core' or 'full') recorded by scripts/setup_wsl_bioenv.sh inside the
+# env prefix, and the tools only the full profile installs. FULL_ONLY_TOOLS is kept identical
+# to the setup script's FULL_ONLY_PROBE_TOOLS array (tests/test_readiness.py parses the script
+# and fails on drift), so the core/full split has exactly one meaning. Without it a correct
+# core-only install reports its missing R stack as a broken environment and offers a rebuild.
+ENV_PROFILE_MARKER = ".bulkseq_profile"
+FULL_ONLY_TOOLS = ("ribodetector_cpu", "Rscript")
+_CORE_PROFILE_DETAIL = ("not installed in the core environment; install the full R/DESeq2 "
+                        "stack to add it")
 
 PYTHON_PACKAGES = {
     "PySide6": "PySide6",
@@ -48,7 +59,7 @@ OPTIONAL_ROUTE_TOOLS = {
     "ribodetector_cpu": "rRNA filtering (RiboDetector)",
     "fastq_screen": "Contamination screen (FastQ Screen)",
     "bowtie2": "Contamination-screen alignment (FastQ Screen)",
-    "perl": "Contamination-screen runtime (FastQ Screen)",
+    "perl": "FastQ Screen runtime and the Salmon transcriptome cleaner (gtf_clean.pl)",
     "read_distribution.py": "Extended alignment QC (RSeQC)",
     "geneBody_coverage.py": "Gene-body coverage QC (RSeQC)",
     "gtfToGenePred": "RSeQC BED12 annotation conversion (UCSC)",
@@ -110,7 +121,10 @@ _R_PACKAGES_ALL = ("DESeq2", "edgeR", "limma", "GSVA", "clusterProfiler", "GO.db
                    # drop it (like GO.db) and pass every check, then crash the figures rule.
                    "ggplot2", "ggrepel", "ggnewscale", "ggridges", "gtable", "pheatmap",
                    "igraph", "jsonlite", "matrixStats", "scales", "svglite", "systemfonts",
-                   "RColorBrewer", "msigdbr")
+                   "RColorBrewer", "msigdbr",
+                   # Organism annotation packages named by app/data/reference_catalog.yaml; a
+                   # missing one silently downgrades that preset's enrichment to g:Profiler.
+                   "org.At.tair.db", "org.Bt.eg.db", "org.Ce.eg.db", "org.Dm.eg.db", "org.Dr.eg.db", "org.Gg.eg.db", "org.Hs.eg.db", "org.Mm.eg.db", "org.Rn.eg.db", "org.Sc.sgd.db", "org.Ss.eg.db")
 
 R_ANALYSIS_PACKAGES = _R_PACKAGES_ALL
 
@@ -134,12 +148,40 @@ def _which_in_env(command: str) -> str | None:
     return shutil.which(command, path=_env_search_path())
 
 
+def _native_env_prefix() -> Path:
+    """The micromamba prefix a native run uses, mirroring snakemake_runner.native_path_prefix."""
+    root = Path(os.environ.get("MAMBA_ROOT_PREFIX") or (Path.home() / "micromamba"))
+    return root / "envs" / WSL_ENV_NAME
+
+
 @dataclass(frozen=True)
 class ReadinessItem:
     name: str
     status: str
     detail: str
     required_for: str
+
+
+def installed_profile(marker: str | None, rscript_present: bool) -> str:
+    """'core' or 'full' for the environment that is actually installed.
+
+    The setup script records the profile it installed; an environment created before that
+    marker existed is classified by whether the full-only R stack is present, so an older
+    full install is never downgraded to 'core' and treated as missing nothing.
+    """
+    text = (marker or "").strip().lower()
+    if text in ("core", "full"):
+        return text
+    return "full" if rscript_present else "core"
+
+
+def _tool_item(name: str, command: str, detail: str, ok: bool, purpose: str,
+               profile: str) -> ReadinessItem:
+    if ok:
+        return ReadinessItem(name, "PASS", detail, purpose)
+    if profile == "core" and command in FULL_ONLY_TOOLS:
+        return ReadinessItem(name, "WARNING", _CORE_PROFILE_DETAIL, purpose)
+    return ReadinessItem(name, "REVIEW_REQUIRED", detail, purpose)
 
 
 def check_readiness() -> list[ReadinessItem]:
@@ -150,19 +192,26 @@ def check_readiness() -> list[ReadinessItem]:
         status = "PASS" if importlib.util.find_spec(import_name) is not None else "FAIL"
         detail = "installed" if status == "PASS" else f"missing; install package {package_name}"
         items.append(ReadinessItem(package_name, status, detail, "GUI/core features"))
+    # Resolved through _which_in_env, not the bare PATH: the environment's bin is where a
+    # native run finds snakemake, so a correct-but-unactivated shell must not report it
+    # missing. The search path is a superset of PATH, so wsl/conda/mamba are unaffected.
     for command, purpose in EXTERNAL_TOOLS.items():
         # WSL is a Windows-only execution path; on Linux the pipeline runs natively.
         if command == "wsl" and not is_windows:
             items.append(ReadinessItem("wsl", "PASS", "not applicable (native execution)", purpose))
             continue
-        status = "PASS" if shutil.which(command) else ("WARNING" if command == "mamba" else "REVIEW_REQUIRED")
-        detail = shutil.which(command) or "not found on PATH"
-        items.append(ReadinessItem(command, status, detail, purpose))
+        found = _which_in_env(command)
+        status = "PASS" if found else ("WARNING" if command == "mamba" else "REVIEW_REQUIRED")
+        items.append(ReadinessItem(command, status, found or "not found on PATH", purpose))
+    # On Windows these tools live in WSL, so this loop reports the Windows session only and
+    # the profile split is the WSL probe's business; on Linux it is the environment check.
+    native_profile = "full" if is_windows else installed_profile(
+        _native_profile_marker(), _which_in_env("Rscript") is not None)
     for command, purpose in BIOINFORMATICS_TOOLS.items():
         found = _which_in_env(command)
-        status = "PASS" if found else "REVIEW_REQUIRED"
         not_found = "not found on PATH or inside this Windows session" if is_windows else "not found on PATH"
-        items.append(ReadinessItem(command, status, found or not_found, purpose))
+        items.append(_tool_item(command, command, found or not_found, found is not None,
+                                purpose, native_profile))
     # On Windows the bioinformatics tools live inside WSL; probe it. On Linux the native
     # PATH probes above ARE the environment check, so the WSL probe is skipped.
     if is_windows:
@@ -186,8 +235,15 @@ def check_readiness() -> list[ReadinessItem]:
             items.append(ReadinessItem(f"WSL env:{WSL_ENV_NAME}", "REVIEW_REQUIRED",
                                        "waiting for a WSL Linux distribution", "Linux bioinformatics tools"))
     else:
-        items.append(_native_r_packages_item())
+        items.append(_native_r_packages_item(native_profile))
     return items
+
+
+def _native_profile_marker() -> str | None:
+    try:
+        return (_native_env_prefix() / ENV_PROFILE_MARKER).read_text(encoding="utf-8")
+    except OSError:
+        return None
 
 
 def check_wsl_bulkseq_environment(distro: str | None = None, env_name: str = WSL_ENV_NAME) -> list[ReadinessItem]:
@@ -217,7 +273,7 @@ def check_wsl_bulkseq_environment(distro: str | None = None, env_name: str = WSL
             distro, f"test -x {shlex.quote(probe_path)}").returncode == 0
         if _core_tools_present(log_paths) and on_disk:
             items.append(ReadinessItem(f"WSL env:{env_name}", "PASS", "micromamba environment found in setup log", "Linux bioinformatics tools"))
-            items.extend(_items_from_tool_paths(log_paths))
+            items.extend(_items_from_tool_paths(log_paths, _wsl_profile(distro, env_name, log_paths)))
             return items
         detail = _short_output(probe) or f"micromamba environment directory '{env_name}' not found"
         items.append(ReadinessItem(f"WSL env:{env_name}", "REVIEW_REQUIRED", detail, "Linux bioinformatics tools"))
@@ -225,20 +281,33 @@ def check_wsl_bulkseq_environment(distro: str | None = None, env_name: str = WSL
 
     items.append(ReadinessItem(f"WSL env:{env_name}", "PASS", "micromamba environment found", "Linux bioinformatics tools"))
     log_paths = _tool_paths_from_install_log()
-    for command, purpose in WSL_TOOLS.items():
-        result = _run_wsl(
-            distro,
-            _wsl_tool_probe_command(env_name, command),
-        )
+    found: dict[str, tuple[bool, str]] = {}
+    for command in WSL_TOOLS:
+        result = _run_wsl(distro, _wsl_tool_probe_command(env_name, command))
         if result.returncode == 0:
-            items.append(ReadinessItem(f"WSL {command}", "PASS", _short_output(result), purpose))
+            found[command] = (True, _short_output(result))
         elif command in log_paths:
-            items.append(ReadinessItem(f"WSL {command}", "PASS", f"{log_paths[command]} (from setup log)", purpose))
+            found[command] = (True, f"{log_paths[command]} (from setup log)")
         else:
-            items.append(ReadinessItem(f"WSL {command}", "REVIEW_REQUIRED", _short_output(result) or "not found in WSL bulkseq environment", purpose))
+            found[command] = (False, _short_output(result) or "not found in WSL bulkseq environment")
+    profile = _wsl_profile(distro, env_name, {k: v for k, (ok, v) in found.items() if ok})
+    for command, purpose in WSL_TOOLS.items():
+        ok, detail = found[command]
+        items.append(_tool_item(f"WSL {command}", command, detail, ok, purpose, profile))
+    if profile == "core":
+        # A core environment has no R at all; probing its packages would report the whole
+        # analysis stack broken for an environment that was installed exactly as asked.
+        items.append(_r_packages_item("WSL R packages", "", False, profile))
+        return items
     rp = _run_wsl(distro, _wsl_r_packages_probe_command(env_name, R_ANALYSIS_PACKAGES), timeout=R_PROBE_TIMEOUT_SEC)
-    items.append(_r_packages_item("WSL R packages", _short_output(rp), rp.returncode == 0))
+    items.append(_r_packages_item("WSL R packages", _short_output(rp), rp.returncode == 0, profile))
     return items
+
+
+def _wsl_profile(distro: str | None, env_name: str, tool_paths: dict[str, str]) -> str:
+    marker = _run_wsl(distro, f"cat \"$({_wsl_env_prefix_command(env_name)})/{ENV_PROFILE_MARKER}\"")
+    text = _short_output(marker) if marker.returncode == 0 else None
+    return installed_profile(text, "Rscript" in tool_paths)
 
 
 def missing_python_packages() -> list[str]:
@@ -280,17 +349,13 @@ def _run_wsl(distro: str | None, command: str, timeout: int = 20) -> subprocess.
 
 
 def _wsl_env_prefix_command(env_name: str) -> str:
-    # An if-elif chain, NOT a bash array or `for` loop: neither survives the
-    # `wsl -- bash -lc "<string>"` subprocess round-trip (wsl.exe reconstructs the command line
-    # and mangles the loop/array, so an existing env probed as "not found"). The three candidates
-    # cover every install path the app's setup creates ($HOME/micromamba/envs is the default).
-    e = env_name
-    return (
-        f'if [ -d "$HOME/micromamba/envs/{e}" ]; then echo "$HOME/micromamba/envs/{e}"; '
-        f'elif [ -d "/root/micromamba/envs/{e}" ]; then echo "/root/micromamba/envs/{e}"; '
-        f'elif [ -d "$HOME/.local/share/mamba/envs/{e}" ]; then echo "$HOME/.local/share/mamba/envs/{e}"; '
-        'else exit 1; fi'
-    )
+    # The one prefix a run can actually use: snakemake_runner._wrap_wsl exports
+    # MAMBA_ROOT_PREFIX=WSL_MAMBA_ROOT and puts <root>/envs/<env>/bin on PATH, and the setup
+    # script creates the environment under the same root, so accepting any other location
+    # would mark an environment ready that every run would then fail to find. $HOME is
+    # expanded by the same `wsl -- bash -lc` shell the run uses, so it resolves identically.
+    prefix = f"{WSL_MAMBA_ROOT}/envs/{env_name}"
+    return f'if [ -d "{prefix}" ]; then echo "{prefix}"; else exit 1; fi'
 
 
 def _wsl_tool_probe_command(env_name: str, tool: str) -> str:
@@ -328,29 +393,31 @@ def _wsl_r_packages_probe_command(env_name: str, packages: tuple[str, ...]) -> s
     )
 
 
-def _r_packages_item(name: str, out: str, ok: bool) -> ReadinessItem:
+def _r_packages_item(name: str, out: str, ok: bool, profile: str = "full") -> ReadinessItem:
     if ok and out == "OK":
         return ReadinessItem(name, "PASS", "R analysis stack installed (DE engines, enrichment incl. GO.db, PPI, microarray)",
+                             "DESeq2 / engines / enrichment / GSVA")
+    if profile == "core":
+        return ReadinessItem(name, "WARNING", _CORE_PROFILE_DETAIL,
                              "DESeq2 / engines / enrichment / GSVA")
     return ReadinessItem(name, "REVIEW_REQUIRED", out or "R analysis packages not verified",
                          "DESeq2 / engines / enrichment / GSVA")
 
 
-def _native_r_packages_item() -> ReadinessItem:
+def _native_r_packages_item(profile: str = "full") -> ReadinessItem:
     # Resolve Rscript the way a run will — through the environment's bin, not just the
     # PATH the GUI happened to inherit.
     rscript = _which_in_env("Rscript")
     if rscript is None:
-        return ReadinessItem("R packages", "REVIEW_REQUIRED", "Rscript not on PATH",
-                             "DESeq2 / engines / enrichment / GSVA")
+        return _r_packages_item("R packages", "Rscript not on PATH", False, profile)
     try:
         rp = subprocess.run([rscript, "-e", _r_packages_check_code(R_ANALYSIS_PACKAGES)],
                             capture_output=True, text=True, timeout=R_PROBE_TIMEOUT_SEC, check=False)
         text = (rp.stdout or rp.stderr or "").strip()
         out = text.splitlines()[-1][:240] if text else ""
-        return _r_packages_item("R packages", out, rp.returncode == 0)
+        return _r_packages_item("R packages", out, rp.returncode == 0, profile)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return ReadinessItem("R packages", "REVIEW_REQUIRED", str(exc), "DESeq2 / engines / enrichment / GSVA")
+        return _r_packages_item("R packages", str(exc), False, profile)
 
 
 def _short_output(result: subprocess.CompletedProcess[str]) -> str:
@@ -389,14 +456,25 @@ def _core_tools_present(paths: dict[str, str]) -> bool:
     return all(tool in paths for tool in ("snakemake", "fastqc", "multiqc", "fastp", "STAR", "featureCounts", "samtools"))
 
 
-def _items_from_tool_paths(paths: dict[str, str]) -> list[ReadinessItem]:
+def _items_from_tool_paths(paths: dict[str, str], profile: str = "full") -> list[ReadinessItem]:
     items: list[ReadinessItem] = []
     for command, purpose in WSL_TOOLS.items():
-        if command in paths:
-            items.append(ReadinessItem(f"WSL {command}", "PASS", f"{paths[command]} (from setup log)", purpose))
-        else:
-            items.append(ReadinessItem(f"WSL {command}", "REVIEW_REQUIRED", "not found in WSL setup log", purpose))
+        found = command in paths
+        detail = f"{paths[command]} (from setup log)" if found else "not found in WSL setup log"
+        items.append(_tool_item(f"WSL {command}", command, detail, found, purpose, profile))
     return items
+
+
+def readiness_counts(items: list[ReadinessItem]) -> tuple[int, int]:
+    """(ready, total) over individual checks, not over UI cards.
+
+    A card-level count reports "4 of 4 ready" while a check inside one of those cards is red.
+    WARNING items are optional or not-applicable (an absent mamba, a full-only tool on a core
+    environment) and are excluded from both numbers; every other item counts, and only PASS
+    counts as ready.
+    """
+    counted = [item for item in items if item.status != "WARNING"]
+    return sum(1 for item in counted if item.status == "PASS"), len(counted)
 
 
 def readiness_summary(items: list[ReadinessItem]) -> str:

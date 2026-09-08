@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -12,20 +13,81 @@ import yaml
 from app.constants import WSL_ENV_NAME, WSL_MAMBA_ROOT, WSL_MICROMAMBA
 
 
+# Command catalog. Which of these a run actually executed is decided by select_tools()
+# from the run's own config: probing all of them would record a version for a tool the
+# run never used, and probing a fixed subset (what this dict used to be) left the
+# configured trimmer, rRNA filter, contamination screen, RSeQC, gffread, perl and aria2c
+# out of software_versions.txt entirely.
 TOOLS = {
     "snakemake": ["snakemake", "--version"],
     "python": ["python", "--version"],
     "fastqc": ["fastqc", "--version"],
     "multiqc": ["multiqc", "--version"],
     "fastp": ["fastp", "--version"],
+    "trim_galore": ["trim_galore", "--version"],
+    "trimmomatic": ["trimmomatic", "-version"],
     "sortmerna": ["sortmerna", "--version"],
+    "ribodetector": ["ribodetector_cpu", "--version"],
+    "fastq_screen": ["fastq_screen", "--version"],
+    "bowtie2": ["bowtie2", "--version"],
     "STAR": ["STAR", "--version"],
-    "hisat2": ["hisat2", "--version"],
+    "HISAT2": ["hisat2", "--version"],
     "samtools": ["samtools", "--version"],
     "featureCounts": ["featureCounts", "-v"],
     "salmon": ["salmon", "--version"],
+    "gffread": ["gffread", "--version"],
+    "RSeQC": ["read_distribution.py", "--version"],
+    "perl": ["perl", "-v"],
+    "aria2c": ["aria2c", "--version"],
     "Rscript": ["Rscript", "--version"],
 }
+
+# Config value -> catalog key for the three interchangeable tools.
+TRIMMER_TOOLS = {"fastp": "fastp", "trim-galore": "trim_galore", "trimmomatic": "trimmomatic"}
+RRNA_TOOLS = {"sortmerna": "sortmerna", "ribodetector": "ribodetector"}
+
+
+def select_tools(config: dict[str, Any] | None) -> dict[str, list[str]]:
+    """The tools this config's run can actually invoke, mirroring the Snakefile's gates.
+
+    Gated by the same conditions as make_run_summary.select_tools (the pipeline-side writer)
+    and labelled identically, so a user comparing the GUI-written software_versions.txt with
+    the report reads the same names. It is a superset: this side also records the RSeQC,
+    perl, aria2c and bowtie2 companions that the pipeline writer does not probe.
+    """
+    cfg = config or {}
+    wf = cfg.get("workflow") or {}
+    input_type = str((cfg.get("input") or {}).get("type", "fastq"))
+    reads_processed = input_type not in ("count_matrix", "microarray", "deseq2_results")
+    names = ["snakemake", "python", "Rscript"]
+    if reads_processed:
+        names.append("multiqc")
+        if wf.get("fastqc_pre_trim", True) or (
+                wf.get("fastqc_post_trim", True) and wf.get("trimming", True)):
+            names.append("fastqc")
+        aligner = str(wf.get("aligner") or "STAR").upper()
+        if aligner == "SALMON":
+            # gtf_clean.pl runs under perl (workflow/rules/reference.smk).
+            names += ["salmon", "gffread", "perl"]
+        elif aligner == "HISAT2":
+            names += ["HISAT2", "samtools", "featureCounts"]
+        else:
+            names += ["STAR", "samtools"]
+            if str(wf.get("quantifier") or "featureCounts") == "featureCounts":
+                names.append("featureCounts")
+        if wf.get("trimming", True):
+            names.append(TRIMMER_TOOLS.get(str(wf.get("trimmer", "fastp")), "fastp"))
+        if wf.get("rrna_filtering"):
+            names.append(RRNA_TOOLS.get(str(wf.get("rrna_tool", "sortmerna")), "sortmerna"))
+        # The contamination screen additionally needs a FastQ Screen config path; that is the
+        # Snakefile's own gate, and without it the rule is skipped.
+        if wf.get("contamination_screen") and (cfg.get("contamination") or {}).get("conf"):
+            names += ["fastq_screen", "bowtie2", "perl"]
+        if wf.get("rseqc") and aligner != "SALMON":  # RSeQC needs a genome BAM
+            names.append("RSeQC")
+        if input_type in ("sra", "mixed"):
+            names.append("aria2c")
+    return {name: TOOLS[name] for name in dict.fromkeys(names)}
 
 
 def _no_window_flags() -> int:
@@ -34,11 +96,11 @@ def _no_window_flags() -> int:
     return 0
 
 
-def _capture_versions_wsl(distro: str | None = None) -> dict[str, str]:
+def _capture_versions_wsl(tools: dict[str, list[str]], distro: str | None = None) -> dict[str, str]:
     # Probe every tool inside the WSL micromamba env in one shot — the tools live
     # there, not on the Windows PATH, so a local probe would report all missing.
     probes = []
-    for name, command in TOOLS.items():
+    for name, command in tools.items():
         binary = command[0]
         joined = " ".join(command)
         probes.append(
@@ -63,26 +125,43 @@ def _capture_versions_wsl(distro: str | None = None) -> dict[str, str]:
                 key, _, value = line.partition("\t")
                 versions[key.strip()] = value.strip()
     except Exception as exc:
-        versions = {name: f"unavailable ({exc.__class__.__name__})" for name in TOOLS}
+        versions = {name: f"unavailable ({exc.__class__.__name__})" for name in tools}
     # Any tool the probe did not report (e.g. WSL unreachable) is marked unknown.
-    for name in TOOLS:
+    for name in tools:
         versions.setdefault(name, "unavailable (WSL probe failed)")
     return versions
 
 
-def _capture_versions_local() -> dict[str, str]:
+def _first_nonempty_line(text: str) -> str:
+    for line in text.splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def _capture_versions_local(tools: dict[str, list[str]]) -> dict[str, str]:
     versions: dict[str, str] = {}
-    for name, command in TOOLS.items():
+    for name, command in tools.items():
+        if shutil.which(command[0]) is None:
+            versions[name] = "unavailable (not in env)"
+            continue
         try:
-            result = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
-            versions[name] = (result.stdout or result.stderr).strip().splitlines()[0]
+            # stderr folded into stdout and the first non-empty line taken, exactly as the
+            # WSL branch does: several tools print their version on stderr, and featureCounts
+            # leads with a blank line — indexing [0] of an empty split raised IndexError.
+            result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, encoding="utf-8", errors="replace",
+                                    timeout=10, check=False)
+            versions[name] = _first_nonempty_line(result.stdout or "") or "no version output"
         except Exception as exc:
             versions[name] = f"unavailable ({exc.__class__.__name__})"
     return versions
 
 
-def capture_versions(project_root: Path, use_wsl: bool = False, distro: str | None = None) -> dict[str, str]:
-    versions = _capture_versions_wsl(distro) if use_wsl else _capture_versions_local()
+def capture_versions(project_root: Path, use_wsl: bool = False, distro: str | None = None,
+                     config: dict[str, Any] | None = None) -> dict[str, str]:
+    tools = select_tools(config)
+    versions = _capture_versions_wsl(tools, distro) if use_wsl else _capture_versions_local(tools)
     out = project_root / "results" / "reports" / "software_versions.txt"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(f"{k}: {v}" for k, v in versions.items()) + "\n", encoding="utf-8")
@@ -98,7 +177,7 @@ def write_run_summary(project_root: Path, default_config_path: Path | None = Non
     # creation date) that always differs from the bundled defaults; excluding it
     # keeps the customized-parameters list focused on scientific/tool settings.
     customized = diff_configs(_drop_project(defaults), _drop_project(config))
-    versions = capture_versions(project_root, use_wsl=use_wsl, distro=distro)
+    versions = capture_versions(project_root, use_wsl=use_wsl, distro=distro, config=config)
     sanity_path = project_root / "checks" / "sanity_checks.txt"
     payload = {
         "project": config.get("project", {}),

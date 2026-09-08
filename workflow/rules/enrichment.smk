@@ -47,6 +47,7 @@ rule enrichment:
         # instead of the organism's RNA-seq default (e.g. ENSEMBL), which would map
         # nothing. The GUI also sets this, but a scripted/hand-edited config might not.
         keytype=_ENR.get("keytype") or ("SYMBOL" if MICROARRAY_MODE else _MAPPED[1]),
+        kegg_keytype=_ENR.get("kegg_keytype") or "",
         kegg=_ENR.get("kegg_organism") or _MAPPED[2],
         # backend selects the GO route: 'clusterprofiler' = auto OrgDb->gprofiler->none;
         # 'gprofiler' forces the g:Profiler GO route. gprofiler_organism is the
@@ -160,6 +161,7 @@ if _CUSTOM_GMT or _CUSTOM_ANNOT:
             objects="results/enrichment/custom_enrichment_objects.rds",
             check="checks/11_custom_enrichment_qc.json",
         params:
+            keytype=_ENR.get("keytype") or ("SYMBOL" if MICROARRAY_MODE else _MAPPED[1]),
             gmt=_CUSTOM_GMT or "",
             annot=_CUSTOM_ANNOT or "",
             background=_CUSTOM_BG or "",
@@ -205,6 +207,8 @@ if GSVA_ON:
             scores="results/gsva/gsva_scores.csv",
             heatmap_png="results/figures/gsva_heatmap.png",
             heatmap_svg="results/figures/gsva_heatmap.svg",
+        params:
+            style=config.get("figures_style", {}),
         benchmark:
             "benchmarks/gsva.tsv"
         log:

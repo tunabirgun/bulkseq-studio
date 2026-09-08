@@ -273,7 +273,6 @@ class WorkflowConfig(BaseModel):
 
 
 class FastpConfig(BaseModel):
-    detect_adapter_for_pe: bool = True
     qualified_quality_phred: int = 15
     unqualified_percent_limit: int = 40
     length_required: int = 36
@@ -350,7 +349,6 @@ class Deseq2Config(BaseModel):
     alpha: float = 0.05
     lfc_threshold: float = 1.0
     min_count: int = 10
-    lfc_shrinkage: bool = True
     shrinkage_method: str = "apeglm"
 
     @field_validator("lfc_threshold")
@@ -393,6 +391,8 @@ class EnrichmentConfig(BaseModel):
     # Microarray mode sets keytype = SYMBOL (GPL annotation maps to gene symbols).
     orgdb: str | None = None
     keytype: str | None = None
+    # KEGG gene-identifier form (kegg | ncbi-geneid | uniprot); null derives it from keytype.
+    kegg_keytype: str | None = None
     kegg_organism: str | None = None
     # Independent species-level NCBI taxon used to verify the KEGG organism code.
     # This is deliberately separate from an OrgDb's TAXID, which may name a strain.
@@ -401,6 +401,10 @@ class EnrichmentConfig(BaseModel):
     # setting 'gprofiler' forces the g:Profiler GO route even when an OrgDb loads.
     backend: Literal["clusterprofiler", "gprofiler"] = "clusterprofiler"
     gprofiler_organism: str | None = None
+    # GO ontology for the meta-analysis enrichment rules (workflow/rules/meta.smk reads
+    # enrichment.go_ontology and defaults to BP). Declared here so it survives a save:
+    # pydantic drops keys the model does not know.
+    go_ontology: Literal["BP", "MF", "CC"] = "BP"
 
 
 class PpiConfig(BaseModel):
@@ -414,7 +418,6 @@ class PpiConfig(BaseModel):
     seed_source: Literal["de", "goi"] = "de"
     string_version: str = "12.0"
     max_seed_genes: int = 400   # cap the DE seed set sent to STRING
-    hub_label_count: int = 15   # how many top hub proteins to label on the figure
 
 
 class FigureConfig(BaseModel):
@@ -461,6 +464,15 @@ class FigureConfig(BaseModel):
     enrich_cnet_category: int = 5
     enrich_emap_category: int = 15
     enrich_label_wrap: int = 40
+    # Meta-analysis figure style. Values mirror the getp() fallbacks in
+    # make_meta_figures.R (meta_volcano_fit/z_axis/label_top/heatmap_top) and
+    # make_meta_enrichment_figures.R (meta_enrich_show_category), so declaring them
+    # changes nothing until a user sets one; undeclared, a set value was dropped on save.
+    meta_volcano_fit: bool = False        # expand y to the finite max instead of capping
+    meta_volcano_z_axis: bool = False     # plot |combined_z| instead of -log10(padj)
+    meta_label_top: int = 10              # labelled genes on the meta volcano
+    meta_heatmap_top: int = 50            # rows in the meta effect-size heatmap
+    meta_enrich_show_category: int = 6    # terms in the meta enrichment dot plot
     gsea_line_color: str = ""             # "" = palette-derived
     ppi_layout: str = "fr"  # force-directed (Fruchterman-Reingold) default
     ppi_node_max_size: float = 11.0
@@ -471,7 +483,6 @@ class FigureConfig(BaseModel):
     # stay uniform by default. Groups: core, correlation, enrichment, network. Values are
     # stored as strings and coerced R-side, so the map serializes cleanly to YAML.
     figure_overrides: dict[str, dict[str, str]] = Field(default_factory=dict)
-    rasterize_points: bool = False        # OPTIONAL ggrastr (gated, default off)
 
     @field_validator("point_size", "width_in", "height_in",
                      "heatmap_zlim", "heatmap_cell_height", "ppi_node_max_size")
@@ -502,34 +513,43 @@ class FigureConfig(BaseModel):
 
 class ResourcesConfig(BaseModel):
     profile: Literal["low", "balanced", "high", "custom"] = "balanced"
-    total_threads: int = 4
-    total_memory_gb: int = 8
-    temp_dir: str = "tmp"
-    keep_intermediate: bool = False
+    # ge=1: the pool is handed to snakemake as --cores and as the mem_mb budget. A zero or
+    # negative value was accepted and produced `--cores -4` / a 0 MB pool, which the CLI
+    # path could write into a project config without any check catching it.
+    total_threads: int = Field(default=4, ge=1)
+    total_memory_gb: int = Field(default=8, ge=1)
 
 
 class RuleThreads(BaseModel):
-    fasterq_dump: int = 4
+    # One field per rule_threads() key read in workflow/rules; tests/test_exec_profiles.py
+    # keeps the two in step.
     fastqc: int = 1
     fastp: int = 4
     sortmerna: int = 4
     star_index: int = 4
     star_align: int = 4
+    hisat2_index: int = 8
     hisat2_align: int = 4
+    salmon_index: int = 8
     salmon_quant: int = 4
+    infer_strandedness: int = 4
+    fastq_screen: int = 4
     featurecounts: int = 4
     deseq2: int = 2
     multiqc: int = 1
 
 
 class RuleMemoryGb(BaseModel):
-    fasterq_dump: int = 8
+    # One field per rule_mem_mb() key; these are the per-job reservations Snakemake charges
+    # against resources.total_memory_gb (the GUI clamps them to that pool on save).
     fastqc: int = 1
     fastp: int = 4
     sortmerna: int = 12
     star_index: int = 24
     star_align: int = 24
+    hisat2_index: int = 16
     hisat2_align: int = 8
+    salmon_index: int = 16
     salmon_quant: int = 8
     featurecounts: int = 8
     deseq2: int = 12

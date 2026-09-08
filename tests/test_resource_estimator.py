@@ -8,6 +8,7 @@ from app.core.resources import (
     _parse_lscpu_physical_cores,
     _parse_wsl_probe,
     recommend_profile,
+    recommend_rule_memory_gb,
     recommend_rule_threads,
 )
 
@@ -92,3 +93,38 @@ def test_rule_threads_derive_two_star_workers_from_global_pool() -> None:
         if total >= 8:
             assert 2 * star_threads <= total
         assert all(1 <= value <= total for value in rules.values())
+
+
+def _rule_keys(pattern: str) -> set[str]:
+    import re
+    from pathlib import Path
+
+    rules_dir = Path(__file__).resolve().parents[1] / "workflow" / "rules"
+    keys: set[str] = set()
+    for path in rules_dir.glob("*.smk"):
+        keys.update(re.findall(pattern, path.read_text(encoding="utf-8")))
+    return keys
+
+
+def test_resource_models_declare_exactly_the_keys_the_rules_read() -> None:
+    from app.core.config_models import RuleMemoryGb, RuleThreads
+
+    thread_keys = _rule_keys(r"rule_threads\(\s*['\"](\w+)['\"]")
+    memory_keys = _rule_keys(r"rule_mem_mb\(\s*['\"](\w+)['\"]")
+    assert thread_keys and memory_keys
+    assert set(RuleThreads.model_fields) == thread_keys
+    assert set(RuleMemoryGb.model_fields) == memory_keys
+    assert set(recommend_rule_threads(8)) == thread_keys
+    assert set(recommend_rule_memory_gb(8)) == memory_keys
+
+
+def test_rule_memory_is_clamped_to_the_pool() -> None:
+    from app.core.config_models import RuleMemoryGb
+
+    declared = RuleMemoryGb().model_dump()
+    for pool in (1, 4, 8, 16, 64):
+        rules = recommend_rule_memory_gb(pool)
+        assert all(1 <= value <= pool for value in rules.values())
+        assert all(rules[name] == min(declared[name], pool) for name in declared)
+    assert recommend_rule_memory_gb(64)["star_align"] == 24
+    assert recommend_rule_memory_gb(4)["star_align"] == 4

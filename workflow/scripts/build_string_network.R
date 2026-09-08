@@ -36,13 +36,17 @@ sink(log_con, type = "message")
 
 out <- snakemake@output
 organism <- tolower(as.character(snakemake@params[["organism"]]))
-score_thr <- as.integer(snakemake@params[["score_threshold"]]); if (is.na(score_thr) || score_thr < 1) score_thr <- 400
+# A configured threshold below 1 is not a usable STRING cut-off; clamp it, and keep the
+# requested value so the provenance records configured-vs-realized honestly.
+score_thr_requested <- as.integer(snakemake@params[["score_threshold"]])
+score_thr <- score_thr_requested; if (is.na(score_thr) || score_thr < 1) score_thr <- 400
 taxon_override <- suppressWarnings(as.integer(snakemake@params[["taxon"]]))
 seed_source <- as.character(snakemake@params[["seed_source"]])
 string_version <- as.character(snakemake@params[["string_version"]]); if (!nzchar(string_version)) string_version <- "12.0"
 max_seed <- as.integer(snakemake@params[["max_seed"]]); if (is.na(max_seed) || max_seed < 1) max_seed <- 400
-hub_n <- as.integer(snakemake@params[["hub_labels"]]); if (is.na(hub_n) || hub_n < 0) hub_n <- 15
-goi_path <- as.character(snakemake@params[["goi"]])
+# The gene list is an input only when one is configured (ppi.smk), so absence is normal.
+goi_path <- tryCatch(as.character(snakemake@input[["goi"]]), error = function(e) character(0))
+if (!length(goi_path)) goi_path <- ""
 
 style <- tryCatch(snakemake@params[["style"]], error = function(e) NULL); if (!is.list(style)) style <- list()
 getp <- make_getp(style)
@@ -51,14 +55,11 @@ fig_w <- as.numeric(gp("width_in", 7)); fig_h <- as.numeric(gp("height_in", 6));
 base_size <- as.numeric(gp("base_font_size", 12))
 font_family <- as.character(gp("font_family", ""))
 label_bold <- isTRUE(as.logical(getp("label_bold", FALSE)))
-gene_symbol_italic <- isTRUE(as.logical(getp("gene_symbol_italic", TRUE)))
 palette_name <- as.character(gp("palette", "Blue-Red"))
-node_max_size <- as.numeric(getp("ppi_node_max_size", 11))
-ppi_layout <- as.character(getp("ppi_layout", "fr"))
+ppi_layout <- as.character(getp("ppi_layout", "fr"))  # requested only; the static view uses the packer
 
 COMMUNITY_SEED <- 42L
 LAYOUT_SEED <- 42L
-LABEL_SEED <- 42L
 PPI_PROVENANCE_SCHEMA_VERSION <- 1L
 # A circular straight-edge drawing is outerplanar.  These bounds deliberately
 # limit the static *rendering* attempt only: all network exports are written
@@ -111,9 +112,8 @@ ppi_linewidth_mm_to_report_px <- function(mm) {
   mm * .pt * 0.75 * PPI_REPORT_WIDTH_PX / (render_w * 72)
 }
 
-# Honour an explicit network override exactly. With the global 6 x 5 default,
-# a labelled graph plus two legends is too small, so the un-overridden network
-# canvas grows just enough for the configured hub-label count.
+# Honour an explicit network override exactly. With the global 6 x 5 default, the packed
+# topology plus three legends is too small, so the un-overridden network canvas grows.
 network_override <- tryCatch(style[["figure_overrides"]][["network"]], error = function(e) NULL)
 has_width_override <- is.list(network_override) && !is.null(network_override[["width_in"]]) &&
   nzchar(as.character(network_override[["width_in"]]))
@@ -137,6 +137,8 @@ state$string_realized_version <- NA_character_
 state$string_realized_build <- NA_character_
 state$seed_source <- NA_character_
 state$seed_input_count <- NA_integer_
+state$seed_up_count <- NA_integer_
+state$seed_down_count <- NA_integer_
 state$seed_after_limit_count <- NA_integer_
 state$mapped_seed_count <- NA_integer_
 state$mapped_string_id_count <- NA_integer_
@@ -147,7 +149,6 @@ state$realized_max_combined_score <- NA_real_
 state$node_count <- 0L
 state$edge_count <- 0L
 state$module_count <- 0L
-state$hub_label_count <- 0L
 state$layout_method <- NA_character_
 state$layout_fallback_reason <- NA_character_
 state$edge_visual_bands <- character(0)
@@ -178,15 +179,15 @@ write_provenance <- function(status, reason = NA_character_) {
     configuration = list(
       seed_source = seed_source,
       max_seed_genes = max_seed,
-      score_threshold_combined = score_thr,
+      score_threshold_combined = score_thr_requested,
       string_combined_score_scale = "0-1000",
-      stored_edge_weight = "combined_score / 1000",
-      hub_label_count = hub_n,
-      layout = ppi_layout
+      stored_edge_weight = "combined_score / 1000"
     ),
     realized = list(
       seed_source = state$seed_source,
       seed_input_count = state$seed_input_count,
+      seed_up_count = state$seed_up_count,
+      seed_down_count = state$seed_down_count,
       seed_after_limit_count = state$seed_after_limit_count,
       mapped_seed_count = state$mapped_seed_count,
       mapped_string_id_count = state$mapped_string_id_count,
@@ -198,7 +199,6 @@ write_provenance <- function(status, reason = NA_character_) {
       node_count = state$node_count,
       edge_count = state$edge_count,
       module_count = state$module_count,
-      hub_label_count = state$hub_label_count,
       layout_method = state$layout_method,
       layout_fallback_reason = state$layout_fallback_reason,
       figure_width_in = render_w,
@@ -244,9 +244,12 @@ write_provenance <- function(status, reason = NA_character_) {
 }
 
 write_check <- function(status, message) {
-  msg <- gsub('"', '\\\\"', message)
-  writeLines(sprintf('{\n  "check": "16_ppi_network",\n  "status": "%s",\n  "messages": [\n    {"status": "%s", "message": "%s"}\n  ]\n}',
-                     status, status, msg), out[["check"]])
+  # Serialize with jsonlite: an upstream error message carrying a quote, backslash,
+  # newline or tab used to produce a file the sanity aggregator could not parse.
+  jsonlite::write_json(
+    list(check = "16_ppi_network", status = status,
+         messages = list(list(status = status, message = message))),
+    out[["check"]], auto_unbox = TRUE, pretty = TRUE)
 }
 placeholder_fig <- function(msg) {
   p <- ggplot() + annotate("text", x = 0, y = 0, label = msg, size = 5) +
@@ -286,6 +289,21 @@ strip_loc <- function(x) { i <- grepl("^LOC[0-9]+$", x); x[i] <- sub("^LOC", "",
 
 normalize_string_query <- function(x) {
   toupper(strip_loc(as.character(x)))
+}
+
+# Duplicate-symbol resolution, shared with the interactive viewer
+# (app/core/ppi_graph.py): the most significant row wins (lowest padj), a missing
+# padj never beats a real one, and ties keep the first row of the DE table. The
+# static figure and the viewer must colour a duplicated symbol identically.
+de_value_map <- function(keys, values, padj = NULL) {
+  keys <- toupper(as.character(keys))
+  # as.numeric: one non-numeric token types the whole read.csv column as character, and a
+  # lexical order would then pick a different winner than the viewer's numeric coercion.
+  ord <- if (is.null(padj)) seq_along(keys) else
+    order(suppressWarnings(as.numeric(padj)), na.last = TRUE, method = "radix")
+  keys <- keys[ord]; values <- values[ord]
+  keep <- !duplicated(keys)
+  setNames(values[keep], keys[keep])
 }
 
 build_string_seed_lookup <- function(original_display_id) {
@@ -360,19 +378,29 @@ ok <- tryCatch({
   } else {
     up <- tryCatch(read.csv(snakemake@input[["up"]], stringsAsFactors = FALSE), error = function(e) data.frame())
     down <- tryCatch(read.csv(snakemake@input[["down"]], stringsAsFactors = FALSE), error = function(e) data.frame())
-    seed <- unique(c(up$symbol, down$symbol))
-    seed <- seed[!is.na(seed) & nzchar(seed)]
+    # The up/down tables are written in fold-change order; seed by significance instead, and
+    # give each direction half of the seed budget so the cap cannot silently drop one direction.
+    by_padj <- function(d) if (nrow(d) && "padj" %in% names(d)) d[order(d$padj), , drop = FALSE] else d
+    ids_of <- function(d, col) { v <- d[[col]]; if (is.null(v)) character(0) else unique(v[!is.na(v) & nzchar(v)]) }
+    up <- by_padj(up); down <- by_padj(down)
+    seed_up <- ids_of(up, "symbol"); seed_down <- ids_of(down, "symbol")
     state$seed_source <- "differential_expression_symbols"
     # Symbol-less genomes (e.g. Fusarium and other locus-tag annotations) have all-NA
     # symbols; fall back to gene_id, which STRING resolves directly (e.g. FGSG_* tags).
-    if (length(seed) < 2) {
-      seed <- unique(c(up$gene_id, down$gene_id))
+    if (length(unique(c(seed_up, seed_down))) < 2) {
+      seed_up <- ids_of(up, "gene_id"); seed_down <- ids_of(down, "gene_id")
       seed_from_gene_id <- TRUE
       state$seed_source <- "differential_expression_gene_ids"
     }
+    state$seed_input_count <- length(unique(c(seed_up, seed_down)))
+    n_up <- min(length(seed_up), max(max_seed %/% 2L, max_seed - length(seed_down)))
+    n_down <- min(length(seed_down), max_seed - n_up)
+    seed_up <- head(seed_up, n_up); seed_down <- head(seed_down, n_down)
+    state$seed_up_count <- length(seed_up); state$seed_down_count <- length(seed_down)
+    seed <- unique(c(seed_up, seed_down))
   }
   seed <- unique(seed[!is.na(seed) & nzchar(seed)])
-  state$seed_input_count <- length(seed)
+  if (is.na(state$seed_input_count)) state$seed_input_count <- length(seed)
   if (length(seed) < 2) stop("fewer than 2 seed genes (no usable symbols or gene IDs)")
   if (length(seed) > max_seed) seed <- head(seed, max_seed)
   seed_lookup <- build_string_seed_lookup(seed)
@@ -430,7 +458,7 @@ ok <- tryCatch({
   # return a different symbol case than the DE table.
   key_col <- if (seed_from_gene_id) strip_loc(resdf$gene_id) else resdf$symbol
   node_key <- if (seed_from_gene_id) strip_loc(V(g)$name) else V(g)$name
-  lfc_map <- setNames(resdf$log2FoldChange, toupper(as.character(key_col)))
+  lfc_map <- de_value_map(key_col, resdf$log2FoldChange, resdf$padj)
   V(g)$log2FC <- unname(lfc_map[toupper(as.character(node_key))])
 
   igraph::write_graph(g, out[["graphml"]], format = "graphml")
@@ -540,7 +568,10 @@ ok <- tryCatch({
     fr_order <- igraph::V(component_graph)$name[
       order(atan2(fr[, 2], fr[, 1]), igraph::V(component_graph)$name, method = "radix")
     ]
-    root <- match(min(igraph::V(component_graph)$name), igraph::V(component_graph)$name)
+    # Radix, not min(): character min() collates under LC_COLLATE, so a mixed-case
+    # symbol set picked a different DFS root (and component order) per locale.
+    root <- match(sort(igraph::V(component_graph)$name, method = "radix")[1],
+                  igraph::V(component_graph)$name)
     dfs_order <- igraph::as_ids(igraph::dfs(
       component_graph, root = root, mode = "all", order = TRUE
     )$order)
@@ -697,7 +728,8 @@ ok <- tryCatch({
   component_ids <- split(names(component_membership), component_membership)
   component_order <- order(
     -vapply(component_ids, length, integer(1)),
-    vapply(component_ids, function(x) min(x), character(1)), method = "radix"
+    vapply(component_ids, function(x) sort(x, method = "radix")[1], character(1)),
+    method = "radix"
   )
   component_ids <- component_ids[component_order]
   component_layouts <- lapply(seq_along(component_ids), function(i) {
@@ -821,7 +853,6 @@ ok <- tryCatch({
     stop("node outlines are below one pixel at the report width")
   }
 
-  state$hub_label_count <- 0L
   lfc <- node_plot$log2FC
   fin <- lfc[is.finite(lfc)]
   zlim <- if (length(fin)) max(abs(fin)) else 1

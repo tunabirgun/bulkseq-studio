@@ -89,28 +89,27 @@ def orientation_messages(cfg: dict) -> list[dict[str, str]]:
     numerator = _text(contrast.get("numerator"))
     denominator = _text(contrast.get("denominator"))
 
-    # reference_level is a factor -> level map; the reference for the contrast factor is the
-    # DESeq2 baseline. The denominator is the baseline of the contrast itself.
-    reference_level = deseq2.get("reference_level", {}) or {}
-    ref_for_factor = _text(reference_level.get(factor)) if factor else ""
-    baseline = ref_for_factor or denominator
+    # The sign of log2FC is fixed by the explicit contrast (results(dds, contrast = c(factor,
+    # numerator, denominator))); relevel()/reference_level does not change it, so the baseline
+    # for orientation is always the denominator.
+    baseline = denominator
 
     inverted = bool(baseline) and bool(numerator) and CASE_RE.search(baseline) and CONTROL_RE.search(numerator)
     if inverted:
         return [{
             "status": "REVIEW_REQUIRED",
             "message": (
-                f"Contrast baseline '{baseline}' looks case-like and numerator '{numerator}' looks "
+                f"Contrast denominator '{baseline}' looks case-like and numerator '{numerator}' looks "
                 "control-like: positive log2FC = up in the CONTROL group, so the up/down gene lists "
                 "and the enrichment up/down ontologies are inverted vs the usual case-vs-control "
-                "convention; consider setting reference_level to the control level."
+                "convention; swap the contrast numerator and denominator if that is not intended."
             ),
         }]
     return [{
         "status": "PASS",
         "message": (
-            f"Contrast orientation looks conventional (baseline '{baseline or 'n/a'}' vs "
-            f"numerator '{numerator or 'n/a'}'); positive log2FC = up in the numerator group."
+            f"Contrast orientation looks conventional: positive log2FC = up in "
+            f"'{numerator or 'n/a'}' relative to '{baseline or 'n/a'}'."
         ),
     }]
 

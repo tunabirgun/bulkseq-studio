@@ -55,7 +55,24 @@ $gh = (Get-Command gh -ErrorAction SilentlyContinue).Source
 if (-not $gh) { $gh = "C:\Program Files\GitHub CLI\gh.exe" }
 if (-not (Test-Path $gh)) { throw "GitHub CLI (gh) not found. Install it and run 'gh auth login'." }
 
-Write-Host "Publishing $tag ..."
+# The tag must name the commit that was built and verified. `gh release create` without
+# --target tags the REMOTE default-branch head, which is not necessarily this working tree:
+# an unpushed commit, a dirty tree or a stale local branch all publish a different tree than
+# the one the artifacts came from, silently.
+$dirty = & git status --porcelain
+if ($LASTEXITCODE -ne 0) { throw "git status failed; cannot verify the tree before publishing." }
+if ($dirty) { throw "Working tree is not clean; commit or stash first:`n$($dirty -join "`n")" }
+& git fetch --quiet
+if ($LASTEXITCODE -ne 0) { throw "git fetch failed; cannot compare HEAD with its upstream." }
+$head = (& git rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0) { throw "git rev-parse HEAD failed." }
+$upstream = (& git rev-parse '@{u}').Trim()
+if ($LASTEXITCODE -ne 0) { throw "No upstream branch; push this branch before publishing." }
+if ($head -ne $upstream) {
+    throw "HEAD ($head) differs from its upstream ($upstream). Push (or pull) before publishing."
+}
+
+Write-Host "Publishing $tag from $head ..."
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "SilentlyContinue"
 try {
@@ -65,8 +82,10 @@ try {
     $ErrorActionPreference = $previousErrorActionPreference
 }
 if ($releaseViewExit -ne 0) {
-    # New release: tag the current commit and attach every supported package.
+    # New release: tag the verified commit (not the remote default-branch head) and attach
+    # every supported package.
     & $gh release create $tag @assets `
+        --target $head `
         --title "BulkSeq Studio $tag" `
         --notes "Verified Windows and Linux packages for $tag. See the changelog and SHA256SUMS.txt for details."
 } else {
@@ -74,4 +93,38 @@ if ($releaseViewExit -ne 0) {
     & $gh release upload $tag @assets --clobber
 }
 if ($LASTEXITCODE -ne 0) { throw "gh release failed" }
+
+# Read the published release back. A green upload is not evidence the release is healthy:
+# an asset can be missing or truncated, and the tag can point at another commit.
+$viewJson = & $gh release view $tag --json assets,tagName,targetCommitish
+if ($LASTEXITCODE -ne 0) { throw "gh release view failed; the release could not be verified." }
+$release = $viewJson | ConvertFrom-Json
+if ($release.tagName -ne $tag) { throw "Published tag is $($release.tagName), expected $tag" }
+$commitish = [string] $release.targetCommitish
+if ($commitish) {
+    $resolved = & git rev-parse --verify --quiet "$commitish^{commit}"
+    if ($LASTEXITCODE -eq 0 -and $resolved) {
+        if ($resolved.Trim() -ne $head) {
+            throw "Release $tag points at $($resolved.Trim()), not the published commit $head"
+        }
+    } else {
+        Write-Host "Note: release target '$commitish' is not resolvable locally; not compared."
+    }
+}
+
+# Every name in SHA256SUMS.txt must be attached, at the byte size of the file whose digest
+# the manifest recorded. The manifest is the authority here, so a file that never made it
+# into it cannot pass this check either.
+$localByName = @{}
+foreach ($f in $assets) { $localByName[(Split-Path -Leaf $f)] = (Get-Item -LiteralPath $f).Length }
+$publishedByName = @{}
+foreach ($a in $release.assets) { $publishedByName[$a.name] = [int64] $a.size }
+$manifestNames = @($recorded | ForEach-Object { ($_ -split "  ", 2)[1] }) + @(Split-Path -Leaf $checksumManifest)
+foreach ($name in $manifestNames) {
+    if (-not $publishedByName.ContainsKey($name)) { throw "Release $tag is missing asset $name" }
+    if ($publishedByName[$name] -ne $localByName[$name]) {
+        throw "Asset $name is $($publishedByName[$name]) bytes on the release, $($localByName[$name]) locally"
+    }
+}
+Write-Host "Verified $($manifestNames.Count) assets on $tag at commit $head."
 Write-Host "Done. Release: https://github.com/tunabirgun/bulkseq-studio/releases/tag/$tag"

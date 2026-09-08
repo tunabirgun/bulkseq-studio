@@ -9,12 +9,14 @@ rule fastqc_raw:
         directory("results/qc/fastqc_raw/{sample}"),
     threads:
         rule_threads("fastqc", 1)
+    resources:
+        mem_mb=rule_mem_mb("fastqc", 1),
     benchmark:
         "benchmarks/fastqc_raw_{sample}.tsv"
     log:
         "logs/fastqc_raw_{sample}.log",
     shell:
-        "mkdir -p {output} && fastqc -o {output} -t {threads} {input} > {log} 2>&1"
+        "mkdir -p {output} && fastqc -o {output} -t {threads} {input:q} > {log} 2>&1"
 
 
 rule fastqc_trim:
@@ -24,12 +26,14 @@ rule fastqc_trim:
         directory("results/qc/fastqc_trim/{sample}"),
     threads:
         rule_threads("fastqc", 1)
+    resources:
+        mem_mb=rule_mem_mb("fastqc", 1),
     benchmark:
         "benchmarks/fastqc_trim_{sample}.tsv"
     log:
         "logs/fastqc_trim_{sample}.log",
     shell:
-        "mkdir -p {output} && fastqc -o {output} -t {threads} {input} > {log} 2>&1"
+        "mkdir -p {output} && fastqc -o {output} -t {threads} {input:q} > {log} 2>&1"
 
 
 # The per-sample alignment artifact and the MultiQC scan dirs depend on the route:
@@ -86,6 +90,10 @@ rule multiqc:
         COUNTS_SUMMARY,
     output:
         "results/qc/multiqc/multiqc_report.html",
+    threads:
+        rule_threads("multiqc", 1)
+    resources:
+        mem_mb=rule_mem_mb("multiqc", 2),
     benchmark:
         "benchmarks/multiqc.tsv"
     log:

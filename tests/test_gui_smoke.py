@@ -101,6 +101,36 @@ def test_config_round_trip_through_widgets() -> None:
     window.close()
 
 
+def test_a_stored_config_carrying_the_removed_hub_label_count_still_opens() -> None:
+    # ppi.hub_label_count was dropped once the static network figure stopped drawing labels.
+    # A project written by an older version still carries it; loading must ignore the extra key
+    # rather than refuse the project.
+    import yaml
+
+    from app.core.config_models import AppConfig, PpiConfig
+
+    _app()
+    window = MainWindow()
+    workdir = Path("manual_test_gui") / uuid4().hex
+    window.workdir.setText(str(workdir))
+    window.project_name.setText("legacy_ppi")
+    window._create_benchmark_project("pasilla_paired_subset")
+    root = window.project_root
+    assert root is not None
+    assert not hasattr(PpiConfig(), "hub_label_count")
+
+    config_path = root / "config" / "config.yaml"
+    stored = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    stored["ppi"]["hub_label_count"] = 15
+    config_path.write_text(yaml.safe_dump(stored, sort_keys=False), encoding="utf-8")
+    assert AppConfig.model_validate(stored).ppi.score_threshold == stored["ppi"]["score_threshold"]
+
+    window._load_project(root)
+    assert window.config is not None
+    assert not hasattr(window.config.ppi, "hub_label_count")
+    window.close()
+
+
 def test_approve_review_resets_on_project_switch() -> None:
     # The run-approval gate is per project; a stale tick must not bleed across
     # opens or an unreviewed run could start.
@@ -309,9 +339,25 @@ def test_resume_banner_and_new_figure_controls(monkeypatch, tmp_path) -> None:
     # new volcano-scale + sample-label controls round-trip through the config
     w.fig_volcano_yscale.setCurrentIndex(w.fig_volcano_yscale.findData("full"))
     w.fig_sample_labels.setChecked(False)
+    # meta-analysis figure detail: exposed spinboxes must reach figures_style and hydrate back
+    w.fig_meta_label_top.setValue(4)
+    w.fig_meta_heatmap_top.setValue(25)
+    w.fig_meta_enrich_show.setValue(9)
     w._apply_figure_style()
     assert w.config.figures_style.volcano_y_scale == "full"
     assert w.config.figures_style.sample_labels is False
+    assert (w.config.figures_style.meta_label_top,
+            w.config.figures_style.meta_heatmap_top,
+            w.config.figures_style.meta_enrich_show_category) == (4, 25, 9)
+    reloaded = w.manager.load_config(w.project_root)
+    assert (reloaded.figures_style.meta_label_top,
+            reloaded.figures_style.meta_heatmap_top,
+            reloaded.figures_style.meta_enrich_show_category) == (4, 25, 9)
+    w.fig_meta_label_top.setValue(1)
+    w._populate_widgets_from_config()
+    assert w.fig_meta_label_top.value() == 4
+    assert w.fig_meta_heatmap_top.value() == 25
+    assert w.fig_meta_enrich_show.value() == 9
     assert not w.fig_volcano_ycap.isEnabled()      # y-cap greyed out in non-cap mode
     # resume banner: seed an incomplete-run marker, refresh, assert it surfaces
     (w.project_root / ".snakemake" / "incomplete").mkdir(parents=True, exist_ok=True)
@@ -324,3 +370,197 @@ def test_resume_banner_and_new_figure_controls(monkeypatch, tmp_path) -> None:
     w._refresh_resume_banner()
     assert w.resume_banner.isHidden()
     w.close()
+
+
+def test_term_picker_reads_every_gene_list_csv_and_splits_joined_symbols(tmp_path) -> None:
+    # The per-ontology GO tables and the custom gene-set results carry the same enrichResult /
+    # gseaResult columns as the combined ones, so they must be offered too. And run_enrichment.R
+    # joins multi-symbol entrez rows with ";", which must not block the id_map bridge.
+    _app()
+    w = MainWindow()
+    w.workdir.setText(str(Path("manual_test_gui") / uuid4().hex))
+    w.project_name.setText("terms")
+    w._create_benchmark_project("pasilla_paired_subset")
+    enr = w.project_root / "results" / "enrichment"
+    enr.mkdir(parents=True, exist_ok=True)
+    (enr / "go_ora_MF.csv").write_text(
+        "ID,Description,p.adjust,Count,geneID\nGO:1,binding,0.001,2,GENA/GENB\n", encoding="utf-8")
+    (enr / "go_ora_CC.csv").write_text(
+        "ID,Description,p.adjust,Count,geneID\nGO:2,membrane,0.002,1,GENA\n", encoding="utf-8")
+    (enr / "custom_ora.csv").write_text(
+        "ID,Description,p.adjust,Count,geneID\nSET1,my set,0.003,1,GENB\n", encoding="utf-8")
+    (enr / "custom_gsea.csv").write_text(
+        "ID,Description,p.adjust,setSize,core_enrichment\nSET2,my other set,0.004,2,GENA/GENB\n",
+        encoding="utf-8")
+    w._populate_term_picker()
+    offered = {w.term_pick.itemData(i)["csv"] for i in range(w.term_pick.count())
+               if isinstance(w.term_pick.itemData(i), dict)}
+    assert offered == {
+        "results/enrichment/go_ora_MF.csv",
+        "results/enrichment/go_ora_CC.csv",
+        "results/enrichment/custom_ora.csv",
+        "results/enrichment/custom_gsea.csv",
+    }
+
+    # id_map bridge: entrez 100 maps to the joined symbol "GENA;GENB"; either token must resolve.
+    des = w.project_root / "results" / "deseq2"
+    des.mkdir(parents=True, exist_ok=True)
+    (des / "deseq2_results.csv").write_text(
+        "gene_id,symbol,log2FoldChange,padj\nFBgn1,GENB,1.0,0.01\n", encoding="utf-8")
+    (enr / "id_map.csv").write_text(
+        "gene_id,base_id,symbol,entrez\nFBgn1,FBgn1,GENA;GENB,100\n", encoding="utf-8")
+    sub, unmatched = w._resolve_term_genes(["100"])
+    assert unmatched == 0 and list(sub["gene_id"]) == ["FBgn1"]
+    w.close()
+
+
+def test_count_matrix_import_never_leaves_an_unbalanced_override_cursor(monkeypatch, tmp_path) -> None:
+    # Every exit path pushes and pops exactly one override cursor, and no dialog is raised while
+    # the wait cursor is up. An extra restoreOverrideCursor() pops a cursor this method never
+    # pushed, which unsets a wait cursor some other operation owns.
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+
+    _app()
+    w = MainWindow()
+    w.workdir.setText(str(Path("manual_test_gui") / uuid4().hex))
+    w.project_name.setText("counts")
+    w._create_benchmark_project("pasilla_paired_subset")
+
+    warnings: list[str] = []
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: warnings.append(a[2])))
+    chosen: dict[str, str] = {}
+    monkeypatch.setattr(QFileDialog, "getOpenFileName",
+                        staticmethod(lambda *a, **k: (chosen["path"], "")))
+
+    def _import(path: Path) -> None:
+        # A sentinel cursor owned by an imaginary outer operation: an extra
+        # restoreOverrideCursor() pops THAT one (restoring an empty stack is a silent no-op,
+        # so only a pre-existing cursor exposes the imbalance).
+        QApplication.setOverrideCursor(Qt.CursorShape.CrossCursor)
+        chosen["path"] = str(path)
+        w._import_count_matrix()
+        current = QApplication.overrideCursor()
+        assert current is not None and current.shape() == Qt.CursorShape.CrossCursor, (
+            f"the caller's override cursor was popped during {path.name}")
+        QApplication.restoreOverrideCursor()
+        assert QApplication.overrideCursor() is None, f"cursor left set after {path.name}"
+
+    _import(tmp_path / "missing.csv")
+    assert warnings and warnings[-1].startswith("Could not read the matrix")
+
+    one_col = tmp_path / "one_column.csv"
+    one_col.write_text("gene_id\nG1\n", encoding="utf-8")
+    _import(one_col)
+    assert "gene-id column plus at least one sample" in warnings[-1]
+
+    tpm = tmp_path / "tpm.csv"
+    tpm.write_text("gene_id,s1,s2\nG1,333333.3,333333.3\nG2,333333.3,333333.3\n"
+                   "G3,333333.4,333333.4\n", encoding="utf-8")
+    _import(tpm)
+    assert "TPM, not raw counts" in warnings[-1]
+    assert w.config.input.type != "count_matrix"
+
+    frac = tmp_path / "fractional.csv"
+    frac.write_text("gene_id,s1,s2\nG1,1.5,2.5\nG2,3.5,4.5\n", encoding="utf-8")
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Cancel))
+    _import(frac)
+    assert w.config.input.type != "count_matrix"      # cancelled
+    assert w.config.input.estimated_counts is False
+
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    _import(frac)
+    assert w.config.input.type == "count_matrix"
+    assert w.config.input.estimated_counts is True    # RSEM/tximport estimated counts
+
+    integer = tmp_path / "counts.csv"
+    integer.write_text("gene_id,s1,s2\nG1,10,20\nG2,30,40\n", encoding="utf-8")
+    _import(integer)
+    assert w.config.input.estimated_counts is False
+    assert (w.project_root / "config" / "counts_matrix.txt").exists()
+    w.close()
+
+
+def test_a_network_share_path_is_refused_with_a_warning_at_every_wsl_conversion(monkeypatch, tmp_path) -> None:
+    # app.core.paths.windows_to_wsl_path raises UnsupportedUncPathError for a non-WSL UNC path
+    # (a \\server\share\... path). Every call site must surface that as a warning and leave the
+    # stored value untouched, never as an excepthook traceback.
+    from pathlib import Path as _Path
+
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+
+    from app.ui import main_window as mw
+
+    _app()
+    w = MainWindow()
+    w.workdir.setText(str(_Path("manual_test_gui") / uuid4().hex))
+    w.project_name.setText("unc")
+    w._create_benchmark_project("pasilla_paired_subset")
+    assert w.project_root is not None
+
+    warnings: list[str] = []
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda _p, _t, text, *a, **k: warnings.append(text)))
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    share = "\\\\fileserver\\genomics\\"
+
+    # 1. Reference Manager: a UNC genome/annotation must not reach the config at all.
+    before = (w.config.reference.mode, w.config.reference.genome_fasta,
+              w.config.reference.annotation_file)
+    monkeypatch.setattr(_Path, "is_file", lambda self: True)
+    monkeypatch.setattr(mw, "validate_reference", lambda *a, **k: [])
+    w.ref_genome.setText(share + "genome.fa")
+    w.ref_annotation.setText(share + "genes.gtf")
+    w._use_custom_reference()
+    assert "network share" in warnings[-1]
+    assert (w.config.reference.mode, w.config.reference.genome_fasta,
+            w.config.reference.annotation_file) == before
+    # undo() drops every patch on this fixture, so both dialog stubs must be re-applied:
+    # an unstubbed modal would hang the offscreen suite rather than fail it.
+    monkeypatch.undo()
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda _p, _t, text, *a, **k: warnings.append(text)))
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+
+    # 2. FASTQ picker under WSL: the sheet must not be written from half-translated paths.
+    w.use_wsl.setChecked(True)
+    sheet = w._configured_samples_path()
+    stamp = sheet.read_text(encoding="utf-8") if sheet.exists() else None
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames",
+                        staticmethod(lambda *a, **k: ([share + "s1_R1.fastq.gz",
+                                                       share + "s1_R2.fastq.gz"], "")))
+    w._select_fastqs()
+    assert "network share" in warnings[-1]
+    assert (sheet.read_text(encoding="utf-8") if sheet.exists() else None) == stamp
+
+    # 3. Custom gene-set fields: the save is refused and the stored value is unchanged.
+    stored = w.config.gene_sets.custom_gene_sets
+    w.custom_gmt.setText(share + "sets.gmt")
+    assert w._save_workflow_settings() is False
+    assert "network share" in warnings[-1]
+    assert w.config.gene_sets.custom_gene_sets == stored
+    w.close()
+
+
+def test_reports_page_shows_reports_already_on_disk(tmp_path) -> None:
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from app.core.project import ProjectManager
+    from app.ui.main_window import MainWindow
+    QApplication.instance() or QApplication([])
+    root = ProjectManager().create_project("reports_on_disk", tmp_path)
+    w = MainWindow()
+    w._load_project(root)
+    assert "No reports yet" in w.report_text.toPlainText()
+    reports = root / "results" / "reports"
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / "run_summary.txt").write_text("Run finished: earlier" + chr(10), encoding="utf-8")
+    w._load_project(root)
+    assert "run_summary.txt" in w.report_text.toPlainText()
+    w.report_text.setPlainText("No reports yet.")
+    w._refresh_report_status()
+    assert "Run finished: earlier" in w.report_text.toPlainText()

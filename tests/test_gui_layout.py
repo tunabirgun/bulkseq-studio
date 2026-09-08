@@ -25,7 +25,7 @@ from app.ui.main_window import MainWindow
 from app.ui.task_navigator import TaskNavigator
 from app.ui.theme import apply_theme
 from app.core.config_models import default_config
-from app.core.resources import SystemResources, recommend_profile, recommend_rule_threads
+from app.core.resources import SystemResources, recommend_profile, recommend_rule_threads, recommend_rule_memory_gb
 
 
 PAGE_LABELS = (
@@ -109,6 +109,8 @@ def test_save_resources_persists_derived_rule_threads(tmp_path: Path) -> None:
         assert persisted.resources.total_threads == 20
         assert persisted.resources.total_memory_gb == 60
         assert persisted.rule_threads.model_dump() == expected
+        assert persisted.rule_memory_gb.model_dump() == recommend_rule_memory_gb(60)
+        assert max(persisted.rule_memory_gb.model_dump().values()) <= 60
     finally:
         window.close()
 
@@ -607,7 +609,9 @@ def test_figure_detail_defaults_to_common_controls_and_reveals_every_advanced_co
             window.fig_sample_labels,
             window.fig_heatmap_zlim,
             window.fig_enrich_show,
-            window.fig_ppi_layout,
+            window.fig_meta_label_top,
+            window.fig_meta_heatmap_top,
+            window.fig_meta_enrich_show,
         }
         assert set(window.figure_detail_common_controls + window.figure_detail_advanced_controls) == expected_controls
 

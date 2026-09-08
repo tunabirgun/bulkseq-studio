@@ -41,14 +41,19 @@ den <- snakemake@params[["denominator"]]
 style <- tryCatch(snakemake@params[["style"]], error = function(e) NULL)
 if (!is.list(style)) style <- list()
 getp <- make_getp(style)
-fig_w <- as.numeric(getp("width_in", 6)); fig_h <- as.numeric(getp("height_in", 5))
-fig_dpi <- as.integer(getp("dpi", 300)); base_size <- as.numeric(getp("base_font_size", 12))
-font_family <- as.character(getp("font_family", ""))
+# Diagnostic scatter of the core DE result, so it follows the 'core' figure group's
+# per-group override (palette / font / base font / canvas) like make_figures.R.
+gp <- getp_for(style, "core")
+fig_w <- as.numeric(gp("width_in", 6)); fig_h <- as.numeric(gp("height_in", 5))
+fig_dpi <- as.integer(getp("dpi", 300)); base_size <- as.numeric(gp("base_font_size", 12))
+font_family <- as.character(gp("font_family", ""))
 label_bold <- isTRUE(as.logical(getp("label_bold", FALSE)))
 title_bold <- isTRUE(as.logical(getp("title_bold", FALSE)))
-palette_name <- as.character(getp("palette", "Blue-Red"))
+palette_name <- as.character(gp("palette", "Blue-Red"))
 pal_spec <- palette_spec(palette_name)
-base_family <- if (nzchar(font_family)) font_family else NULL
+# resolve_font maps a Windows font name onto one installed in the pipeline environment;
+# taking the request verbatim silently rendered a serif request as the sans default.
+base_family <- resolve_font(font_family)
 style_theme <- make_style_theme(base_size = base_size, base_family = base_family,
                                 label_bold = label_bold, title_bold = title_bold)
 save_gg <- make_save_gg(fig_w = fig_w, fig_h = fig_h, fig_dpi = fig_dpi)

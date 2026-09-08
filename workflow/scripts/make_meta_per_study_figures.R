@@ -84,7 +84,11 @@ build_volcano <- function(d) {
   p
 }
 build_ma <- function(d) {
-  d$sig <- ifelse(!is.na(d$padj) & d$padj < alpha, d$direction, "n.s.")
+  # as.character first: ifelse() on a factor returns its integer codes, which name
+  # nothing in DIR_COL, so every significant point lost its colour and the legend
+  # read 1/2/3. Re-factor on the DIR_COL levels so the legend keeps Up/Down/n.s.
+  d$sig <- factor(ifelse(!is.na(d$padj) & d$padj < alpha, as.character(d$direction), "n.s."),
+                  levels = names(DIR_COL))
   ggplot(d, aes(baseMean, log2FoldChange, colour = sig)) +
     geom_hline(yintercept = 0, colour = "grey50", linewidth = 0.3) +
     geom_point(alpha = 0.5, size = max(0.5, point_size * 0.5)) +

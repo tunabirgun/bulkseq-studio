@@ -71,6 +71,7 @@ def create_benchmark_project(benchmark_id: str, working_directory: Path, project
         cfg.reference.genome_size_category = str(benchmark.get("genome_size_category", "custom"))
         if entry is not None:
             cfg.enrichment.keytype = entry.get("enrichment_keytype") or None
+            cfg.enrichment.kegg_keytype = entry.get("kegg_keytype") or None
         ref = benchmark.get("reference", {})
         if ref:
             cfg.reference.source = ref.get("source")

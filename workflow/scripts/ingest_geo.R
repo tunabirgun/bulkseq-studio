@@ -85,8 +85,21 @@ if (identical(source_kind, "local_matrix")) {
   raw <- read.delim(matrix_path, sep = sep, header = TRUE, check.names = FALSE,
                     stringsAsFactors = FALSE, comment.char = "#")
   if (ncol(raw) < 2) stop("Microarray expression matrix needs a gene-id column plus at least one sample column.")
-  exprs_mat <- suppressWarnings(data.matrix(raw[, -1, drop = FALSE]))
-  rownames(exprs_mat) <- as.character(raw[[1]])
+  # data.matrix() turns a character column into factor codes, so a comma-decimal export or one
+  # text placeholder would silently become ranks; parse strictly and refuse anything non-numeric.
+  num <- lapply(raw[, -1, drop = FALSE], function(col) {
+    tok <- trimws(as.character(col))
+    miss <- is.na(col) | !nzchar(tok) | toupper(tok) %in% c("NA", "NAN")
+    v <- suppressWarnings(as.numeric(tok))
+    bad <- !miss & is.na(v)
+    if (any(bad)) stop(sprintf(
+      "Expression matrix has non-numeric value(s) such as '%s'. Export it with '.' as the decimal separator and no text placeholders.",
+      paste(head(unique(tok[bad]), 5), collapse = "', '")))
+    v[miss] <- NA_real_
+    v
+  })
+  exprs_mat <- matrix(unlist(num, use.names = FALSE), nrow = nrow(raw),
+                      dimnames = list(as.character(raw[[1]]), names(num)))
   norm_method <- "User-supplied expression matrix (local)"
   already_log2 <- FALSE
 } else if (identical(source_kind, "affy_cel")) {

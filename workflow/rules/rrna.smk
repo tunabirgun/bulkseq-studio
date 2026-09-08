@@ -81,13 +81,19 @@ elif RRNA_FILTER:
 
     rule rrna_db:
         output:
-            RRNA_DB,
+            # The sidecar is declared so Snakemake removes it with the FASTA when the fetch
+            # fails, and a stale digest can never outlive the database it describes.
+            db=RRNA_DB,
+            integrity=RRNA_DB + ".integrity.json",
         params:
             database=_SMR.get("database") or "",
         log:
             "logs/rrna_db.log",
         shell:
-            "python workflow/scripts/fetch_rrna_db.py --out {output:q} --database '{params.database}' > {log} 2>&1"
+            "python workflow/scripts/fetch_rrna_db.py --out {output.db:q} "
+            # --database=<v> attached: an empty value renders as nothing under :q, and the
+            # detached form would leave argparse with a missing argument.
+            "--sidecar {output.integrity:q} --database={params.database:q} > {log} 2>&1"
 
     rule sortmerna_index:
         input:

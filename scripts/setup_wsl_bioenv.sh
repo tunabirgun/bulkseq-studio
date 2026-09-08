@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 ENV_NAME="${1:-bulkseq}"
@@ -11,9 +11,18 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ---------------------------------------------------------------------------
 HOST_OS="$(uname -s)"
 HOST_ARCH="$(uname -m)"
+# micromamba is pinned to an exact version and verified against a per-platform SHA-256.
+# `/latest` was a moving target: every machine could get a different bootstrap, and a
+# corrupted or substituted download was installed unverified. Bump the version and BOTH
+# digests together (download the pinned URL and hash it; the digests are of the .tar.bz2).
+MM_VERSION="2.9.0"
 case "${HOST_OS}/${HOST_ARCH}" in
-  Linux/x86_64)              MM_PLATFORM="linux-64" ;;
-  Linux/aarch64|Linux/arm64) MM_PLATFORM="linux-aarch64" ;;
+  Linux/x86_64)
+    MM_PLATFORM="linux-64"
+    MM_SHA256="8761c382127e6363bd9e0a2451aa3ef90d071a79133f736e2f759a3bf13040dd" ;;
+  Linux/aarch64|Linux/arm64)
+    MM_PLATFORM="linux-aarch64"
+    MM_SHA256="e705ffeed90ce0659eb546e4b1e1028c9eaf0bc9cc854867b19ac5ce0ba5852f" ;;
   *)
     echo "Unsupported platform: ${HOST_OS} ${HOST_ARCH}." >&2
     echo "BulkSeq Studio runs the pipeline on Linux (x86_64 or aarch64), natively or" >&2
@@ -34,7 +43,7 @@ full)
     # The lock is a linux-64 snapshot pinned to exact builds, so it cannot solve on
     # any other subdir. Go straight to the float spec rather than burning a long
     # solve on a guaranteed failure and reporting it as an error.
-    echo "Note: ${MM_PLATFORM} host â€” installing from the float spec, not the linux-64 lock."
+    echo "Note: ${MM_PLATFORM} host -- installing from the float spec, not the linux-64 lock."
     ENV_FILE="$FALLBACK_ENV_FILE"
     FALLBACK_ENV_FILE=""
   fi
@@ -52,11 +61,27 @@ LOG_DIR="$REPO_DIR/scripts/logs"
 LOG_FILE="$LOG_DIR/wsl_bioenv_install.log"
 MAMBA_ROOT="$HOME/micromamba"
 MICROMAMBA="$HOME/.local/bin/micromamba"
-MM_URL="https://micro.mamba.pm/api/micromamba/${MM_PLATFORM}/latest"
+MM_URL="https://micro.mamba.pm/api/micromamba/${MM_PLATFORM}/${MM_VERSION}"
+
+verify_sha256() {  # verify_sha256 <file> <expected-hex>
+  local actual=""
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$1" | cut -d' ' -f1)"
+  elif command -v shasum >/dev/null 2>&1; then
+    actual="$(shasum -a 256 "$1" | cut -d' ' -f1)"
+  else
+    echo "No sha256sum/shasum available to verify the micromamba download." >&2
+    return 1
+  fi
+  if [ "$actual" != "$2" ]; then
+    echo "micromamba checksum mismatch: expected $2, got $actual" >&2
+    return 1
+  fi
+}
 
 # `timeout` comes from GNU coreutils and is not guaranteed: a minimal container image
 # or a BusyBox userland may not have it. The tool verification below wraps each probe in
-# an `if`, so `set -e` never fires — a missing `timeout` would silently make EVERY tool
+# an `if`, so `set -e` never fires -- a missing `timeout` would silently make EVERY tool
 # report "not found or timed out" on a correctly installed system. Fall back to a
 # portable background-and-kill wait.
 if command -v timeout >/dev/null 2>&1; then
@@ -123,7 +148,7 @@ acquire_lock() {
       fi
     fi
     if [ "$announced" -eq 0 ]; then
-      echo "Another BulkSeq setup is already running; waiting for it to finishâ€¦"
+      echo "Another BulkSeq setup is already running; waiting for it to finish..."
       announced=1
     fi
     sleep 3
@@ -140,22 +165,30 @@ acquire_lock
 
 mkdir -p "$HOME/.local/bin"
 
-# Extract bin/micromamba from the .tar.bz2 at $1 into $2, using only the python3
-# standard library (urllib + tarfile/bz2). No curl, bzip2, apt or sudo needed.
+# Extract bin/micromamba from the .tar.bz2 at $1 into $2 after verifying its SHA-256
+# against $3, using only the python3 standard library (urllib + hashlib + tarfile/bz2).
+# No curl, bzip2, apt or sudo needed. The binary is written to a temp path, made
+# executable and moved into place with os.replace, so an interrupted or mismatched
+# download never leaves a partial micromamba on PATH.
 bootstrap_with_python3() {
-  python3 - "$1" "$2" <<'PY'
-import io, os, stat, sys, tarfile, urllib.request
-url, dest = sys.argv[1], sys.argv[2]
+  python3 - "$1" "$2" "$3" <<'PY'
+import hashlib, io, os, stat, sys, tarfile, urllib.request
+url, dest, expected = sys.argv[1], sys.argv[2], sys.argv[3]
 data = urllib.request.urlopen(url, timeout=180).read()
+digest = hashlib.sha256(data).hexdigest()
+if digest != expected:
+    raise SystemExit(f"micromamba checksum mismatch: expected {expected}, got {digest}")
 with tarfile.open(fileobj=io.BytesIO(data), mode="r:bz2") as tf:
     extracted = tf.extractfile(tf.getmember("bin/micromamba"))
     if extracted is None:
         raise SystemExit("bin/micromamba not found in archive")
     os.makedirs(os.path.dirname(dest), exist_ok=True)
-    with open(dest, "wb") as out:
+    tmp = dest + ".partial"
+    with open(tmp, "wb") as out:
         out.write(extracted.read())
-os.chmod(dest, os.stat(dest).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-print("micromamba written to", dest)
+os.chmod(tmp, os.stat(tmp).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+os.replace(tmp, dest)
+print("micromamba", expected[:12], "verified and written to", dest)
 PY
 }
 
@@ -174,31 +207,40 @@ if [ -x "$MICROMAMBA" ]; then
 else
   installed=0
 
+  echo "micromamba $MM_VERSION ($MM_PLATFORM), sha256 $MM_SHA256"
+
   # Preferred: python3 standard library. No system packages, no sudo.
   if command -v python3 >/dev/null 2>&1; then
     echo "Downloading micromamba with python3 (no system packages needed)..."
-    if bootstrap_with_python3 "$MM_URL" "$MICROMAMBA"; then
+    if bootstrap_with_python3 "$MM_URL" "$MICROMAMBA" "$MM_SHA256"; then
       installed=1
     else
       echo "python3 bootstrap failed; trying curl/wget."
     fi
   fi
 
-  # Fallback: curl or wget piped through tar (tar -j needs bzip2).
+  # Fallback: curl or wget into a temp file, verified before it is unpacked (tar -j needs
+  # bzip2). Piping the download straight into tar would install unverified bytes.
   if [ "$installed" -eq 0 ] && command -v bzip2 >/dev/null 2>&1; then
+    mm_archive="$(mktemp)"
+    mm_fetched=0
     if command -v curl >/dev/null 2>&1; then
       echo "Downloading micromamba with curl..."
-      if curl -L "$MM_URL" | tar -xj -C "$HOME/.local/bin" --strip-components=1 bin/micromamba; then
-        chmod +x "$MICROMAMBA"
-        installed=1
-      fi
+      curl -fsSL -o "$mm_archive" "$MM_URL" && mm_fetched=1
     elif command -v wget >/dev/null 2>&1; then
       echo "Downloading micromamba with wget..."
-      if wget -qO- "$MM_URL" | tar -xj -C "$HOME/.local/bin" --strip-components=1 bin/micromamba; then
-        chmod +x "$MICROMAMBA"
+      wget -qO "$mm_archive" "$MM_URL" && mm_fetched=1
+    fi
+    if [ "$mm_fetched" -eq 1 ] && verify_sha256 "$mm_archive" "$MM_SHA256"; then
+      mm_dir="$(mktemp -d)"
+      if tar -xjf "$mm_archive" -C "$mm_dir" bin/micromamba; then
+        chmod +x "$mm_dir/bin/micromamba"
+        mv -f "$mm_dir/bin/micromamba" "$MICROMAMBA"
         installed=1
       fi
+      rm -rf "$mm_dir"
     fi
+    rm -f "$mm_archive"
   fi
 
   # Last resort: install python3 via apt, but only if sudo needs no password.
@@ -208,7 +250,7 @@ else
     echo "Installing python3 via passwordless sudo apt..."
     sudo apt-get update
     sudo apt-get install -y python3 ca-certificates
-    if command -v python3 >/dev/null 2>&1 && bootstrap_with_python3 "$MM_URL" "$MICROMAMBA"; then
+    if command -v python3 >/dev/null 2>&1 && bootstrap_with_python3 "$MM_URL" "$MICROMAMBA" "$MM_SHA256"; then
       installed=1
     fi
   fi
@@ -245,7 +287,7 @@ esac
 env_exists() { "$MICROMAMBA" env list | awk '{print $1}' | grep -qx "$ENV_NAME"; }
 
 remove_env() {
-  echo "Removing existing environment '$ENV_NAME' for a clean installâ€¦"
+  echo "Removing existing environment '$ENV_NAME' for a clean install..."
   "$MICROMAMBA" env remove --yes -n "$ENV_NAME" || rm -rf "$MAMBA_ROOT/envs/$ENV_NAME"
 }
 
@@ -262,10 +304,10 @@ create_or_update() {
 }
 
 # Drop only the index/shard cache (not downloaded package tarballs) to recover
-# from a truncated JSON shard left by an interrupted or concurrent fetch â€” the
+# from a truncated JSON shard left by an interrupted or concurrent fetch -- the
 # state that makes every run die with "parse error ... empty input".
 clean_index_cache() {
-  echo "Cleaning the micromamba index cache to recover from a corrupted shardâ€¦"
+  echo "Cleaning the micromamba index cache to recover from a corrupted shard..."
   "$MICROMAMBA" clean --index-cache --yes 2>/dev/null || true
   rm -rf "$MAMBA_ROOT/pkgs/cache" 2>/dev/null || true
 }
@@ -281,10 +323,10 @@ attempt_install() {
 }
 
 # Full profile only: does the R/Bioconductor stack actually LOAD? Reads a stdout marker,
-# NOT the exit code â€” `micromamba run` can mask a non-zero status. A dropped GO.db or an
+# NOT the exit code -- `micromamba run` can mask a non-zero status. A dropped GO.db or an
 # r-base ABI drift leaves these installed-but-unloadable, which is what kills enrichment
 # mid-run. Core/empty profile -> trivially "loads".
-R_STACK_PROBE='q<-c("DESeq2","edgeR","limma","GSVA","clusterProfiler","GO.db","DOSE","enrichplot","fgsea","STRINGdb","apeglm","ashr","GEOquery","affy","AnnotationDbi","Biobase","S4Vectors","SummarizedExperiment","metaRNASeq","metafor","HTSFilter","tximport","gprofiler2","ggplot2","ggrepel","ggnewscale","ggridges","gtable","pheatmap","igraph","jsonlite","matrixStats","scales","svglite","systemfonts","RColorBrewer","msigdbr"); ok<-function(p) isTRUE(tryCatch(suppressWarnings(suppressMessages(requireNamespace(p,quietly=TRUE))),error=function(e)FALSE)); bad<-q[!vapply(q,ok,logical(1))]; cat(if(length(bad)) paste0("R_STACK_BAD:",paste(bad,collapse=",")) else "R_STACK_OK")'
+R_STACK_PROBE='q<-c("DESeq2","edgeR","limma","GSVA","clusterProfiler","GO.db","DOSE","enrichplot","fgsea","STRINGdb","apeglm","ashr","GEOquery","affy","AnnotationDbi","Biobase","S4Vectors","SummarizedExperiment","metaRNASeq","metafor","HTSFilter","tximport","gprofiler2","ggplot2","ggrepel","ggnewscale","ggridges","gtable","pheatmap","igraph","jsonlite","matrixStats","scales","svglite","systemfonts","RColorBrewer","msigdbr","org.At.tair.db","org.Bt.eg.db","org.Ce.eg.db","org.Dm.eg.db","org.Dr.eg.db","org.Gg.eg.db","org.Hs.eg.db","org.Mm.eg.db","org.Rn.eg.db","org.Sc.sgd.db","org.Ss.eg.db"); ok<-function(p) isTRUE(tryCatch(suppressWarnings(suppressMessages(requireNamespace(p,quietly=TRUE))),error=function(e)FALSE)); bad<-q[!vapply(q,ok,logical(1))]; cat(if(length(bad)) paste0("R_STACK_BAD:",paste(bad,collapse=",")) else "R_STACK_OK")'
 r_stack_loads() {
   [ "$PROFILE" = "full" ] || return 0
   local out
@@ -436,6 +478,16 @@ fi
 if [ "$verification_failed" -ne 0 ]; then
   echo "ERROR: $PROFILE environment verification failed; see the probes above." >&2
   exit 1
+fi
+
+# Record which profile this environment was installed with. app/core/readiness.py reads the
+# marker so a correct core-only environment is not reported broken for the full-only tools
+# (Rscript, ribodetector_cpu) it was never meant to contain. Written only after verification
+# passed, so the marker never claims a profile that did not install.
+ENV_PREFIX="$MAMBA_ROOT/envs/$ENV_NAME"
+if [ -d "$ENV_PREFIX" ]; then
+  printf '%s\n' "$PROFILE" > "$ENV_PREFIX/.bulkseq_profile"
+  echo "Recorded environment profile '$PROFILE' in $ENV_PREFIX/.bulkseq_profile"
 fi
 
 echo ""

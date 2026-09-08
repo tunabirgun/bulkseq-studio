@@ -32,10 +32,12 @@ from app.core.readiness import (
     next_readiness_actions,
     readiness_summary,
 )
+from app.core import setup_installer
 from app.core.setup_installer import (
     launch_native_bioenv_install,
     launch_wsl_admin_install,
     launch_wsl_bioenv_install,
+    new_setup_run_tag,
 )
 
 # ---------------------------------------------------------------------------
@@ -183,19 +185,35 @@ class WslBioenvInstallThread(QThread):
         self.native = native
         self.rebuild = rebuild
         self.process = None
+        # Marker exported into the install environment so Stop can find the processes running
+        # INSIDE WSL. Terminating wsl.exe alone leaves micromamba resolving in the VM, still
+        # holding the setup lock — the next attempt then blocks for up to 30 minutes.
+        self.run_tag = new_setup_run_tag() if not native else None
 
     def run(self) -> None:
-        if self.native:
-            self.process = launch_native_bioenv_install(profile=self.profile, rebuild=self.rebuild)
-        else:
-            self.process = launch_wsl_bioenv_install(profile=self.profile, rebuild=self.rebuild)
+        try:
+            if self.native:
+                self.process = launch_native_bioenv_install(profile=self.profile, rebuild=self.rebuild)
+            else:
+                self.process = launch_wsl_bioenv_install(
+                    profile=self.profile, rebuild=self.rebuild, run_tag=self.run_tag)
+        except Exception as exc:  # a launch failure must still finish the dialog's thread
+            self.line.emit(f"Could not start the environment setup: {exc}")
+            self.finished_with_code.emit(1)
+            return
         assert self.process.stdout is not None
         for line in self.process.stdout:
             self.line.emit(line.rstrip())
         self.finished_with_code.emit(self.process.wait())
 
     def stop(self) -> None:
-        if self.process and self.process.poll() is None:
+        # Kills the whole install tree (the tagged in-WSL processes, or the native process
+        # group), not just the local relay handle. Guarded so the dialog keeps working against
+        # an installer module that has not grown the helper yet.
+        stopper = getattr(setup_installer, "stop_bioenv_install", None)
+        if stopper is not None:
+            stopper(self.process, run_tag=self.run_tag, native=self.native)
+        elif self.process and self.process.poll() is None:
             self.process.terminate()
 
 
@@ -647,12 +665,19 @@ class ReadinessDialog(QDialog):
             self.text.setPlainText(self._compose_details(items))
         # A broken R/Bioconductor stack clears the version-scoped first-run prompt stamp so the
         # next app launch re-opens this check — a broken env should keep being nudged until it is
-        # repaired, not silenced after one dismissal.
-        if any(it.name in ("WSL R packages", "R packages", "WSL distribution") and it.status != "PASS"
+        # repaired, not silenced after one dismissal. WARNING is not broken: a core-profile install
+        # reports the full-only R stack that way by design (readiness.FULL_ONLY_TOOLS), and treating
+        # it as a failure would re-open this dialog on every launch of a supported install.
+        if any(it.name in ("WSL R packages", "R packages", "WSL distribution")
+               and it.status not in ("PASS", "WARNING")
                for it in items):
             QSettings().remove("env_check_prompted_version")
 
     def _ready_count(self) -> int:
+        # Counts requirement groups (the cards), NOT individual readiness items: on Windows the
+        # bioinformatics tools are probed against the Windows PATH and are legitimately
+        # REVIEW_REQUIRED on a healthy install, so an item tally would read as broken. The
+        # summary text names that scope, so a red line in the details never contradicts it.
         ready = 0
         for card in self._active_cards:
             if isinstance(card.pill, _StatusPill) and card.pill.text() == _PILL_TEXT[STATE_READY]:
@@ -664,12 +689,13 @@ class ReadinessDialog(QDialog):
         total = len(self._active_cards)
         self._summary_complete = ready == total
         if ready == total:
-            self.summary_label.setText(f"{ready} of {total} ready — setup complete")
+            self.summary_label.setText(
+                f"{ready} of {total} requirement groups ready — setup complete")
             self.summary_label.setStyleSheet(
                 f"color: {SUCCESS}; font-size: 10pt; font-weight: 600; background: transparent;"
             )
         else:
-            self.summary_label.setText(f"{ready} of {total} ready")
+            self.summary_label.setText(f"{ready} of {total} requirement groups ready")
             self.summary_label.setStyleSheet(
                 f"color: {MUTED}; font-size: 10pt; background: transparent;"
             )
@@ -765,9 +791,9 @@ class ReadinessDialog(QDialog):
             self.card_core.update_state(
                 STATE_ACTION,
                 "The bulkseq environment is missing or incomplete. This installs Snakemake, "
-                "SRA tools, FastQC, MultiQC, fastp, STAR, HISAT2, Salmon, featureCounts and "
-                "samtools. It can take a while and runs in your WSL user account — no sudo "
-                "password needed.",
+                "aria2 (FASTQ download), FastQC, MultiQC, fastp, STAR, HISAT2, Salmon, "
+                "featureCounts and samtools. It can take a while and runs in your WSL user "
+                "account — no sudo password needed.",
                 action_label="Install / repair core environment",
                 action_handler=self.install_wsl_bioenv,
                 action_enabled=not self._installing,
@@ -783,16 +809,24 @@ class ReadinessDialog(QDialog):
                     "Rscript and the R analysis packages are installed; DESeq2, enrichment and figures can run.",
                 )
             elif not r_ok:
+                # Both branches describe an action, so they need the button that performs it —
+                # the native install runs the same setup script with the full profile.
                 self.card_r.update_state(
                     STATE_ACTION,
                     "Rscript is not on PATH. Install the R/DESeq2 stack into the environment so "
                     "DESeq2, enrichment and figures can run.",
+                    action_label="Install full R/DESeq2 stack",
+                    action_handler=self.install_full_wsl_bioenv,
+                    action_enabled=not self._installing,
                 )
             else:
                 self.card_r.update_state(
                     STATE_ACTION,
                     "Rscript is on PATH but some required R packages are missing; install/repair the "
                     "R/DESeq2 stack so DESeq2, enrichment and figures can run.",
+                    action_label="Repair R/DESeq2 stack",
+                    action_handler=self.install_full_wsl_bioenv,
+                    action_enabled=not self._installing,
                 )
             return
         core_ready = has_wsl_core_environment(items)

@@ -92,7 +92,6 @@ workflow:
   # Mitochondrial + chloroplast genes: keep | discard | separate (default keep).
   organellar_genes: keep
 fastp:
-  detect_adapter_for_pe: true
   qualified_quality_phred: 15
   unqualified_percent_limit: 40
   length_required: 36
@@ -138,7 +137,6 @@ deseq2:
   alpha: 0.05
   lfc_threshold: 1.0
   min_count: 10
-  lfc_shrinkage: true
   shrinkage_method: apeglm
 gene_sets:
   custom_gene_list: null
@@ -151,6 +149,7 @@ enrichment:
   # to SYMBOL. Distinct from workflow.enrichment (the on/off toggle).
   orgdb: null
   keytype: null
+  kegg_keytype: null
   kegg_organism: null
   taxon_id: null
   # backend: clusterprofiler keeps the auto OrgDb->gprofiler->none chain; set to
@@ -158,6 +157,8 @@ enrichment:
   # id (e.g. hsapiens), distinct from the KEGG code; null falls back to the catalog.
   backend: clusterprofiler
   gprofiler_organism: null
+  # GO ontology used by the meta-analysis enrichment rules: BP | MF | CC.
+  go_ontology: BP
 ppi:
   # STRING PPI network. taxon is the curated STRING taxid (null => derived from the
   # organism); the rule degrades to empty outputs when STRING is unreachable or the
@@ -168,7 +169,6 @@ ppi:
   seed_source: de
   string_version: "12.0"
   max_seed_genes: 400
-  hub_label_count: 15
 figures_style:
   palette: Blue-Red
   point_size: 2.5
@@ -205,37 +205,46 @@ figures_style:
   enrich_cnet_category: 5
   enrich_emap_category: 15
   enrich_label_wrap: 40
+  # Meta-analysis figures (mirrors the R defaults in make_meta_figures.R and
+  # make_meta_enrichment_figures.R).
+  meta_volcano_fit: false
+  meta_volcano_z_axis: false
+  meta_label_top: 10
+  meta_heatmap_top: 50
+  meta_enrich_show_category: 6
   gsea_line_color: ""
   ppi_layout: fr
   ppi_node_max_size: 11.0
   size_overrides: {}
-  rasterize_points: false
+  figure_overrides: {}
 resources:
   profile: balanced
   total_threads: 4
   total_memory_gb: 8
-  temp_dir: tmp
-  keep_intermediate: false
 rule_threads:
-  fasterq_dump: 4
   fastqc: 1
   fastp: 4
   sortmerna: 4
   star_index: 4
   star_align: 4
+  hisat2_index: 8
   hisat2_align: 4
+  salmon_index: 8
   salmon_quant: 4
+  infer_strandedness: 4
+  fastq_screen: 4
   featurecounts: 4
   deseq2: 2
   multiqc: 1
 rule_memory_gb:
-  fasterq_dump: 8
   fastqc: 1
   fastp: 4
   sortmerna: 12
   star_index: 24
   star_align: 24
+  hisat2_index: 16
   hisat2_align: 8
+  salmon_index: 16
   salmon_quant: 8
   featurecounts: 8
   deseq2: 12

@@ -681,23 +681,23 @@ def _ppi_sidecar() -> dict:
         },
         "software": {
             "R": "4.5.2", "STRINGdb": "2.22.0", "igraph": "2.2.1",
-            "ggrepel": "0.9.6", "ggplot2": "4.0.3",
+            "ggplot2": "4.0.3",
         },
         "configuration": {
             "seed_source": "de", "max_seed_genes": 200,
-            "score_threshold_combined": 400,
+            "score_threshold_combined": 0,
             "string_combined_score_scale": "0-1000",
             "stored_edge_weight": "combined_score / 1000",
-            "hub_label_count": 15, "layout": "fr",
         },
         "realized": {
             "seed_source": "differential_expression_symbols", "seed_input_count": 154,
+            "seed_up_count": 90, "seed_down_count": 64,
             "seed_after_limit_count": 154, "mapped_seed_count": 149,
             "mapped_string_id_count": 148, "interactions_returned_count": 311,
             "interactions_passing_threshold_count": 205,
             "score_threshold_combined": 400, "minimum_combined_score": 401,
             "maximum_combined_score": 999, "node_count": 101, "edge_count": 205,
-            "module_count": 7, "hub_label_count": 15,
+            "module_count": 7,
             "layout_method": "igraph::layout_with_fr", "layout_fallback_reason": None,
             "figure_width_in": 8.1, "figure_height_in": 6.5,
         },
@@ -734,6 +734,10 @@ def test_ppi_sidecar_is_loaded_and_rendered_without_inference(mrs, tmp_path) -> 
     provenance = mrs.ppi_provenance(tmp_path)
     assert provenance["schema_version"] == 1
     assert provenance["sidecar_path"] == "results/networks/string_ppi_provenance.json"
+    # A configured score below the usable STRING floor is clamped by the R script; the
+    # sidecar must keep the requested and the realized value apart.
+    assert provenance["configuration"]["score_threshold_combined"] == 0
+    assert provenance["realized"]["score_threshold_combined"] == 400
 
     payload = _microarray_payload()
     payload["ppi_provenance"] = provenance
@@ -752,8 +756,7 @@ def test_ppi_sidecar_is_loaded_and_rendered_without_inference(mrs, tmp_path) -> 
 
 def test_label_free_ppi_sidecar_does_not_require_unused_ggrepel(mrs, tmp_path) -> None:
     sidecar = _ppi_sidecar()
-    sidecar["software"].pop("ggrepel")
-    sidecar["realized"]["hub_label_count"] = 0
+    sidecar["software"]["ggrepel"] = "0.9.6"  # stale entry from a labelled-figure run
     sidecar["methods"]["figure_labels"] = {
         "algorithm": "no node labels in the static topology panel",
         "selection": "none; identities and hub metrics are reported outside the static panel",
@@ -780,6 +783,36 @@ def test_label_free_ppi_sidecar_does_not_require_unused_ggrepel(mrs, tmp_path) -
     invalid = mrs.ppi_provenance(tmp_path)
     assert invalid["status"] == "INVALID"
     assert "methods.figure_labels.selection" in invalid["reason"]
+
+
+def test_unreadable_check_file_is_reported_as_fail_not_a_crash(tmp_path, monkeypatch) -> None:
+    # The PPI check used to be hand-escaped JSON, so a STRING error message carrying a
+    # newline or backslash produced a file json.loads() could not parse; the sanity rule
+    # then died instead of reporting it.
+    agg = Path(__file__).resolve().parents[1] / "workflow" / "scripts" / "aggregate_sanity_checks.py"
+    spec = importlib.util.spec_from_file_location("aggregate_sanity_checks", agg)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    checks = tmp_path / "checks"
+    checks.mkdir()
+    broken = checks / "16_ppi_network.json"
+    broken.write_text('{"check": "16_ppi_network", "messages": [{"message": "a\nb"}]}',
+                      encoding="utf-8")
+    good = checks / "01_input_validation.json"
+    good.write_text(json.dumps({"check": "01_input_validation", "status": "PASS",
+                                "messages": [{"status": "PASS", "message": "ok"}]}),
+                    encoding="utf-8")
+    out = tmp_path / "sanity_checks.txt"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "sys.argv", ["aggregate", "--checks", str(broken), str(good), "--out", str(out)])
+    assert mod.main() == 0
+    text = out.read_text(encoding="utf-8")
+    assert "Overall: FAIL" in text
+    assert "16_ppi_network: FAIL" in text
+    assert "unreadable check file:" in text
+    assert "01_input_validation: PASS" in text
 
 
 def test_missing_ppi_sidecar_is_explicitly_not_recorded(mrs, tmp_path) -> None:
@@ -831,3 +864,67 @@ def test_ppi_pass_sidecar_cannot_omit_realized_facts(mrs, tmp_path) -> None:
     assert "PASS sidecar lacks realized facts" in provenance["reason"]
     assert "database.realized_version" in provenance["reason"]
     assert "realized.mapped_seed_count" in provenance["reason"]
+
+
+# ---- Figure-style plumbing in the stats / GOI R scripts ---------------------
+
+_SCRIPTS = Path(__file__).resolve().parents[1] / "workflow" / "scripts"
+
+# Figure group each script belongs to, as offered by the GUI override table
+# (main_window.py PALETTE_GROUPS). A script that never calls getp_for ignores its
+# group's palette, font, base font size and canvas entirely.
+_STYLE_GROUPS = {
+    "make_figures.R": "core",
+    "make_enrichment_figures.R": "enrichment",
+    "make_goi.R": "core",
+    "run_wilcoxon.R": "core",
+    "run_gsva.R": "core",
+    "run_set_overlap.R": "enrichment",
+}
+
+
+def _assert_style_routing(name: str, source: str) -> None:
+    assert f'getp_for(style, "{_STYLE_GROUPS[name]}")' in source, name
+    # A requested Windows font must be mapped onto one installed in the pipeline
+    # environment; taking the name verbatim renders a serif request as the sans default.
+    assert "resolve_font(" in source, name
+    assert 'if (nzchar(font_family)) font_family else NULL' not in source, name
+
+
+@pytest.mark.parametrize("name", sorted(_STYLE_GROUPS))
+def test_every_figure_script_routes_style_through_its_group(name: str) -> None:
+    _assert_style_routing(name, (_SCRIPTS / name).read_text(encoding="utf-8"))
+
+
+def test_style_routing_gate_rejects_a_global_only_getter() -> None:
+    source = (_SCRIPTS / "run_wilcoxon.R").read_text(encoding="utf-8")
+    broken = source.replace('gp <- getp_for(style, "core")', "gp <- make_getp(style)", 1)
+    assert broken != source
+    with pytest.raises(AssertionError):
+        _assert_style_routing("run_wilcoxon.R", broken)
+
+
+def test_style_routing_gate_rejects_an_unresolved_font_family() -> None:
+    source = (_SCRIPTS / "run_set_overlap.R").read_text(encoding="utf-8")
+    broken = source.replace(
+        "base_family <- resolve_font(font_family)",
+        "base_family <- if (nzchar(font_family)) font_family else NULL", 1)
+    assert broken != source
+    with pytest.raises(AssertionError):
+        _assert_style_routing("run_set_overlap.R", broken)
+
+
+def test_goi_figures_use_the_configured_canvas_and_resolution() -> None:
+    source = (_SCRIPTS / "make_goi.R").read_text(encoding="utf-8")
+    assert 'fig_dpi <- as.integer(getp("dpi", 300))' in source
+    assert 'fig_w <- as.numeric(gp("width_in", 7)); fig_h <- as.numeric(gp("height_in", 5))' in source
+    for hardcoded in ("dpi = 300", "dpi = 150", "res = 300", "width = 7, height = 5", "w = 7,"):
+        assert hardcoded not in source, hardcoded
+
+
+def test_set_overlap_dotplot_paints_both_colour_and_fill() -> None:
+    # enrichplot maps p.adjust to `fill` in current versions; a colour-only scale
+    # silently leaves the default red-blue in place of the configured palette.
+    source = (_SCRIPTS / "run_set_overlap.R").read_text(encoding="utf-8")
+    assert "scale_colour_gradientn(colours = pal_spec$seq(255)" in source
+    assert "scale_fill_gradientn(colours = pal_spec$seq(255)" in source

@@ -34,7 +34,9 @@ write.csv(data.frame(Cluster = character(0), ID = character(0), Description = ch
           out[["ora"]], row.names = FALSE)
 saveRDS(NULL, out[["objects"]])
 
-res <- tryCatch(read.csv(results_file, stringsAsFactors = FALSE), error = function(e) NULL)
+# check.names = FALSE: keep hyphens/dots in study names intact so the study_<S>_log2FC /
+# study_<S>_padj lookups below resolve (default repair turns E-MTAB-2523 into E.MTAB.2523).
+res <- tryCatch(read.csv(results_file, stringsAsFactors = FALSE, check.names = FALSE), error = function(e) NULL)
 if (is.null(res) || nrow(res) == 0 || !"meta_sig" %in% colnames(res))
   skip("Cross-study enrichment skipped: the meta-analysis produced no shared-gene result.")
 if (is.null(orgdb_name) || !nzchar(orgdb_name))

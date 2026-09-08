@@ -2,9 +2,9 @@
 
 BulkSeq Studio is a cross-platform desktop application for reproducible bulk RNA-seq and microarray analysis. Its PySide6 interface drives a transparent Snakemake workflow from raw reads or processed inputs through differential expression, enrichment, protein-interaction networks, figures, reports, and route-aware provenance.
 
-> **Release status — 13 August 2026.** Version 0.28.0 is the current public release. Use only the checksummed packages published on GitHub Releases. The separately versioned B1–B20 validation archive remains deposited as version 0.26.6 on Zenodo.
+> **Release status — 8 September 2026.** Version 0.29.0 is the current public release. Use only the checksummed packages published on GitHub Releases. The separately versioned B1–B20 validation archive remains deposited as version 0.26.6 on Zenodo.
 
-[Read the complete documentation](https://tunabirgun.github.io/bulkseq-studio/) · [Download public v0.28.0](https://github.com/tunabirgun/bulkseq-studio/releases/latest) · [View source](https://github.com/tunabirgun/bulkseq-studio) · [Report an issue](https://github.com/tunabirgun/bulkseq-studio/issues)
+[Read the complete documentation](https://tunabirgun.github.io/bulkseq-studio/) · [Download public v0.29.0](https://github.com/tunabirgun/bulkseq-studio/releases/latest) · [View source](https://github.com/tunabirgun/bulkseq-studio) · [Report an issue](https://github.com/tunabirgun/bulkseq-studio/issues)
 
 ![BulkSeq Studio in light mode with the four-stage task navigator and the Analysis settings page](docs/screenshot-overview-light.png)
 
@@ -36,6 +36,22 @@ Imported differential-expression tables are validated in full rather than from a
 Successful pre-run checks store content fingerprints for the configuration, configured sample sheet, local inputs, reference locks, and index files. Starting or resuming a run revalidates that state, so a replaced, edited, missing, unreadable, or unsafe linked input cannot inherit an earlier pass.
 
 > **Meta-analysis correction.** Releases before 0.26.6 adjusted p-values across every gene and then removed direction-discordant genes from the called set. Re-run any multi-study result produced with 0.26.5 or earlier. Single-study differential expression, enrichment, and network output are unaffected.
+
+> **0.29.0 output changes.** GSEA now ranks on the model test statistic, STRING seeding is split by direction in adjusted-p order, meta-analysis combined p-values no longer underflow to zero, and genes-of-interest heatmaps use a zero-anchored colour scale. Results produced with 0.28.0 or earlier can differ in enrichment tables, network membership, and figure ordering; re-run before publishing. [CHANGELOG.md](CHANGELOG.md) lists every change in the release.
+
+### What changed in 0.29.0
+
+- GO, KEGG, and custom GSEA rank genes on the signed model test statistic (DESeq2 Wald, limma or voom moderated *t*, edgeR signed root-F), the metric the exported preranked file already used; the enrichment summary names the ranked column.
+- STRING seeding divides the seed cap between the up- and down-regulated genes in adjusted-p order, passing unused budget from the smaller direction to the larger one, and records the realized up and down seed counts in the network provenance.
+- The meta-analysis inverse-normal combination is computed in tail form, so a large combined statistic yields a finite p-value instead of exactly zero and the most significant genes are ordered by evidence.
+- Genes-of-interest and enrichment-term heatmaps use a zero-anchored, symmetric colour scale, matching the top-DEG heatmap.
+- The volcano plot uses the unshrunken effect, so its guides, colouring, and ranked side key share the coordinate the up- and down-regulated tables report; the MA plot keeps every gene with a finite mean, including the independently filtered low-count cloud.
+- KEGG over-representation and KEGG GSEA are audited and reported per leg, so a comparison with too few significant genes for over-representation still returns its ranked-list pathways.
+- A local microarray matrix with text tokens or comma decimals is refused, with the offending values named, rather than silently converted.
+- A design term that holds only numeric values is fitted as a continuous trend; the design check now flags it for review and the design helper labels the column.
+- The SortMeRNA rRNA database and micromamba are fetched at pinned versions and verified against recorded SHA-256 digests before use.
+- Check Environment reports against the installed profile, so full-only tools and the R stack read as not applicable on a core environment instead of as failures.
+- The Windows installer refuses to run while BulkSeq Studio is open, so an update cannot remove the previous version and then abort on a file in use.
 
 The deposited B1–B20 validation suite belongs to version 0.26.6. Its multi-study result depends on replication: at five replicates per group the combination gained 11–37 true positives over the best constituent study in ten of ten runs, whereas at ten replicates it ranged from 16 fewer to 14 more and failed that power criterion in five of ten. Complete-null calibration was not established for the smallest design: two-study combinations at five replicates per group rejected in 2 of 5 independent seeds, with an exact lower confidence limit of 0.053 that failed the criterion; three-study combinations rejected in 1 of 5. Both strata fell inside the bound at ten replicates. All 1,326 observably opposite-direction planted genes were flagged and none was called. The real two-study dexamethasone arm is corroborative, not a general power claim.
 

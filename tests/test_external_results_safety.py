@@ -94,7 +94,30 @@ def test_local_orientation_route_still_uses_local_contrast_and_reference() -> No
     rendered = " ".join(message["message"] for message in messages)
     assert [message["status"] for message in messages] == ["REVIEW_REQUIRED"]
     assert "tumor_case" in rendered and "vehicle_control" in rendered
-    assert "reference_level" in rendered
+    assert "denominator" in rendered
+
+
+def test_local_orientation_ignores_reference_level_because_the_explicit_contrast_sets_the_sign() -> None:
+    # results(dds, contrast = c(factor, numerator, denominator)) fixes the sign; relevel does not.
+    # The shipped default reference_level is the control level, which used to mask an inverted
+    # contrast (numerator control / denominator treated) as PASS.
+    inverted = orientation.orientation_messages({
+        "input": {"type": "fastq"},
+        "deseq2": {
+            "reference_level": {"condition": "control"},
+            "contrasts": [{"factor": "condition", "numerator": "control", "denominator": "treated"}],
+        },
+    })
+    assert [m["status"] for m in inverted] == ["REVIEW_REQUIRED"]
+    conventional = orientation.orientation_messages({
+        "input": {"type": "fastq"},
+        "deseq2": {
+            "reference_level": {"condition": "treated"},
+            "contrasts": [{"factor": "condition", "numerator": "treated", "denominator": "control"}],
+        },
+    })
+    assert [m["status"] for m in conventional] == ["PASS"]
+    assert "'treated' relative to 'control'" in conventional[0]["message"]
 
 
 def test_external_ingest_has_a_validation_dependency_chain() -> None:

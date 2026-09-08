@@ -364,6 +364,19 @@ def _route_gloss(run: dict) -> dict[str, str]:
             "changes are not confined to genes with low measured expression."
         )
         return definitions
+    if _assay_kind(run) == "log2_cpm":
+        # run_voom.R / run_edger.R write AveExpr / logCPM into the baseMean column, so the
+        # count wording would misname the scale the MA plot is drawn on.
+        definitions["basemean"] = (
+            "Average log2 counts per million across all samples — how strongly the gene is "
+            "expressed overall. Fractional and negative values are valid on this log scale; "
+            "very low values make fold changes noisy."
+        )
+        definitions["ma"] = (
+            "Fold change (y) against average log2 counts per million (x). Confirms changes "
+            "aren't driven only by weakly expressed genes."
+        )
+        return definitions
     if not _is_external_results(run):
         return definitions
     method = _recorded_method(run, "p_adjustment_method")
@@ -775,6 +788,27 @@ def _custom_enrichment_section(project: Path) -> str:
             f"{evidence_html}{figure_html}{ora}{gsea}</section>")
 
 
+def _kegg_leg_message(summary_raw: str, leg: str, label: str, fallback: str) -> str:
+    # "KEGG <leg> status: <STATUS>; adjusted pathways=<n>; detail=<reason>"
+    prefix = f"KEGG {leg} status: "
+    line = next((l.strip() for l in summary_raw.splitlines()
+                 if l.strip().startswith(prefix)), "")
+    if not line:
+        return fallback
+    status = line[len(prefix):].split(";", 1)[0].strip().upper()
+    detail = line.partition("detail=")[2].strip().rstrip(".")
+    if status == "NOT_RUN":
+        return (f"KEGG {label} was not run for this comparison"
+                + (f": {detail}." if detail else "."))
+    if status not in ("PASS", "LIMITED_ANNOTATION"):
+        return (f"KEGG {label} is not interpretable for this run"
+                + (f": {detail}. " if detail else ". ")
+                + "Review the resource-integrity evidence above before drawing "
+                  "pathway conclusions.")
+    return ("No supported KEGG pathways met the adjusted criterion. This does not "
+            "establish that no pathway biology is present.")
+
+
 def _enrichment_section(project: Path) -> str:
     enr = project / "results" / "enrichment"
     if not enr.exists():
@@ -802,7 +836,8 @@ def _enrichment_section(project: Path) -> str:
         "DO effective annotated ORA universe:", "OrgDb annotation identity:",
         "KEGG identity verification:", "KEGG retrieval:",
         "KEGG effective resource universe:", "KEGG supported foreground:",
-        "KEGG eligible hypotheses/gene sets:", "KEGG adjusted results:",
+        "KEGG eligible hypotheses/gene sets:", "KEGG ranked-list annotation:",
+        "KEGG adjusted results:", "KEGG ORA status:", "KEGG GSEA status:",
         "KEGG resource status:", "Unmapped input IDs excluded:",
         "Ambiguous input IDs excluded:", "One-to-many mappings observed:",
         "Cross-keytype discordance observed:", "Many-to-one Entrez groups collapsed",
@@ -842,6 +877,12 @@ def _enrichment_section(project: Path) -> str:
         # Backward-compatible wording for reports produced before the resource
         # integrity audit existed; do not invent an audit status from old files.
         kegg_msg = "No terms passed the significance threshold."
+    # The ORA and GSEA legs are audited separately: an empty significant-gene
+    # foreground makes ORA impossible while leaving the ranked GSEA interpretable.
+    # Summaries written before the split carry no per-leg line, so both fall back
+    # to the single verdict above rather than inventing a status.
+    kegg_ora_msg = _kegg_leg_message(summary_raw, "ORA", "over-representation", kegg_msg)
+    kegg_gsea_msg = _kegg_leg_message(summary_raw, "GSEA", "gene-set enrichment", kegg_msg)
     if is_gprofiler or go_skipped:
         go_trio = ""
     else:
@@ -860,8 +901,8 @@ def _enrichment_section(project: Path) -> str:
         blocks += _enrich_block("GO terms — over-represented among up-regulated genes", enr / "go_ora_up.csv", "ora", empty_msg=go_msg)
         blocks += _enrich_block("GO terms — over-represented among down-regulated genes", enr / "go_ora_down.csv", "ora", empty_msg=go_msg)
     blocks += _enrich_block("GO gene-set enrichment (GSEA)", enr / "gsea.csv", "gsea", empty_msg=go_msg)
-    blocks += _enrich_block("KEGG pathways — over-representation", enr / "kegg_ora.csv", "ora", empty_msg=kegg_msg)
-    blocks += _enrich_block("KEGG pathways — gene-set enrichment (GSEA)", enr / "kegg_gsea.csv", "gsea", empty_msg=kegg_msg)
+    blocks += _enrich_block("KEGG pathways — over-representation", enr / "kegg_ora.csv", "ora", empty_msg=kegg_ora_msg)
+    blocks += _enrich_block("KEGG pathways — gene-set enrichment (GSEA)", enr / "kegg_gsea.csv", "gsea", empty_msg=kegg_gsea_msg)
     blocks += _custom_enrichment_section(project)
     if not blocks:
         if not summ.exists():
@@ -1737,14 +1778,24 @@ def _study_design_section(run: dict) -> str:
     return (f"<section id='design'><h2>Study design</h2><p>{sentence}</p>{details}</section>")
 
 
-# Microarray (limma on intensities) computes no counts, no variance-stabilising transform, and no LFC
-# shrinkage, so the count/DESeq2 wording in the shared figure tech captions is wrong on that route.
-# Rewrite it to the intensity/limma equivalents (the figures themselves are already labelled correctly).
+# The shared figure tech captions are written for the DESeq2 count route (VST matrix, shrunken
+# LFC). The realized assay kind decides what the figures actually carry: limma on microarray
+# intensities and voom/edgeR on log2 CPM produce neither a variance-stabilising transform nor
+# LFC shrinkage, so the captions are rewritten per assay kind to match the axis labels
+# make_figures.R draws (its is_intensity branch: "average log2 expression").
 _MICRO_TECH_SUBS = (
     ("variance-stabilised counts", "log2 expression (array intensity)"),
     ("mean normalised counts (log)", "mean log2 expression"),
     ("shrunken log2 fold change", "log2 fold change (limma, unshrunken)"),
 )
+
+_CPM_TECH_SUBS = (
+    ("variance-stabilised counts", "log2 CPM"),
+    ("mean normalised counts (log)", "average log2 expression"),
+    ("shrunken log2 fold change", "log2 fold change (unshrunken)"),
+)
+
+_TECH_SUBS = {"log2_intensity": _MICRO_TECH_SUBS, "log2_cpm": _CPM_TECH_SUBS}
 
 _MICRO_HOWTO_SUBS = (
     ("lowest-count genes", "genes with the lowest measured expression"),
@@ -1752,10 +1803,30 @@ _MICRO_HOWTO_SUBS = (
 )
 
 
-def _micro_tech(tech: str) -> str:
-    for old, new in _MICRO_TECH_SUBS:
+def _assay_kind(run: dict) -> str:
+    """Assay the figures were drawn from, derived exactly as the Snakefile picks the engine.
+
+    Microarray runs limma on log2 intensities and an external upload fits no local model;
+    otherwise workflow.de_engine decides: limma-voom and edgeR write log2 CPM into the RDS
+    (run_voom.R / run_edger.R assay_kind), DESeq2 writes the VST matrix.
+    """
+    input_type = (run.get("input", {}) or {}).get("type")
+    if input_type == "microarray":
+        return "log2_intensity"
+    if input_type == "deseq2_results":
+        return "results_only"
+    engine = str((run.get("workflow", {}) or {}).get("de_engine") or "DESeq2").casefold()
+    return "log2_cpm" if engine in {"limma-voom", "edger"} else "vst"
+
+
+def _tech_subs(tech: str, assay_kind: str) -> str:
+    for old, new in _TECH_SUBS.get(assay_kind, ()):
         tech = tech.replace(old, new)
     return tech
+
+
+def _micro_tech(tech: str) -> str:
+    return _tech_subs(tech, "log2_intensity")
 
 
 def _micro_howto(howto: str) -> str:
@@ -1811,8 +1882,12 @@ def _panel(
     if not src:
         return ""
     _grp, title, lead, tech, howto = FIG[basename]
-    if is_micro:
-        tech = _micro_tech(tech)
+    # Captions follow the realized assay kind, not the input type: a count run on
+    # limma-voom or edgeR carries log2 CPM and unshrunken effects too.
+    kind = _assay_kind(run) if run else ("log2_intensity" if is_micro else "vst")
+    tech = _tech_subs(tech, kind)
+    if kind == "log2_intensity":
+        # voom/edgeR are count-based, so the count wording in the how-to stays accurate there.
         howto = _micro_howto(howto)
     if run and _is_external_results(run):
         tech, howto = _external_figure_copy(basename, tech, howto, run)
@@ -1833,6 +1908,41 @@ def _panel(
         '</figcaption></figure>')
 
 
+def _ppi_hub_table(project: Path, top: int = 10) -> str:
+    """Top STRING hubs, so the PPI caption's 'prioritise hubs' points at real rows."""
+    path = project / "results" / "networks" / "ppi_hub_genes.csv"
+    rows = _enrich_rows(path, top)  # already ordered -degree, id by build_string_network.R
+    if not rows:
+        return ""
+    # A degraded run writes a header-only file with symbol,degree only; render what exists.
+    spec = [(h, k) for h, k in (("Protein", "symbol"), ("Degree", "degree"),
+                                ("Betweenness", "betweenness"), ("Module", "module"),
+                                ("log2FC", "log2FC")) if k in rows[0]]
+    if not spec or "symbol" not in {k for _, k in spec}:
+        return ""
+
+    def cell(key: str, val: str) -> str:
+        if key == "symbol":
+            return f"<td>{html.escape(val or '')}</td>"
+        try:
+            f = float(val)
+        except (ValueError, TypeError):
+            return f"<td class='num'>{html.escape(val or '')}</td>"
+        txt = f"{int(round(f))}" if key in {"degree", "module"} else f"{f:.4g}"
+        return f"<td class='num'>{txt}</td>"
+
+    head = "".join(f"<th scope='col' class='{'' if k == 'symbol' else 'num'}'>{html.escape(h)}</th>"
+                   for h, k in spec)
+    body = "".join("<tr>" + "".join(cell(k, r.get(k, "")) for _, k in spec) + "</tr>"
+                   for r in rows)
+    return ("<div class='enr-block'><h3>Most connected proteins (network hubs)</h3>"
+            "<p class='muted small'>Ordered by STRING degree — the candidates the network "
+            "panel says are worth prioritising. Full table: "
+            "<code>results/networks/ppi_hub_genes.csv</code>.</p>"
+            f"<div class='tablewrap'><table class='data enr'><thead><tr>{head}</tr></thead>"
+            f"<tbody>{body}</tbody></table></div></div>")
+
+
 def _figure_groups(
     figs: Path,
     up: int,
@@ -1840,6 +1950,7 @@ def _figure_groups(
     unit: str,
     is_micro: bool = False,
     run: dict | None = None,
+    project: Path | None = None,
 ) -> str:
     total = up + down
     dyn = {}
@@ -1856,6 +1967,7 @@ def _figure_groups(
     out: list[str] = []
     for gkey, gtitle, gsub in FIG_GROUPS:
         panels: list[str] = []
+        shown: set[str] = set()
         for basename, meta in FIG.items():
             if meta[0] != gkey:
                 continue
@@ -1870,12 +1982,16 @@ def _figure_groups(
             if not p:
                 continue
             panels.append(p)
+            shown.add(basename)
             idx += 1
         if not panels:
             continue
+        extra = (_ppi_hub_table(project)
+                 if gkey == "function" and project is not None and "ppi_network" in shown
+                 else "")
         out.append(f'<h3 class="figgroup">{gtitle}</h3>'
                    f'<p class="figgroup-sub">{gsub}</p>'
-                   f'<div class="panels">{"".join(panels)}</div>')
+                   f'<div class="panels">{"".join(panels)}</div>{extra}')
     if not out:
         return ""
     intro = ('<p class="muted small">Click any panel to open it full size and zoom — figures '
@@ -2036,7 +2152,7 @@ def build(project: Path) -> str:
     meta_cards = _meta_cards(run, project)
     meta_link = "" if _is_external_results(run) else _meta_analysis_link(project)
     study = _study_design_section(run)
-    figures = _figure_groups(figs, up, down, unit, is_micro=is_micro, run=run)
+    figures = _figure_groups(figs, up, down, unit, is_micro=is_micro, run=run, project=project)
     de_html = _de_section(project, up, down, num, den, unit, run=run)
     goi_html = section("Genes of interest", _goi_section(project, run), sid="goi")
     enrichment = _enrichment_section(project)

@@ -3,6 +3,10 @@
 # build_string_network.R degrades to empty outputs + a PASS check when the network
 # or organism is unavailable, so a run never fails because STRING is unreachable.
 _PPI = config.get("ppi", {})
+# The gene list is a real input (like figures.smk's genes_of_interest), so editing it
+# re-triggers the network instead of silently reusing the previous seed set.
+_PPI_GOI = config.get("gene_sets", {}).get("custom_gene_list")
+_PPI_GOI_INPUT = {"goi": _PPI_GOI} if _PPI_GOI else {}
 
 
 rule network_string:
@@ -10,6 +14,7 @@ rule network_string:
         results="results/deseq2/deseq2_results.csv",
         up="results/deseq2/upregulated_genes.csv",
         down="results/deseq2/downregulated_genes.csv",
+        **_PPI_GOI_INPUT,
     output:
         graphml="results/networks/string_ppi.graphml",
         sif="results/networks/string_ppi.sif",
@@ -28,8 +33,6 @@ rule network_string:
         seed_source=_PPI.get("seed_source", "de"),
         string_version=_PPI.get("string_version", "12.0"),
         max_seed=_PPI.get("max_seed_genes", 400),
-        hub_labels=_PPI.get("hub_label_count", 15),
-        goi=(config.get("gene_sets", {}).get("custom_gene_list") or ""),
         style=config.get("figures_style", {}),
     benchmark:
         "benchmarks/network_string.tsv"

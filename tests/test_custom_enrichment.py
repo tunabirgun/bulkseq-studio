@@ -216,3 +216,61 @@ cat("custom deterministic GSEA rank contract OK\\n")
     assert "ranked <- sort" not in source
     assert "with_deterministic_custom_gsea_ties(" in source
     assert "rank_evidence," in source
+
+
+def test_custom_id_normalisation_matches_run_enrichment_including_the_symbol_gate(
+    tmp_path: Path,
+) -> None:
+    # The script claims the same id normalisation as run_enrichment.R. That claim is only
+    # true if the LOC -> bare NCBI GeneID strip carries the same keytype gate: on a SYMBOL
+    # route "LOC101927877" is a gene symbol, not a GeneID, and stripping it silently drops
+    # the gene from every custom gene set that names it.
+    command, script_path, runtime_path = _r_runtime(SCRIPT)
+    main = SCRIPT.parent / "run_enrichment.R"
+    code = f'''
+ids <- c("ENSG00000123456.4", "ENSMUSG00000000001", "SPOM_SPAC212.11", "AT1G01010",
+         "LOC4326813", "LOC_Os01g01010", "LOC101927877", "FGSG_00001", "CAALFM_C100020CA")
+load_strip <- function(path) {{
+  env <- new.env(parent=globalenv())
+  for (expr in parse(file=path)) {{
+    if (is.call(expr) && identical(as.character(expr[[1]]), "<-") &&
+        identical(as.character(expr[[2]]), "strip_version")) eval(expr, envir=env)
+  }}
+  get("strip_version", envir=env)
+}}
+custom <- load_strip({runtime_path(SCRIPT)!r})
+main <- load_strip({runtime_path(main)!r})
+
+for (kt in list("SYMBOL", "kegg", "ncbi-geneid", "ENSEMBL", NULL)) {{
+  keytype <<- kt
+  stopifnot(identical(custom(ids), main(ids)))
+}}
+
+keytype <<- "SYMBOL"
+symbol_route <- custom(ids)
+stopifnot("LOC101927877" %in% symbol_route,   # a legitimate symbol survives
+          "ENSG00000123456" %in% symbol_route,
+          !("101927877" %in% symbol_route))
+keytype <<- "kegg"
+kegg_route <- custom(ids)
+stopifnot("101927877" %in% kegg_route, "4326813" %in% kegg_route,
+          "LOC_Os01g01010" %in% kegg_route,   # MSU locus tags are never stripped
+          "SPOM_SPAC212.11" %in% kegg_route)  # structural dots survive
+# Negative gate: the previous unconditional strip changed the SYMBOL route.
+old_strip <- function(id) {{
+  v <- grepl("^ENS", id); id[v] <- sub("\\\\.\\\\d+$", "", id[v])
+  l <- grepl("^LOC[0-9]+$", id); id[l] <- sub("^LOC", "", id[l])
+  id
+}}
+stopifnot(!identical(old_strip(ids), symbol_route),
+          identical(old_strip(ids), kegg_route))
+cat("custom id normalisation parity OK\\n")
+'''
+    harness = tmp_path / "custom_id_parity.R"
+    harness.write_text(code, encoding="utf-8")
+    completed = subprocess.run(
+        [*command, runtime_path(harness)], capture_output=True, text=True,
+        timeout=60, check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "custom id normalisation parity OK" in completed.stdout

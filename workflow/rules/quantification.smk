@@ -125,6 +125,8 @@ else:
             attribute=_FC.get("attribute_type", "gene_id"),
         threads:
             rule_threads("featurecounts", 6)
+        resources:
+            mem_mb=rule_mem_mb("featurecounts", 8),
         benchmark:
             "benchmarks/featurecounts.tsv"
         log:
@@ -149,6 +151,8 @@ if ORGANELLAR_FILTER and ORGANELLAR_MODE == "discard":
             gtf=ANNOTATION_GTF,
         output:
             counts=COUNTS_FILE,
+        benchmark:
+            "benchmarks/filter_organellar.tsv"
         log:
             "logs/filter_organellar.log",
         shell:
@@ -167,6 +171,8 @@ elif ORGANELLAR_FILTER and ORGANELLAR_MODE == "separate":
             counts=COUNTS_FILE,
             organellar="results/organellar/organellar_counts.txt",
             summary="results/organellar/organellar_summary.tsv",
+        benchmark:
+            "benchmarks/filter_organellar.tsv"
         log:
             "logs/filter_organellar.log",
         shell:

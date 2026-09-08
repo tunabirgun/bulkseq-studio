@@ -12,7 +12,7 @@ DOCS_ROOT = ROOT / "docs"
 README_PATH = ROOT / "README.md"
 # The public software version controls the site shell. The deposited benchmark archive has its
 # own version and must not be relabelled when the application advances.
-PUBLIC_VERSION = "0.28.0"
+PUBLIC_VERSION = "0.29.0"
 ARCHIVE_VERSION = "0.26.6"
 
 
@@ -237,7 +237,7 @@ def _replace_once(source: str, old: str, new: str) -> str:
         ("index.html", "<p class=\"lead\">BulkSeq Studio is for biologists", "<p class=\"lead\">BulkSeq Studio is for\nbiologists", "one physical line"),
         ("guide.html", "</section>", f'<img src="assets/screenshot-linux.png" alt="BulkSeq Studio {PUBLIC_VERSION} AppImage">\n</section>', "relabels the earlier Linux screenshot"),
         ("guide.html", "<h2>What is WSL2, and why does Windows need it?</h2>", "<h3>What is WSL2, and why does Windows need it?</h3>", "heading hierarchy skips"),
-        ("README.md", "Version 0.28.0 is the current public release.", "Version 0.28.0 is a source candidate.", "source-candidate claim"),
+        ("README.md", "Version 0.29.0 is the current public release.", "Version 0.29.0 is a source candidate.", "source-candidate claim"),
     ],
     ids=(
         "stale-product-shell",

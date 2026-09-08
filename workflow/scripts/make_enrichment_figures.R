@@ -24,6 +24,9 @@ suppressMessages({
 
 # Shared palette/theme/getp/save_gg helpers (sourced; resolved via scriptdir).
 source(file.path(snakemake@scriptdir, "figure_style.R"))
+# One ORA scope rule shared with export_network.R, so the Cytoscape export and these
+# figures can never describe different BH families under the same term names.
+source(file.path(snakemake@scriptdir, "enrichment_scope.R"))
 
 log_con <- file(snakemake@log[[1]], open = "wt")
 sink(log_con, type = "message")
@@ -441,7 +444,6 @@ if (identical(backend, "gprofiler")) {
   placeholder("Term-similarity map not available (g:Profiler backend)", out[["emap_png"]], out[["emap_svg"]])
   placeholder("No disease-ontology terms (human/mouse only)", out[["do_dotplot_png"]], out[["do_dotplot_svg"]])
 } else {
-  ego_all <- obj$ego_all
   gse <- obj$gse
   geneList <- obj$geneList
 
@@ -450,26 +452,26 @@ if (identical(backend, "gprofiler")) {
   # combined foreground means both directional tests were empty. When combined is
   # empty, show the direction with more adjusted-significant terms and state the
   # exact result counts for all three tests in the figure caption.
+  ego_all <- obj$ego_all
   combined_n <- nrows(ego_all)
   up_n <- nrows(obj$ego_up)
   down_n <- nrows(obj$ego_down)
-  go_plot_obj <- ego_all
+  # Which ORA wins is decided in one place only (enrichment_scope.R), shared with the
+  # Cytoscape export; the counts above are its inputs and the caption's numbers.
+  selected <- select_enrichment_scope(obj)
+  stopifnot(combined_n == selected$combined_n, up_n == selected$up_n,
+            down_n == selected$down_n)
+  go_plot_obj <- selected$object
+  go_scope_label <- selected$scope
   go_scope_caption <- NULL
-  go_scope_label <- "combined-foreground"
-  if (combined_n == 0 && max(up_n, down_n) > 0) {
-    if (up_n >= down_n) {
-      go_plot_obj <- obj$ego_up
-      go_scope_label <- "up-regulated"
-      go_scope_caption <- sprintf(
-        "Up-regulated ORA selected (separate BH family): %d GO BP terms.\nAdjusted-significant terms - combined: %d; down-regulated: %d.",
-        up_n, combined_n, down_n)
-    } else {
-      go_plot_obj <- obj$ego_down
-      go_scope_label <- "down-regulated"
-      go_scope_caption <- sprintf(
-        "Down-regulated ORA selected (separate BH family): %d GO BP terms.\nAdjusted-significant terms - combined: %d; up-regulated: %d.",
-        down_n, combined_n, up_n)
-    }
+  if (identical(go_scope_label, "up-regulated")) {
+    go_scope_caption <- sprintf(
+      "Up-regulated ORA selected (separate BH family): %d GO BP terms.\nAdjusted-significant terms - combined: %d; down-regulated: %d.",
+      up_n, combined_n, down_n)
+  } else if (identical(go_scope_label, "down-regulated")) {
+    go_scope_caption <- sprintf(
+      "Down-regulated ORA selected (separate BH family): %d GO BP terms.\nAdjusted-significant terms - combined: %d; up-regulated: %d.",
+      down_n, combined_n, up_n)
   }
   no_go_scoped <- if (enrich_ran && have_orgdb) {
     "No GO Biological Process terms met the adjusted criterion in the combined, up-regulated, or down-regulated ORAs"

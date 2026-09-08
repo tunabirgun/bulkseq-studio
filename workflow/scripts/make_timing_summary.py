@@ -17,11 +17,22 @@ except Exception:  # psutil is optional at report time
 
 
 # Prefix -> phase, matched by startswith in list order (first match wins), so more
-# specific prefixes must precede generic ones (salmon_index before a bare salmon rule).
-# Covers every current route: STAR/HISAT2/Salmon, fastp/Trim Galore/Trimmomatic,
-# SortMeRNA/RiboDetector, and the stats/network steps that used to fall into "Other".
+# specific prefixes must precede generic ones (salmon_index before a bare salmon rule,
+# ingest_deseq2_results before a bare ingest rule).
+#
+# Coverage is not asserted here: tests/test_timing_phases.py reads every `benchmark:` path
+# declared under workflow/rules and fails if any stem still lands in "Other", so a new rule
+# that needs an entry is caught by the test rather than by a claim in this comment.
 PHASES = [
     ("download", "Download"),
+    # project/input/QC gates (checks/*.json) and their aggregation
+    ("00_project_setup", "Sanity checks"),
+    ("01_input_validation", "Sanity checks"),
+    ("19_orientation_qc", "Sanity checks"),
+    ("20_duplicate_study_qc", "Sanity checks"),
+    ("21_strandedness_qc", "Sanity checks"),
+    ("22_sample_structure_qc", "Sanity checks"),
+    ("sanity_checks", "Sanity checks"),
     # reference preparation (indices, transcriptome, reference checks)
     ("read_length", "Reference"),
     ("star_index", "Reference"),
@@ -54,14 +65,23 @@ PHASES = [
     ("salmon_tximport", "Quantification"),
     ("featurecounts", "Quantification"),
     ("07_quantification", "Quantification"),
-    # differential expression (the active engine is route-specific)
+    ("filter_organellar", "Quantification"),
+    ("ingest_geo", "Quantification"),
+    # differential expression (the active engine is route-specific; the results-upload route
+    # ingests an external table instead of fitting one, so it belongs to the same phase)
+    ("ingest_deseq2_results", "Differential expression"),
     ("deseq2", "Differential expression"),
     ("limma", "Differential expression"),
     ("edger", "Differential expression"),
-    # enrichment (includes enrichment_figures)
+    ("voom", "Differential expression"),
+    # enrichment (includes enrichment_figures and enrichment_term_heatmap)
     ("enrichment", "Enrichment"),
+    ("custom_enrichment", "Enrichment"),
     # DE figures
     ("figures", "Figures"),
+    ("genes_of_interest", "Figures"),
+    # cross-study meta-analysis (every meta_* rule: combination, figures, per-study, enrichment)
+    ("meta", "Meta-analysis"),
     # statistics and networks
     ("network", "Stats & networks"),
     ("set_overlap", "Stats & networks"),

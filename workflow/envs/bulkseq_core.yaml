@@ -23,6 +23,9 @@ dependencies:
   - hisat2=2.2.2
   - salmon=1.10.3
   - gffread=0.12.9
+  # gffread's GTF pre-clean (workflow/scripts/gtf_clean.pl) runs under perl on the Salmon
+  # route. Declared explicitly so it cannot arrive only as another tool's transitive dep.
+  - perl
   - samtools=1.22.1
   - subread=2.1.1
   # Preprocessing alternatives (opt-in; fastp + SortMeRNA remain the defaults): the Trim Galore

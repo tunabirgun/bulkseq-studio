@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from app.core.paths import (
+    UnsupportedUncPathError,
+    is_unsupported_unc_path,
     is_wsl_unc_path,
     usable_disk_free_bytes,
     windows_to_wsl_path,
@@ -28,6 +30,18 @@ class TestWindowsPathTranslation:
 
     def test_path_with_spaces(self) -> None:
         assert windows_to_wsl_path(r"C:\Users\Tuna\BulkSeq Studio\p") == "/mnt/c/Users/Tuna/BulkSeq Studio/p"
+
+
+def test_non_wsl_unc_path_is_refused_not_silently_mangled() -> None:
+    # It used to produce '/mnt/\\server\share/...', a path WSL cannot open, with no error.
+    for share in (r"\\server\share\data", r"\\10.0.0.5\lab\runs\p", "//server/share/data"):
+        assert is_unsupported_unc_path(share), share
+        with pytest.raises(UnsupportedUncPathError, match="network share"):
+            windows_to_wsl_path(share)
+    # Negative control: a WSL-native share still translates, and so does a local drive.
+    assert not is_unsupported_unc_path(r"\\wsl.localhost\Ubuntu\home\u\p")
+    assert windows_to_wsl_path(r"\\wsl.localhost\Ubuntu\home\u\p") == "/home/u/p"
+    assert not is_unsupported_unc_path(r"C:\data")
 
 
 # --- WSL vhdx free-space correction (cross-platform where the logic is pure) ---

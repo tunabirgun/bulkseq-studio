@@ -37,17 +37,22 @@ alpha <- as.numeric(snakemake@params[["alpha"]])
 style <- tryCatch(snakemake@params[["style"]], error = function(e) NULL)
 if (!is.list(style)) style <- list()
 getp <- make_getp(style)
-fig_w <- as.numeric(getp("width_in", 7)); fig_h <- as.numeric(getp("height_in", 6))
+# This dotplot belongs to the enrichment figure group, so a per-group override
+# (palette / font / base font / canvas) applies here exactly as in make_enrichment_figures.R.
+gp <- getp_for(style, "enrichment")
+fig_w <- as.numeric(gp("width_in", 7)); fig_h <- as.numeric(gp("height_in", 6))
 fig_dpi <- as.integer(getp("dpi", 300))
-base_size <- as.numeric(getp("base_font_size", 12))
-font_family <- as.character(getp("font_family", ""))
+base_size <- as.numeric(gp("base_font_size", 12))
+font_family <- as.character(gp("font_family", ""))
 label_bold <- isTRUE(as.logical(getp("label_bold", FALSE)))
 title_bold <- isTRUE(as.logical(getp("title_bold", FALSE)))
-palette_name <- as.character(getp("palette", "Blue-Red"))
+palette_name <- as.character(gp("palette", "Blue-Red"))
 show_cat <- as.integer(getp("enrich_show_category", 15))
 label_wrap <- as.integer(getp("enrich_label_wrap", 40))
 pal_spec <- palette_spec(palette_name)
-base_family <- if (nzchar(font_family)) font_family else NULL
+# resolve_font maps a Windows font name onto one installed in the pipeline environment;
+# taking the request verbatim silently rendered a serif request as the sans default.
+base_family <- resolve_font(font_family)
 style_theme <- make_style_theme(base_size = base_size, base_family = base_family,
                                 label_bold = label_bold, title_bold = title_bold)
 save_gg <- make_save_gg(fig_w = fig_w, fig_h = fig_h, fig_dpi = fig_dpi)
@@ -107,11 +112,16 @@ if (is.null(spec)) {
         # Hallmark names wrapped, no embedded title. Description (set NAME) kept.
         n_show <- min(show_cat, nrow(edf))
         dp <- enrichplot::dotplot(eo, showCategory = n_show,
-                                  label_format = function(lbl) scales::label_wrap(label_wrap)(lbl)) +
-          scale_colour_gradientn(colours = pal_spec$seq(255), name = "p.adjust",
-                                 transform = "reverse") +
-          labs(title = NULL) +
-          style_theme(theme_bw)
+                                  label_format = function(lbl) scales::label_wrap(label_wrap)(lbl))
+        # enrichplot maps p.adjust to `fill` in current versions (older ones used `colour`),
+        # so set BOTH, as make_enrichment_figures.R does: the colour-only scale silently did
+        # nothing and the dots kept enrichplot's default red-blue instead of the palette.
+        dp <- suppressWarnings(
+          dp + scale_colour_gradientn(colours = pal_spec$seq(255), name = "p.adjust",
+                                      transform = "reverse") +
+               scale_fill_gradientn(colours = pal_spec$seq(255), name = "p.adjust",
+                                    transform = "reverse")
+        ) + labs(title = NULL) + style_theme(theme_bw)
         # Canvas height scales with the number of plotted sets so the dot does not
         # float in an oversized panel; capped so very large sets stay readable.
         ov_h <- max(fig_h, 1.2 + 0.32 * n_show)

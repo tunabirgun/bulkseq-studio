@@ -152,6 +152,95 @@ def test_probe_error_on_real_env_still_trusts_install_log(monkeypatch) -> None:
     assert env.status == "PASS", env
 
 
+def test_full_only_tool_split_matches_the_setup_script() -> None:
+    # The core/full split has to mean the same thing in both places: readiness decides what a
+    # core environment may legitimately lack, the setup script decides what it installs.
+    import re
+    from pathlib import Path
+    from app.core.readiness import FULL_ONLY_TOOLS
+
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "setup_wsl_bioenv.sh").read_text(
+        encoding="utf-8")
+    match = re.search(r"FULL_ONLY_PROBE_TOOLS=\(([^)]*)\)", script)
+    assert match, "setup_wsl_bioenv.sh no longer declares FULL_ONLY_PROBE_TOOLS"
+    assert set(match.group(1).split()) == set(FULL_ONLY_TOOLS)
+
+
+def test_core_profile_does_not_report_the_missing_r_stack_as_broken() -> None:
+    from app.core.readiness import _r_packages_item, _tool_item, installed_profile
+
+    assert installed_profile("core\n", rscript_present=False) == "core"
+    assert installed_profile(None, rscript_present=True) == "full"      # pre-marker full install
+    assert installed_profile(None, rscript_present=False) == "core"
+    assert installed_profile("full", rscript_present=False) == "full"   # marker beats inference
+
+    core_r = _r_packages_item("WSL Rscript", "", False, "core")
+    assert core_r.status == "WARNING", core_r
+    core_tool = _tool_item("WSL Rscript", "Rscript", "not found", False, "", "core")
+    assert core_tool.status == "WARNING", core_tool
+    # Negative control: the same absence on a FULL environment is a real failure.
+    assert _tool_item("WSL Rscript", "Rscript", "not found", False, "", "full").status == "REVIEW_REQUIRED"
+    assert _r_packages_item("WSL R packages", "cannot load: GO.db", False, "full").status == "REVIEW_REQUIRED"
+    # A core-only tool that is not full-only still fails on a core environment.
+    assert _tool_item("WSL STAR", "STAR", "not found", False, "", "core").status == "REVIEW_REQUIRED"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the rebuild advice is the WSL branch")
+def test_core_environment_is_never_told_to_rebuild_from_scratch() -> None:
+    core = [ReadinessItem(n, "PASS", "", "") for n in
+            ("wsl", "WSL distribution", "WSL micromamba", "WSL env:bulkseq", "WSL snakemake",
+             "WSL fastqc", "WSL multiqc", "WSL fastp", "WSL STAR", "WSL featureCounts",
+             "WSL samtools", "WSL salmon", "WSL gffread", "WSL hisat2")]
+    core += [ReadinessItem("WSL Rscript", "WARNING", "not installed in the core environment", ""),
+             ReadinessItem("WSL R packages", "WARNING", "not installed in the core environment", "")]
+    actions = next_readiness_actions(core)
+    assert not any("Rebuild from scratch" in a for a in actions), actions
+    assert any("Install Full R/DESeq2 Stack" in a for a in actions), actions
+    # Negative control: a full environment whose stack will not load still gets the rebuild.
+    broken = [i for i in core if i.name not in ("WSL Rscript", "WSL R packages")]
+    broken += [ReadinessItem("WSL Rscript", "PASS", "", ""),
+               ReadinessItem("WSL R packages", "REVIEW_REQUIRED", "cannot load: GO.db", "")]
+    assert any("Rebuild from scratch" in a for a in next_readiness_actions(broken))
+
+
+def test_snakemake_is_probed_through_the_environment_bin(monkeypatch, tmp_path) -> None:
+    # An unactivated shell must not report a correct environment's snakemake missing.
+    from pathlib import Path
+
+    import app.core.readiness as R
+
+    env_bin = tmp_path / "envs" / "bulkseq" / "bin"
+    env_bin.mkdir(parents=True)
+    exe = env_bin / ("snakemake.exe" if sys.platform.startswith("win") else "snakemake")
+    exe.write_text("#!/bin/sh\n", encoding="utf-8")
+    exe.chmod(0o755)
+    monkeypatch.setattr(R, "_env_search_path", lambda: str(env_bin))
+    found = R._which_in_env("snakemake")  # Windows resolves PATHEXT and upper-cases it
+    assert found is not None and Path(found).parent == env_bin
+    monkeypatch.setattr(R, "_env_search_path", lambda: str(tmp_path / "empty"))
+    assert R._which_in_env("snakemake") is None
+
+
+def test_accepted_wsl_env_prefix_is_the_one_a_run_uses() -> None:
+    from app.constants import WSL_MAMBA_ROOT
+    from app.core.readiness import _wsl_env_prefix_command
+
+    command = _wsl_env_prefix_command("bulkseq")
+    assert f"{WSL_MAMBA_ROOT}/envs/bulkseq" in command
+    # A prefix no run path can reach must not be accepted as a ready environment.
+    assert ".local/share/mamba" not in command
+
+
+def test_readiness_counts_items_not_cards() -> None:
+    from app.core.readiness import readiness_counts
+
+    items = [ReadinessItem("a", "PASS", "", ""), ReadinessItem("b", "PASS", "", ""),
+             ReadinessItem("perl", "REVIEW_REQUIRED", "not found", ""),
+             ReadinessItem("mamba", "WARNING", "optional", "")]
+    assert readiness_counts(items) == (2, 3)
+    assert readiness_counts([i for i in items if i.status != "REVIEW_REQUIRED"]) == (2, 2)
+
+
 def test_validate_reference_empty_field_fails_cleanly() -> None:
     from pathlib import Path
     from app.core.reference_manager import validate_reference

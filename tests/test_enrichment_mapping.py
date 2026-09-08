@@ -7,11 +7,16 @@ from pathlib import Path
 from typing import Callable
 
 import pytest
+import yaml
 
 from app.core.paths import windows_to_wsl_path
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "workflow" / "scripts" / "run_enrichment.R"
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "workflow" / "scripts" / "run_enrichment.R"
+SCOPE_SCRIPT = ROOT / "workflow" / "scripts" / "enrichment_scope.R"
+CATALOG = ROOT / "app" / "data" / "reference_catalog.yaml"
+KEGG_KEY_FORMS = {"kegg", "ncbi-geneid", "ncbi-proteinid", "uniprot"}
 
 
 def _r_runtime(script: Path) -> tuple[list[str], str, Callable[[Path], str]]:
@@ -434,3 +439,226 @@ cat("deterministic GSEA rank contract OK\\n")
     assert source.count("rank_info <- build_deterministic_rank(") == 3
     assert "gene_list <- sort" not in source
     assert "deduplicate_ids" not in source
+
+
+def test_catalog_declares_only_verified_kegg_key_forms() -> None:
+    # enrichment_keytype is the AnnotationDbi keytype; kegg_keytype is the enrichKEGG key
+    # form. clusterProfiler::download_KEGG(keyType="ncbi-geneid") returns 0 genes for spo,
+    # vvi, ghi, pfa and cal while keyType="kegg" returns their full collections, so those
+    # organisms must declare the kegg form rather than the NCBI one.
+    entries = yaml.safe_load(CATALOG.read_text(encoding="utf-8"))["references"]
+    by_name = {entry["organism_name"]: entry for entry in entries}
+    declared = {
+        name: entry["kegg_keytype"]
+        for name, entry in by_name.items()
+        if entry.get("kegg_keytype")
+    }
+    assert declared, "no catalog entry declares a kegg_keytype"
+    assert set(declared.values()) <= KEGG_KEY_FORMS
+    verified_kegg_form = [
+        "Schizosaccharomyces pombe", "Vitis vinifera", "Gossypium hirsutum",
+        "Zymoseptoria tritici IPO323", "Plasmodium falciparum 3D7", "Candida albicans",
+    ]
+    for name in verified_kegg_form:
+        assert declared.get(name) == "kegg", name
+    # C. albicans previously declared no key form at all; its RefSeq gene_id
+    # (CAALFM_C100020CA) is the KEGG cal gene id, the same shape its fungal siblings use.
+    assert by_name["Candida albicans"]["enrichment_keytype"] == "kegg"
+    # An AnnotationDbi keytype must never be declared as the KEGG key form.
+    assert not (set(declared.values()) & {"ENSEMBL", "SYMBOL", "TAIR", "FLYBASE"})
+
+
+def test_kegg_key_form_is_derived_and_reaches_enrichkegg(tmp_path: Path) -> None:
+    command, script_path, runtime_path = _r_runtime(SCRIPT)
+    code = f'''
+exprs <- parse(file={script_path!r})
+wanted <- c("resolve_kegg_keytype", "KEGG_KEY_FORMS", "run_kegg", "assess_kegg_resource",
+            "mapped_unique", "mapping_fraction", "safe_slot", "raw_result_count", "nrows",
+            "build_deterministic_rank", "with_deterministic_gsea_ties",
+            "ANNOTATION_WARNING_FRACTION", "KEGG_VALID_STATUSES",
+            "KEGG_MIN_GENE_SET_SIZE", "KEGG_MAX_GENE_SET_SIZE")
+for (expr in exprs) {{
+  if (is.call(expr) && identical(as.character(expr[[1]]), "<-") &&
+      as.character(expr[[2]]) %in% wanted) eval(expr, envir=.GlobalEnv)
+}}
+
+# Only KEGG-side key forms are accepted; an AnnotationDbi keytype degrades to "kegg".
+stopifnot(resolve_kegg_keytype(NULL, "ncbi-geneid") == "ncbi-geneid",
+          resolve_kegg_keytype(NULL, "kegg") == "kegg",
+          resolve_kegg_keytype(NULL, "ENSEMBL") == "kegg",
+          resolve_kegg_keytype(NULL, "SYMBOL") == "kegg",
+          resolve_kegg_keytype(NULL, NULL) == "kegg",
+          resolve_kegg_keytype(NULL, "") == "kegg",
+          resolve_kegg_keytype("uniprot", "ENSEMBL") == "uniprot",
+          resolve_kegg_keytype("not-a-key-form", "ncbi-geneid") == "ncbi-geneid",
+          resolve_kegg_keytype("NCBI-GeneID", "kegg") == "ncbi-geneid")
+
+# Every run_kegg call site must pass a key form, not a hardcoded literal: the OrgDb route
+# maps to Entrez ("ncbi-geneid"), the two non-OrgDb routes pass the resolved value.
+key_args <- character(0)
+walk <- function(e) {{
+  if (!is.call(e)) return(invisible())
+  if (identical(as.character(e[[1]])[[1]], "run_kegg") && length(e) >= 4L)
+    key_args <<- c(key_args, paste(deparse(e[[4]]), collapse=""))
+  for (part in as.list(e)) tryCatch(walk(part), error=function(err) invisible())
+}}
+for (expr in exprs) walk(expr)
+stopifnot(length(key_args) == 3L,
+          sum(key_args == "kegg_keytype") == 2L,
+          sum(key_args == '"ncbi-geneid"') == 1L,
+          !any(key_args == '"kegg"'))
+
+# The key form reaches enrichKEGG and gseKEGG and is recorded in the audit evidence.
+kegg_org <- "ath"; alpha <- 0.05
+configured_organism_name <- "Arabidopsis thaliana"; configured_taxon_id <- "3702"
+out <- list(kegg=tempfile(fileext=".csv"), kegg_gsea=tempfile(fileext=".csv"))
+validate_kegg_identity <- function(kegg_code, expected_name, expected_taxon=NA_character_, ...)
+  list(status="PASS", reason="synthetic PASS", configured_code=kegg_code,
+       registry_code=kegg_code, registry_name=expected_name,
+       registry_taxon=as.character(expected_taxon), expected_name=expected_name,
+       expected_taxon=as.character(expected_taxon), registry_source="synthetic")
+seen <- new.env()
+enrichKEGG <- function(...) {{ seen$ora <- list(...)$keyType; NULL }}
+gseKEGG <- function(...) {{ seen$gsea <- list(...)$keyType; NULL }}
+ranked <- setNames(as.numeric(10:1), as.character(1:10))
+for (form in c("kegg", "ncbi-geneid", "uniprot")) {{
+  seen$ora <- NA; seen$gsea <- NA
+  res <- run_kegg(as.character(1:5), ranked, form, background=as.character(1:10),
+                  foregrounds=list(up=as.character(1:3), down=as.character(4:5),
+                                   combined=as.character(1:5)))
+  stopifnot(identical(seen$ora, form), identical(seen$gsea, form),
+            identical(res$audit$key_form, form))
+}}
+cat("KEGG key form derivation and propagation OK\\n")
+'''
+    harness = tmp_path / "kegg_key_form.R"
+    harness.write_text(code, encoding="utf-8")
+    completed = subprocess.run(
+        [*command, runtime_path(harness)], capture_output=True, text=True,
+        timeout=120, check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "KEGG key form derivation and propagation OK" in completed.stdout
+
+
+def test_enrichment_scope_is_shared_by_the_figures_and_the_network_export(
+    tmp_path: Path,
+) -> None:
+    command, _, runtime_path = _r_runtime(SCRIPT)
+    code = f'''
+source({runtime_path(SCOPE_SCRIPT)!r})
+df <- function(n) if (n == 0L) data.frame(Description=character(0)) else
+  data.frame(Description=sprintf("term%d", seq_len(n)), stringsAsFactors=FALSE)
+
+combined <- select_enrichment_scope(list(ego_all=df(4), ego_up=df(9), ego_down=df(7)))
+stopifnot(combined[["scope"]] == "combined-foreground", combined[["selected_n"]] == 4L)
+up <- select_enrichment_scope(list(ego_all=df(0), ego_up=df(3), ego_down=df(2)))
+stopifnot(up[["scope"]] == "up-regulated", up[["selected_n"]] == 3L)
+down <- select_enrichment_scope(list(ego_all=df(0), ego_up=df(1), ego_down=df(6)))
+stopifnot(down[["scope"]] == "down-regulated", down[["selected_n"]] == 6L)
+tie <- select_enrichment_scope(list(ego_all=df(0), ego_up=df(5), ego_down=df(5)))
+stopifnot(tie[["scope"]] == "up-regulated")
+empty <- select_enrichment_scope(list())
+stopifnot(empty[["scope"]] == "combined-foreground", empty[["selected_n"]] == 0L)
+
+# Negative gate: the export used to take the first object with >= 2 terms, so a
+# single-term combined ORA sent the figure and the export to different BH families,
+# and a GSEA-only object was exported under the ORA name.
+obj <- list(ego_all=df(1), ego_up=df(5), ego_down=df(0), gse=df(8))
+old_pick <- NULL
+for (nm in c("ego_all", "ego_up", "ego_down", "gse")) {{
+  o <- obj[[nm]]
+  if (!is.null(o) && nrow(as.data.frame(o)) >= 2) {{ old_pick <- nm; break }}
+}}
+new <- select_enrichment_scope(obj)
+stopifnot(old_pick == "ego_up", new[["scope"]] == "combined-foreground",
+          new[["selected_n"]] == 1L)
+cat("shared enrichment scope rule OK\\n")
+'''
+    harness = tmp_path / "enrichment_scope.R"
+    harness.write_text(code, encoding="utf-8")
+    completed = subprocess.run(
+        [*command, runtime_path(harness)], capture_output=True, text=True,
+        timeout=60, check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "shared enrichment scope rule OK" in completed.stdout
+
+    export = (ROOT / "workflow" / "scripts" / "export_network.R").read_text(encoding="utf-8")
+    figures = (ROOT / "workflow" / "scripts" / "make_enrichment_figures.R").read_text(
+        encoding="utf-8")
+    for source in (export, figures):
+        assert 'source(file.path(snakemake@scriptdir, "enrichment_scope.R"))' in source
+        assert "select_enrichment_scope(obj)" in source
+
+
+def test_kegg_audit_separates_tested_hypotheses_from_adjusted_results(
+    tmp_path: Path,
+) -> None:
+    # The audit reports the hypotheses KEGG tested before the cutoff (enrichResult@result)
+    # and the pathways that met it (as.data.frame). Under DOSE they are different counts;
+    # collapsing them to one number would make the evidence line false.
+    command, script_path, runtime_path = _r_runtime(SCRIPT)
+    code = f'''
+suppressMessages(library(clusterProfiler))
+exprs <- parse(file={script_path!r})
+wanted <- c("raw_result_count", "nrows", "safe_slot", "run_kegg", "assess_kegg_resource",
+            "mapped_unique", "mapping_fraction", "build_deterministic_rank",
+            "with_deterministic_gsea_ties", "ANNOTATION_WARNING_FRACTION",
+            "KEGG_VALID_STATUSES", "KEGG_MIN_GENE_SET_SIZE", "KEGG_MAX_GENE_SET_SIZE")
+for (expr in exprs) {{
+  if (is.call(expr) && identical(as.character(expr[[1]]), "<-") &&
+      as.character(expr[[2]]) %in% wanted) eval(expr, envir=.GlobalEnv)
+}}
+set.seed(1)
+universe <- sprintf("g%03d", 1:200)
+t2g <- do.call(rbind, lapply(1:8, function(i)
+  data.frame(term=paste0("T", i), gene=sample(universe, 12 + i), stringsAsFactors=FALSE)))
+# A term with no query gene is never a tested hypothesis.
+t2g <- rbind(t2g, data.frame(term="TX", gene=universe[151:170], stringsAsFactors=FALSE))
+query <- universe[1:20]
+ek <- enricher(query, universe=universe, TERM2GENE=t2g, pvalueCutoff=0.05,
+               qvalueCutoff=0.20, minGSSize=10, maxGSSize=500)
+
+sets <- lapply(split(t2g$gene, t2g$term), function(v) intersect(unique(v), ek@universe))
+eligible <- sets[lengths(sets) >= 10 & lengths(sets) <= 500]
+overlapping <- sum(vapply(eligible, function(v) any(intersect(ek@gene, ek@universe) %in% v),
+                          logical(1)))
+cat("eligible gene sets:", length(eligible), " tested hypotheses:", overlapping,
+    " raw_result_count:", raw_result_count(ek), " adjusted:", nrows(ek), "\\n")
+stopifnot(raw_result_count(ek) == overlapping,
+          overlapping < length(eligible),          # TX carries no query gene
+          nrows(ek) <= raw_result_count(ek))
+# An adjusted-empty result still has tested hypotheses, which is what "not evidence that
+# no pathway biology is present" means; the audit must carry both counts, not one twice.
+strict <- enricher(query, universe=universe, TERM2GENE=t2g, pvalueCutoff=1e-12,
+                   qvalueCutoff=1e-12, minGSSize=10, maxGSSize=500)
+stopifnot(nrows(strict) == 0L, raw_result_count(strict) == overlapping)
+
+kegg_org <- "ath"; alpha <- 0.05
+configured_organism_name <- "Arabidopsis thaliana"; configured_taxon_id <- "3702"
+out <- list(kegg=tempfile(fileext=".csv"), kegg_gsea=tempfile(fileext=".csv"))
+validate_kegg_identity <- function(kegg_code, expected_name, expected_taxon=NA_character_, ...)
+  list(status="PASS", reason="synthetic PASS", configured_code=kegg_code,
+       registry_code=kegg_code, registry_name=expected_name,
+       registry_taxon=as.character(expected_taxon), expected_name=expected_name,
+       expected_taxon=as.character(expected_taxon), registry_source="synthetic")
+enrichKEGG <- function(...) strict
+gseKEGG <- function(...) NULL
+ranked <- setNames(seq_along(universe) * 1.0, universe)
+audit <- run_kegg(query, ranked, "kegg", background=universe,
+                  foregrounds=list(up=query[1:10], down=query[11:20], combined=query))$audit
+cat("audit hypotheses:", audit$ora_hypotheses_n, " adjusted:", audit$ora_adjusted_n, "\\n")
+stopifnot(audit$ora_hypotheses_n == raw_result_count(strict),
+          audit$ora_adjusted_n == nrows(strict),
+          audit$ora_hypotheses_n > audit$ora_adjusted_n)
+cat("KEGG-style ORA hypothesis accounting OK\\n")
+'''
+    harness = tmp_path / "kegg_hypothesis_counts.R"
+    harness.write_text(code, encoding="utf-8")
+    completed = subprocess.run(
+        [*command, runtime_path(harness)], capture_output=True, text=True,
+        timeout=120, check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "KEGG-style ORA hypothesis accounting OK" in completed.stdout

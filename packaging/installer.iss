@@ -43,6 +43,12 @@ WizardImageFile=wizard_large.bmp,wizard_large@2x.bmp
 WizardSmallImageFile=wizard_small.bmp,wizard_small@2x.bmp
 UninstallDisplayName={#MyAppName}
 UninstallDisplayIcon={app}\{#MyAppExeName}
+; The application holds this mutex while it runs (app/main.py). Setup checks it before
+; InitializeSetup removes the previous version, so an open application makes Setup stop
+; with the old version intact instead of uninstalling first and then aborting on a locked
+; file. Force-closing covers helper processes (QtWebEngine) at the copy stage.
+AppMutex=BulkSeqStudioRunning
+CloseApplications=force
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -104,6 +110,18 @@ begin
   Result := True;
   if not GetInstalledUninstaller(uninst, ver) then
     exit;
+
+  { Never remove anything while the application is open: an older build (before the
+    AppMutex existed) holds its files, the uninstaller then races the copy step, and the
+    user is left with a half-deleted tree. Detect it by its main window title. }
+  if FindWindowByWindowName('{#MyAppName}') <> 0 then
+  begin
+    Log('BulkSeq Studio main window found; refusing to modify the existing installation.');
+    if not WizardSilent then
+      MsgBox('BulkSeq Studio is running. Close it, then run Setup again.', mbError, MB_OK);
+    Result := False;
+    exit;
+  end;
 
   { Read the install directory now, while the uninstall registry key still exists;
     the uninstaller deletes that key, so it cannot be read afterwards. }

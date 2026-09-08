@@ -149,6 +149,52 @@ stopifnot(grepl("could not be restored", restore_error, fixed=TRUE))
     assert result.returncode == 0, result.stderr
 
 
+def test_ppi_duplicate_symbol_rule_matches_the_interactive_viewer(tmp_path: Path) -> None:
+    # Same fixture as tests/test_ppi_graph.py's duplicate-symbol tests: the static
+    # figure's de_value_map() must pick the row the viewer picks (lowest padj; a
+    # missing padj never wins; a tie keeps the first row).
+    command, script_path, runtime_path = _r_runtime(SCRIPT)
+    code = f'''
+exprs <- parse(file={script_path!r})
+for (expr in exprs) {{
+  if (is.call(expr) && length(expr) >= 3L && is.symbol(expr[[2]]) &&
+      identical(as.character(expr[[1]]), "<-") &&
+      as.character(expr[[2]]) %in% c("strip_loc", "de_value_map")) eval(expr, envir=.GlobalEnv)
+}}
+
+res <- data.frame(
+  gene_id=c("g_high", "g_sig", "no_padj", "has_padj", "first", "second"),
+  symbol=c("DUP", "DUP", "NA1", "NA1", "TIE", "TIE"),
+  log2FoldChange=c(0.2, -3.5, 5.0, -1.0, 1.0, 2.0),
+  padj=c(0.40, 1e-8, NA_real_, 0.4, 0.01, 0.01),
+  stringsAsFactors=FALSE)
+lfc <- de_value_map(res$symbol, res$log2FoldChange, res$padj)
+stopifnot(identical(unname(lfc[["DUP"]]), -3.5))   # lowest padj, not the larger effect
+stopifnot(identical(unname(lfc[["NA1"]]), -1.0))   # NA padj never beats a real one
+stopifnot(identical(unname(lfc[["TIE"]]), 1.0))    # tie keeps the first table row
+
+# Negative gate: the previous first-row rule disagrees on the duplicated symbol.
+legacy <- setNames(res$log2FoldChange, toupper(res$symbol))
+stopifnot(identical(unname(legacy[["DUP"]]), 0.2),
+          !identical(unname(legacy[["DUP"]]), unname(lfc[["DUP"]])))
+
+# A results table without padj keeps the first-row behaviour rather than failing.
+stopifnot(identical(unname(de_value_map(res$symbol, res$log2FoldChange)[["DUP"]]), 0.2))
+# The join is case-insensitive on both sides.
+stopifnot(identical(unname(de_value_map(c("sesB"), c(1.5), c(0.01))[["SESB"]]), 1.5))
+'''
+    harness = tmp_path / "ppi_duplicate_rule.R"
+    harness.write_text(code, encoding="utf-8")
+    result = subprocess.run(
+        [*command, runtime_path(harness)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_ppi_case_restoration_is_wired_between_mapping_and_graph_labels() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     _assert_case_restoration_wiring(source)

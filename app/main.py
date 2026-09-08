@@ -11,7 +11,7 @@ from PySide6.QtCore import QLocale, QRect, QSettings, Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMessageBox, QSplashScreen
 
-from app.constants import APP_NAME, APP_VERSION
+from app.constants import APP_NAME, APP_VERSION, APP_MUTEX_NAME
 from app.core.paths import app_root
 from app.ui.main_window import MainWindow
 from app.ui.theme import PALETTES, apply_theme, system_ui_font_family
@@ -230,7 +230,27 @@ def _harden_stream_encoding() -> None:
                 pass
 
 
+def hold_instance_mutex(name: str = APP_MUTEX_NAME):
+    """Create the named mutex the installer checks (AppMutex); returns the handle or None.
+
+    The handle must stay referenced for the process lifetime. Only Windows has the installer,
+    so other platforms return None. A second instance also succeeds (the mutex is shared)."""
+    if not sys.platform.startswith("win"):
+        return None
+    try:
+        import ctypes
+        handle = ctypes.windll.kernel32.CreateMutexW(None, False, name)
+        return handle or None
+    except Exception:
+        return None
+
+
+_INSTANCE_MUTEX = None
+
+
 def main() -> int:
+    global _INSTANCE_MUTEX
+    _INSTANCE_MUTEX = hold_instance_mutex()
     _harden_stream_encoding()
     # QtWebEngine reads these at engine init (QApplication construction), so they
     # must be set first. Conservative flags that rendered reliably under flaky GPU

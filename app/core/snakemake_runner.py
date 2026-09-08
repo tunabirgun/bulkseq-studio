@@ -11,7 +11,7 @@ from pathlib import Path
 
 from app.constants import WSL_ENV_NAME, WSL_MAMBA_ROOT, WSL_MICROMAMBA
 from app.core.config_models import AppConfig
-from app.core.paths import windows_to_wsl_path
+from app.core.paths import UnsupportedUncPathError, windows_to_wsl_path
 
 # Marker prefix exported into the WSL process environment so the whole process
 # tree can be found and killed from a separate `wsl` invocation (terminating the
@@ -46,6 +46,28 @@ def _target_input_exists(project_root: Path | None, rel_path: str) -> bool:
     return (Path(project_root) / rel_path).exists()
 
 
+def _samples_sheet(project_root: Path) -> Path:
+    """The sheet the Snakefile will actually parse: `config.yaml`'s `input.samples`, resolved
+    against the project root because Snakemake runs with the project root as its working
+    directory. Falls back to the conventional location when the config is absent or unreadable
+    — the same file the Snakefile's own default would name."""
+    import yaml  # local: keeps module import cheap, mirroring the pandas import below
+
+    relative = "config/samples.tsv"
+    try:
+        loaded = yaml.safe_load(
+            (project_root / "config" / "config.yaml").read_text(encoding="utf-8")
+        )
+        section = loaded.get("input") if isinstance(loaded, dict) else None
+        configured = str((section or {}).get("samples") or "").strip() if isinstance(section, dict) else ""
+        if configured:
+            relative = configured
+    except (OSError, ValueError, UnicodeDecodeError, yaml.YAMLError):
+        pass
+    candidate = Path(relative)
+    return candidate if candidate.is_absolute() else project_root / candidate
+
+
 def _is_multistudy(project_root: Path | None) -> bool:
     """True when the project's samples.tsv is a genuine multi-study sheet (a 'dataset' column with
     more than one distinct non-empty value) — an EXACT mirror of the Snakefile's MULTI_DATASET, using
@@ -57,7 +79,7 @@ def _is_multistudy(project_root: Path | None) -> bool:
     arg-structure tests keep prior behaviour."""
     if project_root is None:
         return True
-    samples = Path(project_root) / "config" / "samples.tsv"
+    samples = _samples_sheet(Path(project_root))
     if not samples.exists():
         return False
     try:
@@ -188,6 +210,18 @@ def build_snakemake_args(
             project_root, "results/enrichment/custom_enrichment_objects.rds"
         ):
             targets.append("custom_enrichment_figure")
+        # GSVA writes a styled heatmap, so a restyle must re-render it. Mirror the Snakefile's
+        # GSVA_ON exactly (gsva AND a custom gene-set file AND a per-sample matrix, i.e. not a
+        # deseq2-results upload), because forcing an undefined rule aborts the regenerate. Gate on
+        # the rule's INPUTS as well as its score table: `results/export/` is not protected by
+        # reclaim_run_space.sh, so a reclaimed run can keep gsva_scores.csv with no matrix left to
+        # re-run from, which would be a MissingInputException instead of a restyle.
+        if (config.workflow.gsva and config.gene_sets.custom_gene_sets
+                and config.input.type != "deseq2_results"
+                and _target_input_exists(project_root, "results/gsva/gsva_scores.csv")
+                and _target_input_exists(project_root, "results/export/normalized_expression_matrix.csv")
+                and _target_input_exists(project_root, config.gene_sets.custom_gene_sets)):
+            targets.append("gsva")
         # Multi-study meta-analysis comparative figures are style-consuming too, so a restyle
         # regenerates them from the existing meta result (no re-run of the per-study DESeq2). Mirror
         # the Snakefile's META_MODE exactly (meta_analysis AND multi-study AND a count-based input):
@@ -200,6 +234,12 @@ def build_snakemake_args(
             project_root, "results/meta/meta_analysis_results.csv"
         ):
             targets.append("meta_figures")
+            # Per-study figures are style-consuming too. The rule is an aggregator whose declared
+            # output is the manifest, so its presence is what marks "it has run"; its inputs are the
+            # meta result (checked above) and the pooled DE table.
+            if (_target_input_exists(project_root, "results/meta/per_study/manifest.json")
+                    and _target_input_exists(project_root, "results/deseq2/deseq2_results.csv")):
+                targets.append("meta_per_study")
             if config.workflow.enrichment and _target_input_exists(
                 project_root, "results/meta/meta_enrichment_objects.rds"
             ):
@@ -302,7 +342,10 @@ def build_snakemake_command(
     """
     args = build_snakemake_args(config, mode, project_root, exec_profile=exec_profile)
     if use_wsl:
-        wsl_root = windows_to_wsl_path(project_root)
+        try:
+            wsl_root = windows_to_wsl_path(project_root)
+        except UnsupportedUncPathError as exc:
+            raise RuntimeError(f"The project folder is on a network share that WSL cannot open: {exc}") from exc
         inner = _wrap_wsl(args, wsl_root, run_tag)
         cmd = ["wsl"]
         if distro:
@@ -312,6 +355,16 @@ def build_snakemake_command(
             cmd, subprocess.list2cmdline(cmd), use_wsl=True, distro=distro, run_tag=run_tag
         )
     return SnakemakeCommand(args, subprocess.list2cmdline(args), use_wsl=False)
+
+
+def native_mamba_root() -> Path:
+    """The micromamba root a native (non-WSL) run uses.
+
+    Byte-for-byte the default the workflow's shell rules apply
+    (``${MAMBA_ROOT_PREFIX:-$HOME/micromamba}``), so the environment handed to Snakemake and
+    the expansion inside a rule cannot disagree.
+    """
+    return Path(os.environ.get("MAMBA_ROOT_PREFIX") or (Path.home() / "micromamba"))
 
 
 def native_path_prefix() -> list[str]:
@@ -324,7 +377,7 @@ def native_path_prefix() -> list[str]:
     Only existing directories are returned, so a host without the environment (every
     Windows box, and a Linux box using an already-activated shell) is unaffected.
     """
-    root = Path(os.environ.get("MAMBA_ROOT_PREFIX") or (Path.home() / "micromamba"))
+    root = native_mamba_root()
     dirs: list[str] = []
     env_bin = root / "envs" / WSL_ENV_NAME / "bin"
     if env_bin.is_dir():
@@ -413,11 +466,15 @@ class SnakemakeRunner:
                 getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
                 | getattr(subprocess, "CREATE_NO_WINDOW", 0)
             )
+        # The pipeline runs in a UTF-8 Linux environment; decode as such and never let one
+        # undecodable byte kill the reader (the default is the console code page, strict).
         self.process = subprocess.Popen(
             self.command.command,
             cwd=self.project_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            encoding="utf-8",
+            errors="replace",
             text=True,
             bufsize=1,
             creationflags=creationflags,
@@ -440,6 +497,11 @@ class SnakemakeRunner:
             prefix = native_path_prefix()
             if prefix:
                 env["PATH"] = os.pathsep.join([*prefix, env.get("PATH", "")])
+            # Rule shells dereference MAMBA_ROOT_PREFIX (trimming.smk's Trimmomatic adapter
+            # lookup among them) and Snakemake runs them under `set -u`, so an unset variable
+            # aborts the job. WSL runs get it from the login shell; give a native run the same
+            # value the rules would have defaulted to.
+            env["MAMBA_ROOT_PREFIX"] = env.get("MAMBA_ROOT_PREFIX") or str(native_mamba_root())
         return env
 
     def _signal_native_group(self, sig: int) -> bool:

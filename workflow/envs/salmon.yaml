@@ -1,7 +1,0 @@
-name: bulkseq-salmon
-channels:
-  - bioconda
-  - conda-forge
-dependencies:
-  - salmon
-  - bioconductor-tximport

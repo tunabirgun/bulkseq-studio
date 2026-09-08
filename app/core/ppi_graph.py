@@ -57,9 +57,10 @@ def build_ppi_cytoscape_json(project_root: str | Path) -> dict:
 
     # DE attributes keyed by UPPER(symbol) AND UPPER(gene_id), so the join works
     # whether the network nodes are symbols (model organisms) or gene_ids (symbol-less
-    # genomes like Fusarium, whose RefSeq GTF has no symbols). Iterating ascending by
-    # baseMean means the max-baseMean row is written last and wins each key (the
-    # many-to-one dedup); a NaN baseMean sorts first so it never wins.
+    # genomes like Fusarium, whose RefSeq GTF has no symbols). Duplicate keys resolve
+    # by the rule build_string_network.R's de_value_map() applies, so the static figure
+    # and this viewer never colour the same symbol from different rows: lowest padj
+    # wins, a missing padj never beats a real one, and a tie keeps the first row.
     de_by_key: dict[str, dict] = {}
     deseq_path = root / DESEQ_CSV
     if deseq_path.exists():
@@ -68,21 +69,25 @@ def build_ppi_cytoscape_json(project_root: str | Path) -> dict:
         except Exception:
             de = pd.DataFrame()
         if not de.empty:
-            if "baseMean" in de.columns:
-                de = de.sort_values("baseMean", na_position="first")
-            for _, r in de.iterrows():
+            padj = (pd.to_numeric(de["padj"], errors="coerce") if "padj" in de.columns
+                    else pd.Series(np.nan, index=de.index))
+            for (_, r), p in zip(de.iterrows(), padj):
                 gid = str(r["gene_id"]) if "gene_id" in de.columns and pd.notna(r.get("gene_id")) else None
                 rec = {
                     "log2FoldChange": _num(r.get("log2FoldChange")),
                     "padj": _num(r.get("padj")),
                     "baseMean": _num(r.get("baseMean")),
                     "gene_id": gid,
+                    "_padj_rank": float(p) if pd.notna(p) else float("inf"),
                 }
-                if gid:
-                    de_by_key[gid.upper()] = rec
+                keys = [gid.upper()] if gid else []
                 sym = r.get("symbol")
                 if "symbol" in de.columns and pd.notna(sym) and str(sym):
-                    de_by_key[str(sym).upper()] = rec
+                    keys.append(str(sym).upper())
+                for key in keys:
+                    prev = de_by_key.get(key)
+                    if prev is None or rec["_padj_rank"] < prev["_padj_rank"]:
+                        de_by_key[key] = rec
 
     # Mean VST expression per gene_id (row mean across sample columns).
     mean_by_gene: dict[str, float] = {}

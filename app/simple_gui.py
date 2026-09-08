@@ -63,11 +63,17 @@ class _RunThread(QThread):
             self.line.emit(f"Failed to launch run: {exc}")
             self.done.emit(1)
             return
-        if proc.stdout is not None:
-            for raw in proc.stdout:
-                self.line.emit(raw.rstrip("\n"))
-        proc.wait()
-        self.done.emit(proc.returncode if proc.returncode is not None else -1)
+        try:
+            if proc.stdout is not None:
+                for raw in proc.stdout:
+                    self.line.emit(raw.rstrip("\n"))
+        except Exception as exc:
+            self.line.emit(f"Run output reader failed: {exc}")
+            if proc.stdout is not None:
+                proc.stdout.close()
+        finally:
+            proc.wait()
+            self.done.emit(proc.returncode if proc.returncode is not None else -1)
 
 
 class SimpleWindow(QWidget):

@@ -23,6 +23,25 @@ def _star_bam_sort_ram_bytes(_wildcards, resources):
     return mem_mb * 1_000_000 // 2
 
 
+# samtools sort's -m is PER SORT THREAD and `-@ N` adds N threads to the main one, so the
+# hardcoded -m 1G it replaces reserved (threads + 1) GB -- 9 GB against this rule's 8 GB
+# declaration at 8 threads, while hisat2 runs alongside in the same pipe. Divide half the job's
+# reservation across those threads+1 so the sort stays inside half and hisat2 keeps the rest.
+# The floor keeps a high thread count from handing samtools a uselessly small buffer; below it
+# the sort spills to many small temp files instead of failing.
+_HISAT2_SORT_MEM_FLOOR_MB = 256
+
+
+def _hisat2_sort_mem_mb(_wildcards, threads, resources):
+    try:
+        mem_mb = int(resources.mem_mb)
+    except (AttributeError, TypeError, ValueError):
+        raise ValueError("hisat2_align requires a positive mem_mb resource") from None
+    if mem_mb <= 0:
+        raise ValueError("hisat2_align requires a positive mem_mb resource")
+    return f"{max(mem_mb // 2 // (max(int(threads), 1) + 1), _HISAT2_SORT_MEM_FLOOR_MB)}M"
+
+
 if not USE_SALMON:
 
     if USE_HISAT2 and SINGLE_END:
@@ -37,6 +56,8 @@ if not USE_SALMON:
                 rule_threads("hisat2_align", 8)
             resources:
                 mem_mb=rule_mem_mb("hisat2_align", 8),
+            params:
+                sort_mem=_hisat2_sort_mem_mb,
             benchmark:
                 "benchmarks/hisat2_align_{sample}.tsv"
             log:
@@ -44,7 +65,7 @@ if not USE_SALMON:
             shell:
                 "hisat2 -p {threads} -x {input.idx}/genome -U {input.r1:q} "
                 "--summary-file results/aligned/{wildcards.sample}_hisat2_summary.txt 2> {log} "
-                "| samtools sort -@ {threads} -m 1G "
+                "| samtools sort -@ {threads} -m {params.sort_mem} "
                 "-T {resources.tmpdir}/sort_{wildcards.sample} -o {output.bam:q} - 2>> {log}"
 
     elif USE_HISAT2:
@@ -60,6 +81,8 @@ if not USE_SALMON:
                 rule_threads("hisat2_align", 8)
             resources:
                 mem_mb=rule_mem_mb("hisat2_align", 8),
+            params:
+                sort_mem=_hisat2_sort_mem_mb,
             benchmark:
                 "benchmarks/hisat2_align_{sample}.tsv"
             log:
@@ -70,7 +93,7 @@ if not USE_SALMON:
                 # (overall rate) is written next to the BAM for inspection.
                 "hisat2 -p {threads} -x {input.idx}/genome -1 {input.r1:q} -2 {input.r2:q} "
                 "--summary-file results/aligned/{wildcards.sample}_hisat2_summary.txt 2> {log} "
-                "| samtools sort -@ {threads} -m 1G "
+                "| samtools sort -@ {threads} -m {params.sort_mem} "
                 "-T {resources.tmpdir}/sort_{wildcards.sample} -o {output.bam:q} - 2>> {log}"
 
     else:
@@ -100,7 +123,7 @@ if not USE_SALMON:
             shell:
                 "rm -rf {resources.tmpdir}/star_{wildcards.sample} && "
                 "STAR --runMode alignReads --genomeDir {input.index} "
-                "--readFilesIn {input.fastqs} --readFilesCommand zcat "
+                "--readFilesIn {input.fastqs:q} --readFilesCommand zcat "
                 "--outSAMtype BAM SortedByCoordinate --quantMode GeneCounts "
                 "--limitBAMsortRAM {params.bam_sort_ram} "
                 "--runThreadN {threads} "

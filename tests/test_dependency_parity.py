@@ -169,6 +169,176 @@ HARD_R_NAMESPACE_TO_CONDA = {
 }
 
 
+# Every CLI command readiness probes, with the conda package that provides it and the profile
+# that must contain it. The header comment of this file claims CLI coverage; without this table
+# a probed command could be missing from every environment spec and only fail on a user's
+# machine. 'full' entries must also be exactly what readiness treats as full-only.
+PROBED_COMMAND_TO_CONDA = {
+    "snakemake": ("snakemake-minimal", "core"),
+    "aria2c": ("aria2", "core"),
+    "fastqc": ("fastqc", "core"),
+    "multiqc": ("multiqc", "core"),
+    "fastp": ("fastp", "core"),
+    "sortmerna": ("sortmerna", "core"),
+    "ribodetector_cpu": ("ribodetector", "full"),
+    "STAR": ("star", "core"),
+    "hisat2": ("hisat2", "core"),
+    "hisat2-build": ("hisat2", "core"),
+    "salmon": ("salmon", "core"),
+    "gffread": ("gffread", "core"),
+    "perl": ("perl", "core"),
+    "samtools": ("samtools", "core"),
+    "featureCounts": ("subread", "core"),
+    "trim_galore": ("trim-galore", "core"),
+    "trimmomatic": ("trimmomatic", "core"),
+    "fastq_screen": ("fastq-screen", "core"),
+    "bowtie2": ("bowtie2", "core"),
+    "read_distribution.py": ("rseqc", "core"),
+    "geneBody_coverage.py": ("rseqc", "core"),
+    "gtfToGenePred": ("ucsc-gtftogenepred", "core"),
+    "genePredToBed": ("ucsc-genepredtobed", "core"),
+    "Rscript": ("r-base", "full"),
+}
+
+
+def _assert_probed_commands_installed(probed: set[str], mapping: dict[str, tuple[str, str]],
+                                      core: set[str], full: set[str], lock: set[str],
+                                      full_only: set[str]) -> None:
+    unmapped = sorted(probed - set(mapping))
+    assert not unmapped, f"probed CLI commands with no conda package (gate fails closed): {unmapped}"
+    for command, (package, profile) in mapping.items():
+        name = _normalise_distribution(package)
+        assert name in full, f"bulkseq_full.yaml does not install {package} for probed {command}"
+        assert name in lock, f"bulkseq.lock.yaml does not install {package} for probed {command}"
+        if profile == "core":
+            assert name in core, f"bulkseq_core.yaml does not install {package} for probed {command}"
+            assert command not in full_only, f"{command} is probed as full-only but ships in core"
+        else:
+            assert name not in core, f"{package} is in the core profile but mapped as full-only"
+            assert command in full_only, (
+                f"{command} needs the full profile, so readiness must not require it on a core "
+                "environment")
+
+
+def test_every_probed_cli_tool_is_installed_by_the_profile_that_must_provide_it() -> None:
+    from app.core.readiness import BIOINFORMATICS_TOOLS, FULL_ONLY_TOOLS, WSL_TOOLS
+
+    envs = REPO_ROOT / "workflow" / "envs"
+    _assert_probed_commands_installed(
+        set(BIOINFORMATICS_TOOLS) | set(WSL_TOOLS), PROBED_COMMAND_TO_CONDA,
+        _conda_names(envs / "bulkseq_core.yaml"), _conda_names(envs / "bulkseq_full.yaml"),
+        _conda_names(envs / "bulkseq.lock.yaml"), set(FULL_ONLY_TOOLS))
+
+
+def test_cli_tool_parity_rejects_an_unmapped_probe_and_a_missing_package() -> None:
+    envs = REPO_ROOT / "workflow" / "envs"
+    core = _conda_names(envs / "bulkseq_core.yaml")
+    full = _conda_names(envs / "bulkseq_full.yaml")
+    lock = _conda_names(envs / "bulkseq.lock.yaml")
+    full_only = {"ribodetector_cpu", "Rscript"}
+    with pytest.raises(AssertionError, match="never_probed_tool"):
+        _assert_probed_commands_installed({"never_probed_tool"}, PROBED_COMMAND_TO_CONDA,
+                                          core, full, lock, full_only)
+    mutated = dict(PROBED_COMMAND_TO_CONDA, imaginary=("no-such-conda-package", "core"))
+    with pytest.raises(AssertionError, match="no-such-conda-package"):
+        _assert_probed_commands_installed(set(mutated), mutated, core, full, lock, full_only)
+
+
+# R scripts a run executes only on some configs (input route, DE engine, or an optional
+# feature). A namespace that appears in none of the other scripts is not loaded by every run,
+# so it belongs in validate_project.required_r_packages()'s per-config additions rather than in
+# the unconditional blocking gate.
+_CONFIG_GATED_R_SCRIPTS = {
+    "ingest_geo.R", "ingest_deseq2_results.R", "salmon_tximport.R",
+    "run_edger.R", "run_limma.R", "run_voom.R", "run_gsva.R", "run_custom_enrichment.R",
+    "run_meta_analysis.R", "run_meta_enrichment.R", "run_meta_per_study.R",
+    "run_meta_per_study_enrichment.R", "make_meta_figures.R",
+    "make_meta_enrichment_figures.R", "make_meta_per_study_figures.R", "make_goi.R",
+}
+
+
+def _r_scripts_loading(namespace: str) -> set[str]:
+    # An actual load — library/require/requireNamespace/loadNamespace or a ns:: call — not a
+    # mention of the name in a comment.
+    escaped = re.escape(namespace)
+    loads = re.compile(rf"(?:library|require|requireNamespace|loadNamespace)\s*\(\s*"
+                       rf"[\"']?{escaped}[\"']?\s*[),]|{escaped}::")
+    return {path.name for path in (REPO_ROOT / "workflow" / "scripts").glob("*.R")
+            if loads.search(path.read_text(encoding="utf-8"))}
+
+
+# A config that selects every optional route, engine and feature, so required_r_packages()
+# reports the complete set of conditionally loaded packages.
+_MAXIMAL_CONFIG = {
+    "input": {"type": "microarray"}, "microarray": {"source": "affy_cel"},
+    "workflow": {"meta_analysis": True, "de_engine": "limma-voom", "gsva": True,
+                 "aligner": "Salmon"},
+    "enrichment": {"backend": "gprofiler"},
+}
+
+
+def _assert_blocking_r_gate(blocking: list[str], conditional: set[str]) -> None:
+    assert len(blocking) == len(set(blocking)), "duplicate entry in _CORE_R_PACKAGES"
+    unprobed = sorted(set(blocking) - set(R_ANALYSIS_PACKAGES))
+    assert not unprobed, f"validate_project blocks on packages readiness never probes: {unprobed}"
+    for namespace in sorted(set(HARD_R_NAMESPACE_TO_CONDA) - set(blocking) - conditional):
+        mandatory_scripts = _r_scripts_loading(namespace) - _CONFIG_GATED_R_SCRIPTS
+        assert not mandatory_scripts, (
+            f"{namespace} is loaded by {sorted(mandatory_scripts)}, which every run executes, "
+            "but validate_project._CORE_R_PACKAGES does not block on it and "
+            "required_r_packages() does not add it for any config")
+
+
+def _load_validate_project():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "validate_project", REPO_ROOT / "workflow" / "scripts" / "validate_project.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _blocking_and_conditional() -> tuple[list[str], set[str]]:
+    module = _load_validate_project()
+    blocking = list(module._CORE_R_PACKAGES)
+    return blocking, set(module.required_r_packages(_MAXIMAL_CONFIG)) - set(blocking)
+
+
+def test_blocking_r_gate_is_one_list_with_the_readiness_probe() -> None:
+    # validate_project.py runs from the project's workflow copy and cannot import app, so the
+    # two lists are separate text. This is what keeps them one list: the blocking gate must be
+    # a subset of what readiness probes, and every namespace a mandatory script loads must be
+    # either in it or in required_r_packages()'s per-config additions.
+    blocking, conditional = _blocking_and_conditional()
+    assert conditional, "required_r_packages added nothing for the maximal config"
+    _assert_blocking_r_gate(blocking, conditional)
+
+
+def test_blocking_r_gate_rejects_a_dropped_mandatory_package_negative_control() -> None:
+    blocking, conditional = _blocking_and_conditional()
+    for dropped in ("ggplot2", "SummarizedExperiment", "systemfonts"):
+        with pytest.raises(AssertionError, match=dropped):
+            _assert_blocking_r_gate([p for p in blocking if p != dropped], conditional)
+    with pytest.raises(AssertionError, match="never probes"):
+        _assert_blocking_r_gate(blocking + ["notAProbedPackage"], conditional)
+
+
+def test_catalog_orgdbs_are_installed_and_probed_everywhere() -> None:
+    catalog = (REPO_ROOT / "app" / "data" / "reference_catalog.yaml").read_text(encoding="utf-8")
+    orgdbs = sorted(set(re.findall(r"org\.[A-Za-z]+\.[a-z]+\.db", catalog)))
+    assert orgdbs, "no OrgDb declared in the reference catalog; the parser is out of date"
+    full = _conda_names(REPO_ROOT / "workflow" / "envs" / "bulkseq_full.yaml")
+    lock = _conda_names(REPO_ROOT / "workflow" / "envs" / "bulkseq.lock.yaml")
+    setup = (REPO_ROOT / "scripts" / "setup_wsl_bioenv.sh").read_text(encoding="utf-8")
+    for namespace in orgdbs:
+        conda_package = _normalise_distribution("bioconductor-" + namespace.lower())
+        assert conda_package in full, f"bulkseq_full.yaml is missing {namespace}"
+        assert conda_package in lock, f"bulkseq.lock.yaml is missing {namespace}"
+        assert namespace in R_ANALYSIS_PACKAGES, f"readiness R probe is missing {namespace}"
+        assert f'"{namespace}"' in setup, f"setup R load probe is missing {namespace}"
+
+
 def test_hard_direct_r_namespaces_are_in_fallback_lock_readiness_and_setup_probe() -> None:
     full = _conda_names(REPO_ROOT / "workflow" / "envs" / "bulkseq_full.yaml")
     lock = _conda_names(REPO_ROOT / "workflow" / "envs" / "bulkseq.lock.yaml")

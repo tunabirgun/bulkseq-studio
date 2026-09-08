@@ -38,8 +38,13 @@ if (is.null(cc) || is.null(n) || n == 0) {
   placeholder("Cross-study enrichment unavailable\n(organism unmapped or no significant terms)")
 } else {
   p <- tryCatch({
-    d <- enrichplot::dotplot(cc, showCategory = show_cat, includeAll = TRUE) +
-      scale_color_gradientn(colours = rev(pal_spec$seq(255)), name = "p.adjust") +
+    # enrichplot's compareCluster dotplot maps p.adjust to `fill` (1.30.4; older versions
+    # used `colour`), so set BOTH: the colour-only scale silently did nothing and the
+    # figure kept enrichplot's default ramp instead of the project palette.
+    d <- suppressWarnings(
+      enrichplot::dotplot(cc, showCategory = show_cat, includeAll = TRUE) +
+        scale_color_gradientn(colours = rev(pal_spec$seq(255)), name = "p.adjust") +
+        scale_fill_gradientn(colours = rev(pal_spec$seq(255)), name = "p.adjust")) +
       style_theme() + theme(axis.text.x = element_text(angle = 40, hjust = 1),
                             axis.text.y = element_text(size = 8)) + labs(x = NULL, y = NULL)
     d

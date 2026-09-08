@@ -89,6 +89,63 @@ def test_figures_mode_gates_optional_targets_on_input_existence(tmp_path) -> Non
     assert "network_string" in with_inputs
 
 
+def test_figures_mode_forces_gsva_only_when_its_rule_and_inputs_exist(tmp_path) -> None:
+    # gsva writes a styled heatmap, so a restyle must re-render it -- but only when the Snakefile
+    # actually defines the rule (GSVA_ON) and every declared input is still on disk. The score CSV
+    # alone is not enough: results/export/ is not protected by reclaim_run_space.sh.
+    cfg = default_config("demo", tmp_path)
+    cfg.workflow.gsva = True
+    (tmp_path / "config").mkdir(parents=True)
+    gmt = tmp_path / "config" / "sets.gmt"
+    gmt.write_text("SET1\tna\tGENE1\tGENE2\n")
+    cfg.gene_sets.custom_gene_sets = "config/sets.gmt"
+    # Nothing produced yet -> not forced.
+    assert "gsva" not in build_snakemake_command(tmp_path, cfg, mode="figures").command
+    (tmp_path / "results" / "gsva").mkdir(parents=True)
+    (tmp_path / "results" / "gsva" / "gsva_scores.csv").write_text("x")
+    # Scores present but the normalized matrix reclaimed -> still not forced (MissingInputException).
+    assert "gsva" not in build_snakemake_command(tmp_path, cfg, mode="figures").command
+    (tmp_path / "results" / "export").mkdir(parents=True)
+    (tmp_path / "results" / "export" / "normalized_expression_matrix.csv").write_text("x")
+    assert "gsva" in build_snakemake_command(tmp_path, cfg, mode="figures").command
+    # Each half of the Snakefile's GSVA_ON guard must switch it back off: without a gene-set file,
+    # and on a deseq2-results upload, the rule is undefined and naming it aborts the whole run.
+    cfg.gene_sets.custom_gene_sets = None
+    assert "gsva" not in build_snakemake_command(tmp_path, cfg, mode="figures").command
+    cfg.gene_sets.custom_gene_sets = "config/sets.gmt"
+    cfg.input.type = "deseq2_results"
+    assert "gsva" not in build_snakemake_command(tmp_path, cfg, mode="figures").command
+    cfg.input.type = "fastq"
+    cfg.workflow.gsva = False
+    assert "gsva" not in build_snakemake_command(tmp_path, cfg, mode="figures").command
+
+
+def test_figures_mode_forces_meta_per_study_under_the_meta_guard(tmp_path) -> None:
+    # meta_per_study renders styled per-study figures; it must be forced when its manifest and
+    # inputs exist, and must stay out whenever the meta rules themselves are undefined.
+    cfg = default_config("demo", tmp_path)
+    cfg.workflow.meta_analysis = True
+    (tmp_path / "config").mkdir(parents=True)
+    (tmp_path / "config" / "samples.tsv").write_text(
+        "sample_id\tdataset\tcondition\ns1\tD1\tA\ns2\tD2\tB\n")
+    (tmp_path / "results" / "meta").mkdir(parents=True)
+    (tmp_path / "results" / "meta" / "meta_analysis_results.csv").write_text("x")
+    # Meta figures are forced, but per-study has not run (no manifest).
+    cmd = build_snakemake_command(tmp_path, cfg, mode="figures").command
+    assert "meta_figures" in cmd and "meta_per_study" not in cmd
+    (tmp_path / "results" / "meta" / "per_study").mkdir()
+    (tmp_path / "results" / "meta" / "per_study" / "manifest.json").write_text("{}")
+    # Manifest without the pooled DE table it reads -> still not forced.
+    assert "meta_per_study" not in build_snakemake_command(tmp_path, cfg, mode="figures").command
+    (tmp_path / "results" / "deseq2").mkdir(parents=True)
+    (tmp_path / "results" / "deseq2" / "deseq2_results.csv").write_text("x")
+    assert "meta_per_study" in build_snakemake_command(tmp_path, cfg, mode="figures").command
+    # Single-study sheet -> the meta rules are undefined, so per-study goes with them.
+    (tmp_path / "config" / "samples.tsv").write_text(
+        "sample_id\tdataset\tcondition\ns1\tD1\tA\ns2\tD1\tB\n")
+    assert "meta_per_study" not in build_snakemake_command(tmp_path, cfg, mode="figures").command
+
+
 def test_native_command_has_no_use_conda() -> None:
     # No rule declares a conda: directive; --use-conda would be a no-op and is
     # intentionally omitted.

@@ -29,8 +29,17 @@ def main() -> int:
             lines.append(f"{path.stem}: MISSING")
             lines.append("")
             continue
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        messages = payload.get("messages", [])
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            # An unreadable check is a FAIL to report, not a crash that takes the
+            # whole sanity rule (and the run) down with it.
+            payload = {"check": path.stem, "status": "FAIL",
+                       "messages": [{"status": "FAIL", "message": f"unreadable check file: {exc}"}]}
+        if not isinstance(payload, dict):
+            payload = {"check": path.stem, "status": "FAIL",
+                       "messages": [{"status": "FAIL", "message": "check file is not a JSON object"}]}
+        messages = [m for m in payload.get("messages", []) if isinstance(m, dict)]
         status = overall_status(messages, payload.get("status"))
         if PRIORITY.get(status, 0) > PRIORITY.get(worst, 0):
             worst = status

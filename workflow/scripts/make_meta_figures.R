@@ -61,7 +61,10 @@ gsym <- function(ids, id_map) {
 }
 
 # --- load ---------------------------------------------------------------------
-res <- tryCatch(read.csv(snakemake@input[["results"]], stringsAsFactors = FALSE), error = function(e) NULL)
+# check.names = FALSE: a study named e.g. E-MTAB-2523 makes the column study_E-MTAB-2523_log2FC,
+# which the default name repair rewrites to study_E.MTAB.2523_log2FC -- the per_study_<S>.csv
+# lookup then misses silently (placeholder forest, all-NA study summary, mislabelled heatmap).
+res <- tryCatch(read.csv(snakemake@input[["results"]], stringsAsFactors = FALSE, check.names = FALSE), error = function(e) NULL)
 if (is.null(res)) res <- data.frame()
 meta_dir <- dirname(snakemake@input[["results"]])
 study_cols <- grep("^study_.*_log2FC$", colnames(res), value = TRUE)
@@ -114,9 +117,10 @@ emit(out[["volcano_png"]], out[["volcano_svg"]], {
     hline <- NULL  # no fixed significance line on the Z scale (alpha threshold is FDR-space, not Z-space)
     ysub <- "Stouffer/inverse-normal combined Z (always finite; no off-scale genes)"
   } else {
-    # metaRNASeq combined FDR hits exact 0 for strong genes -> -log10 saturates at ~308 and squashes
-    # the informative band. Cap the y-axis just above the largest FINITE (padj>0) value and mark the
-    # off-scale genes with a triangle, so the real 0..cap region fills the plot (EnhancedVolcano-style).
+    # The combined FDR can still reach exact 0 -- a per-study p of exactly 0 saturates the pooled
+    # tail even in the stable statistic -> -log10 saturates at ~308 and squashes the informative
+    # band. Cap the y-axis just above the largest FINITE (padj>0) value and mark the off-scale genes
+    # with a triangle, so the real 0..cap region fills the plot (EnhancedVolcano-style).
     fin <- d$neglog[d$combined_padj > 0 & is.finite(d$neglog)]
     cap <- if (length(fin)) max(fin) * 1.1 else -log10(alpha) * 3
     cap <- max(cap, -log10(alpha) * 2)
@@ -308,7 +312,8 @@ if (nrow(conv)) {
   conv_out <- data.frame(gene_id = conv$gene_id, gene_symbol = gsym(conv$gene_id, id_map),
                          common_direction = conv$common_direction, n_studies_sig = conv$n_studies_sig)
   for (s in studies) conv_out[[paste0("study_", s, "_log2FC")]] <- conv[[paste0("study_", s, "_log2FC")]]
-  for (cc in c("rem_log2FC", "rem_ci_lo", "rem_ci_hi", "tau2", "I2", "QEp", "combined_pvalue", "combined_padj"))
+  for (cc in c("rem_log2FC", "rem_ci_lo", "rem_ci_hi", "rem_pvalue", "rem_padj",
+               "tau2", "I2", "QEp", "combined_pvalue", "combined_padj"))
     conv_out[[cc]] <- conv[[cc]]
   write.csv(conv_out, out[["convergent"]], row.names = FALSE)
 } else {

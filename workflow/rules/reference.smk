@@ -175,7 +175,7 @@ rule read_length:
         "results/qc/read_length.txt",
     shell:
         # Disable pipefail: head closes the pipe early, giving zcat a SIGPIPE.
-        r"set +o pipefail; zcat {input} | head -n 40000 | "
+        r"set +o pipefail; zcat {input:q} | head -n 40000 | "
         r"awk 'NR%4==2{{if(length($0)>m)m=length($0)}}END{{print m}}' > {output}"
 
 
@@ -259,6 +259,10 @@ rule make_transcriptome:
         # in sync); no-op for already-unique transcriptomes (Ensembl, most assemblies).
         "export PATH=\"${{MAMBA_ROOT_PREFIX:-$HOME/micromamba}}/envs/bulkseq/bin:${{PATH}}\" && "
         "command -v gffread >/dev/null 2>&1 || {{ echo 'gffread is not installed in the bulkseq environment; the Salmon aligner route needs it. In the app open Setup and click Install / repair core environment (or update the env from workflow/envs/bulkseq_core.yaml), then re-run.' >&2; exit 1; }}; "
+        # gtf_clean.pl below runs under perl, which reaches the env only as a transitive
+        # dependency of other tools. Guard it like gffread so a solve that drops it fails here
+        # with an actionable message instead of exit 127 mid-pipe.
+        "command -v perl >/dev/null 2>&1 || {{ echo 'perl is not installed in the bulkseq environment; the Salmon aligner route needs it to clean the annotation. In the app open Setup and click Install / repair core environment (or update the env from workflow/envs/bulkseq_core.yaml), then re-run.' >&2; exit 1; }}; "
         "awk -F'\\t' '$3 != \"gene\" && $7 != \"?\"' {input.gtf:q} | "
         "perl workflow/scripts/gtf_clean.pl > {output.fa:q}.nogene.gtf && "
         "gffread -w {output.fa:q}.raw -g {input.fa:q} {output.fa:q}.nogene.gtf > {log} 2>&1 && "

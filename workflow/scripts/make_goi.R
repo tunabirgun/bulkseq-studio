@@ -38,8 +38,13 @@ if (!is.list(style)) style <- list()
 # Inherit the project palette + font instead of hardcoding them: getp_for merges any 'core'
 # per-figure-group override onto the global style, so GOI matches the other core figures.
 gp <- getp_for(style, "core")
+getp <- make_getp(style)
 base_size <- tryCatch(as.numeric(gp("base_font_size", 12)), error = function(e) 12)
 if (length(base_size) != 1 || is.na(base_size)) base_size <- 12
+# Canvas and raster resolution come from the same style block as the other figures; they were
+# hardcoded here, so the configured figure size and DPI never reached the GOI outputs.
+fig_w <- as.numeric(gp("width_in", 7)); fig_h <- as.numeric(gp("height_in", 5))
+fig_dpi <- as.integer(getp("dpi", 300))
 pal_spec <- palette_spec(as.character(gp("palette", "Blue-Red")))
 base_family <- resolve_font(as.character(gp("font_family", "")))
 style_theme <- make_style_theme(base_size = base_size, base_family = base_family,
@@ -129,8 +134,8 @@ if (is.null(dds) || is.null(vsd)) {
     theme_void()
   for (pair in list(c(out[["heatmap_png"]], out[["heatmap_svg"]]),
                     c(out[["expr_png"]], out[["expr_svg"]]))) {
-    ggsave(pair[[1]], msg, width = 7, height = 5, dpi = 150)
-    ggsave(pair[[2]], msg, width = 7, height = 5)
+    ggsave(pair[[1]], msg, width = fig_w, height = fig_h, dpi = fig_dpi)
+    ggsave(pair[[2]], msg, width = fig_w, height = fig_h)
   }
   writeLines("gene,note", out[["csv"]])
   writeLines("Genes-of-interest figures need per-sample counts, absent in a DESeq2-results upload.",
@@ -145,8 +150,8 @@ if (is.null(dds) || is.null(vsd)) {
   }
   sl0 <- slice_de_by_genes(genes0)
   write.csv(sl0, out[["de_slice"]], row.names = FALSE)
-  ggsave(out[["log2fc_png"]], make_log2fc_forest(sl0), width = 7, height = 5, dpi = 300)
-  ggsave(out[["log2fc_svg"]], make_log2fc_forest(sl0), width = 7, height = 5)
+  ggsave(out[["log2fc_png"]], make_log2fc_forest(sl0), width = fig_w, height = fig_h, dpi = fig_dpi)
+  ggsave(out[["log2fc_svg"]], make_log2fc_forest(sl0), width = fig_w, height = fig_h)
   sink(type = "message"); close(log_con); quit(save = "no", status = 0)
 }
 # Gene-id -> symbol map (from the DE step) lets the user list match either ids or
@@ -182,14 +187,14 @@ genes_path <- snakemake@input[["genes"]]
 if (length(genes_path) < 1 || !nzchar(genes_path[[1]]) || !file.exists(genes_path[[1]])) {
   writeLines("No gene list supplied (gene_sets.custom_gene_list).", out[["report"]])
   empty <- ggplot() + annotate("text", x = 0, y = 0, label = "No genes of interest supplied") + theme_void()
-  ggsave(out[["heatmap_png"]], empty, width = 7, height = 5, dpi = 300)
-  ggsave(out[["heatmap_svg"]], empty, width = 7, height = 5)
-  ggsave(out[["expr_png"]], empty, width = 7, height = 5, dpi = 300)
-  ggsave(out[["expr_svg"]], empty, width = 7, height = 5)
+  ggsave(out[["heatmap_png"]], empty, width = fig_w, height = fig_h, dpi = fig_dpi)
+  ggsave(out[["heatmap_svg"]], empty, width = fig_w, height = fig_h)
+  ggsave(out[["expr_png"]], empty, width = fig_w, height = fig_h, dpi = fig_dpi)
+  ggsave(out[["expr_svg"]], empty, width = fig_w, height = fig_h)
   writeLines("gene,note", out[["csv"]])
   write.csv(slice_de_by_genes(character(0)), out[["de_slice"]], row.names = FALSE)
-  ggsave(out[["log2fc_png"]], make_log2fc_forest(NULL), width = 7, height = 5, dpi = 300)
-  ggsave(out[["log2fc_svg"]], make_log2fc_forest(NULL), width = 7, height = 5)
+  ggsave(out[["log2fc_png"]], make_log2fc_forest(NULL), width = fig_w, height = fig_h, dpi = fig_dpi)
+  ggsave(out[["log2fc_svg"]], make_log2fc_forest(NULL), width = fig_w, height = fig_h)
   sink(type = "message"); close(log_con); quit(save = "no", status = 0)
 }
 goi <- readLines(genes_path[[1]], warn = FALSE)
@@ -234,8 +239,8 @@ writeLines(c(
   if (length(missing)) paste("Not matched:", paste(head(missing, 100), collapse = ", ")) else "All matched."),
   out[["report"]])
 
-save_gg <- function(p, png_path, svg_path, w = 7, h = 5) {
-  ggsave(png_path, p, width = w, height = h, dpi = 300)
+save_gg <- function(p, png_path, svg_path, w = fig_w, h = fig_h) {
+  ggsave(png_path, p, width = w, height = h, dpi = fig_dpi)
   ggsave(svg_path, p, width = w, height = h)
 }
 
@@ -248,15 +253,19 @@ if (length(present) < 1) {
   # (e.g. a gene present in deseq2_results.csv but filtered out of the VST object upstream).
   sl_na <- slice_de_by_genes(goi)
   write.csv(sl_na, out[["de_slice"]], row.names = FALSE)
-  ggsave(out[["log2fc_png"]], make_log2fc_forest(sl_na), width = 7, height = 5, dpi = 300)
-  ggsave(out[["log2fc_svg"]], make_log2fc_forest(sl_na), width = 7, height = 5)
+  ggsave(out[["log2fc_png"]], make_log2fc_forest(sl_na), width = fig_w, height = fig_h, dpi = fig_dpi)
+  ggsave(out[["log2fc_svg"]], make_log2fc_forest(sl_na), width = fig_w, height = fig_h)
   sink(type = "message"); close(log_con); quit(save = "no", status = 0)
 }
 
 # ---- Focused heatmap (z-scored VST) ----------------------------------------
 mat <- assay(vsd)[present, , drop = FALSE]
 rownames(mat) <- lab_for(rownames(vsd)[present])
-if (length(present) > 1) mat <- t(scale(t(mat)))
+mat <- t(scale(t(mat)))
+# Row z-scores need a zero-anchored diverging ramp with symmetric breaks (as in
+# make_figures.R), so z=0 is the neutral colour rather than the data midpoint.
+zlim <- as.numeric(gp("heatmap_zlim", 2.5))
+mat <- pmin(pmax(mat, -zlim), zlim)
 ann <- as.data.frame(colData(dds)[, group_var, drop = FALSE])
 ph <- pheatmap(mat, scale = "none", annotation_col = ann, show_rownames = TRUE,
                show_colnames = sample_labels,  # hide sample names to declutter a many-sample run
@@ -266,13 +275,15 @@ ph <- pheatmap(mat, scale = "none", annotation_col = ann, show_rownames = TRUE,
                cluster_rows = length(present) > 1 && all(is.finite(mat)),
                clustering_method = "ward.D2", fontsize = base_size, fontsize_row = 8,
                color = pal_spec$div(255),  # project diverging ramp (was a hardcoded Blue-Red)
+               breaks = seq(-zlim, zlim, length.out = 256), legend_breaks = c(-zlim, 0, zlim),
+               legend_labels = c(sprintf("%.1f", -zlim), "0  (row z-score)", sprintf("%.1f", zlim)),
                border_color = NA, silent = TRUE)
 # Size from BOTH axes: height from gene count, width from sample count (a many-sample
 # GOI heatmap otherwise crushed its columns). Mirrors figure_style.R::heatmap_dim.
 gutter <- min(2.6, 0.6 + 0.070 * max(nchar(rownames(mat)), 1))
-ww <- min(max(gutter + ncol(mat) * 10 / 72 + 1.7, 7), 44)
+ww <- min(max(gutter + ncol(mat) * 10 / 72 + 1.7, fig_w), 44)
 hh <- min(max(length(present) * 12 / 72 + 3.1, 4), 44)
-png(out[["heatmap_png"]], width = ww, height = hh, units = "in", res = 300)
+png(out[["heatmap_png"]], width = ww, height = hh, units = "in", res = fig_dpi)
 grid::grid.newpage(); grid::grid.draw(ph$gtable); dev.off()
 svglite(out[["heatmap_svg"]], width = ww, height = hh)
 grid::grid.newpage(); grid::grid.draw(ph$gtable); dev.off()
@@ -292,7 +303,7 @@ grp_levels <- sort(unique(long$group))
 grp_cols <- setNames(rep(pal_spec$discrete, length.out = length(grp_levels)), grp_levels)
 p_expr <- ggplot(long, aes(group, count, colour = group)) +
   geom_boxplot(outlier.shape = NA, alpha = 0.4) +
-  geom_jitter(width = 0.15, size = 1.6) +
+  geom_jitter(position = position_jitter(width = 0.15, seed = 1), size = 1.6) +
   facet_wrap(~ gene, scales = "free_y") +
   scale_colour_manual(values = grp_cols) +
   labs(x = NULL, y = if (identical(assay_kind, "log2_cpm")) "log2 CPM"
@@ -312,7 +323,7 @@ matched_ids <- rownames(vsd)[present]
 sl <- slice_de_by_genes(matched_ids)
 write.csv(sl, out[["de_slice"]], row.names = FALSE)
 save_gg(make_log2fc_forest(sl), out[["log2fc_png"]], out[["log2fc_svg"]],
-       w = 7, h = min(max(nrow(sl) * 0.28 + 1.5, 3), 22))
+       w = fig_w, h = min(max(nrow(sl) * 0.28 + 1.5, 3), 22))
 
 write.csv(as.data.frame(nc), out[["csv"]])
 sink(type = "message"); close(log_con)

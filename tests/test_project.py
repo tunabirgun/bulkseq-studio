@@ -2,8 +2,35 @@ from __future__ import annotations
 
 import pytest
 
+from pathlib import Path
+
 from app.core.benchmark_datasets import create_benchmark_project
-from app.core.project import ProjectExistsError, ProjectManager, is_project_root
+from app.core.project import (ProjectExistsError, ProjectManager, is_project_root,
+                              validate_working_directory)
+
+
+def test_cli_refuses_a_resource_pool_below_one(tmp_path, capsys) -> None:
+    # The pool becomes snakemake's --cores and the mem_mb budget: `--cores -4` and a 0 MB
+    # pool were accepted and written into the project config with nothing to catch them.
+    from app.cli import EXIT_INVALID, EXIT_OK, main
+
+    root = ProjectManager().create_project("resources", tmp_path)
+    for key, bad in (("resources.total_threads", "-4"), ("resources.total_memory_gb", "0")):
+        assert main(["config", "set", key, bad, "-C", str(root), "--quiet"]) == EXIT_INVALID
+        assert "greater than or equal to 1" in capsys.readouterr().err
+    # Negative control: a valid value still round-trips.
+    assert main(["config", "set", "resources.total_threads", "8", "-C", str(root),
+                 "--quiet"]) == EXIT_OK
+
+
+def test_network_share_working_directory_fails(tmp_path) -> None:
+    # A UNC share is writable from Windows but has no path the pipeline can reach, and
+    # windows_to_wsl_path now refuses it. Report it where the folder is chosen.
+    messages = validate_working_directory(Path(r"\\server\share\projects"))
+    assert messages and messages[0]["status"] == "FAIL"
+    assert "network share" in messages[0]["message"]
+    # Negative control: an ordinary local directory still validates.
+    assert all(m["status"] != "FAIL" for m in validate_working_directory(tmp_path, min_free_gb=0))
 
 
 def test_create_project_creates_network_and_stats_dirs(tmp_path) -> None:

@@ -17,7 +17,8 @@ _TM_SW = f"{_TM.get('sliding_window_size', 4)}:{_TM.get('sliding_window_quality'
 _TM_LEAD = _TM.get("leading", 3)
 _TM_TRAIL = _TM.get("trailing", 3)
 
-_PATH_PREPEND = "export PATH=\"${{MAMBA_ROOT_PREFIX:-$HOME/micromamba}}/envs/bulkseq/bin:${{PATH}}\" && "
+_MAMBA_ROOT = "${{MAMBA_ROOT_PREFIX:-$HOME/micromamba}}"
+_PATH_PREPEND = "export PATH=\"" + _MAMBA_ROOT + "/envs/bulkseq/bin:${{PATH}}\" && "
 _TG_GUARD = (
     # Put the env bin on PATH first (see reference.smk): the activated PATH is not
     # reliably inherited by the rule shell, so command -v would fail even when installed.
@@ -32,9 +33,17 @@ _TM_GUARD = (
     "bulkseq environment; the Trimmomatic trimmer needs it. In the app open Setup and click "
     "Install / repair the environment, then re-run.' >&2; exit 1; }}; "
 )
+# Locate the Trimmomatic adapter FASTA in the environment's share dir. Both candidate roots
+# default MAMBA_ROOT_PREFIX exactly as the PATH prepend above does: bare, it is unset on a
+# native (non-WSL) run and `set -u` aborts the rule before Trimmomatic starts. find|head always
+# exits 0, so an empty result is caught explicitly -- otherwise Trimmomatic silently receives
+# ILLUMINACLIP::2:30:10 and no adapter is clipped.
 _ADAP_FIND = (
-    "ADAP=$(find \"${{CONDA_PREFIX:-$MAMBA_ROOT_PREFIX/envs/bulkseq}}/share\" "
-    "\"$MAMBA_ROOT_PREFIX/envs/bulkseq/share\" -name %s 2>/dev/null | head -1) && "
+    "ADAP=$(find \"${{CONDA_PREFIX:-" + _MAMBA_ROOT + "/envs/bulkseq}}/share\" "
+    "\"" + _MAMBA_ROOT + "/envs/bulkseq/share\" -name %(name)s 2>/dev/null | head -1) && "
+    "test -n \"$ADAP\" || {{ echo 'The Trimmomatic adapter file %(name)s was not found in the "
+    "bulkseq environment; the Trimmomatic trimmer needs it. In the app open Setup and click "
+    "Install / repair the environment, then re-run.' >&2; exit 1; }}; "
 )
 
 
@@ -52,6 +61,7 @@ if TRIMMER == "trim-galore":
                 q=_Q, length=_MINLEN,
                 cores=lambda wc, threads: min(threads, 4),
             threads: rule_threads("fastp", 4)
+            resources: mem_mb=rule_mem_mb("fastp", 4)
             benchmark: "benchmarks/trim_galore_{sample}.tsv"
             log: "logs/trim_galore_{sample}.log",
             shell:
@@ -59,7 +69,7 @@ if TRIMMER == "trim-galore":
                 "rm -rf {params.wd} && mkdir -p {params.wd} results/qc/trim_galore && "
                 "trim_galore --gzip --basename {wildcards.sample} --quality {params.q} "
                 "--length {params.length} --cores {params.cores} --output_dir {params.wd} "
-                "{input.r1} > {log} 2>&1 && "
+                "{input.r1:q} > {log} 2>&1 && "
                 "mv {params.wd}/{wildcards.sample}_trimmed.fq.gz {output.r1} && "
                 "(cp {params.wd}/*_trimming_report.txt results/qc/trim_galore/ 2>/dev/null || true) && "
                 "rm -rf {params.wd}"
@@ -78,6 +88,7 @@ if TRIMMER == "trim-galore":
                 q=_Q, length=_MINLEN,
                 cores=lambda wc, threads: min(threads, 4),
             threads: rule_threads("fastp", 4)
+            resources: mem_mb=rule_mem_mb("fastp", 4)
             benchmark: "benchmarks/trim_galore_{sample}.tsv"
             log: "logs/trim_galore_{sample}.log",
             shell:
@@ -85,7 +96,7 @@ if TRIMMER == "trim-galore":
                 "rm -rf {params.wd} && mkdir -p {params.wd} results/qc/trim_galore && "
                 "trim_galore --paired --gzip --basename {wildcards.sample} --quality {params.q} "
                 "--length {params.length} --cores {params.cores} --output_dir {params.wd} "
-                "{input.r1} {input.r2} > {log} 2>&1 && "
+                "{input.r1:q} {input.r2:q} > {log} 2>&1 && "
                 "mv {params.wd}/{wildcards.sample}_val_1.fq.gz {output.r1} && "
                 "mv {params.wd}/{wildcards.sample}_val_2.fq.gz {output.r2} && "
                 "(cp {params.wd}/*_trimming_report.txt results/qc/trim_galore/ 2>/dev/null || true) && "
@@ -103,12 +114,13 @@ elif TRIMMER == "trimmomatic":
             params:
                 length=_MINLEN, sw=_TM_SW, leading=_TM_LEAD, trailing=_TM_TRAIL,
             threads: rule_threads("fastp", 4)
+            resources: mem_mb=rule_mem_mb("fastp", 4)
             benchmark: "benchmarks/trimmomatic_{sample}.tsv"
             log: "logs/trimmomatic_{sample}.log",
             shell:
                 _TM_GUARD + "mkdir -p results/qc/trimmomatic && " +
-                (_ADAP_FIND % "TruSeq3-SE.fa") +
-                "trimmomatic SE -threads {threads} {input.r1} {output.r1} "
+                (_ADAP_FIND % {"name": "TruSeq3-SE.fa"}) +
+                "trimmomatic SE -threads {threads} {input.r1:q} {output.r1:q} "
                 "ILLUMINACLIP:$ADAP:2:30:10 LEADING:{params.leading} TRAILING:{params.trailing} "
                 "SLIDINGWINDOW:{params.sw} MINLEN:{params.length} "
                 "> results/qc/trimmomatic/{wildcards.sample}.log 2>&1; "
@@ -127,14 +139,15 @@ elif TRIMMER == "trimmomatic":
                 wd=lambda wc: f"results/trimmed/_tm_{wc.sample}",
                 length=_MINLEN, sw=_TM_SW, leading=_TM_LEAD, trailing=_TM_TRAIL,
             threads: rule_threads("fastp", 4)
+            resources: mem_mb=rule_mem_mb("fastp", 4)
             benchmark: "benchmarks/trimmomatic_{sample}.tsv"
             log: "logs/trimmomatic_{sample}.log",
             shell:
                 _TM_GUARD +
                 "rm -rf {params.wd} && mkdir -p {params.wd} results/qc/trimmomatic && " +
-                (_ADAP_FIND % "TruSeq3-PE.fa") +
-                "trimmomatic PE -threads {threads} {input.r1} {input.r2} "
-                "{output.r1} {params.wd}/u1.fq.gz {output.r2} {params.wd}/u2.fq.gz "
+                (_ADAP_FIND % {"name": "TruSeq3-PE.fa"}) +
+                "trimmomatic PE -threads {threads} {input.r1:q} {input.r2:q} "
+                "{output.r1:q} {params.wd}/u1.fq.gz {output.r2:q} {params.wd}/u2.fq.gz "
                 "ILLUMINACLIP:$ADAP:2:30:10 LEADING:{params.leading} TRAILING:{params.trailing} "
                 "SLIDINGWINDOW:{params.sw} MINLEN:{params.length} "
                 "> results/qc/trimmomatic/{wildcards.sample}.log 2>&1; "
@@ -155,10 +168,11 @@ else:
             params:
                 q=_Q, u=_U, length=_MINLEN, polyg=_POLYG, polyx=_POLYX,
             threads: rule_threads("fastp", 4)
+            resources: mem_mb=rule_mem_mb("fastp", 4)
             benchmark: "benchmarks/fastp_{sample}.tsv"
             log: "logs/fastp_{sample}.log",
             shell:
-                "fastp -i {input.r1} -o {output.r1} "
+                "fastp -i {input.r1:q} -o {output.r1:q} "
                 "-q {params.q} -u {params.u} -l {params.length} {params.polyg} {params.polyx} "
                 "-j {output.json} -h {output.html} "
                 "--thread $(( {threads} < 16 ? {threads} : 16 )) > {log} 2>&1"
@@ -177,10 +191,11 @@ else:
             params:
                 q=_Q, u=_U, length=_MINLEN, polyg=_POLYG, polyx=_POLYX,
             threads: rule_threads("fastp", 4)
+            resources: mem_mb=rule_mem_mb("fastp", 4)
             benchmark: "benchmarks/fastp_{sample}.tsv"
             log: "logs/fastp_{sample}.log",
             shell:
-                "fastp -i {input.r1} -I {input.r2} -o {output.r1} -O {output.r2} "
+                "fastp -i {input.r1:q} -I {input.r2:q} -o {output.r1:q} -O {output.r2:q} "
                 "--detect_adapter_for_pe -q {params.q} -u {params.u} -l {params.length} {params.polyg} {params.polyx} "
                 "-j {output.json} -h {output.html} "
                 "--thread $(( {threads} < 16 ? {threads} : 16 )) > {log} 2>&1"

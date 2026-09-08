@@ -6,7 +6,11 @@ from uuid import uuid4
 import pandas as pd
 
 from app.core.input_detection import detect_fastq_inputs
-from app.core.metadata import detect_batch_condition_confounding, validate_metadata
+from app.core.metadata import (
+    detect_batch_condition_confounding,
+    non_numeric_matrix_tokens,
+    validate_metadata,
+)
 
 
 BASE = Path("manual_test_metadata")
@@ -69,3 +73,11 @@ def test_single_replicate_warns() -> None:
     )
     messages = validate_metadata(df, allow_pending_sra=True)
     assert any(m["status"] == "WARNING" and "two biological replicates" in m["message"] for m in messages)
+
+
+def test_non_numeric_matrix_tokens_rejects_decimal_commas_and_placeholders() -> None:
+    clean = pd.DataFrame({"S1": ["8.21", "12.9", "NA", ""], "S2": ["1e3", "-0.5", "7", "nan"]})
+    assert non_numeric_matrix_tokens(clean) == []
+    dirty = pd.DataFrame({"S1": ["8,21", "12.9"], "S2": ["NULL", "n/a"]})
+    assert non_numeric_matrix_tokens(dirty) == ["8,21", "NULL", "n/a"]
+    assert non_numeric_matrix_tokens(dirty, limit=1) == ["8,21"]

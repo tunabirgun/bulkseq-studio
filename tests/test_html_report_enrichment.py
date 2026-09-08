@@ -151,6 +151,47 @@ def test_ppi_report_panel_spans_the_responsive_figure_grid(mhr, tmp_path) -> Non
             "ppi_network", "STRING protein-association network")
 
 
+def _write_hub_csv(project: Path, rows: list[list], cols: list[str] | None = None) -> Path:
+    networks = project / "results" / "networks"
+    networks.mkdir(parents=True, exist_ok=True)
+    _write_csv(networks / "ppi_hub_genes.csv",
+               cols or ["symbol", "degree", "betweenness", "module", "log2FC"], rows)
+    return networks / "ppi_hub_genes.csv"
+
+
+def test_ppi_hub_table_backs_the_prioritise_hubs_caption(mhr, tmp_path) -> None:
+    _write_hub_csv(tmp_path, [["FKBP5", 12, 340.5, 1, -2.31],
+                              ["KLF15", 9, 88.0, 1, 1.07]])
+    table = mhr._ppi_hub_table(tmp_path)
+    assert "Most connected proteins (network hubs)" in table
+    assert "tablewrap" in table and "<table class='data enr'>" in table
+    assert "FKBP5" in table and "KLF15" in table
+    # R writes the file already ordered by -degree; the report must not reorder it.
+    assert table.index("FKBP5") < table.index("KLF15")
+    assert "<td class='num'>12</td>" in table and "<td class='num'>340.5</td>" in table
+    assert "results/networks/ppi_hub_genes.csv" in table
+
+    # The figure group carries it beside the network panel.
+    figs = tmp_path / "results" / "figures"
+    figs.mkdir(parents=True, exist_ok=True)
+    (figs / "ppi_network.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 1"></svg>', encoding="utf-8")
+    grouped = mhr._figure_groups(figs, 1, 1, "genes", project=tmp_path)
+    assert "Most connected proteins (network hubs)" in grouped
+    # Without the project (or the CSV) the section simply does not appear.
+    assert "Most connected proteins" not in mhr._figure_groups(figs, 1, 1, "genes")
+
+
+def test_ppi_hub_table_tolerates_a_degraded_header_only_file(mhr, tmp_path) -> None:
+    # skip() in build_string_network.R writes symbol,degree with no rows.
+    _write_hub_csv(tmp_path, [], cols=["symbol", "degree"])
+    assert mhr._ppi_hub_table(tmp_path) == ""
+    _write_hub_csv(tmp_path, [["A", 2]], cols=["symbol", "degree"])
+    table = mhr._ppi_hub_table(tmp_path)
+    assert "Betweenness" not in table and "<td>A</td>" in table
+    assert mhr._ppi_hub_table(tmp_path / "missing") == ""
+
+
 def test_volcano_report_panel_uses_the_same_derived_dense_contract(mhr, tmp_path) -> None:
     (tmp_path / "volcano.svg").write_text(
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 1"></svg>',
@@ -915,7 +956,7 @@ def test_html_enrichment_discloses_mapping_coverage_and_limitations(mhr, tmp_pat
         "Mapped tested-gene universe (unique Entrez IDs): 20629\n"
         "GO effective annotated ORA universes: BP 15910/20629 (77.1%; LIMITED_ANNOTATION); MF 20200/20629 (97.9%; PASS); CC 20500/20629 (99.4%; PASS)\n"
         "KEGG identity verification: PASS; configured code=ath; registry code=ath; organism=Arabidopsis thaliana; taxon=3702; expected organism=Arabidopsis thaliana; expected taxon=3702\n"
-        "KEGG retrieval: SUCCESS; pathway collection=162; detail=none\n"
+        "KEGG retrieval: SUCCESS; key form=kegg; pathway collection=162; detail=none\n"
         "KEGG effective resource universe: 4748/20629 (23.0%); eligible 10-500 pathway universe=4687\n"
         "KEGG supported foreground: up 14/79 (17.7%); down 14/64 (21.9%); combined 28/143 (19.6%)\n"
         "KEGG eligible hypotheses/gene sets: 132 after 10-500 filter; foreground-overlapping ORA hypotheses adjusted=32\n"
@@ -950,6 +991,9 @@ def test_html_enrichment_discloses_mapping_coverage_and_limitations(mhr, tmp_pat
     assert "GSEA exact-score ties: 2 pair(s)" in rendered
     assert "GSEA duplicate canonical-ID collapse: 0 group(s)" in rendered
     assert "KEGG identity verification: PASS" in rendered
+    # The enrichKEGG key form is part of the retrieval evidence: the same organism can
+    # return an empty collection under a different key form.
+    assert "KEGG retrieval: SUCCESS; key form=kegg" in rendered
     assert "KEGG effective resource universe: 4748/20629 (23.0%)" in rendered
     assert "KEGG resource status: LIMITED_ANNOTATION" in rendered
     assert "no supported KEGG pathways met the adjusted criterion" in rendered
@@ -1159,3 +1203,77 @@ def test_custom_enrichment_absent_route_and_explicitly_unconfigured_stale_output
         encoding="utf-8",
     )
     assert "Custom gene-set enrichment" not in mhr._enrichment_section(tmp_path)
+
+
+# ---- Figure captions follow the realized assay kind, not the input type ------
+
+def _svg_figs(tmp_path: Path, *names: str) -> Path:
+    figs = tmp_path / "figures"
+    figs.mkdir(exist_ok=True)
+    for name in names:
+        (figs / f"{name}.svg").write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>',
+            encoding="utf-8")
+    return figs
+
+
+def _count_run(engine: str) -> dict:
+    return {"input": {"type": "fastq"}, "workflow": {"de_engine": engine}}
+
+
+def test_assay_kind_is_derived_from_the_route_and_the_de_engine(mhr) -> None:
+    assert mhr._assay_kind(_count_run("DESeq2")) == "vst"
+    assert mhr._assay_kind(_count_run("limma-voom")) == "log2_cpm"
+    assert mhr._assay_kind(_count_run("edgeR")) == "log2_cpm"
+    assert mhr._assay_kind({"input": {"type": "count_matrix"},
+                            "workflow": {"de_engine": "edgeR"}}) == "log2_cpm"
+    # Microarray runs limma whatever the engine field says; an upload fits no local model.
+    assert mhr._assay_kind({"input": {"type": "microarray"},
+                            "workflow": {"de_engine": "limma-voom"}}) == "log2_intensity"
+    assert mhr._assay_kind({"input": {"type": "deseq2_results"}}) == "results_only"
+    assert mhr._assay_kind({}) == "vst"
+
+
+@pytest.mark.parametrize("engine", ["limma-voom", "edgeR"])
+def test_count_captions_match_the_log2_cpm_axes_the_figures_draw(mhr, tmp_path, engine) -> None:
+    figs = _svg_figs(tmp_path, "ma_plot", "pca", "top_deg_heatmap")
+    rendered = mhr._figure_groups(figs, 3, 2, "genes", run=_count_run(engine))
+
+    # make_figures.R labels the MA x axis "average log2 expression" on these backends and
+    # neither run_voom.R nor run_edger.R shrinks the effect (resLFC <- res).
+    assert "average log2 expression" in rendered
+    assert "log2 fold change (unshrunken)" in rendered
+    assert "log2 CPM" in rendered
+    assert "shrunken log2 fold change" not in rendered
+    assert "variance-stabilised counts" not in rendered
+    assert "mean normalised counts (log)" not in rendered
+    # voom and edgeR are count-based, so the count wording in the how-to stays accurate.
+    assert "lowest-count genes" in rendered
+
+
+def test_deseq2_and_microarray_captions_are_unchanged(mhr, tmp_path) -> None:
+    figs = _svg_figs(tmp_path, "ma_plot", "pca")
+    deseq2 = mhr._figure_groups(figs, 3, 2, "genes", run=_count_run("DESeq2"))
+    assert "mean normalised counts (log)" in deseq2
+    assert "shrunken log2 fold change" in deseq2
+    assert "variance-stabilised counts" in deseq2
+    assert "log2 CPM" not in deseq2
+
+    micro_run = {"input": {"type": "microarray"}}
+    micro = mhr._figure_groups(figs, 3, 2, "genes", is_micro=True, run=micro_run)
+    assert "log2 fold change (limma, unshrunken)" in micro
+    assert "log2 expression (array intensity)" in micro
+    assert "genes with the lowest measured expression" in micro
+    assert "log2 CPM" not in micro
+    # The caption path is reachable without a run payload (older callers pass is_micro only).
+    assert "log2 expression (array intensity)" in mhr._panel(figs, "pca", "A", is_micro=True)
+
+
+def test_basemean_glossary_names_the_scale_the_engine_actually_wrote(mhr) -> None:
+    voom = mhr._route_gloss(_count_run("limma-voom"))
+    assert "log2 counts per million" in voom["basemean"]
+    assert "read count" not in voom["basemean"]
+    assert "log2 counts per million" in voom["ma"]
+    # DESeq2 keeps the count wording; microarray keeps the intensity wording.
+    assert "read count" in mhr._route_gloss(_count_run("DESeq2"))["basemean"]
+    assert "expression intensity" in mhr._route_gloss({"input": {"type": "microarray"}})["basemean"]

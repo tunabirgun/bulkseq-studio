@@ -189,6 +189,63 @@ def test_gui_fallback_reference_lock_is_route_aware_and_malformed_fails_closed(
     assert _load_reference_integrity(tmp_path, "microarray") == {}
 
 
+def test_gui_version_probes_follow_the_configured_routes() -> None:
+    # software_versions.txt recorded a fixed list, so trim_galore, ribodetector, fastq_screen,
+    # bowtie2, RSeQC, gffread, perl and aria2c never appeared in it no matter what ran.
+    from app.core.provenance import TOOLS as provenance_TOOLS, select_tools
+
+    salmon = select_tools({"input": {"type": "sra"},
+                           "workflow": {"aligner": "Salmon", "trimmer": "trim-galore",
+                                        "rrna_filtering": True, "rrna_tool": "ribodetector",
+                                        "contamination_screen": True, "rseqc": True},
+                           "contamination": {"conf": "/x/fastq_screen.conf"}})
+    for expected in ("salmon", "gffread", "perl", "trim_galore", "ribodetector",
+                     "fastq_screen", "bowtie2", "aria2c", "Rscript", "snakemake"):
+        assert expected in salmon, f"{expected} is not probed on the route that runs it"
+    assert "fastp" not in salmon and "sortmerna" not in salmon and "STAR" not in salmon
+    assert "RSeQC" not in salmon, "RSeQC needs a genome BAM; Salmon produces none"
+
+    star = select_tools({"input": {"type": "fastq"}, "workflow": {"rseqc": True}})
+    assert {"STAR", "samtools", "featureCounts", "fastp", "RSeQC"} <= set(star)
+    assert "aria2c" not in star and "fastq_screen" not in star
+
+    # The labels must match the pipeline-side writer's, or the same tool appears under two
+    # names between software_versions.txt and the report.
+    hisat2 = select_tools({"input": {"type": "fastq"}, "workflow": {"aligner": "HISAT2"}})
+    assert {"HISAT2", "samtools", "featureCounts"} <= set(hisat2)
+    mrs = _load_make_run_summary()
+    shared = set(mrs.TOOLS) & set(select_tools({"input": {"type": "fastq"}, "workflow": {}}))
+    for name in shared:
+        assert mrs.TOOLS[name][0] == provenance_TOOLS[name][0], f"{name} probes a different binary"
+
+    # A results-only project runs no read-processing tool at all.
+    results_only = select_tools({"input": {"type": "deseq2_results"}, "workflow": {}})
+    assert set(results_only) == {"snakemake", "python", "Rscript"}
+
+
+def test_local_version_probe_survives_a_tool_that_prints_nothing(monkeypatch) -> None:
+    # (stdout or stderr).splitlines()[0] raised IndexError on empty output and killed the
+    # whole summary; the WSL branch's first-non-empty-line rule must apply natively too.
+    import app.core.provenance as prov
+
+    monkeypatch.setattr(prov.shutil, "which", lambda name: "/usr/bin/" + name)
+
+    class _R:
+        def __init__(self, out):
+            self.stdout = out
+
+    outputs = {"fastqc": "", "featureCounts": "\n\nfeatureCounts v2.0.6\n"}
+    monkeypatch.setattr(prov.subprocess, "run",
+                        lambda cmd, **kw: _R(outputs.get(cmd[0], "tool 1.2.3\n")))
+    versions = prov._capture_versions_local({"fastqc": ["fastqc", "--version"],
+                                             "featureCounts": ["featureCounts", "-v"]})
+    assert versions["fastqc"] == "no version output"
+    assert versions["featureCounts"] == "featureCounts v2.0.6"
+    # A tool that is not installed is named as such rather than raising.
+    monkeypatch.setattr(prov.shutil, "which", lambda name: None)
+    assert prov._capture_versions_local({"perl": ["perl", "-v"]})["perl"] == "unavailable (not in env)"
+
+
 def test_run_summary_tools_capture_configured_trimmer_and_rrna_filter() -> None:
     # make_run_summary.py's TOOLS dict previously never probed the trimmer / rRNA filter /
     # contamination screen a run actually used (only the fastp/sortmerna defaults were ever

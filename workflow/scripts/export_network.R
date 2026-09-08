@@ -19,6 +19,8 @@ local({
 suppressMessages({
   library(jsonlite)
 })
+# One ORA scope rule shared with make_enrichment_figures.R (separate BH families).
+source(file.path(snakemake@scriptdir, "enrichment_scope.R"))
 
 log_con <- file(snakemake@log[[1]], open = "wt")
 sink(log_con, type = "message")
@@ -31,7 +33,7 @@ have_ep <- requireNamespace("enrichplot", quietly = TRUE)
 
 # Shared multi-format writer: GraphML (igraph), SIF (hand-written; write_graph has
 # no sif format), cytoscape.js JSON (jsonlite), and node/edge CSVs.
-write_network <- function(g, graphml, sif, cyjs, nodes_csv, edges_csv) {
+write_network <- function(g, graphml, sif, cyjs, nodes_csv, edges_csv, scope = "none") {
   empty <- is.null(g) || !have_ig || igraph::vcount(g) == 0
   if (empty) {
     # Valid empty GraphML (not a 0-byte file) so degraded runs still import.
@@ -44,7 +46,8 @@ write_network <- function(g, graphml, sif, cyjs, nodes_csv, edges_csv) {
     }
     writeLines(character(0), sif)
     writeLines('{"elements":{"nodes":[],"edges":[]}}', cyjs)
-    write.csv(data.frame(id = character(0)), nodes_csv, row.names = FALSE)
+    # Same header as a populated export, so the node schema is stable across degraded runs.
+    write.csv(data.frame(id = character(0), scope = character(0)), nodes_csv, row.names = FALSE)
     write.csv(data.frame(source = character(0), target = character(0)), edges_csv, row.names = FALSE)
     return(invisible())
   }
@@ -52,23 +55,35 @@ write_network <- function(g, graphml, sif, cyjs, nodes_csv, edges_csv) {
   el <- igraph::as_edgelist(g)
   writeLines(apply(el, 1, function(r) paste(r[1], "interacts", r[2], sep = "\t")), sif)
   nodes_df <- data.frame(id = igraph::V(g)$name %||% as.character(seq_len(igraph::vcount(g))),
-                         stringsAsFactors = FALSE)
+                         scope = scope, stringsAsFactors = FALSE)
   write.csv(nodes_df, nodes_csv, row.names = FALSE)
   edges_df <- data.frame(source = el[, 1], target = el[, 2], stringsAsFactors = FALSE)
   if ("weight" %in% igraph::edge_attr_names(g)) edges_df$weight <- igraph::E(g)$weight
   write.csv(edges_df, edges_csv, row.names = FALSE)
-  nodes_j <- lapply(nodes_df$id, function(x) list(data = list(id = x)))
+  nodes_j <- lapply(nodes_df$id, function(x) list(data = list(id = x, scope = scope)))
   edges_j <- lapply(seq_len(nrow(edges_df)), function(i) list(data = as.list(edges_df[i, , drop = FALSE])))
   writeLines(toJSON(list(elements = list(nodes = nodes_j, edges = edges_j)), auto_unbox = TRUE), cyjs)
 }
 
-# Pick the first enrichment result with >= 2 terms (ego_all is empty on most real
-# data, so do not source from it alone).
+# Source object: the ORA scope make_enrichment_figures.R draws, so the export and the
+# figure describe the same BH family. Term similarity needs >= 2 terms; when the selected
+# ORA has fewer and GSEA does not, fall back to the GSEA result -- a different test, so it
+# is exported under its own scope label rather than as the ORA.
+selected <- select_enrichment_scope(obj)
 pick <- NULL
-for (nm in c("ego_all", "ego_up", "ego_down", "gse")) {
-  o <- obj[[nm]]
-  if (!is.null(o) && tryCatch(nrow(as.data.frame(o)) >= 2, error = function(e) FALSE)) { pick <- o; break }
+scope <- "none"
+if (selected$selected_n >= 2) {
+  pick <- selected$object
+  scope <- sprintf("GO BP ORA (%s)", selected$scope)
+} else if (!is.null(obj[["gse"]]) &&
+           tryCatch(nrow(as.data.frame(obj[["gse"]])) >= 2, error = function(e) FALSE)) {
+  pick <- obj[["gse"]]
+  scope <- "GO BP GSEA (ranked list)"
 }
+message(sprintf(paste0("Enrichment network scope: %s; adjusted-significant terms - ",
+                       "combined: %d; up: %d; down: %d; selected ORA (%s): %d"),
+                scope, selected$combined_n, selected$up_n, selected$down_n,
+                selected$scope, selected$selected_n))
 
 emap_g <- NULL
 genemap_g <- NULL
@@ -98,9 +113,9 @@ if (have_ep && have_ig && !is.null(pick)) {
 }
 
 write_network(emap_g, out[["emap_graphml"]], out[["emap_sif"]], out[["emap_cyjs"]],
-              out[["emap_nodes"]], out[["emap_edges"]])
+              out[["emap_nodes"]], out[["emap_edges"]], scope = scope)
 write_network(genemap_g, out[["genemap_graphml"]], out[["genemap_sif"]], out[["genemap_cyjs"]],
-              out[["genemap_nodes"]], out[["genemap_edges"]])
+              out[["genemap_nodes"]], out[["genemap_edges"]], scope = scope)
 
 sink(type = "message")
 close(log_con)

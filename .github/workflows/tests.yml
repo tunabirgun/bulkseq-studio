@@ -68,3 +68,42 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           BULKSEQ_SKIP_READINESS_DIALOG: "1"
         run: python -m pytest -q --tb=short
+
+  # The figure contracts that actually execute R (label-layout angles, the volcano ranked
+  # key, the sample-distance gradient legend) skip themselves when Rscript is missing, and
+  # neither runner above has R -- so those gates never ran anywhere. This job installs R and
+  # sets BULKSEQ_REQUIRE_R=1, which turns every one of those skips into a failure.
+  #
+  # The R package list is what the executed helper slices and their harness scripts call:
+  # ggplot2 and svglite (grid/grDevices are base; systemfonts arrives with svglite). Nothing
+  # here sources a whole pipeline script, so pheatmap and the Bioconductor stack stay out.
+  figure-contracts:
+    name: figure contracts (R)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          # Match the pinned pipeline R (workflow/envs); use-public-rspm serves binaries, so
+          # ggplot2 does not get built from source on every run.
+          r-version: "4.5.2"
+          use-public-rspm: true
+
+      - name: Install the R packages the executed contracts need
+        run: Rscript -e 'install.packages(c("ggplot2", "svglite"))'
+
+      - name: Install pytest
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "pytest>=8.2"
+
+      - name: Run the figure contracts with R mandatory
+        env:
+          BULKSEQ_REQUIRE_R: "1"
+        run: python -m pytest -q --tb=short tests/test_figure_rendering_contracts.py

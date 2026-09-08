@@ -809,7 +809,10 @@ _ENRICHMENT_MAPPING_PREFIXES = (
     "KEGG effective resource universe:",
     "KEGG supported foreground:",
     "KEGG eligible hypotheses/gene sets:",
+    "KEGG ranked-list annotation:",
     "KEGG adjusted results:",
+    "KEGG ORA status:",
+    "KEGG GSEA status:",
     "KEGG resource status:",
     "Unmapped input IDs excluded:",
     "Ambiguous input IDs excluded:",
@@ -826,6 +829,12 @@ _ENRICHMENT_MAPPING_PREFIXES = (
     "ORA parameters:",
     "ORA multiple-testing families:",
     "GSEA parameters:",
+    # Determinism evidence for the ranked list: the HTML report already keeps these three
+    # (make_html_report.py), and the provenance record must carry the same set or a run whose
+    # GSEA ranking is reproducible cannot be shown to be.
+    "GSEA ranking order:",
+    "GSEA exact-score ties:",
+    "GSEA duplicate canonical-ID collapse:",
     "Mapping limitation:",
 )
 
@@ -851,14 +860,15 @@ _PPI_REQUIRED_FIELDS = {
     "software": ("R", "STRINGdb", "igraph", "ggplot2"),
     "configuration": (
         "seed_source", "max_seed_genes", "score_threshold_combined",
-        "string_combined_score_scale", "stored_edge_weight", "hub_label_count", "layout",
+        "string_combined_score_scale", "stored_edge_weight",
     ),
     "realized": (
-        "seed_source", "seed_input_count", "seed_after_limit_count", "mapped_seed_count",
+        "seed_source", "seed_input_count", "seed_up_count", "seed_down_count",
+        "seed_after_limit_count", "mapped_seed_count",
         "mapped_string_id_count", "interactions_returned_count",
         "interactions_passing_threshold_count", "score_threshold_combined",
         "minimum_combined_score", "maximum_combined_score", "node_count", "edge_count",
-        "module_count", "hub_label_count", "layout_method", "layout_fallback_reason",
+        "module_count", "layout_method", "layout_fallback_reason",
         "figure_width_in", "figure_height_in",
     ),
     "methods": ("edge_source", "community_detection", "betweenness", "layout", "figure_labels"),
@@ -991,7 +1001,7 @@ def ppi_provenance_lines(payload: dict) -> list[str]:
         f"seed={_recorded(labels.get('seed'))}",
         "PPI package versions: " + "; ".join(
             f"{name}={_recorded(software.get(name))}"
-            for name in ("R", "STRINGdb", "igraph", "ggrepel", "ggplot2")
+            for name in ("R", "STRINGdb", "igraph", "ggplot2")
             if name in software
         ),
     ]

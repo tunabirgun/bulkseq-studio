@@ -10,6 +10,7 @@ os.environ.setdefault("BULKSEQ_SKIP_READINESS_DIALOG", "1")
 from PySide6.QtWidgets import QApplication, QLabel, QSizePolicy  # noqa: E402
 
 from app.core.config_models import Deseq2ResultsDirectionProvenance  # noqa: E402
+from app.core.paths import app_root  # noqa: E402
 from app.ui.main_window import MainWindow  # noqa: E402
 
 
@@ -35,6 +36,9 @@ def test_workflow_controls_greyed_by_input_mode() -> None:
     assert w.rseqc.isEnabled()
     assert w.gsva.isEnabled()
     assert w.meta_analysis.isEnabled()  # count-based route -> meta available
+    assert w.adv_group.isEnabled()
+    assert all(c.isEnabled() for c in w.adv_alignment_widgets)
+    assert all(c.isEnabled() for c in w.adv_de_widgets)
 
     # microarray: no alignment, limma-trend forced -> align group + de_engine + organellar +
     # rseqc greyed; enrichment/figures/gsva and the contrast builder stay live.
@@ -51,6 +55,11 @@ def test_workflow_controls_greyed_by_input_mode() -> None:
     assert w.numerator.isEnabled()
     assert w.design.isEnabled()
     assert not w.meta_analysis.isEnabled()  # microarray has no per-study count fan-out
+    # Nothing in Advanced parameters applies: no reads to trim or align, and limma-trend
+    # reads neither the DESeq2 count filter nor its shrinkage estimator.
+    assert not w.adv_group.isEnabled()
+    assert not any(c.isEnabled() for c in w.adv_alignment_widgets)
+    assert not any(c.isEnabled() for c in w.adv_de_widgets)
 
     # count-matrix: no alignment, but the DE engine still runs on counts.
     w.config.input.type = "count_matrix"
@@ -59,6 +68,14 @@ def test_workflow_controls_greyed_by_input_mode() -> None:
     assert w.de_engine.isEnabled()
     assert w.gsva.isEnabled()
     assert w.meta_analysis.isEnabled()  # count matrix can carry a multi-study dataset column
+    # The read-preparation / aligner parameters are dead here, but DESeq2 still reads its
+    # count filter and shrinkage estimator, so the panel must not be greyed wholesale.
+    assert w.adv_group.isEnabled()
+    assert not any(c.isEnabled() for c in w.adv_alignment_widgets)
+    assert all(c.isEnabled() for c in w.adv_de_widgets)
+    assert not w.fastp_u.isEnabled()
+    assert not w.star_twopass.isEnabled()
+    assert w.de_min_count.isEnabled()
 
     # deseq2-results: DE is bypassed and there is no per-sample matrix. Local-model controls
     # disappear; the immutable imported direction replaces them while thresholds stay live.
@@ -88,6 +105,8 @@ def test_workflow_controls_greyed_by_input_mode() -> None:
     assert not w.design_helper_button.isEnabled()
     assert not w.de_min_count.isEnabled()
     assert not w.de_shrink.isEnabled()
+    assert not w.adv_group.isEnabled()  # DE is bypassed and there are no reads
+    assert not any(c.isEnabled() for c in w.adv_alignment_widgets)
     assert w.alpha.isEnabled()
     assert w.lfc_threshold.isEnabled()
     assert not w.external_de_direction_banner.isHidden()
@@ -145,6 +164,8 @@ def test_workflow_controls_greyed_by_input_mode() -> None:
     assert w.design_helper_button.isEnabled()
     assert w.de_min_count.isEnabled()
     assert w.de_shrink.isEnabled()
+    assert w.adv_group.isEnabled()
+    assert all(c.isEnabled() for c in w.adv_alignment_widgets)
     assert w.external_de_direction_banner.isHidden()
     assert threshold_label.text() == "BH FDR"
     assert w.contrast_info.isHidden()
@@ -156,6 +177,34 @@ def test_workflow_controls_greyed_by_input_mode() -> None:
     assert w.trimmer.isEnabled()
     w.trim.setChecked(False)
     assert not w.trimmer.isEnabled()
+    w.close()
+
+
+def test_friendly_phase_maps_every_rule_the_workflow_defines() -> None:
+    # The run-phase banner must not call the reference download "Downloading sequencing data":
+    # the specific download_genome/download_gtf entries have to win over the bare "download"
+    # that catches download_fastq, and no entry may match a rule that does not exist.
+    _app()
+    w = MainWindow()
+    assert w._friendly_phase("download_genome") == "Preparing the reference genome"
+    assert w._friendly_phase("download_gtf") == "Preparing the reference genome"
+    assert w._friendly_phase("download_fastq") == "Downloading sequencing data"
+    assert w._friendly_phase("star_align") == "Aligning reads to the genome"
+    assert w._friendly_phase("not_a_rule_at_all") is None
+    # Every key must be reachable from a real rule name; the removed fasterq/prefetch entries
+    # were dead because the workflow has no such rule.
+    rules = set()
+    sources = list((app_root() / "workflow" / "rules").glob("*.smk"))
+    sources.append(app_root() / "workflow" / "Snakefile")
+    for smk in sources:
+        for line in smk.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("rule ") and stripped.endswith(":"):
+                rules.add(stripped[len("rule "):-1].strip())
+    assert "download_genome" in rules and "download_fastq" in rules
+    unmatched = [key for key, _ in w._PHASE_BY_RULE
+                 if not any(key in rule for rule in rules)]
+    assert unmatched == []
     w.close()
 
 
@@ -171,14 +220,24 @@ def test_meta_analysis_checkbox_roundtrip() -> None:
     assert ("comparative_meta", "Multi-study meta-analysis figures") in w.PALETTE_GROUPS
 
     w.meta_analysis.setChecked(True)
+    # The GO-ontology combo is a meta-analysis dependant: live only while meta-analysis is on.
+    assert w.meta_go_ontology.isEnabled()
+    w.meta_go_ontology.setCurrentIndex(w.meta_go_ontology.findData("MF"))
     assert w._save_workflow_settings() is not False
     assert w.config.workflow.meta_analysis is True
+    assert w.config.enrichment.go_ontology == "MF"
+    assert w.manager.load_config(w.project_root).enrichment.go_ontology == "MF"
 
     w.config.workflow.meta_analysis = False
     w._populate_widgets_from_config()
     assert w.meta_analysis.isChecked() is False
+    assert not w.meta_go_ontology.isEnabled()
+    assert w.meta_go_ontology.currentData() == "MF"  # hydrated from config, not reset
 
     w.config.workflow.meta_analysis = True
+    w.config.enrichment.go_ontology = "CC"
     w._populate_widgets_from_config()
     assert w.meta_analysis.isChecked() is True
+    assert w.meta_go_ontology.isEnabled()
+    assert w.meta_go_ontology.currentData() == "CC"
     w.close()

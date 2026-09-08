@@ -36,25 +36,50 @@ samples_file <- snakemake@input[["samples"]]
 out_csv <- snakemake@output[["scores"]]
 png_path <- snakemake@output[["heatmap_png"]]
 svg_path <- snakemake@output[["heatmap_svg"]]
+# Figure style. The rule declares no `style` param, so the values arrive through the config;
+# read the param first anyway so the script matches the other figure scripts if one is added.
+style <- tryCatch(snakemake@params[["style"]], error = function(e) NULL)
+if (!is.list(style)) style <- tryCatch(snakemake@config[["figures_style"]], error = function(e) NULL)
+if (!is.list(style)) style <- list()
+getp <- make_getp(style)
+# A sample x gene-set heatmap belongs to the 'core' figure group, so a per-group override
+# (palette / font / base font / canvas) applies here as it does in make_figures.R.
+gp <- getp_for(style, "core")
+pal_spec <- palette_spec(as.character(gp("palette", "Blue-Red")))
+# resolve_font maps a Windows font name onto one installed in the pipeline environment.
+base_family <- resolve_font(as.character(gp("font_family", "")))
+base_size <- as.numeric(gp("base_font_size", 12))
+# Pathway names are the long labels here, so they follow make_figures.R's heatmap
+# convention (row labels four points under the base font) instead of the base size.
+fs_row <- max(4, base_size - 4)
+fig_w <- as.numeric(gp("width_in", 8)); fig_h <- as.numeric(gp("height_in", 5))
+fig_dpi <- as.integer(getp("dpi", 300))
 # Per-sample column labels on the GSVA (gene-set x sample) heatmap; default TRUE. Off (the Figure
 # Style "Show per-sample labels" toggle) declutters a many-sample run, like the other heatmaps.
-sample_labels <- { sl <- tryCatch(snakemake@config[["figures_style"]][["sample_labels"]],
-                                  error = function(e) NULL)
+sample_labels <- { sl <- style[["sample_labels"]]
                    if (is.null(sl)) TRUE else isTRUE(as.logical(sl)) }
-# Project palette for the diverging heatmap ramp (was hardcoded); read from the same style config.
-fig_style <- tryCatch(snakemake@config[["figures_style"]], error = function(e) NULL)
-if (!is.list(fig_style)) fig_style <- list()
-pal_spec <- palette_spec(as.character(make_getp(fig_style)("palette", "Blue-Red")))
+# pheatmap's text grobs carry no font family of their own, so draw the gtable inside a
+# viewport that sets one (the same mechanism make_figures.R uses for its heatmaps).
+draw_grid <- function(gtable) {
+  grid::grid.newpage()
+  if (!is.null(base_family)) {
+    grid::pushViewport(grid::viewport(gp = grid::gpar(fontfamily = base_family)))
+    grid::grid.draw(gtable); grid::popViewport()
+  } else grid::grid.draw(gtable)
+}
 
 dir.create(dirname(out_csv), showWarnings = FALSE, recursive = TRUE)
 dir.create(dirname(png_path), showWarnings = FALSE, recursive = TRUE)
 
-placeholder <- function(msg) {
-  write.csv(data.frame(gene_set = character(0)), out_csv, row.names = FALSE)
-  for (dev_open in list(function() png(png_path, width = 1800, height = 1200, res = 300),
-                        function() svglite(svg_path, width = 6, height = 4))) {
+draw_message <- function(msg) {
+  for (dev_open in list(function() png(png_path, width = fig_w, height = fig_h, units = "in", res = fig_dpi),
+                        function() svglite(svg_path, width = fig_w, height = fig_h))) {
     dev_open(); plot.new(); text(0.5, 0.5, msg, cex = 1.1); dev.off()
   }
+}
+placeholder <- function(msg) {
+  write.csv(data.frame(gene_set = character(0)), out_csv, row.names = FALSE)
+  draw_message(msg)
   message(msg)
 }
 
@@ -108,25 +133,25 @@ v <- apply(scores, 1, stats::var)
 # carries no cross-sample signal, so excluding it from a top-variable heatmap is also correct.
 v <- v[is.finite(v) & v > 0]
 if (length(v) < 1) {
-  for (dev_open in list(function() png(png_path, width = 1800, height = 1200, res = 300),
-                        function() svglite(svg_path, width = 6, height = 4))) {
-    dev_open(); plot.new()
-    text(0.5, 0.5, "GSVA heatmap skipped: no gene set varies across samples.", cex = 1.1)
-    dev.off()
-  }
+  draw_message("GSVA heatmap skipped: no gene set varies across samples.")
 } else {
   top <- names(sort(v, decreasing = TRUE))[seq_len(min(40, length(v)))]
   mat <- scores[top, , drop = FALSE]
-  h <- max(3.5, min(14, 0.22 * nrow(mat) + 1.5))
+  # Row pitch follows the row font (>= 1.6 line heights per row) so a larger base font
+  # cannot make the pathway labels collide; 0.22 in reproduces the previous 9 pt layout.
+  row_in <- max(0.22, 1.6 * fs_row / 72)
+  h <- max(fig_h, min(14, row_in * nrow(mat) + 1.5))
   # cluster_rows needs >= 2 rows; a single surviving pathway would otherwise crash pheatmap's hclust.
   draw <- function() pheatmap(mat, scale = "row", show_rownames = TRUE,
                               show_colnames = sample_labels,  # honor the declutter toggle
                               cluster_rows = nrow(mat) >= 2,
                               annotation_col = ann, angle_col = 45,
                               color = pal_spec$div(255),  # project diverging ramp (was hardcoded)
-                              fontsize = 9, silent = FALSE)
-  png(png_path, width = 8, height = h, units = "in", res = 300); draw(); dev.off()
-  svglite(svg_path, width = 8, height = h); draw(); dev.off()
+                              fontsize = base_size, fontsize_row = fs_row, silent = TRUE)
+  png(png_path, width = fig_w, height = h, units = "in", res = fig_dpi)
+  draw_grid(draw()$gtable); dev.off()
+  svglite(svg_path, width = fig_w, height = h)
+  draw_grid(draw()$gtable); dev.off()
 }
 
 writeLines(capture.output(sessionInfo()), sub("gsva_scores\\.csv$", "gsva_sessionInfo.txt", out_csv))

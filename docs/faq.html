@@ -7,7 +7,7 @@
 <meta name="description" content="Frequently asked questions and troubleshooting for BulkSeq Studio, plus how to cite the software and its benchmark archive, and the MIT license.">
 <link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
 <link rel="stylesheet" href="assets/site.css?v=9">
-<link rel="stylesheet" href="assets/product-v028.css?v=3">
+<link rel="stylesheet" href="assets/product-v029.css?v=3">
 <script>
 try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (error) {}
 </script>
@@ -18,7 +18,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="">
-      <span class="brand-copy"><span class="brand-title">BulkSeq Studio</span><span class="ver">v0.28.0</span></span>
+      <span class="brand-copy"><span class="brand-title">BulkSeq Studio</span><span class="ver">v0.29.0</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu</button>
     <nav aria-label="Documentation">
@@ -32,7 +32,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
       </ul>
       <div class="ext">
         <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
-        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.28.0 ↗</a>
+        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.29.0 ↗</a>
         <a href="faq.html#cite">Citation</a>
       </div>
     </nav>
@@ -42,7 +42,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
     <section id="faq"><p class="kicker">Help</p>
 <h1>FAQ &amp; troubleshooting</h1>
 <p class="lead">Short answers to the questions that come up most often.</p>
-<div class="note"><span class="t">Release status</span> Version 0.28.0 is the current public release. Use only the checksummed packages published on GitHub Releases.</div>
+<div class="note"><span class="t">Release status</span> Version 0.29.0 is the current public release. Use only the checksummed packages published on GitHub Releases.</div>
 
 <h2>Do I need to know how to code?</h2>
 <p>No. The whole pipeline runs from a guided graphical interface. Project and data, Analysis setup, Validate and run, and Explore results group the same tasks into four stages; wide windows use a stage rail and compact windows use stage and page selectors. No command line is required.</p>
@@ -54,25 +54,25 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 <p>Yes, and it is one-time. The core bioinformatics environment downloads over several minutes, and the R / DESeq2 stack is the largest, slowest install. You can keep creating projects, editing metadata, and generating configs while it installs; only starting a pipeline run needs the tools in place.</p>
 
 <h2>Do I have to remember to check the environment before my first run?</h2>
-<p>No. On the first launch after install the app opens the Check Environment dialog automatically, once, so a missing tool such as the R/DESeq2 stack is flagged up front rather than mid-run; you can reopen it any time from <strong>Check Environment</strong> on the Project page.</p>
+<p>No. On the first launch after install the app opens the Check Environment dialog automatically, once, so a missing tool such as the R/DESeq2 stack is flagged up front rather than mid-run; you can reopen it any time from <strong>Check Environment</strong> on the Project page. The summary reads <em>N of 4 requirement groups ready</em> and reports against the profile you installed, so a core-only environment shows the full-only tools and the R stack as not applicable rather than as failures.</p>
 
 <h2>Does it work on Linux without WSL?</h2>
 <p>Yes. On Linux the same GUI drives the same Snakemake pipeline natively in a local micromamba environment, with no WSL involved, and produces identical results. There is no WSL setup step and no memory cap below the host's RAM.</p>
 
 <h2>How do I update to a new version?</h2>
-<p>Use only an approved artifact. The current public release is 0.28.0. On Windows, the installer detects an existing install and offers to update or uninstall first; a portable ZIP is replaced by unpacking the new archive. On Linux, download the AppImage or use <a href="https://github.com/AppImageCommunity/AppImageUpdate">AppImageUpdate</a> with the published companion zsync information.</p>
+<p>Use only an approved artifact. The current public release is 0.29.0. On Windows, close BulkSeq Studio before you start Setup, which refuses to modify an installation that is still open; it then detects the existing install and offers to update or uninstall first. A portable ZIP is replaced by unpacking the new archive. On Linux, download the AppImage or use <a href="https://github.com/AppImageCommunity/AppImageUpdate">AppImageUpdate</a> with the published companion zsync information.</p>
 
 <h2>Which trimmer, rRNA tool, and DE engine should I use?</h2>
 <p>The defaults are chosen to work for a standard study: fastp for trimming, SortMeRNA if you turn on rRNA removal, and DESeq2 for differential expression. Change them only when you have a reason. Prefer Trim Galore or Trimmomatic if your lab standardizes on one; use RiboDetector when no rRNA reference is available for your organism; and run limma-voom or edgeR quasi-likelihood as a cross-check, especially on larger designs. All the alternatives produce the same tables and figures, so downstream steps do not change.</p>
 
 <h2>My organism has no Bioconductor annotation package (a crop or fungus). Can I still get enrichment and networks?</h2>
-<p>Yes. Without an OrgDb you still get KEGG pathway ORA and GSEA for any organism with a KEGG code, plus GO through g:Profiler (<code>gprofiler2</code>), and the STRING protein-interaction network is unaffected. An organism is not skipped for lacking an OrgDb.</p>
+<p>Yes. Without an OrgDb you still get KEGG pathway ORA and GSEA for any organism with a KEGG code (the catalogue records each organism's KEGG identifier form, and <em>Schizosaccharomyces pombe</em> is the known exception: KEGG keys its genes by NCBI GeneID while the RefSeq annotation uses <code>SPOM_</code> locus identifiers, so its KEGG step reports an empty universe as review-required rather than silently passing), plus GO through g:Profiler (<code>gprofiler2</code>), and the STRING protein-interaction network is unaffected. An organism is not skipped for lacking an OrgDb.</p>
 
 <h2>Can I run single-end reads?</h2>
 <p>Yes. Single-end and paired-end input both run the full alignment route through every trimmer, aligner, and rRNA tool; the app detects the layout from the sample sheet. A single run must use one layout — a mixed-layout sample sheet is rejected with guidance so the two are not counted together.</p>
 
 <h2>I already have processed data. Can I skip the download and alignment?</h2>
-<p>Yes. Three choices on the Add data page take pre-computed input straight into the analysis. <strong>Use a Count Matrix</strong> ingests a gene &times; sample count table and skips download, QC, and alignment, running DESeq2 &rarr; figures &rarr; enrichment. The table must be <em>raw integer counts</em>; normalized values are refused by default, while RSEM/tximport estimated counts can be opted in. <strong>Upload DESeq2 Results</strong> starts from an external differential-expression table and skips to the applicable figures, enrichment, and STRING network. The complete table is validated, its fold-change direction must be confirmed, and the project copy is bound to its hash, size, row count, and schema; no local DESeq2 model is claimed. <strong>Upload a local microarray matrix</strong> takes already-normalized log2 intensities and runs the limma route with no accession or download.</p>
+<p>Yes. Three buttons on the Add data page take pre-computed input straight into the analysis. On the <strong>Count / DE tables</strong> tab, <strong>Import count matrix</strong> ingests a gene &times; sample count table and skips download, QC, and alignment, running DESeq2 &rarr; figures &rarr; enrichment; the table must be <em>raw integer counts</em>, normalized values are refused by default, and RSEM/tximport estimated counts can be opted in. <strong>Import differential-expression results</strong> on the same tab starts from an external differential-expression table and skips to the applicable figures, enrichment, and STRING network. The complete table is validated, its fold-change direction must be confirmed, and the project copy is bound to its hash, size, row count, and schema; no local DESeq2 model is claimed. On the <strong>Microarray</strong> tab, <strong>Import microarray matrix</strong> takes already-normalized log2 intensities and runs the limma route with no accession or download; every sample column must be numeric with a dot decimal separator, and a matrix carrying text tokens or comma decimals is refused at import rather than silently converted.</p>
 
 <h2>Can I combine two studies or BioProjects of the same comparison?</h2>
 <p>Yes, with the multi-study meta-analysis. Put the samples of every study in one project, give each row a <code>dataset</code> value (its study of origin) and a <code>condition</code> value on the Samples page, then enable <strong>Multi-study meta-analysis</strong> on the Analysis settings page. Each study is analysed separately with DESeq2 and the per-study statistics are combined (<code>metaRNASeq</code> inverse-normal p-values and <code>metafor</code> effect-size pooling), so platform and depth differences stay within a study. Genes whose direction disagrees across studies are flagged discordant and are never called cross-study hits. A separate <code>meta_analysis_report.html</code>, the <code>results/meta/</code> tables, and comparative figures are written alongside the standard outputs. At least one study must contain both compared groups (otherwise the comparison is perfectly confounded with study and the run is blocked), and the studies must share one organism and one gene-identifier namespace.</p>
@@ -84,7 +84,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 <p>Almost always an identifier-namespace mismatch: the gene IDs in your GMT or annotation table must match the run's ID format. A mismatch is flagged, with examples of the run's IDs. Use Ensembl gene IDs for human and mouse, FlyBase for Drosophila, and NCBI GeneIDs (bare or <code>LOC&lt;GeneID&gt;</code>) for NCBI-RefSeq crops such as rice.</p>
 
 <h2>Where do my results go, and how do I re-make just the figures?</h2>
-<p>Everything lands in the project folder; open it from <strong>Open Project Folder</strong> on Run monitor. To restyle figures, use the built-in <strong>Figure Style</strong> inspector on Figures and tables and click <strong>Regenerate figures</strong>; this re-renders them without re-running alignment or differential expression.</p>
+<p>Everything lands in the project folder; open it from <strong>Folder</strong> in the <strong>After the run</strong> row on the Run monitor page. To restyle figures, use the <strong>Style</strong> tab of the side panel on Figures and tables and click <strong>Regenerate figures</strong>; this re-renders them without re-running alignment or differential expression.</p>
 
 <h2>Can I change between light and dark mode while a project is open?</h2>
 <p>Yes. The persistent header control switches the main window, dialogs, plots, status surfaces, and embedded protein network immediately and saves the choice for the next launch. It does not change the open project, current page, or analysis settings.</p>
@@ -101,10 +101,10 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 <h2>Cite &amp; license</h2>
 <p class="lead">BulkSeq Studio is free and open-source software released under the MIT License. You can install it, use it, study the code, and share it at no cost. The accompanying manuscript is in preparation for submission to a peer-reviewed journal.</p>
 
-<h3>Cite BulkSeq Studio v0.28.0</h3>
+<h3>Cite BulkSeq Studio v0.29.0</h3>
 <p>Cite the software version that produced your result. Until the software manuscript is published, use the release record below and include the exact version in your methods.</p>
-<pre><code>Birgün, Tuna (2026). BulkSeq Studio (Version 0.28.0) [Computer software].
-  https://github.com/tunabirgun/bulkseq-studio/releases/tag/v0.28.0</code></pre>
+<pre><code>Birgün, Tuna (2026). BulkSeq Studio (Version 0.29.0) [Computer software].
+  https://github.com/tunabirgun/bulkseq-studio/releases/tag/v0.29.0</code></pre>
 
 <h3>Cite the validation archive v0.26.6</h3>
 <p>Cite the separately versioned reproduction archive when you use its validation scripts, scoring environment, tables, or figures. Its DOI is <a href="https://doi.org/10.5281/zenodo.21833538">10.5281/zenodo.21833538</a>; the concept DOI <a href="https://doi.org/10.5281/zenodo.20955660">10.5281/zenodo.20955660</a> resolves to the latest deposited archive version.</p>
@@ -112,7 +112,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   https://doi.org/10.5281/zenodo.21833538</code></pre>
 
 <h3>Links</h3>
-<p><a class="btn btn-solid" href="https://github.com/tunabirgun/bulkseq-studio">GitHub repository</a> <a class="btn btn-solid" href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">Public release (0.28.0)</a> <a class="btn btn-solid" href="https://doi.org/10.5281/zenodo.20955660">Zenodo archive</a></p>
+<p><a class="btn btn-solid" href="https://github.com/tunabirgun/bulkseq-studio">GitHub repository</a> <a class="btn btn-solid" href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">Public release (0.29.0)</a> <a class="btn btn-solid" href="https://doi.org/10.5281/zenodo.20955660">Zenodo archive</a></p>
 <ul>
   <li><strong>Source code:</strong> <a href="https://github.com/tunabirgun/bulkseq-studio">github.com/tunabirgun/bulkseq-studio</a></li>
   <li><strong>Downloads:</strong> <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">github.com/tunabirgun/bulkseq-studio/releases/latest</a> (Windows installer, portable ZIP, Linux build)</li>
@@ -126,7 +126,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   </main>
 </div>
 
-<script src="assets/product-v028.js?v=3" defer></script>
+<script src="assets/product-v029.js?v=3" defer></script>
 <script src="assets/lightbox.js" defer></script>
 <script src="assets/toc.js" defer></script>
 </body>

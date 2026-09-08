@@ -22,6 +22,9 @@ dependencies:
   - hisat2=2.2.2
   - salmon=1.10.3
   - gffread=0.12.9
+  # gffread's GTF pre-clean (workflow/scripts/gtf_clean.pl) runs under perl on the Salmon
+  # route. Declared explicitly so it cannot arrive only as another tool's transitive dep.
+  - perl
   - samtools=1.22.1
   - subread=2.1.1
   # Preprocessing alternatives (opt-in; fastp + SortMeRNA remain the defaults): the Trim Galore
@@ -100,6 +103,12 @@ dependencies:
   - bioconductor-org.at.tair.db
   - bioconductor-org.ce.eg.db
   - bioconductor-org.dr.eg.db
+  # Every OrgDb named in app/data/reference_catalog.yaml must be installable, or the
+  # preset silently falls back to g:Profiler (tests/test_dependency_parity.py checks).
+  - bioconductor-org.rn.eg.db
+  - bioconductor-org.bt.eg.db
+  - bioconductor-org.gg.eg.db
+  - bioconductor-org.ss.eg.db
   - r-ggplot2
   - r-ggrepel
   - r-ggnewscale

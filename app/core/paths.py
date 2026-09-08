@@ -12,6 +12,13 @@ from pathlib import Path
 # translation is just stripping the \\wsl...\<distro> prefix (not a /mnt mount).
 _WSL_UNC = re.compile(r"^//wsl(?:\.localhost|\$)/[^/]+/?(.*)$", re.IGNORECASE)
 _WSL_MOUNT = re.compile(r"^/mnt/([a-zA-Z])/(.*)$")
+# Any \\server\share path. The WSL-native shares above are the only ones WSL can reach;
+# every other UNC path has no /mnt drive letter to translate to.
+_UNC = re.compile(r"^//[^/]+/[^/]")
+
+
+class UnsupportedUncPathError(ValueError):
+    """A network-share (UNC) path that has no WSL-side equivalent."""
 
 
 def app_root() -> Path:
@@ -68,15 +75,30 @@ def project_configured_path(project_root: str | Path, configured_path: str | Pat
 def windows_to_wsl_path(path: str | Path) -> str:
     # A WSL-native UNC path is already on the Linux filesystem: map
     # \\wsl.localhost\<distro>\home\user\... -> /home/user/... (no /mnt prefix).
-    unc = _WSL_UNC.match(str(path).replace("\\", "/"))
+    text = str(path).replace("\\", "/")
+    unc = _WSL_UNC.match(text)
     if unc:
         return "/" + unc.group(1).lstrip("/")
+    if _UNC.match(text):
+        # Path.resolve() keeps '\\server\share' as the drive, which the /mnt mapping below
+        # would turn into the nonsense '/mnt/\\server\share/...' and hand to WSL as a real
+        # path. Fail loudly instead: the caller must pick a local drive or a WSL share.
+        raise UnsupportedUncPathError(
+            f"'{path}' is a Windows network share (UNC). WSL cannot reach it: use a local "
+            "drive (C:\\...) or a WSL path (\\\\wsl.localhost\\<distro>\\...) instead."
+        )
     p = Path(path).resolve()
     drive = p.drive.rstrip(":").lower()
     rest = "/".join(p.parts[1:])
     if drive:
         return f"/mnt/{drive}/{rest}"
     return str(p).replace("\\", "/")
+
+
+def is_unsupported_unc_path(path: str | Path) -> bool:
+    """True for a network-share path that windows_to_wsl_path cannot translate."""
+    text = str(path).replace("\\", "/")
+    return bool(_UNC.match(text)) and not _WSL_UNC.match(text)
 
 
 def is_wsl_unc_path(path: str | Path) -> bool:

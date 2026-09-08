@@ -135,8 +135,21 @@ if (min(table(grp)) < 2) {
   design_checks[[length(design_checks) + 1]] <- list(status = "WARNING",
     message = "At least one condition has fewer than two replicates.")
 }
-write_check(snakemake@output[["design_check"]], "08_metadata_design_qc",
-            if (full_rank) "PASS" else "FAIL", design_checks)
+# A numeric column with few distinct values (batch coded 1/2/3) is fitted as a linear trend,
+# not as a factor; flag it so the user relabels the levels if they meant groups.
+for (v in covariates) {
+  x <- coldata[[v]]
+  n_lv <- length(unique(x[!is.na(x)]))
+  if (is.numeric(x) && n_lv <= 10) design_checks[[length(design_checks) + 1]] <- list(
+    status = "REVIEW_REQUIRED",
+    message = sprintf(paste0(
+      "Design term '%s' is numeric with %d distinct values and is fitted as a continuous covariate ",
+      "(a linear trend), not as a factor. If these are group labels (batch, run, donor), use ",
+      "non-numeric labels such as 'b1', 'b2' so they are modelled as levels."), v, n_lv))
+}
+design_status <- if (!full_rank) "FAIL" else if (any(vapply(design_checks, function(m)
+  identical(m$status, "REVIEW_REQUIRED"), logical(1)))) "REVIEW_REQUIRED" else "PASS"
+write_check(snakemake@output[["design_check"]], "08_metadata_design_qc", design_status, design_checks)
 
 # ---- edgeR quasi-likelihood fit ---------------------------------------------
 dge <- DGEList(counts = cts, group = grp)

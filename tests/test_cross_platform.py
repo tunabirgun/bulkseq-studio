@@ -6,8 +6,8 @@ such as NTFS.
 """
 from __future__ import annotations
 
-import inspect
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -21,19 +21,91 @@ from app.core.metadata import validate_metadata
 
 # ---- Stop must reach the whole process tree ---------------------------------
 
-def test_native_launch_creates_its_own_process_group() -> None:
-    # Windows gets CREATE_NEW_PROCESS_GROUP; POSIX needs setsid() via
-    # start_new_session, or os.killpg has no group to signal and Snakemake's
-    # children (STAR, featureCounts, Rscript) survive Stop.
-    src = inspect.getsource(snakemake_runner.SnakemakeRunner.start)
-    assert "start_new_session" in src
+class _FakeProcess:
+    """Stands in for a launched Snakemake relay: never actually running."""
+
+    def __init__(self) -> None:
+        self.pid = 424242
+        self.terminated = False
+        self.killed = False
+
+    def poll(self):
+        return None
+
+    def wait(self, timeout=None):
+        return 0
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.killed = True
 
 
-def test_stop_signals_the_group_not_just_the_child() -> None:
-    for method in (snakemake_runner.SnakemakeRunner._stop_native_tree,
-                   snakemake_runner.SnakemakeRunner._reap_local):
-        src = inspect.getsource(method)
-        assert "_signal_native_group" in src, f"{method.__name__} can leak the tool processes"
+def _runner(monkeypatch, tmp_path, **command_kwargs):
+    captured: dict = {}
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured.update(kwargs)
+        return _FakeProcess()
+
+    monkeypatch.setattr(snakemake_runner.subprocess, "Popen", fake_popen)
+    cmd = snakemake_runner.SnakemakeCommand(["snakemake", "-n"], "snakemake -n", **command_kwargs)
+    return snakemake_runner.SnakemakeRunner(tmp_path, cmd), captured
+
+
+def test_native_launch_creates_its_own_process_group(monkeypatch, tmp_path) -> None:
+    # Windows gets CREATE_NEW_PROCESS_GROUP; POSIX needs setsid() via start_new_session, or
+    # os.killpg has no group to signal and Snakemake's children (STAR, featureCounts, Rscript)
+    # survive Stop. Asserted on the arguments actually handed to Popen.
+    runner, captured = _runner(monkeypatch, tmp_path)
+    runner.start()
+    if sys.platform.startswith("win"):
+        assert captured["creationflags"] & subprocess.CREATE_NEW_PROCESS_GROUP
+        assert captured["start_new_session"] is False
+    else:
+        assert captured["start_new_session"] is True
+    # The pipeline speaks UTF-8; a strict cp1252 decode of one curly quote used to kill the
+    # reader thread and leave the UI at "Running" forever.
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "replace"
+
+
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX process groups")
+def test_stop_signals_the_group_not_just_the_child(monkeypatch, tmp_path) -> None:
+    signalled: list[tuple[int, int]] = []
+    monkeypatch.setattr(snakemake_runner.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(snakemake_runner.os, "killpg",
+                        lambda pgid, sig: signalled.append((pgid, sig)))
+    runner, _ = _runner(monkeypatch, tmp_path)
+    process = runner.start()
+    runner.stop()
+    assert (process.pid, signal.SIGTERM) in signalled, "the tool processes can leak"
+    assert not process.terminated, "a bare terminate() reaches only the relay handle"
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"), reason="taskkill is the Windows tree kill")
+def test_windows_stop_walks_the_process_tree(monkeypatch, tmp_path) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(snakemake_runner, "_run_quiet", lambda cmd, **kw: calls.append(cmd))
+    runner, _ = _runner(monkeypatch, tmp_path)
+    process = runner.start()
+    runner.stop()
+    assert ["taskkill", "/F", "/T", "/PID", str(process.pid)] in calls
+
+
+def test_wsl_stop_kills_the_tagged_tree_inside_the_vm(monkeypatch, tmp_path) -> None:
+    # Killing the Windows wsl.exe relay leaves snakemake/STAR running inside the VM; the
+    # run tag is the only handle on them.
+    calls: list[list[str]] = []
+    monkeypatch.setattr(snakemake_runner, "_run_quiet", lambda cmd, **kw: calls.append(cmd))
+    tag = "BULKSEQ_RUN_TAG_0123456789abcdef"
+    runner, _ = _runner(monkeypatch, tmp_path, use_wsl=True, distro="Ubuntu-24.04", run_tag=tag)
+    runner.start()
+    runner.stop()
+    assert calls and calls[0][:4] == ["wsl", "-d", "Ubuntu-24.04", "--exec"]
+    assert f"{tag}=1" in calls[0][-1]
 
 
 @pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX process groups")

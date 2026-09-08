@@ -1,10 +1,11 @@
 # Multi-study differential-expression META-ANALYSIS.
 # Per-study DESeq2 (subset the merged matrix by study-of-origin) -> HTSFilter per study ->
-# intersect the gene space -> combine per-study two-sided Wald p-values with metaRNASeq::invnorm
-# (replicate-weighted inverse normal) + post-hoc sign concordance, and co-report a metafor
-# random/fixed-effect effect-size summary on the UNSHRUNKEN log2FC + lfcSE. Directionless
-# combined p-values with conflicting per-study signs are FLAGGED (common_direction=discordant,
-# never called a meta-DEG), not silently dropped. Method: Rau/Marot/Jaffrezic (BMC Bioinf 2014).
+# intersect the gene space -> combine per-study two-sided Wald p-values by the metaRNASeq
+# replicate-weighted inverse normal (computed in tail form; see combine_meta) + post-hoc sign
+# concordance, and co-report a metafor random/fixed-effect effect-size summary on the
+# UNSHRUNKEN log2FC + lfcSE. Directionless combined p-values with conflicting per-study signs are
+# FLAGGED (common_direction=discordant, never called a meta-DEG), not silently dropped.
+# Method: Rau/Marot/Jaffrezic (BMC Bioinf 2014).
 #
 # The two functions below are pure and unit-tested; the snakemake driver runs only under Snakemake.
 
@@ -41,7 +42,7 @@ combine_meta <- function(per_study, nrep, alpha = 0.05) {
     combined_z = numeric(0), combined_z_offscale = logical(0),
     common_direction = character(0), n_studies_sig = integer(0),
     rem_log2FC = numeric(0), rem_ci_lo = numeric(0), rem_ci_hi = numeric(0),
-    rem_pvalue = numeric(0), tau2 = numeric(0),
+    rem_pvalue = numeric(0), rem_padj = numeric(0), tau2 = numeric(0),
     I2 = numeric(0), QEp = numeric(0), meta_sig = logical(0), stringsAsFactors = FALSE)
   common <- Reduce(intersect, lapply(per_study, rownames))
   # No shared gene ids -> almost always a gene-id namespace / organism mismatch; return an empty
@@ -57,15 +58,22 @@ combine_meta <- function(per_study, nrep, alpha = 0.05) {
   keep <- stats::complete.cases(pmat) & stats::complete.cases(lmat) & stats::complete.cases(smat)
   common <- common[keep]
   # Every shared gene NA in >=1 study (e.g. a degenerate arm) collapses the combinable set; return
-  # empty instead of calling invnorm on length-0 vectors (which errors with non-conformable arrays).
+  # empty instead of combining length-0 vectors (which errors with non-conformable arrays).
   if (length(common) == 0) return(empty_result())
   pmat <- pmat[keep, , drop = FALSE]; lmat <- lmat[keep, , drop = FALSE]
   smat <- smat[keep, , drop = FALSE]; padjmat <- padjmat[keep, , drop = FALSE]
-  # Clamp p away from {0,1}: DESeq2 emits exact-0 p-values and qnorm(1)/qnorm(0) = +/-Inf would
-  # corrupt the combined Z-statistic.
+  # Clamp p away from {0,1}: DESeq2 emits exact-0 p-values and qnorm(0/1, lower.tail = FALSE) is
+  # +/-Inf. Both bounds are load-bearing for the tail-form statistic below.
   pmat_c <- pmin(pmax(pmat, .Machine$double.xmin), 1 - 1e-16)
-  indpval <- lapply(seq_len(k), function(j) pmat_c[, j])
-  fc <- metaRNASeq::invnorm(indpval, nrep = as.integer(nrep[studies]), BHth = alpha)
+  # Replicate-weighted inverse normal, computed in the tail form instead of via metaRNASeq::invnorm.
+  # invnorm evaluates qnorm(1 - p) and 1 - pnorm(statc); both lose the tail to rounding, so any
+  # gene with |Z| >= ~8.29 (two equal-weight studies at p ~2.3e-9) collapses to a combined p of
+  # exactly 0 and becomes unrankable. This form is algebraically identical: rows with any NA p are
+  # dropped above, so invnorm's per-row NA reweighting is a no-op and its weights reduce to the
+  # row-constant sqrt(nrep_j / sum(nrep)), in `studies` column order.
+  w <- sqrt(as.numeric(nrep[studies]) / sum(as.numeric(nrep[studies])))
+  statc <- as.vector(stats::qnorm(pmat_c, lower.tail = FALSE) %*% w)
+  fc <- list(TestStatistic = statc, rawpval = stats::pnorm(statc, lower.tail = FALSE))
 
   # Direction: concordant only when every study agrees on the sign of the UNSHRUNKEN LFC.
   signs <- sign(lmat)
@@ -103,20 +111,22 @@ combine_meta <- function(per_study, nrep, alpha = 0.05) {
   }, setNames(numeric(7L), rc)))
   if (!is.matrix(rem)) rem <- matrix(rem, ncol = 7L, dimnames = list(NULL, rc))
   if (k < 3) rem[, c("tau2", "I2", "QEp")] <- NA_real_   # heterogeneity not estimable at k=2
+  # rem_pvalue is a per-gene test of the POOLED EFFECT SIZE, a different hypothesis from the
+  # combined p-value above, so it needs its own correction; reported raw it invited reading an
+  # uncorrected p as significant. Its family is the concordant genes whose pooled effect is
+  # estimable -- a subset of combined_padj's family, not the same one, because rma.uni returns
+  # NA for genes it cannot fit. Restricting before p.adjust also avoids counting those NA rows
+  # in the number of hypotheses.
+  rem_tested <- conc & is.finite(rem[, "pval"])
+  rem_adj <- rep(NA_real_, length(common))
+  if (any(rem_tested)) rem_adj[rem_tested] <- stats::p.adjust(rem[rem_tested, "pval"], method = "BH")
 
-  # Combined inverse-normal Z (metaRNASeq statistic): always finite, so the meta-volcano can plot a
-  # rankable y-axis for genes whose combined FDR underflows to exact 0 (fit-all-elements mode).
-  cz <- tryCatch(as.numeric(fc$TestStatistic), error = function(e) rep(NA_real_, length(common)))
-  if (length(cz) != length(common)) cz <- rep(NA_real_, length(common))
-  # metaRNASeq's qnorm(1 - p) is +/-Inf when any study's p underflows to ~0 (DESeq2 emits exact-0 p
-  # for strong genes). Left as Inf, ggplot silently DROPS those rows from the z-axis meta-volcano --
-  # the strongest meta-DEGs. Cap to a finite ceiling just past the largest finite |z| and flag them,
-  # so the figure renders them as off-scale triangles instead of losing them.
+  # Combined inverse-normal Z: finite by construction now (the p clamp bounds every qnorm term), so
+  # the meta-volcano can plot a rankable y-axis for genes whose combined FDR still underflows to
+  # exact 0. The off-scale flag is derived, not asserted, and stays in the schema as a published
+  # column of meta_analysis_results.csv.
+  cz <- fc$TestStatistic
   cz_off <- !is.finite(cz)
-  if (any(cz_off)) {
-    ceil <- if (any(is.finite(cz))) max(abs(cz[is.finite(cz)])) * 1.1 else 100
-    cz[cz_off] <- sign(as.numeric(fc$TestStatistic))[cz_off] * ceil
-  }
   out <- data.frame(
     gene_id          = common,
     combined_pvalue  = fc$rawpval,
@@ -126,7 +136,8 @@ combine_meta <- function(per_study, nrep, alpha = 0.05) {
     common_direction = ifelse(commonsgn > 0, "up", ifelse(commonsgn < 0, "down", "discordant")),
     n_studies_sig    = as.integer(rowSums(!is.na(padjmat) & padjmat < alpha)),
     rem_log2FC = rem[, "beta"], rem_ci_lo = rem[, "ci.lb"], rem_ci_hi = rem[, "ci.ub"],
-    rem_pvalue = rem[, "pval"], tau2 = rem[, "tau2"], I2 = rem[, "I2"], QEp = rem[, "QEp"],
+    rem_pvalue = rem[, "pval"], rem_padj = rem_adj,
+    tau2 = rem[, "tau2"], I2 = rem[, "I2"], QEp = rem[, "QEp"],
     stringsAsFactors = FALSE)
   # A meta-DEG = significant combined FDR AND concordant direction. Discordant genes keep their
   # row (searchable) but are never called significant.

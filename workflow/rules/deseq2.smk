@@ -93,6 +93,10 @@ if MICROARRAY_MODE:
             denominator=_CONTRAST.get("denominator", ""),
             alpha=_DE.get("alpha", 0.05),
             lfc_threshold=_DE.get("lfc_threshold", 1.0),
+        threads:
+            rule_threads("deseq2", 2)
+        resources:
+            mem_mb=rule_mem_mb("deseq2", 12),
         benchmark:
             "benchmarks/limma_de.tsv"
         log:
@@ -172,6 +176,10 @@ elif VOOM_MODE:
             # Path (not input) so count-matrix mode, which has no reference, still
             # runs; run_voom.R reads symbol/biotype from it only when it exists.
             gtf=ANNOTATION_GTF,
+        threads:
+            rule_threads("deseq2", 2)
+        resources:
+            mem_mb=rule_mem_mb("deseq2", 12),
         benchmark:
             "benchmarks/voom_de.tsv"
         log:
@@ -204,6 +212,10 @@ elif EDGER_MODE:
             alpha=_DE.get("alpha", 0.05),
             lfc_threshold=_DE.get("lfc_threshold", 1.0),
             gtf=ANNOTATION_GTF,
+        threads:
+            rule_threads("deseq2", 2)
+        resources:
+            mem_mb=rule_mem_mb("deseq2", 12),
         benchmark:
             "benchmarks/edger_de.tsv"
         log:
@@ -242,6 +254,10 @@ else:
             # Path (not input) so count-matrix mode, which has no reference, still
             # runs; run_deseq2.R reads symbol/biotype from it only when it exists.
             gtf=ANNOTATION_GTF,
+        threads:
+            rule_threads("deseq2", 2)
+        resources:
+            mem_mb=rule_mem_mb("deseq2", 12),
         benchmark:
             "benchmarks/deseq2.tsv"
         log:

@@ -598,25 +598,37 @@ save_grid(dist_render$gtable, out[["dist_png"]], out[["dist_svg"]],
 # ---- MA plot ----------------------------------------------------------------
 # The MA plot is dense; scale the configured point size down so it stays legible.
 ma_point <- max(0.3, point_size * 0.4)
-if ("baseMean" %in% colnames(as.data.frame(resLFC)) && any(is.finite(as.data.frame(resLFC)$baseMean))) {
 ma <- as.data.frame(resLFC)
-ma <- ma[!is.na(ma$padj), ]
-ma$sig <- ma$padj < alpha_thr
+# Keep every measured gene: independent filtering sets padj to NA for the low-count
+# cloud, which is exactly the region the caption asks readers to inspect, so
+# significance is a colour here and not a filter.
+ma <- if ("baseMean" %in% colnames(ma)) ma[is.finite(ma$baseMean) & is.finite(ma$log2FoldChange), ] else ma[0, ]
+if (nrow(ma) > 0) {
+ma$sig <- !is.na(ma$padj) & ma$padj < alpha_thr
 # Colour each point by local 2D density (base R densCols) so the dense band
 # regains a gradient while individual outliers stay visible. x is log-scaled for
 # counts, so density is computed on log10(baseMean) there.
 xv <- if (is_intensity) ma$baseMean else log10(pmax(ma$baseMean, .Machine$double.eps))
-ma$dens <- grDevices::densCols(xv, ma$log2FoldChange,
-                               colramp = colorRampPalette(pal_spec$seq(7)))
+# densCols needs two or more points and a non-degenerate range on both axes.
+ma$dens <- if (nrow(ma) >= 2 && diff(range(xv)) > 0 && diff(range(ma$log2FoldChange)) > 0) {
+  grDevices::densCols(xv, ma$log2FoldChange, colramp = colorRampPalette(pal_spec$seq(7)))
+} else pal_spec$seq(7)[4]
 ma_sig <- ma[ma$sig, ]
 p_ma <- ggplot(ma, aes(baseMean, log2FoldChange)) +
   geom_point(aes(colour = dens), size = ma_point, alpha = scatter_alpha_fg) +
-  scale_colour_identity() +
-  ggnewscale::new_scale_colour() +
-  geom_point(data = ma_sig, aes(colour = sprintf("padj < %.3g", alpha_thr)),
-             shape = 21, fill = NA, size = ma_point + 0.4, stroke = 0.3, alpha = scatter_alpha_fg) +
-  scale_colour_manual(values = setNames(pal_spec$discrete[2], sprintf("padj < %.3g", alpha_thr)),
-                      name = NULL) +
+  scale_colour_identity()
+# The significance ring is a layer, not a filter. Added only when something is significant:
+# an empty layer would leave a manual scale with no matching level (a warning, and a legend
+# key for a category the figure does not contain).
+if (nrow(ma_sig) > 0) {
+  p_ma <- p_ma +
+    ggnewscale::new_scale_colour() +
+    geom_point(data = ma_sig, aes(colour = sprintf("padj < %.3g", alpha_thr)),
+               shape = 21, fill = NA, size = ma_point + 0.4, stroke = 0.3, alpha = scatter_alpha_fg) +
+    scale_colour_manual(values = setNames(pal_spec$discrete[2], sprintf("padj < %.3g", alpha_thr)),
+                        name = NULL)
+}
+p_ma <- p_ma +
   geom_smooth(method = "loess", span = 0.3, se = FALSE, colour = "grey25", linewidth = 0.5) +
   geom_hline(yintercept = 0, colour = "grey40", linewidth = 0.4) +
   labs(x = if (is_intensity) "average log2 expression" else "mean of normalised counts",
@@ -626,25 +638,26 @@ p_ma <- ggplot(ma, aes(baseMean, log2FoldChange)) +
 if (!is_intensity) p_ma <- p_ma + scale_x_log10(labels = scales::label_log())
 ma_dim <- fig_dim("ma_plot")
 save_gg(p_ma, out[["ma_png"]], out[["ma_svg"]], w = ma_dim[1], h = ma_dim[2])
-} else save_placeholder("MA plot needs a baseMean column in the results table.", out[["ma_png"]], out[["ma_svg"]])
+} else save_placeholder("MA plot needs a finite baseMean and log2 fold change in the results table.", out[["ma_png"]], out[["ma_svg"]])
 
 # ---- Volcano ----------------------------------------------------------------
 vol <- as.data.frame(resLFC)
 vol$gene <- rownames(vol)
 vol$label <- label_for(vol$gene)
-# x position keeps the SHRUNKEN resLFC effect size (apeglm/ashr; correct display convention:
-# it de-noises low-count genes' fold changes). Up/Down classification below instead uses the
-# RAW log2FoldChange from `res`, matching upregulated_genes.csv / downregulated_genes.csv
-# (run_deseq2.R:181-185) and the up/down heatmaps below, so the figure's point colours agree
-# with the CSV row counts make_html_report.py captions it with.
+# The dashed vertical guides and the Up/Down classification below are BOTH defined on the
+# RAW log2FoldChange from `res` (matching upregulated_genes.csv / downregulated_genes.csv,
+# run_deseq2.R:181-185), so the x axis carries that same raw value: a shrunken x would put
+# points on the wrong side of their own guide. The shrunken effect keeps the MA plot.
 vol$log2FoldChange_raw <- res$log2FoldChange[match(vol$gene, rownames(res))]
 # Only the DESeq2 backend shrinks: run_voom.R, run_edger.R, run_limma.R (microarray) and
-# ingest_deseq2_results.R all set `resLFC <- res`, so on those routes the x axis carries the
-# raw value and calling it "shrunken" would be a false claim -- the same one
-# make_html_report.py (_micro_tech, ~:1200) already strips from the shared tech captions.
-# Derive it from the data instead of hardcoding, so a new backend cannot desync the label.
+# ingest_deseq2_results.R all set `resLFC <- res`. Derive it from the data instead of
+# hardcoding, so a new backend cannot desync the recorded provenance.
 lfc_is_shrunken <- !identical(res$log2FoldChange, resLFC$log2FoldChange)
+if (any(is.finite(vol$log2FoldChange_raw))) vol$log2FoldChange <- vol$log2FoldChange_raw
+message(sprintf("Volcano x axis: raw (unshrunken) log2 fold change; this backend %s shrink effect sizes.",
+                if (lfc_is_shrunken) "does" else "does not"))
 vol <- vol[!is.na(vol$padj), ]
+if (nrow(vol) > 0) {
 vol$neglog10padj <- -log10(vol$padj)
 
 # padj can underflow to 0 (most-significant genes) -> -log10 = Inf. Clamp to a
@@ -702,7 +715,8 @@ pal <- c(Down = pal_spec$discrete[1], "n.s." = "grey80", Up = pal_spec$discrete[
 sig_size  <- max(0.6, point_size * as.numeric(getp("volcano_point_scale", 0.55)))
 sig_alpha <- as.numeric(getp("volcano_point_alpha", 0.55))
 
-xm   <- max(abs(vol$log2FoldChange))
+xm   <- max(abs(vol$log2FoldChange), na.rm = TRUE)
+if (!is.finite(xm) || xm <= 0) xm <- 1  # every effect exactly zero: keep a drawable span
 cap_labels <- lab[lab$capped, , drop = FALSE]
 cap_side_n <- if (nrow(cap_labels)) max(table(cap_labels$direction)) else 0
 # Capped genes share one truthful y coordinate. Retain modest headroom above the
@@ -745,7 +759,7 @@ p_vol <- p_vol +
                       guide = guide_legend(override.aes = list(shape = 16,
                                                                alpha = 1,
                                                                size = 3))) +
-  labs(x = if (lfc_is_shrunken) "log2 fold change (shrunken)" else "log2 fold change",
+  labs(x = if (lfc_is_shrunken) "log2 fold change (raw, unshrunken)" else "log2 fold change",
        y = if (do_cap) "-log10 adjusted p (axis capped)"
            else if (identical(yscale, "sqrt")) "-log10 adjusted p (sqrt scale)"
            else "-log10 adjusted p") +
@@ -767,6 +781,7 @@ if (length(derived_vol_w) == 1L && is.finite(derived_vol_w)) {
   vol_dim[1] <- max(vol_dim[1], derived_vol_w)
 }
 save_gg(p_vol, out[["volcano_png"]], out[["volcano_svg"]], w = vol_dim[1], h = vol_dim[2])
+} else save_placeholder("Volcano needs at least one gene with an adjusted p-value.", out[["volcano_png"]], out[["volcano_svg"]])
 
 # ---- Top-DEG heatmap --------------------------------------------------------
 # Drop NA padj first (order() puts NA last, so a naive head() would pull in NA
@@ -776,6 +791,7 @@ if (has_counts) {
 ok <- which(!is.na(res$padj))
 ord <- ok[order(res$padj[ok])]
 n_top <- min(heatmap_top, length(ord))
+if (n_top >= 1) {  # heatmap_top_n = 1 stays a supported setting; 0 rows cannot be drawn
 top_names <- rownames(res)[head(ord, n_top)]
 hm <- assay(vsd)[top_names, , drop = FALSE]
 rownames(hm) <- label_for(top_names)
@@ -811,6 +827,7 @@ hm_min_dim <- fig_dim("top_deg_heatmap")
 hm_render <- finalize_heatmap_gtable(ph2$gtable, hm_min_dim[1], hm_min_dim[2])
 save_grid(hm_render$gtable, out[["heatmap_png"]], out[["heatmap_svg"]],
           w = hm_render$dim[1], h = hm_render$dim[2])
+} else save_placeholder("No gene carries an adjusted p-value, so no top-DEG heatmap can be drawn.", out[["heatmap_png"]], out[["heatmap_svg"]])
 } else save_placeholder("Top-DEG heatmap needs the counts / VST matrix (unavailable for a DESeq2-results upload).", out[["heatmap_png"]], out[["heatmap_svg"]])
 
 # ---- Separate up- / down-regulated top-DEG heatmaps -------------------------

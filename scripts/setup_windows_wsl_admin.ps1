@@ -36,17 +36,33 @@ try {
         Finish 1
     }
 
+    # wsl.exe writes progress and diagnostics to stderr. Windows PowerShell 5.1 wraps a native
+    # command's redirected stderr in a NativeCommandError, which $ErrorActionPreference = "Stop"
+    # makes terminating -- so a single stderr line jumped straight to the catch below and left
+    # the --no-launch retry and the broken-distro guidance unreachable. Run the native call under
+    # "Continue" (the same deliberate pattern as scripts/build_release.ps1) so the log keeps
+    # wsl's own text and $LASTEXITCODE decides success. Resolve the command first so a missing
+    # wsl.exe still terminates into the catch, exactly as it did before.
+    function Invoke-Wsl {
+        param([string[]]$Arguments)
+        $exe = (Get-Command wsl -ErrorAction Stop).Source
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try { & $exe @Arguments 2>&1 }
+        finally { $ErrorActionPreference = $previous }
+    }
+
     # Install a distribution non-interactively: --no-launch skips the Ubuntu account-creation
     # prompt (which would otherwise hang this window), so BulkSeq Studio can set up the tools as
     # root afterward. Falls back to a plain install if the installed wsl.exe predates --no-launch.
     function Install-Distro {
         param([string]$Name)
         Write-Step "Installing distribution '$Name' (no-launch)..."
-        & wsl --install -d $Name --no-launch 2>&1 | ForEach-Object { Write-Step $_ }
+        Invoke-Wsl @("--install", "-d", $Name, "--no-launch") | ForEach-Object { Write-Step $_ }
         if ($LASTEXITCODE -ne 0) {
             Write-Step "--no-launch was not accepted (exit $LASTEXITCODE); retrying a plain install."
             Write-Step "An interactive Ubuntu setup window may open on older WSL; complete or close it to continue."
-            & wsl --install -d $Name 2>&1 | ForEach-Object { Write-Step $_ }
+            Invoke-Wsl @("--install", "-d", $Name) | ForEach-Object { Write-Step $_ }
         }
         return $LASTEXITCODE
     }
@@ -55,7 +71,7 @@ try {
     # real launch as root so "present" is not mistaken for "usable".
     function Test-DistroStarts {
         param([string]$Name)
-        $out = & wsl -d $Name -u root -- echo BULKSEQ_OK 2>&1
+        $out = Invoke-Wsl @("-d", $Name, "-u", "root", "--", "echo", "BULKSEQ_OK")
         return ($LASTEXITCODE -eq 0 -and ($out -match "BULKSEQ_OK"))
     }
 
@@ -69,13 +85,13 @@ try {
 
     Write-Step "wsl.exe found at: $($wsl.Source)"
     Write-Step "Checking WSL status..."
-    & wsl --status 2>&1 | ForEach-Object { Write-Step $_ }
+    Invoke-Wsl @("--status") | ForEach-Object { Write-Step $_ }
 
     Write-Step "Checking installed WSL distributions..."
     # wsl.exe emits UTF-16LE; Windows PowerShell captures it NUL-interleaved, so strip the NUL
     # bytes before the name match -- otherwise a registered distro never matches and the
     # broken-distro guidance below is skipped in favor of an install-over.
-    $distros = @(& wsl -l -q 2>&1) | ForEach-Object { ($_ -replace "`0", "").Trim() }
+    $distros = @(Invoke-Wsl @("-l", "-q")) | ForEach-Object { ($_ -replace "`0", "").Trim() }
     $distros | Where-Object { $_ } | ForEach-Object { Write-Step $_ }
 
     # Resolve the REAL registered name before probing/starting it. The Store app registers Ubuntu as
@@ -90,7 +106,7 @@ try {
         Write-Step "'$Distro' is registered. Checking that it starts..."
         if (Test-DistroStarts $Distro) {
             Write-Step "'$Distro' starts correctly."
-            & wsl --set-default $Distro 2>&1 | ForEach-Object { Write-Step $_ }
+            Invoke-Wsl @("--set-default", $Distro) | ForEach-Object { Write-Step $_ }
             Finish 0
         }
         Write-Step "WARNING: '$Distro' is registered but will not start (a missing or broken virtual disk)."
@@ -105,7 +121,7 @@ try {
     Install-Distro $Distro | Out-Null
     $script:ExitCode = $LASTEXITCODE
     if ($script:ExitCode -eq 0) {
-        & wsl --set-default $Distro 2>&1 | ForEach-Object { Write-Step $_ }
+        Invoke-Wsl @("--set-default", $Distro) | ForEach-Object { Write-Step $_ }
         if (Test-DistroStarts $Distro) {
             Write-Step "'$Distro' installed and starts correctly."
         } else {

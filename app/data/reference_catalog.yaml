@@ -3,6 +3,11 @@
 # release-111; fungi, plants and bacteria use NCBI RefSeq (uniform, stable,
 # always ships a GTF). The pipeline downloads genome_fasta_url + annotation_gtf_url
 # and builds the STAR index automatically when a preset is selected.
+# enrichment_keytype is the AnnotationDbi keytype used with an OrgDb; kegg_keytype is the
+# separate enrichKEGG/gseKEGG key form (kegg | ncbi-geneid | uniprot, default kegg) for the
+# non-OrgDb routes. They are different id spaces and must not be conflated: for spo, vvi, ghi,
+# pfa and cal, clusterProfiler::download_KEGG(keyType="ncbi-geneid") returns 0 genes while
+# keyType="kegg" returns the organism's full collection (verified 2026-09-08).
 references:
   - organism_name: Homo sapiens
     scientific_name: Homo sapiens
@@ -82,7 +87,8 @@ references:
     source: NCBI RefSeq
     assembly_accession: GCF_000002945.1
     orgdb: null
-    enrichment_keytype: ncbi-geneid
+    enrichment_keytype: kegg
+    kegg_keytype: kegg
     kegg_organism: spo
     string_taxon: 284812
     gprofiler_organism: spombe
@@ -535,7 +541,8 @@ references:
     source: NCBI RefSeq
     assembly_accession: GCF_000182965.3
     orgdb: null
-    enrichment_keytype: null
+    enrichment_keytype: kegg
+    kegg_keytype: kegg
     kegg_organism: cal
     string_taxon: 237561
     gprofiler_organism: calbicans
@@ -834,7 +841,8 @@ references:
     source: NCBI RefSeq
     assembly_accession: GCF_030704535.1
     orgdb: null
-    enrichment_keytype: ncbi-geneid
+    enrichment_keytype: kegg
+    kegg_keytype: kegg
     kegg_organism: vvi
     string_taxon: 29760
     gprofiler_organism: vvinifera
@@ -864,7 +872,8 @@ references:
     source: NCBI RefSeq
     assembly_accession: GCF_007990345.1
     orgdb: null
-    enrichment_keytype: ncbi-geneid
+    enrichment_keytype: kegg
+    kegg_keytype: kegg
     kegg_organism: ghi
     string_taxon: 3635
     gprofiler_organism: null
@@ -954,7 +963,8 @@ references:
     source: NCBI RefSeq
     assembly_accession: GCF_000219625.1
     orgdb: null
-    enrichment_keytype: ncbi-geneid
+    enrichment_keytype: kegg
+    kegg_keytype: kegg
     kegg_organism: ztr
     string_taxon: 336722
     gprofiler_organism: ztritici
@@ -1115,7 +1125,8 @@ references:
     source: NCBI RefSeq
     assembly_accession: GCF_000002765.6
     orgdb: null
-    enrichment_keytype: ncbi-geneid
+    enrichment_keytype: kegg
+    kegg_keytype: kegg
     kegg_organism: pfa
     string_taxon: 36329
     gprofiler_organism: pfalciparum

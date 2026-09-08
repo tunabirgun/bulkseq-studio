@@ -151,18 +151,34 @@ def recommend_rule_threads(total_threads: int) -> dict[str, int]:
     alignment_threads = min(total, 12, max(4, half_pool))
     secondary_alignment_threads = min(total, 8, max(4, half_pool))
     return {
-        "fasterq_dump": min(4, total),
         "fastqc": 1,
         "fastp": min(4, total),
         "sortmerna": min(4, total),
         "star_index": min(12, total),
         "star_align": alignment_threads,
+        "hisat2_index": min(8, total),
         "hisat2_align": secondary_alignment_threads,
+        "salmon_index": min(8, total),
         "salmon_quant": secondary_alignment_threads,
+        "infer_strandedness": min(4, total),
+        "fastq_screen": min(4, total),
         "featurecounts": min(6, total),
         "deseq2": min(2, total),
         "multiqc": 1,
     }
+
+
+def recommend_rule_memory_gb(total_memory_gb: int) -> dict[str, int]:
+    """Per-rule memory reservations clamped to the schedulable pool.
+
+    The declared reservations (RuleMemoryGb defaults) are what each job needs on a
+    large machine; a job may never ask for more than the whole pool, otherwise the
+    scheduler clamps it silently and STAR sizes its sort buffer from the clamped value.
+    """
+    from app.core.config_models import RuleMemoryGb
+
+    pool = max(int(total_memory_gb), 1)
+    return {name: max(1, min(int(gb), pool)) for name, gb in RuleMemoryGb().model_dump().items()}
 
 
 def recommend_profile(system: SystemResources, profile: str = "balanced") -> dict[str, int | str]:
@@ -182,10 +198,7 @@ def recommend_profile(system: SystemResources, profile: str = "balanced") -> dic
         reserve = 8 if ram >= 32 else 4
         total_memory_gb = max(4, int(min(ram * 0.75, ram - reserve)))
     rule_threads = recommend_rule_threads(total_threads)
-    # Match the workflow's declared 24-GB STAR reservation, clamped only when the
-    # entire selected pool is smaller.  Keeping this per-job value allows two
-    # alignments in a 60-GB pool while preserving headroom for the scheduler/UI.
-    star_mem = min(total_memory_gb, 24)
+    star_mem = recommend_rule_memory_gb(total_memory_gb)["star_align"]
     return {
         "profile": profile,
         "total_threads": total_threads,

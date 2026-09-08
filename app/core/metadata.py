@@ -42,6 +42,15 @@ def load_metadata(path: Path) -> pd.DataFrame:
 USER_TABLE_ENCODINGS: tuple[str, ...] = ("utf-8-sig", "cp1252", "latin-1")
 
 
+def non_numeric_matrix_tokens(values: pd.DataFrame, limit: int = 5) -> list[str]:
+    """Tokens in a numeric matrix that neither parse as numbers nor mark a missing value."""
+    text = values.astype(str).apply(lambda col: col.str.strip())
+    missing = values.isna() | text.isin({"", "NA", "NaN", "nan"})
+    numeric = text.apply(pd.to_numeric, errors="coerce")
+    bad = text.to_numpy()[(numeric.isna() & ~missing).to_numpy()]
+    return sorted(set(bad.tolist()))[:limit]
+
+
 def read_user_table(path: Path, **kwargs: object) -> pd.DataFrame:
     """Read a user-supplied CSV/TSV, tolerating non-UTF-8 encodings.
 

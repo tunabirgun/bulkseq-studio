@@ -36,6 +36,25 @@ if (is.null(configured_taxon_id)) configured_taxon_id <- ""
 alpha <- as.numeric(snakemake@params[["alpha"]])
 out <- snakemake@output
 
+# enrichKEGG/gseKEGG key form for the non-OrgDb routes, kept separate from the
+# AnnotationDbi `keytype` above: they are different id spaces (KEGG accepts
+# kegg | ncbi-geneid | uniprot, AnnotationDbi accepts ENSEMBL/SYMBOL/TAIR/...).
+# Prefer an explicit kegg_keytype param; until the rule forwards the catalog field,
+# derive it from the configured keytype and accept only KEGG-side values, so an
+# AnnotationDbi keytype can never be handed to KEGG. A wrong value is not silent:
+# download_KEGG then returns an empty collection and the audit reports
+# NOT_INTERPRETABLE ("no pathway gene-set collection").
+KEGG_KEY_FORMS <- c("kegg", "ncbi-geneid", "ncbi-proteinid", "uniprot")
+resolve_kegg_keytype <- function(configured, fallback) {
+  for (value in list(configured, fallback)) {
+    value <- tolower(trimws(as.character(value)))
+    if (length(value) == 1L && !is.na(value) && value %in% KEGG_KEY_FORMS) return(value)
+  }
+  "kegg"
+}
+kegg_keytype <- resolve_kegg_keytype(
+  tryCatch(snakemake@params[["kegg_keytype"]], error = function(e) NULL), keytype)
+
 write_check <- function(path, status, message) {
   msg <- gsub('"', '\\\\"', message)
   json <- sprintf('{\n  "check": "10_enrichment_qc",\n  "status": "%s",\n  "messages": [\n    {"status": "%s", "message": "%s"}\n  ]\n}',
@@ -121,6 +140,22 @@ read_ids_csv <- function(path) {
   unique(as.character(ids[!is.na(ids) & nzchar(as.character(ids))]))
 }
 
+# The signed model test statistic is the GSEA ranking metric: it orders genes by
+# evidence against the null (effect size divided by its standard error), whereas
+# log2FoldChange alone promotes large but poorly estimated effects. Every DE writer
+# emits `stat` (DESeq2 Wald, limma/voom moderated t, edgeR sign(logFC)*sqrt(F),
+# ingested results a direction-checked fallback), so log2FoldChange is used only
+# when no finite statistic exists. The exported preranked .rnk already ranks on
+# `stat`; this keeps the in-pipeline GSEA and that export on the same metric.
+select_rank_statistic <- function(res) {
+  if ("stat" %in% names(res)) {
+    values <- suppressWarnings(as.numeric(res[["stat"]]))
+    if (any(is.finite(values))) return(list(values = values, name = "stat"))
+  }
+  list(values = suppressWarnings(as.numeric(res[["log2FoldChange"]])),
+       name = "log2FoldChange")
+}
+
 # Build every GSEA input under one explicit ordering contract. Statistics must be
 # finite and are ordered decreasingly. Exact-score ties use the canonical gene id:
 # all-digit ids (Entrez) compare by exact numeric value, while all other id spaces
@@ -128,7 +163,8 @@ read_ids_csv <- function(path) {
 # ids and non-finite scores are removed, repeated canonical ids are collapsed by
 # their median score, matching the deterministic many-to-one reducer used above
 # for OrgDb mappings and making the rank invariant to source-row order.
-build_deterministic_rank <- function(statistic, canonical_id) {
+build_deterministic_rank <- function(statistic, canonical_id,
+                                     statistic_name = NA_character_) {
   if (length(statistic) != length(canonical_id)) {
     stop("GSEA statistics and canonical ids must have equal lengths")
   }
@@ -176,8 +212,11 @@ build_deterministic_rank <- function(statistic, canonical_id) {
     runs <- rle(sort(unname(values), method = "radix"))$lengths
     runs[runs > 1L]
   } else integer(0)
+  ranked_on <- if (is.na(statistic_name)) "the supplied statistic" else
+    as.character(statistic_name)
   list(
     values = values,
+    statistic_name = ranked_on,
     ranked_gene_n = length(values),
     tie_group_n = length(tie_sizes),
     tie_pair_n = sum(as.double(tie_sizes) * (tie_sizes - 1) / 2),
@@ -188,9 +227,9 @@ build_deterministic_rank <- function(statistic, canonical_id) {
     invalid_id_removed = as.integer(invalid_id_removed),
     nonfinite_removed = as.integer(nonfinite_removed),
     id_policy = id_policy,
-    policy = paste0("invalid IDs and non-finite statistics removed; duplicate canonical IDs ",
-                    "collapsed by median; finite statistic descending; exact ties by ",
-                    id_policy)
+    policy = paste0("ranked on ", ranked_on, "; invalid IDs and non-finite statistics ",
+                    "removed; duplicate canonical IDs collapsed by median; finite ",
+                    "statistic descending; exact ties by ", id_policy)
   )
 }
 
@@ -395,16 +434,17 @@ map_ids_with_routing <- function(ids, orgdb, configured_keytype, orgdb_package =
 # when its source rows imply both directions or when its collapsed effect has the
 # opposite sign from the one declared direction. This keeps foreground and
 # universe in the same conflict-free gene space.
-collapse_entrez_results <- function(res, up_ids, down_ids) {
-  required <- c("base_id", "ENTREZID", "log2FoldChange")
+collapse_entrez_results <- function(res, up_ids, down_ids,
+                                    statistic_column = "log2FoldChange") {
+  required <- c("base_id", "ENTREZID", "log2FoldChange", statistic_column)
   if (!all(required %in% names(res))) {
     stop("Entrez collapse requires columns: ", paste(required, collapse = ", "))
   }
   empty_table <- data.frame(
     gene_id = character(0), base_id = character(0), source_ids = character(0),
     symbol = character(0), ENTREZID = character(0), log2FoldChange = numeric(0),
-    stat = numeric(0), baseMean = numeric(0), direction = character(0),
-    stringsAsFactors = FALSE)
+    stat = numeric(0), baseMean = numeric(0), rank_statistic = numeric(0),
+    direction = character(0), stringsAsFactors = FALSE)
   empty_conflicts <- data.frame(
     ENTREZID = character(0), reason = character(0), source_ids = character(0),
     source_directions = character(0), stringsAsFactors = FALSE)
@@ -444,16 +484,20 @@ collapse_entrez_results <- function(res, up_ids, down_ids) {
     directions <- sort(unique(res$input_direction[idx]))
     nonneutral <- setdiff(directions, "neutral")
     lfc <- finite_median(res$log2FoldChange[idx])
+    # The direction guard keys on the column the GSEA rank is built from, so a
+    # collapsed group can never enter the ranked list with a sign opposite to the
+    # direction its source rows declared.
+    rank_stat <- finite_median(res[[statistic_column]][idx])
     reason <- character(0)
     if ("conflict" %in% directions || all(c("up", "down") %in% nonneutral)) {
       reason <- c(reason, "opposed_source_directions")
     }
     declared <- if (identical(nonneutral, "up")) "up" else
                 if (identical(nonneutral, "down")) "down" else "neutral"
-    if (identical(declared, "up") && is.finite(lfc) && lfc <= 0) {
+    if (identical(declared, "up") && is.finite(rank_stat) && rank_stat <= 0) {
       reason <- c(reason, "collapsed_effect_not_positive")
     }
-    if (identical(declared, "down") && is.finite(lfc) && lfc >= 0) {
+    if (identical(declared, "down") && is.finite(rank_stat) && rank_stat >= 0) {
       reason <- c(reason, "collapsed_effect_not_negative")
     }
     if (length(reason)) {
@@ -469,8 +513,9 @@ collapse_entrez_results <- function(res, up_ids, down_ids) {
       source_ids = paste(source_ids, collapse = ";"),
       symbol = if ("symbol" %in% names(res)) first_text(res$symbol[idx]) else NA_character_,
       ENTREZID = entrez, log2FoldChange = lfc,
-      stat = if ("stat" %in% names(res)) finite_median(res$stat[idx]) else NA_real_,
-      baseMean = if ("baseMean" %in% names(res)) finite_median(res$baseMean[idx]) else NA_real_,
+      stat = if ("stat" %in% names(res)) finite_median(res[["stat"]][idx]) else NA_real_,
+      baseMean = if ("baseMean" %in% names(res)) finite_median(res[["baseMean"]][idx]) else NA_real_,
+      rank_statistic = rank_stat,
       direction = declared, stringsAsFactors = FALSE)
   }
   table <- if (length(rows)) do.call(rbind, rows) else empty_table
@@ -511,6 +556,10 @@ MAPPING_REVIEW_FRACTION <- 0.50
 ANNOTATION_WARNING_FRACTION <- 0.80
 KEGG_MIN_GENE_SET_SIZE <- 10L
 KEGG_MAX_GENE_SET_SIZE <- 500L
+# Fewer significant genes than this cannot support an over-representation reading;
+# every route gates its check status on it so a near-empty foreground stays visible
+# whatever the resource audit says about the databases themselves.
+MIN_ORA_FOREGROUND_GENES <- 5L
 
 mapping_gate <- function(tested_fraction, significant_fraction) {
   observed <- c(tested_fraction, significant_fraction)
@@ -757,81 +806,136 @@ raw_result_count <- function(object) {
   if (is.data.frame(result)) nrow(result) else 0L
 }
 
+KEGG_VALID_STATUSES <- c("PASS", "LIMITED_ANNOTATION")
+
 assess_kegg_resource <- function(identity, retrieval_success, retrieval_error,
                                  supplied_universe, effective_universe, pathway_sets,
                                  foregrounds, ora_hypotheses_n, ora_adjusted_n,
                                  gsea_adjusted_n,
                                  min_size = KEGG_MIN_GENE_SET_SIZE,
-                                 max_size = KEGG_MAX_GENE_SET_SIZE) {
+                                 max_size = KEGG_MAX_GENE_SET_SIZE,
+                                 ora_attempted = TRUE, ora_success = retrieval_success,
+                                 ora_error = retrieval_error,
+                                 gsea_attempted = TRUE, gsea_success = retrieval_success,
+                                 gsea_error = retrieval_error,
+                                 ranked_ids = character(0)) {
   clean_ids <- function(values) mapped_unique(as.character(values))
   supplied <- clean_ids(supplied_universe)
   effective <- clean_ids(effective_universe)
+  ranked <- clean_ids(ranked_ids)
   foregrounds <- lapply(foregrounds, clean_ids)
   for (name in c("up", "down", "combined")) {
     if (is.null(foregrounds[[name]])) foregrounds[[name]] <- character(0)
   }
+  sets <- if (is.list(pathway_sets)) lapply(pathway_sets, clean_ids) else list()
+  # Gene sets are eligible per leg: restricted to that leg's own gene space (the
+  # ORA universe, the ranked list) and then to the declared size window.
+  eligible_for <- function(space) {
+    restricted <- lapply(sets, function(values) intersect(values, space))
+    sizes <- lengths(restricted)
+    restricted[sizes >= min_size & sizes <= max_size]
+  }
+  eligible <- eligible_for(effective)
+  eligible_ids <- clean_ids(unlist(eligible, use.names = FALSE))
+  gsea_eligible <- eligible_for(ranked)
+  gsea_annotated <- clean_ids(unlist(gsea_eligible, use.names = FALSE))
+  supported <- if (length(eligible_ids))
+    lapply(foregrounds, function(values) length(intersect(values, eligible_ids))) else
+    list(up = 0L, down = 0L, combined = 0L)
   result <- list(
     status = "NOT_INTERPRETABLE", reason = "", identity = identity,
     retrieval_success = isTRUE(retrieval_success), retrieval_error = as.character(retrieval_error),
     supplied_universe_n = length(supplied), effective_universe_n = length(effective),
     effective_universe_fraction = mapping_fraction(length(effective), length(supplied)),
-    pathway_collection_n = if (is.list(pathway_sets)) length(pathway_sets) else 0L,
-    eligible_gene_sets_n = 0L, eligible_universe_n = 0L,
-    supported_foreground = list(up = 0L, down = 0L, combined = 0L),
+    pathway_collection_n = length(sets),
+    eligible_gene_sets_n = length(eligible), eligible_universe_n = length(eligible_ids),
+    supported_foreground = supported,
     foreground_total = lapply(foregrounds, length),
     ora_hypotheses_n = as.integer(ora_hypotheses_n),
     ora_adjusted_n = as.integer(ora_adjusted_n),
     gsea_adjusted_n = as.integer(gsea_adjusted_n),
+    gsea_ranked_n = length(ranked),
+    gsea_gene_sets_n = length(gsea_eligible),
+    gsea_annotated_n = length(gsea_annotated),
+    gsea_annotated_fraction = mapping_fraction(length(gsea_annotated), length(ranked)),
     min_size = as.integer(min_size), max_size = as.integer(max_size))
-  if (!identical(identity$status, "PASS")) {
-    result$reason <- identity$reason
-    return(result)
+
+  ora_leg <- function() {
+    fail <- function(reason) list(status = "NOT_INTERPRETABLE", reason = reason)
+    if (!identical(identity$status, "PASS")) return(fail(identity$reason))
+    if (!isTRUE(ora_attempted)) return(list(
+      status = "NOT_RUN",
+      reason = if (nzchar(ora_error)) as.character(ora_error) else
+        "KEGG over-representation was not run"))
+    if (!isTRUE(ora_success)) return(fail(paste("KEGG ORA retrieval failed:", ora_error)))
+    if (!length(supplied) || !length(effective) || any(!effective %in% supplied)) {
+      return(fail("KEGG effective universe is zero, malformed, or outside the supplied tested universe"))
+    }
+    if (!length(sets)) return(fail("KEGG retrieval returned no pathway gene-set collection"))
+    if (!length(eligible) || !length(eligible_ids)) {
+      return(fail(sprintf("KEGG returned no eligible %d-%d gene pathway hypotheses",
+                          min_size, max_size)))
+    }
+    if (supported$combined < 1L) {
+      return(fail("no combined foreground genes are supported by eligible KEGG pathways"))
+    }
+    if (!is.finite(result$ora_hypotheses_n) || result$ora_hypotheses_n < 1L) {
+      return(fail("KEGG produced no foreground-overlapping ORA hypotheses after size filtering"))
+    }
+    fractions <- c(
+      result$effective_universe_fraction,
+      vapply(c("up", "down", "combined"), function(name) {
+        total <- result$foreground_total[[name]]
+        if (total > 0L) supported[[name]] / total else NA_real_
+      }, numeric(1)))
+    limited <- any(fractions[is.finite(fractions)] < ANNOTATION_WARNING_FRACTION)
+    list(status = if (limited) "LIMITED_ANNOTATION" else "PASS",
+         reason = if (limited)
+           "valid KEGG resource with limited universe or foreground annotation coverage" else
+           "valid KEGG resource and supported foreground")
   }
-  if (!isTRUE(retrieval_success)) {
-    result$reason <- paste("KEGG retrieval failed:", retrieval_error)
-    return(result)
+
+  gsea_leg <- function() {
+    fail <- function(reason) list(status = "NOT_INTERPRETABLE", reason = reason)
+    if (!identical(identity$status, "PASS")) return(fail(identity$reason))
+    if (!isTRUE(gsea_attempted)) return(list(
+      status = "NOT_RUN",
+      reason = if (nzchar(gsea_error)) as.character(gsea_error) else
+        "KEGG gene-set enrichment was not run"))
+    if (!isTRUE(gsea_success)) return(fail(paste("KEGG GSEA retrieval failed:", gsea_error)))
+    if (!length(sets)) return(fail("KEGG retrieval returned no pathway gene-set collection"))
+    if (!length(gsea_eligible) && length(ranked)) {
+      return(fail(sprintf("KEGG returned no eligible %d-%d gene pathway hypotheses for the ranked list",
+                          min_size, max_size)))
+    }
+    fraction <- result$gsea_annotated_fraction
+    limited <- is.finite(fraction) && fraction < ANNOTATION_WARNING_FRACTION
+    list(status = if (limited) "LIMITED_ANNOTATION" else "PASS",
+         reason = if (limited)
+           "valid KEGG resource with limited ranked-list annotation coverage" else
+           "valid KEGG resource and annotated ranked list")
   }
-  if (!length(supplied) || !length(effective) || any(!effective %in% supplied)) {
-    result$reason <- "KEGG effective universe is zero, malformed, or outside the supplied tested universe"
-    return(result)
+
+  # Worst status across the legs, ignoring legs that never ran: a leg that did not
+  # run is not evidence against the other leg's resource, and only when neither ran
+  # is the resource itself unexercised.
+  overall_of <- function(legs) {
+    priority <- c(PASS = 0L, LIMITED_ANNOTATION = 1L, NOT_INTERPRETABLE = 2L)
+    ran <- Filter(function(leg) leg$status %in% names(priority), legs)
+    if (!length(ran)) return(list(
+      status = "NOT_RUN",
+      reason = paste(vapply(legs, function(leg) leg$reason, ""), collapse = "; ")))
+    ran[[which.max(priority[vapply(ran, function(leg) leg$status, "")])]]
   }
-  if (!is.list(pathway_sets) || !length(pathway_sets)) {
-    result$reason <- "KEGG retrieval returned no pathway gene-set collection"
-    return(result)
-  }
-  pathway_sets <- lapply(pathway_sets, clean_ids)
-  effective_sets <- lapply(pathway_sets, function(values) intersect(values, effective))
-  sizes <- lengths(effective_sets)
-  eligible <- effective_sets[sizes >= min_size & sizes <= max_size]
-  result$eligible_gene_sets_n <- length(eligible)
-  eligible_ids <- clean_ids(unlist(eligible, use.names = FALSE))
-  result$eligible_universe_n <- length(eligible_ids)
-  if (!length(eligible) || !length(eligible_ids)) {
-    result$reason <- sprintf("KEGG returned no eligible %d-%d gene pathway hypotheses",
-                             min_size, max_size)
-    return(result)
-  }
-  result$supported_foreground <- lapply(
-    foregrounds, function(values) length(intersect(values, eligible_ids)))
-  if (result$supported_foreground$combined < 1L) {
-    result$reason <- "no combined foreground genes are supported by eligible KEGG pathways"
-    return(result)
-  }
-  if (!is.finite(result$ora_hypotheses_n) || result$ora_hypotheses_n < 1L) {
-    result$reason <- "KEGG produced no foreground-overlapping ORA hypotheses after size filtering"
-    return(result)
-  }
-  support_fractions <- c(
-    result$effective_universe_fraction,
-    vapply(c("up", "down", "combined"), function(name) {
-      total <- result$foreground_total[[name]]
-      if (total > 0L) result$supported_foreground[[name]] / total else NA_real_
-    }, numeric(1)))
-  result$status <- if (any(support_fractions[is.finite(support_fractions)] <
-                           ANNOTATION_WARNING_FRACTION)) "LIMITED_ANNOTATION" else "PASS"
-  result$reason <- if (identical(result$status, "LIMITED_ANNOTATION"))
-    "valid KEGG resource with limited universe or foreground annotation coverage" else
-    "valid KEGG resource and supported foreground"
+  ora <- ora_leg()
+  gsea <- gsea_leg()
+  result$ora_status <- ora$status
+  result$ora_reason <- ora$reason
+  result$gsea_status <- gsea$status
+  result$gsea_reason <- gsea$reason
+  overall <- overall_of(list(ora, gsea))
+  result$status <- overall$status
+  result$reason <- overall$reason
   result
 }
 
@@ -845,11 +949,11 @@ kegg_evidence_lines <- function(kegg) {
   audit <- kegg$audit
   if (is.null(audit)) return("KEGG resource status: NOT_INTERPRETABLE; audit evidence missing.")
   identity <- audit$identity
-  interpretation <- if (audit$status %in% c("PASS", "LIMITED_ANNOTATION") &&
+  interpretation <- if (audit$status %in% KEGG_VALID_STATUSES &&
                         audit$ora_adjusted_n == 0L && audit$gsea_adjusted_n == 0L) {
     paste0("no supported KEGG pathways met the adjusted criterion; this is not evidence ",
            "that no pathway biology is present")
-  } else if (audit$status %in% c("PASS", "LIMITED_ANNOTATION")) {
+  } else if (audit$status %in% KEGG_VALID_STATUSES) {
     sprintf("%d ORA and %d GSEA pathways met the adjusted criterion",
             audit$ora_adjusted_n, audit$gsea_adjusted_n)
   } else audit$reason
@@ -859,8 +963,9 @@ kegg_evidence_lines <- function(kegg) {
             identity$status, identity$configured_code, identity$registry_code,
             identity$registry_name, identity$registry_taxon,
             identity$expected_name, identity$expected_taxon, identity$registry_source),
-    sprintf("KEGG retrieval: %s; pathway collection=%d; detail=%s",
+    sprintf("KEGG retrieval: %s; key form=%s; pathway collection=%d; detail=%s",
             if (audit$retrieval_success) "SUCCESS" else "FAILED",
+            if (is.null(audit$key_form)) "not recorded" else as.character(audit$key_form),
             audit$pathway_collection_n,
             if (nzchar(audit$retrieval_error)) audit$retrieval_error else "none"),
     sprintf("KEGG effective resource universe: %s; eligible %d-%d pathway universe=%d",
@@ -871,18 +976,29 @@ kegg_evidence_lines <- function(kegg) {
             format_fraction_count(audit$supported_foreground$down, audit$foreground_total$down),
             format_fraction_count(audit$supported_foreground$combined, audit$foreground_total$combined)),
     sprintf(paste0("KEGG eligible hypotheses/gene sets: %d after %d-%d filter; ",
-                   "foreground-overlapping ORA hypotheses adjusted=%d"),
+                   "foreground-overlapping ORA hypotheses tested before the cutoff=%d"),
             audit$eligible_gene_sets_n, audit$min_size, audit$max_size,
             audit$ora_hypotheses_n),
+    sprintf(paste0("KEGG ranked-list annotation: annotated ranked genes %s; eligible ",
+                   "%d-%d gene sets for the ranked list=%d"),
+            format_fraction_count(audit$gsea_annotated_n, audit$gsea_ranked_n),
+            audit$min_size, audit$max_size, audit$gsea_gene_sets_n),
     sprintf("KEGG adjusted results: ORA=%d; GSEA=%d; BH pvalueCutoff=%s; qvalueCutoff=0.20",
             audit$ora_adjusted_n, audit$gsea_adjusted_n,
             format(alpha, scientific = FALSE, trim = TRUE)),
+    sprintf("KEGG ORA status: %s; adjusted pathways=%d; detail=%s",
+            audit$ora_status, audit$ora_adjusted_n, audit$ora_reason),
+    sprintf("KEGG GSEA status: %s; adjusted pathways=%d; detail=%s",
+            audit$gsea_status, audit$gsea_adjusted_n, audit$gsea_reason),
     sprintf("KEGG resource status: %s; %s", audit$status, interpretation))
 }
 
 # KEGG ORA (combined significant set) + GSEA (ranked list). The returned audit
 # distinguishes a valid but sparsely annotated resource from an invalid or
 # unverifiable resource, and preserves zero adjusted results as a negative result.
+# The two legs are audited and written independently: an empty significant-gene
+# foreground makes ORA impossible without saying anything about the ranked GSEA,
+# and a failed gseKEGG call says nothing about the ORA.
 run_kegg <- function(genes_all, ranked, kegg_keytype, background = NULL,
                      foregrounds = list(up = character(0), down = character(0),
                                         combined = genes_all),
@@ -895,7 +1011,8 @@ run_kegg <- function(genes_all, ranked, kegg_keytype, background = NULL,
   empty_return <- function(reason) {
     audit <- assess_kegg_resource(
       identity, FALSE, reason, background, character(0), list(), foregrounds,
-      0L, 0L, 0L)
+      0L, 0L, 0L, ranked_ids = names(ranked))
+    audit$key_form <- kegg_keytype
     list(ekegg_all = NULL, kegg_gse = NULL, n_ora = 0L, n_gsea = 0L,
          audit = audit)
   }
@@ -919,14 +1036,16 @@ run_kegg <- function(genes_all, ranked, kegg_keytype, background = NULL,
   # an empty vector: clusterProfiler treats a zero-length universe as a failure, and
   # trading an inflated result for no result is the worse error.
   if (length(background) > 0) kegg_args$universe <- background
+  ora_attempted <- length(genes_all) >= 1
+  gsea_attempted <- length(ranked) > 0
   ek_error <- ""
-  ek <- if (length(genes_all) >= 1) tryCatch(
+  ek <- if (ora_attempted) tryCatch(
     do.call(enrichKEGG, kegg_args), error = function(e) {
       ek_error <<- conditionMessage(e); message("enrichKEGG failed: ", ek_error); NULL
     }) else { ek_error <- "combined foreground is empty"; NULL }
   kg <- NULL
   kg_error <- ""
-  if (length(ranked) > 0) {
+  if (gsea_attempted) {
     set.seed(42)
     kg <- tryCatch(
       with_deterministic_gsea_ties(
@@ -939,11 +1058,20 @@ run_kegg <- function(genes_all, ranked, kegg_keytype, background = NULL,
         kg_error <<- conditionMessage(e); message("gseKEGG failed: ", kg_error); NULL
       })
   } else kg_error <- "ranked list is empty"
-  retrieval_error <- paste(c(ek_error, kg_error)[nzchar(c(ek_error, kg_error))], collapse = "; ")
-  pathway_sets <- safe_slot(kg, "geneSets", list())
+  ora_success <- !is.null(ek) && !nzchar(ek_error)
+  gsea_success <- !is.null(kg) && !nzchar(kg_error)
+  # Only a leg that was actually attempted can have failed retrieval; an empty
+  # foreground or ranked list is a property of the differential expression, not of
+  # the KEGG resource, and must not be reported as a retrieval failure.
+  attempted_error <- c(if (ora_attempted) ek_error, if (gsea_attempted) kg_error)
+  retrieval_error <- paste(attempted_error[nzchar(attempted_error)], collapse = "; ")
+  # gseKEGG's geneSets are the organism's pathway collection; fall back to the ORA
+  # object's own collection so a failed GSEA leg cannot strip the ORA leg of the
+  # resource evidence it is judged on (and vice versa).
+  pathway_sets <- safe_slot(kg, "geneSets", safe_slot(ek, "geneSets", list()))
   audit <- assess_kegg_resource(
     identity = identity,
-    retrieval_success = !is.null(ek) && !is.null(kg) && !nzchar(retrieval_error),
+    retrieval_success = (!ora_attempted || ora_success) && (!gsea_attempted || gsea_success),
     retrieval_error = retrieval_error,
     supplied_universe = background,
     effective_universe = safe_slot(ek, "universe", character(0)),
@@ -951,10 +1079,16 @@ run_kegg <- function(genes_all, ranked, kegg_keytype, background = NULL,
     foregrounds = foregrounds,
     ora_hypotheses_n = raw_result_count(ek),
     ora_adjusted_n = nrows(ek),
-    gsea_adjusted_n = nrows(kg))
-  if (audit$status %in% c("PASS", "LIMITED_ANNOTATION")) {
-    if (nrows(ek) > 0) write.csv(as.data.frame(ek), out[["kegg"]], row.names = FALSE)
-    if (nrows(kg) > 0) write.csv(as.data.frame(kg), out[["kegg_gsea"]], row.names = FALSE)
+    gsea_adjusted_n = nrows(kg),
+    ora_attempted = ora_attempted, ora_success = ora_success, ora_error = ek_error,
+    gsea_attempted = gsea_attempted, gsea_success = gsea_success, gsea_error = kg_error,
+    ranked_ids = names(ranked))
+  audit$key_form <- kegg_keytype
+  if (audit$ora_status %in% KEGG_VALID_STATUSES && nrows(ek) > 0) {
+    write.csv(as.data.frame(ek), out[["kegg"]], row.names = FALSE)
+  }
+  if (audit$gsea_status %in% KEGG_VALID_STATUSES && nrows(kg) > 0) {
+    write.csv(as.data.frame(kg), out[["kegg_gsea"]], row.names = FALSE)
   }
   list(ekegg_all = ek, kegg_gse = kg, n_ora = nrows(ek), n_gsea = nrows(kg),
        audit = audit)
@@ -1018,7 +1152,8 @@ if (orgdb_ok) {
     up_input <- read_ids_csv(up_file)
     down_input <- read_ids_csv(down_file)
     sig_input <- unique(c(up_input, down_input))
-    collapsed <- collapse_entrez_results(res, up_input, down_input)
+    rank_column <- select_rank_statistic(res)$name
+    collapsed <- collapse_entrez_results(res, up_input, down_input, rank_column)
     res <- collapsed$table
     conflict_entrez <- mapped_unique(collapsed$conflicts$ENTREZID)
     up_e <- mapped_unique(res$ENTREZID[res$direction == "up"])
@@ -1113,7 +1248,9 @@ if (orgdb_ok) {
     write_ont_csv(ego_mf, out[["go_mf"]])
     write_ont_csv(ego_cc, out[["go_cc"]])
 
-    rank_info <- build_deterministic_rank(res$log2FoldChange, res$ENTREZID)
+    # res$rank_statistic is the per-Entrez median of the same column the collapse
+    # gated direction on, so the collapse and the ranking cannot diverge.
+    rank_info <- build_deterministic_rank(res$rank_statistic, res$ENTREZID, rank_column)
     gene_list <- rank_info$values
     set.seed(42)
     # Gene-set size limits and BH correction are gseGO's defaults, stated explicitly.
@@ -1160,7 +1297,8 @@ if (orgdb_ok) {
       foregrounds = list(up = up_e, down = down_e, combined = all_sig),
       expected_name = expected_kegg_name, expected_taxon = expected_kegg_taxon)
     else list(ekegg_all = NULL, kegg_gse = NULL, n_ora = 0L, n_gsea = 0L,
-              audit = list(status = "NOT_RUN"))
+              audit = list(status = "NOT_RUN", ora_status = "NOT_RUN",
+                           gsea_status = "NOT_RUN"))
     go_bp_universe_n <- effective_ora_universe_n(ego_all)
     go_mf_universe_n <- effective_ora_universe_n(ego_mf)
     go_cc_universe_n <- effective_ora_universe_n(ego_cc)
@@ -1254,8 +1392,9 @@ if (orgdb_ok) {
       sprintf("ORA parameters: Benjamini-Hochberg (BH); pvalueCutoff=%s; qvalueCutoff=0.20; gene-set size 10-500; explicit tested-gene universe.",
               format(alpha, scientific = FALSE, trim = TRUE)),
       "ORA multiple-testing families: up, down, and combined queries are BH-corrected separately; their term counts must not be summed or interpreted as one experiment-wide FDR family.",
-      sprintf("GSEA parameters: complete mapped, direction-conflict-free ranked Entrez list; Benjamini-Hochberg (BH); pvalueCutoff=%s; gene-set size 10-500; seed=42.",
-              format(alpha, scientific = FALSE, trim = TRUE)),
+      sprintf(paste0("GSEA parameters: complete mapped, direction-conflict-free ranked Entrez list ",
+                     "ranked on %s; Benjamini-Hochberg (BH); pvalueCutoff=%s; gene-set size 10-500; seed=42."),
+              rank_info$statistic_name, format(alpha, scientific = FALSE, trim = TRUE)),
       rank_evidence_lines(rank_info),
       "Mapping limitation: enrichment tests only the retained mapped subset; incomplete, ambiguous, or non-random identifier mapping can bias terms and pathways, so coverage and exclusions must accompany interpretation.",
       sprintf("Up-regulated: %d genes, %d GO BP terms (ORA)", length(up_e), n_up),
@@ -1265,7 +1404,7 @@ if (orgdb_ok) {
       sprintf("KEGG adjusted results meeting the criterion: %d (ORA), %d (GSEA)",
               kegg$n_ora, kegg$n_gsea))
     result_status <- status_max(
-      if (length(all_sig) >= 5) "PASS" else "REVIEW_REQUIRED",
+      if (length(all_sig) >= MIN_ORA_FOREGROUND_GENES) "PASS" else "REVIEW_REQUIRED",
       coverage_status, direction_status, annotation_check_status, kegg_check_status)
     list(status = result_status,
          message = sprintf(paste0(
@@ -1296,7 +1435,8 @@ if (orgdb_ok) {
     res <- res[!is.na(res$padj) & !is.na(res$log2FoldChange), ]
     res$base_id <- strip_version(res$gene_id)
     write_id_map(res)  # no entrez on this route; symbol/gene_id still bridge term extraction
-    rank_info <- build_deterministic_rank(res$log2FoldChange, res$base_id)
+    rank_stat <- select_rank_statistic(res)
+    rank_info <- build_deterministic_rank(rank_stat$values, res$base_id, rank_stat$name)
     gene_list <- rank_info$values
     tested_genes <- unique(res$base_id)  # tested-gene background for gost custom_bg
 
@@ -1346,6 +1486,15 @@ if (orgdb_ok) {
       # otherwise abort the whole route, including the always-on KEGG block below.
       # Keep only atomic columns for the CSV (the full table is kept in the RDS).
       if (n_go > 0) {
+        # gost returns source-grouped order; the report and its "top by adjusted p"
+        # caption take file order, so sort here. gost's `p_value` IS the g:SCS-adjusted
+        # value. term_id is a deterministic secondary key so exact ties are stable.
+        if ("p_value" %in% names(go_rows)) {
+          key <- if ("term_id" %in% names(go_rows)) as.character(go_rows$term_id) else
+            rownames(go_rows)
+          go_rows <- go_rows[order(suppressWarnings(as.numeric(go_rows$p_value)), key,
+                                   method = "radix"), , drop = FALSE]
+        }
         atomic <- vapply(go_rows, is.atomic, logical(1))
         write.csv(go_rows[, atomic, drop = FALSE], out[["go"]], row.names = FALSE)
       }
@@ -1354,11 +1503,12 @@ if (orgdb_ok) {
     # KEGG ORA + GSEA via clusterProfiler on the raw locus-tag ids (always-on tail).
     # Same tested-gene background g:Profiler receives as custom_bg, in locus-tag space.
     kegg <- if (has_kegg) run_kegg(
-      all_ids, gene_list, "kegg", background = tested_genes, rank_info = rank_info,
+      all_ids, gene_list, kegg_keytype, background = tested_genes, rank_info = rank_info,
       foregrounds = list(up = up_ids, down = down_ids, combined = all_ids),
       expected_name = configured_organism_name)
     else list(ekegg_all = NULL, kegg_gse = NULL, n_ora = 0L, n_gsea = 0L,
-              audit = list(status = "NOT_RUN"))
+              audit = list(status = "NOT_RUN", ora_status = "NOT_RUN",
+                           gsea_status = "NOT_RUN"))
 
     saveRDS(list(ego_all = NULL, ego_up = NULL, ego_down = NULL,
                  gse = NULL, ego_do = NULL,
@@ -1379,7 +1529,9 @@ if (orgdb_ok) {
               kegg$n_ora, kegg$n_gsea))
     gp_check_status <- if (is.null(gp)) "REVIEW_REQUIRED" else "PASS"
     kegg_check_status <- if (has_kegg) resource_status_to_check(kegg$audit$status) else "PASS"
-    result_status <- status_max(gp_check_status, kegg_check_status)
+    result_status <- status_max(
+      if (length(all_ids) >= MIN_ORA_FOREGROUND_GENES) "PASS" else "REVIEW_REQUIRED",
+      gp_check_status, kegg_check_status)
     list(status = result_status,
          message = sprintf(paste0("g:Profiler GO=%d adjusted terms; KEGG ORA=%d, GSEA=%d adjusted pathways; ",
                                   "KEGG resource=%s."),
@@ -1399,7 +1551,8 @@ if (orgdb_ok) {
     res <- res[!is.na(res$padj) & !is.na(res$log2FoldChange), ]
     res$base_id <- strip_version(res$gene_id)
     write_id_map(res)  # no entrez on this route; symbol/gene_id still bridge term extraction
-    rank_info <- build_deterministic_rank(res$log2FoldChange, res$base_id)
+    rank_stat <- select_rank_statistic(res)
+    rank_info <- build_deterministic_rank(rank_stat$values, res$base_id, rank_stat$name)
     gene_list <- rank_info$values
 
     tested_genes <- unique(res$base_id)  # tested-gene background for the KEGG ORA universe
@@ -1409,7 +1562,7 @@ if (orgdb_ok) {
     all_ids <- unique(c(up_ids, down_ids))
 
     kegg <- run_kegg(
-      all_ids, gene_list, "kegg", background = tested_genes, rank_info = rank_info,
+      all_ids, gene_list, kegg_keytype, background = tested_genes, rank_info = rank_info,
       foregrounds = list(up = up_ids, down = down_ids, combined = all_ids),
       expected_name = configured_organism_name)
 
@@ -1429,7 +1582,9 @@ if (orgdb_ok) {
       kegg_evidence_lines(kegg),
       sprintf("KEGG adjusted results meeting the criterion: %d (ORA), %d (GSEA)",
               kegg$n_ora, kegg$n_gsea))
-    list(status = resource_status_to_check(kegg$audit$status),
+    list(status = status_max(
+           if (length(all_ids) >= MIN_ORA_FOREGROUND_GENES) "PASS" else "REVIEW_REQUIRED",
+           resource_status_to_check(kegg$audit$status)),
          message = sprintf(paste0("KEGG-only enrichment: ORA=%d, GSEA=%d adjusted pathways; ",
                                   "resource=%s; %s"),
                            kegg$n_ora, kegg$n_gsea, kegg$audit$status,

@@ -87,6 +87,7 @@ from app.core.metadata import (
     read_user_table,
     save_metadata,
     validate_metadata,
+    non_numeric_matrix_tokens,
 )
 from app.core.project import (
     ProjectExistsError,
@@ -101,7 +102,7 @@ from app.core.preflight import (
     write_input_validation_with_fingerprint,
 )
 from app.core.reference_manager import catalog_entry_for_organism, load_reference_catalog, md5sum, validate_reference
-from app.core.resources import detect_system, recommend_profile, recommend_rule_threads
+from app.core.resources import detect_system, recommend_profile, recommend_rule_threads, recommend_rule_memory_gb
 from app.core.sra_metadata import fetch_ena_metadata, metadata_to_samples
 from app.core.geo_metadata import fetch_geo_series
 from app.core.runtime_calibration import calibration_factor, record_run
@@ -118,6 +119,7 @@ from app.core.paths import (
     data_path,
     is_wsl_unc_path,
     project_configured_path,
+    UnsupportedUncPathError,
     windows_to_wsl_path,
     wsl_recommended_workdir,
     wsl_unc_distro,
@@ -146,9 +148,14 @@ class RunnerThread(QThread):
             self.finished_with_code.emit(1)
             return
         assert process.stdout is not None
-        for line in process.stdout:
-            self.line.emit(line.rstrip())
-        self.finished_with_code.emit(process.wait())
+        try:
+            for line in process.stdout:
+                self.line.emit(line.rstrip())
+        except Exception as exc:  # a dead reader must still report completion or the UI hangs
+            self.line.emit(f"Run output reader failed: {exc}")
+            process.stdout.close()
+        finally:
+            self.finished_with_code.emit(process.wait())
 
 
 class BackgroundWorker(QThread):
@@ -1264,10 +1271,18 @@ class MainWindow(QMainWindow):
             self.workflow_design_options.setVisible(
                 not external_results and self.workflow_design_toggle.isChecked())
             self.workflow_design_options.setEnabled(not external_results)
-        for model_control_name in ("de_min_count", "de_shrink"):
-            model_control = getattr(self, model_control_name, None)
-            if model_control is not None:
-                model_control.setEnabled(not external_results)
+        # DESeq2's count filter and shrinkage estimator are read by the count-based DE engines
+        # only: microarray runs limma-trend on intensities and a results upload skips DE entirely.
+        de_params_active = mode not in ("microarray", "deseq2_results")
+        if getattr(self, "adv_group", None) is not None:
+            # Disable the whole panel only when nothing in it applies; otherwise gate each
+            # parameter, because a disabled group box would take the still-relevant DESeq2
+            # rows down with it on the count-matrix route.
+            self.adv_group.setEnabled(alignment_active or de_params_active)
+            for advanced_control in self.adv_alignment_widgets:
+                advanced_control.setEnabled(alignment_active)
+            for advanced_control in self.adv_de_widgets:
+                advanced_control.setEnabled(de_params_active)
         if getattr(self, "organellar", None) is not None:
             self.organellar.setEnabled(alignment_active)  # needs a genome + GTF
         if getattr(self, "rseqc", None) is not None:
@@ -1279,15 +1294,22 @@ class MainWindow(QMainWindow):
             # cannot run the per-study DESeq2 fan-out. The workflow additionally requires a 'dataset'
             # column with >1 study (MULTI_DATASET) — the Snakefile is the source of truth there.
             self.meta_analysis.setEnabled(mode in ("fastq", "sra", "mixed", "count_matrix"))
-        if getattr(self, "per_study_enrichment", None) is not None:
-            # Only meaningful when meta-analysis is both available (mode) and enabled.
-            self.per_study_enrichment.setEnabled(
-                self.meta_analysis.isEnabled() and self.meta_analysis.isChecked())
+        self._sync_meta_controls()
         if hasattr(self, "trim_poly_g"):
             self._sync_trimmer_controls()
         if hasattr(self, "workflow_summary"):
             self._update_workflow_summary()
         self._update_workflow_section_height()
+
+    def _sync_meta_controls(self) -> None:
+        """Grey the meta-analysis dependants unless meta-analysis is both available and on."""
+        if getattr(self, "meta_analysis", None) is None:
+            return
+        active = self.meta_analysis.isEnabled() and self.meta_analysis.isChecked()
+        for control in (getattr(self, "per_study_enrichment", None),
+                        getattr(self, "meta_go_ontology", None)):
+            if control is not None:
+                control.setEnabled(active)
 
     def _update_workflow_section_height(self, *_args) -> None:
         """Fit the active settings section before resorting to inner scrolling."""
@@ -1666,57 +1688,71 @@ class MainWindow(QMainWindow):
         sep = "," if src.suffix.lower() == ".csv" else "\t"
         # Reading/copying the matrix is blocking I/O (and a UNC/9P source can be
         # slow), so show a wait cursor and status instead of a frozen-looking window.
+        # Each phase pushes exactly one override cursor and its `finally` pops it, so no
+        # dialog is raised under a wait cursor and no path double-restores (which would pop
+        # a cursor this method never pushed).
         self.statusBar().showMessage("Importing count matrix...")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             try:
                 df = read_user_table(src, sep=sep, comment="#", dtype=str)
             except Exception as exc:
-                QMessageBox.warning(self, APP_NAME, f"Could not read the matrix: {exc}")
+                read_error: str | None = str(exc)
+            else:
+                read_error = None
+            if read_error is None and df.shape[1] < 2:
+                read_error = ""  # shape problem: its own message below
+            fractional = tpm = False
+            if read_error is None:
+                # Sample columns = all but the gene-id column, minus featureCounts metadata.
+                meta_cols = {"Chr", "Start", "End", "Strand", "Length"}
+                sample_cols = [c for c in df.columns[1:] if c not in meta_cols]
+                # featureCounts BAM-path columns -> sample_ids.
+                def clean(c: str) -> str:
+                    return re.sub(r"_Aligned\.sortedByCoord\.out\.bam$", "", Path(str(c)).name)
+                sample_ids = [clean(c) for c in sample_cols]
+                # Detect normalized / estimated input up front (mirrors the ingest_counts guard) so
+                # the user gets an immediate, clear choice instead of a downstream ingest failure.
+                # RSEM/tximport estimated counts are fractional but valid (rounded); TPM/FPKM/log/
+                # RMA are not.
+                _num = df[sample_cols].apply(pd.to_numeric, errors="coerce")
+                _vals = _num.to_numpy(dtype="float64").ravel()
+                _vals = _vals[~pd.isna(_vals)]
+                _nz = _vals[_vals != 0]
+                fractional = bool(_nz.size and float((_nz % 1 != 0).mean()) > 0.5)
+                if fractional:
+                    _colsum = _num.sum(axis=0, skipna=True).to_numpy(dtype="float64")
+                    tpm = bool(_colsum.size and float(((abs(_colsum - 1e6) / 1e6) < 0.01).mean()) >= 0.5)
+        finally:
+            QApplication.restoreOverrideCursor()
+        if read_error is not None:
+            QMessageBox.warning(self, APP_NAME, f"Could not read the matrix: {read_error}"
+                                if read_error else
+                                "The matrix needs a gene-id column plus at least one sample column.")
+            return
+        self.config.input.estimated_counts = False
+        if tpm:
+            QMessageBox.warning(self, APP_NAME,
+                "The matrix columns each sum to ~1,000,000, so this is TPM, not raw counts. "
+                "DESeq2 and the meta-analysis need raw integer counts — re-export "
+                "un-normalized counts and import again.")
+            return
+        if fractional:
+            resp = QMessageBox.question(self, APP_NAME,
+                "The matrix values are mostly non-integer.\n\n"
+                "• If these are RSEM / tximport ESTIMATED counts, they will be rounded to "
+                "integers and the run can proceed.\n"
+                "• If they are NORMALIZED data (FPKM/RPKM, log-CPM, RMA or microarray "
+                "intensities), DESeq2 cannot use them — cancel and re-export raw counts.\n\n"
+                "Are these estimated counts?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel)
+            if resp != QMessageBox.StandardButton.Yes:
+                self.statusBar().showMessage("Count-matrix import cancelled.", 4000)
                 return
-            if df.shape[1] < 2:
-                QMessageBox.warning(self, APP_NAME, "The matrix needs a gene-id column plus at least one sample column.")
-                return
-            # Sample columns = all but the gene-id column, minus featureCounts metadata.
-            meta_cols = {"Chr", "Start", "End", "Strand", "Length"}
-            sample_cols = [c for c in df.columns[1:] if c not in meta_cols]
-            # featureCounts BAM-path columns -> sample_ids.
-            def clean(c: str) -> str:
-                return re.sub(r"_Aligned\.sortedByCoord\.out\.bam$", "", Path(str(c)).name)
-            sample_ids = [clean(c) for c in sample_cols]
-            # Detect normalized / estimated input up front (mirrors the ingest_counts guard) so the
-            # user gets an immediate, clear choice instead of a downstream ingest failure. RSEM/
-            # tximport estimated counts are fractional but valid (rounded); TPM/FPKM/log/RMA are not.
-            self.config.input.estimated_counts = False
-            _num = df[sample_cols].apply(pd.to_numeric, errors="coerce")
-            _vals = _num.to_numpy(dtype="float64").ravel()
-            _vals = _vals[~pd.isna(_vals)]
-            _nz = _vals[_vals != 0]
-            if _nz.size and float((_nz % 1 != 0).mean()) > 0.5:
-                _colsum = _num.sum(axis=0, skipna=True).to_numpy(dtype="float64")
-                _tpm = _colsum.size and float(((abs(_colsum - 1e6) / 1e6) < 0.01).mean()) >= 0.5
-                if _tpm:
-                    QApplication.restoreOverrideCursor()
-                    QMessageBox.warning(self, APP_NAME,
-                        "The matrix columns each sum to ~1,000,000, so this is TPM, not raw counts. "
-                        "DESeq2 and the meta-analysis need raw integer counts — re-export "
-                        "un-normalized counts and import again.")
-                    return
-                QApplication.restoreOverrideCursor()
-                resp = QMessageBox.question(self, APP_NAME,
-                    "The matrix values are mostly non-integer.\n\n"
-                    "• If these are RSEM / tximport ESTIMATED counts, they will be rounded to "
-                    "integers and the run can proceed.\n"
-                    "• If they are NORMALIZED data (FPKM/RPKM, log-CPM, RMA or microarray "
-                    "intensities), DESeq2 cannot use them — cancel and re-export raw counts.\n\n"
-                    "Are these estimated counts?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-                    QMessageBox.StandardButton.Cancel)
-                if resp != QMessageBox.StandardButton.Yes:
-                    self.statusBar().showMessage("Count-matrix import cancelled.", 4000)
-                    return
-                QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-                self.config.input.estimated_counts = True
+            self.config.input.estimated_counts = True
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
             # Copy the matrix into the project and switch to count-matrix mode.
             dest = self.project_root / "config" / "counts_matrix.txt"
             # Write the parsed table as canonical TSV. ingest_counts.py picks its
@@ -1784,6 +1820,14 @@ class MainWindow(QMainWindow):
                 return
             if df.shape[1] < 2:
                 QMessageBox.warning(self, APP_NAME, "The matrix needs a gene-id column plus at least one sample column.")
+                return
+            bad_tokens = non_numeric_matrix_tokens(df.iloc[:, 1:])
+            if bad_tokens:
+                QMessageBox.warning(
+                    self, APP_NAME,
+                    "The matrix has non-numeric values such as "
+                    + ", ".join(repr(t) for t in bad_tokens)
+                    + ". Export it with '.' as the decimal separator and no text placeholders, then import again.")
                 return
             sample_ids = [str(c) for c in df.columns[1:]]
             dest = self.project_root / "config" / "microarray_expression.tsv"
@@ -2125,6 +2169,15 @@ class MainWindow(QMainWindow):
         if not genome.is_file() or not annotation.is_file():
             QMessageBox.warning(self, APP_NAME, "Genome FASTA and annotation must exist.")
             return
+        # Translate before anything is validated, hashed or mutated: a network share has no
+        # WSL-side equivalent, so the selection must be rejected whole rather than leaving the
+        # config half-updated with a reference the run cannot open.
+        try:
+            genome_wsl = windows_to_wsl_path(genome)
+            annotation_wsl = windows_to_wsl_path(annotation)
+        except UnsupportedUncPathError as exc:
+            QMessageBox.warning(self, APP_NAME, str(exc))
+            return
         validation = validate_reference(genome, annotation)
         if any(message.get("status") == "FAIL" for message in validation):
             detail = self._format_messages(validation)
@@ -2162,11 +2215,12 @@ class MainWindow(QMainWindow):
             self.config.ppi.taxon = entry.get("string_taxon")
             if self.config.input.type != "microarray":
                 enr.keytype = entry.get("enrichment_keytype") or None
+                enr.kegg_keytype = entry.get("kegg_keytype") or None
         # Store WSL-resolvable paths: reference staging and validate_reference.py
         # run inside WSL, where a Windows path (C:\...) would not exist. The md5s
         # above were computed on the native paths (readable on the Windows side).
-        self.config.reference.genome_fasta = windows_to_wsl_path(genome)
-        self.config.reference.annotation_file = windows_to_wsl_path(annotation)
+        self.config.reference.genome_fasta = genome_wsl
+        self.config.reference.annotation_file = annotation_wsl
         self.config.reference.annotation_format = self.ref_format.currentText()  # type: ignore[assignment]
         self.config.reference.genome_md5 = genome_md5
         self.config.reference.annotation_md5 = annotation_md5
@@ -2376,9 +2430,19 @@ class MainWindow(QMainWindow):
             "Opt-in and slow: run the full GO/KEGG enrichment for every study in the "
             "meta-analysis, not just the pooled cross-study enrichment. Only available when "
             "multi-study meta-analysis is on.")
+        self.meta_go_ontology = QComboBox()
+        for _ont_label, _ont in (("Biological process (BP)", "BP"),
+                                 ("Molecular function (MF)", "MF"),
+                                 ("Cellular component (CC)", "CC")):
+            self.meta_go_ontology.addItem(_ont_label, _ont)
+        self.meta_go_ontology.setToolTip(
+            "Which branch of the Gene Ontology the cross-study meta-analysis enrichment reports: "
+            "biological process (default), molecular function or cellular component. This applies "
+            "only to the meta-analysis GO results; the ordinary per-run enrichment still reports all "
+            "three branches. Only available when multi-study meta-analysis is on.")
         # Dependent enable: only meaningful when meta-analysis is active.
         self.meta_analysis.toggled.connect(
-            lambda on: self.per_study_enrichment.setEnabled(self.meta_analysis.isEnabled() and on))
+            lambda on: self._sync_meta_controls())
         # fastp parameters
         self.fastp_q = QSpinBox()
         self.fastp_q.setRange(0, 40)
@@ -2597,6 +2661,21 @@ class MainWindow(QMainWindow):
 
         read_column, read_form = advanced_column("Read preparation")
         analysis_column, analysis_form = advanced_column("Alignment and statistics")
+        # Mode gating: every parameter here except the two DESeq2 ones belongs to the
+        # alignment/read-processing stages, which no microarray, count-matrix or
+        # deseq2-results run executes. Collect the widgets (label included, so a greyed
+        # field never keeps a live-looking caption) rather than disabling a column, because
+        # Qt propagates a disabled parent to children unconditionally and the DESeq2 rows
+        # share the analysis column.
+        self.adv_alignment_widgets: list[QWidget] = []
+        self.adv_de_widgets: list[QWidget] = []
+
+        def adv_row(form: QFormLayout, bucket: list[QWidget], title: str,
+                    help_text: str, field: QWidget) -> None:
+            label = self._info_label(title, help_text)
+            form.addRow(label, field)
+            bucket += [label, field]
+
         adv_columns.addWidget(
             read_column, 0, 0, alignment=Qt.AlignmentFlag.AlignTop)
         adv_columns.addWidget(
@@ -2605,49 +2684,50 @@ class MainWindow(QMainWindow):
         adv_columns.setColumnStretch(1, 1)
         self.fastp_u = QSpinBox(); self.fastp_u.setRange(0, 100); self.fastp_u.setValue(40)
         self.fastp_polyx = QCheckBox()
-        read_form.addRow(self._info_label("fastp: low-quality limit", "Maximum percentage of low-quality bases before a read is discarded (-u). fastp default 40."), self.fastp_u)
-        read_form.addRow(self._info_label("fastp: trim 3' poly-X", "Trim 3' poly-A/poly-X tails (degraded or 3'-biased libraries). fastp default off."), self.fastp_polyx)
+        adv_row(read_form, self.adv_alignment_widgets, "fastp: low-quality limit", "Maximum percentage of low-quality bases before a read is discarded (-u). fastp default 40.", self.fastp_u)
+        adv_row(read_form, self.adv_alignment_widgets, "fastp: trim 3' poly-X", "Trim 3' poly-A/poly-X tails (degraded or 3'-biased libraries). fastp default off.", self.fastp_polyx)
         self.tm_sw_q = QSpinBox(); self.tm_sw_q.setRange(0, 40); self.tm_sw_q.setValue(15)
         self.tm_leading = QSpinBox(); self.tm_leading.setRange(0, 40); self.tm_leading.setValue(3)
         self.tm_trailing = QSpinBox(); self.tm_trailing.setRange(0, 40); self.tm_trailing.setValue(3)
-        read_form.addRow(self._info_label("Trimmomatic: window quality", "Average Phred required over a 4-base sliding window (SLIDINGWINDOW:4:Q). Default 15."), self.tm_sw_q)
-        read_form.addRow(self._info_label("Trimmomatic: leading quality", "Trim leading bases below this quality (LEADING). Default 3."), self.tm_leading)
-        read_form.addRow(self._info_label("Trimmomatic: trailing quality", "Trim trailing bases below this quality (TRAILING). Default 3."), self.tm_trailing)
+        adv_row(read_form, self.adv_alignment_widgets, "Trimmomatic: window quality", "Average Phred required over a 4-base sliding window (SLIDINGWINDOW:4:Q). Default 15.", self.tm_sw_q)
+        adv_row(read_form, self.adv_alignment_widgets, "Trimmomatic: leading quality", "Trim leading bases below this quality (LEADING). Default 3.", self.tm_leading)
+        adv_row(read_form, self.adv_alignment_widgets, "Trimmomatic: trailing quality", "Trim trailing bases below this quality (TRAILING). Default 3.", self.tm_trailing)
         self.rd_ensure = QComboBox()
         for _lbl, _v in (("norrna (keep confident non-rRNA)", "norrna"), ("rrna", "rrna"), ("both", "both"), ("none", "none")):
             self.rd_ensure.addItem(_lbl, _v)
         self.rd_chunk = QSpinBox(); self.rd_chunk.setRange(16, 4096); self.rd_chunk.setValue(256)
-        read_form.addRow(self._info_label("RiboDetector: ensure mode (-e)", "Which class is kept with high confidence. norrna keeps high-confidence non-rRNA reads (recommended)."), self.rd_ensure)
-        read_form.addRow(self._info_label("RiboDetector: chunk size", "Reads per batch (x1024): a memory/speed trade-off. Default 256."), self.rd_chunk)
+        adv_row(read_form, self.adv_alignment_widgets, "RiboDetector: ensure mode (-e)", "Which class is kept with high confidence. norrna keeps high-confidence non-rRNA reads (recommended).", self.rd_ensure)
+        adv_row(read_form, self.adv_alignment_widgets, "RiboDetector: chunk size", "Reads per batch (x1024): a memory/speed trade-off. Default 256.", self.rd_chunk)
         self.fs_subset = QSpinBox(); self.fs_subset.setRange(1000, 5000000); self.fs_subset.setSingleStep(10000); self.fs_subset.setValue(100000)
-        analysis_form.addRow(self._info_label("FastQ Screen: reads sampled", "How many reads FastQ Screen subsamples per sample. Default 100000."), self.fs_subset)
+        adv_row(analysis_form, self.adv_alignment_widgets, "FastQ Screen: reads sampled", "How many reads FastQ Screen subsamples per sample. Default 100000.", self.fs_subset)
         self.fs_conf = QLineEdit()
         fs_conf_browse = QPushButton("Browse")
         fs_conf_browse.clicked.connect(lambda: self._pick_reference_file(self.fs_conf, "FastQ Screen config (*.conf *.txt);;All files (*)"))
         fs_conf_row = QHBoxLayout(); fs_conf_row.addWidget(self.fs_conf); fs_conf_row.addWidget(fs_conf_browse)
         fs_conf_widget = QWidget(); fs_conf_widget.setLayout(fs_conf_row)
-        analysis_form.addRow(self._info_label("FastQ Screen: config", "Path to a fastq_screen.conf listing the bowtie2 genome indexes to screen against (required to run the screen). The built-in genome auto-download is not used; point this at a panel you already have."), fs_conf_widget)
+        adv_row(analysis_form, self.adv_alignment_widgets, "FastQ Screen: config", "Path to a fastq_screen.conf listing the bowtie2 genome indexes to screen against (required to run the screen). The built-in genome auto-download is not used; point this at a panel you already have.", fs_conf_widget)
         self.star_twopass = QCheckBox()
         self.star_multimap = QSpinBox(); self.star_multimap.setRange(1, 200); self.star_multimap.setValue(10)
         self.star_mismatch = QDoubleSpinBox(); self.star_mismatch.setRange(0.0, 1.0); self.star_mismatch.setSingleStep(0.02); self.star_mismatch.setDecimals(2); self.star_mismatch.setValue(1.0)
-        analysis_form.addRow(self._info_label("STAR: two-pass mode", "Two-pass mapping improves novel-junction detection (slower). STAR default off."), self.star_twopass)
-        analysis_form.addRow(self._info_label("STAR: max multimappers", "Reads mapping to more than this many loci are discarded (outFilterMultimapNmax). Default 10."), self.star_multimap)
-        analysis_form.addRow(self._info_label("STAR: mismatch ratio", "Max mismatches as a fraction of read length (outFilterMismatchNoverReadLmax). 1.0 = STAR default."), self.star_mismatch)
+        adv_row(analysis_form, self.adv_alignment_widgets, "STAR: two-pass mode", "Two-pass mapping improves novel-junction detection (slower). STAR default off.", self.star_twopass)
+        adv_row(analysis_form, self.adv_alignment_widgets, "STAR: max multimappers", "Reads mapping to more than this many loci are discarded (outFilterMultimapNmax). Default 10.", self.star_multimap)
+        adv_row(analysis_form, self.adv_alignment_widgets, "STAR: mismatch ratio", "Max mismatches as a fraction of read length (outFilterMismatchNoverReadLmax). 1.0 = STAR default.", self.star_mismatch)
         self.fc_feature = QLineEdit("exon")
         self.fc_attribute = QLineEdit("gene_id")
-        analysis_form.addRow(self._info_label("featureCounts: feature", "GTF feature counted (-t). Default exon."), self.fc_feature)
-        analysis_form.addRow(self._info_label("featureCounts: gene attribute", "GTF attribute grouped into genes (-g). Default gene_id."), self.fc_attribute)
+        adv_row(analysis_form, self.adv_alignment_widgets, "featureCounts: feature", "GTF feature counted (-t). Default exon.", self.fc_feature)
+        adv_row(analysis_form, self.adv_alignment_widgets, "featureCounts: gene attribute", "GTF attribute grouped into genes (-g). Default gene_id.", self.fc_attribute)
         self.de_min_count = QSpinBox(); self.de_min_count.setRange(0, 1000); self.de_min_count.setValue(10)
         self.de_shrink = QComboBox()
         for _v in ("apeglm", "ashr", "normal"):
             self.de_shrink.addItem(_v, _v)
-        analysis_form.addRow(self._info_label("DESeq2: minimum count", "Keep genes with at least this many reads in the smallest group. Default 10 (the validated value)."), self.de_min_count)
-        analysis_form.addRow(self._info_label("DESeq2: LFC shrinkage", "lfcShrink estimator for the MA/volcano effect sizes. Default apeglm (the validated value)."), self.de_shrink)
+        adv_row(analysis_form, self.adv_de_widgets, "DESeq2: minimum count", "Keep genes with at least this many reads in the smallest group. Default 10 (the validated value).", self.de_min_count)
+        adv_row(analysis_form, self.adv_de_widgets, "DESeq2: LFC shrinkage", "lfcShrink estimator for the MA/volcano effect sizes. Default apeglm (the validated value).", self.de_shrink)
         self.adv_container.setVisible(False)
         self.adv_toggle.toggled.connect(self.adv_container.setVisible)
         self.adv_toggle.toggled.connect(self._schedule_workflow_section_height_update)
         adv_outer.addWidget(self.adv_toggle)
         adv_outer.addWidget(self.adv_container)
+        self.adv_group = adv_group
 
         out_group = QGroupBox("Outputs")
         out_layout = QVBoxLayout(out_group)
@@ -2725,6 +2805,14 @@ class MainWindow(QMainWindow):
         optional_grid.setColumnStretch(0, 1)
         optional_grid.setColumnStretch(1, 1)
         out_layout.addLayout(optional_grid)
+        meta_ont_row = QHBoxLayout()
+        meta_ont_row.setContentsMargins(0, 0, 0, 0)
+        meta_ont_row.setSpacing(8)
+        meta_ont_row.addWidget(self._info_label(
+            "Meta-analysis GO ontology", self.meta_go_ontology.toolTip()))
+        meta_ont_row.addWidget(self.meta_go_ontology)
+        meta_ont_row.addStretch(1)
+        out_layout.addLayout(meta_ont_row)
         self.out_group = out_group
 
         # Custom collections are an opt-in branch rather than part of the first
@@ -2855,8 +2943,19 @@ class MainWindow(QMainWindow):
         factor = self.contrast_factor.text().strip() or "condition"
         exclude = {"sample_id", "fastq_1", "fastq_2", "fastq_1_url", "fastq_2_url", "layout",
                    "original_accession", "experiment_accession", "gsm_accession", "platform",
-                   "original_filename", "detected_pair_id", "condition", factor}
-        candidates = [c for c in cols if c and c not in exclude]
+                   "original_filename", "detected_pair_id", "condition", "sample_title",
+                   "read_count", "base_count", "download_bytes", "fastq_1_md5", "fastq_2_md5", factor}
+        technical = re.compile(r"(_md5|_url|_bytes|_count|_accession)$")
+        candidates = [c for c in cols if c and c not in exclude and not technical.search(c)]
+        df_cols = self.metadata_table.to_dataframe()
+
+        def numeric_levels(col: str) -> int | None:
+            # A numeric column enters the design as a continuous trend, not as groups.
+            vals = df_cols[col].astype(str).str.strip() if col in df_cols.columns else pd.Series(dtype=str)
+            vals = vals[vals.ne("") & vals.ne("unknown")]
+            if vals.empty or pd.to_numeric(vals, errors="coerce").isna().any():
+                return None
+            return int(vals.nunique())
         dlg = QDialog(self)
         dlg.setWindowTitle("Design helper")
         dlg.setMinimumWidth(460)
@@ -2874,7 +2973,9 @@ class MainWindow(QMainWindow):
             _dh_none.setWordWrap(True)
             lay.addWidget(_dh_none)
         for c in candidates:
-            cb = QCheckBox(c)
+            n_lv = numeric_levels(c)
+            cb = QCheckBox(c if n_lv is None else
+                           f"{c}  (numeric, {n_lv} distinct values: fitted as a linear trend, not as groups)")
             cb.setChecked(c in current.split())
             lay.addWidget(cb)
             boxes.append((c, cb))
@@ -3542,9 +3643,11 @@ class MainWindow(QMainWindow):
     # Map a Snakemake rule name to a plain-language phase, longest/most specific
     # substrings first so e.g. "fastqc_trim" wins over "fastqc".
     _PHASE_BY_RULE = [
+        # download_genome / download_gtf fetch the reference, not the reads, so they must be
+        # matched before the bare "download" entry that catches download_fastq.
+        ("download_genome", "Preparing the reference genome"),
+        ("download_gtf", "Preparing the reference genome"),
         ("download", "Downloading sequencing data"),
-        ("fasterq", "Downloading sequencing data"),
-        ("prefetch", "Downloading sequencing data"),
         ("fastqc_raw", "Quality control (raw reads)"),
         ("fastqc_trim", "Quality control (trimmed reads)"),
         ("fastqc", "Quality control"),
@@ -3562,7 +3665,6 @@ class MainWindow(QMainWindow):
         ("ingest_counts", "Reading the count matrix"),
         ("ingest_deseq2_results", "Reading the external differential-expression table"),
         ("featurecounts", "Counting reads per gene"),
-        ("htseq", "Counting reads per gene"),
         ("genes_of_interest", "Genes-of-interest figures"),
         ("deseq2", "Differential expression (DESeq2)"),
         ("enrichment", "Functional enrichment (GO / GSEA)"),
@@ -3573,7 +3675,6 @@ class MainWindow(QMainWindow):
         ("sanity", "Running sanity checks"),
         ("_check", "Running sanity checks"),
         ("reports", "Writing run reports"),
-        ("summary", "Writing run reports"),
     ]
 
     def _friendly_phase(self, rule_name: str) -> str | None:
@@ -3794,6 +3895,7 @@ class MainWindow(QMainWindow):
             }
             status_text, phase_text = success_labels.get(was_mode, ("Completed", ""))
             self._set_run_status(status_text, "PASS")
+            self._refresh_report_status()
             self.phase_label.setText(phase_text)
             self.progress_value_label.setVisible(True)
             # An enrichment-term heatmap writes the fixed term_heatmap.*; copy it to a
@@ -4305,7 +4407,6 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(self.ppi_no_project_panel, 1)
 
-        row1 = QHBoxLayout()
         load_btn = QPushButton("Load / refresh network")
         load_btn.setProperty("primary", True)
         load_btn.setToolTip("Assemble the network from this project's results and display it.")
@@ -4360,59 +4461,33 @@ class MainWindow(QMainWindow):
         self.ppi_focus_cb.setToolTip("When you click a protein, show only its own and its "
                                      "interactors' labels; hide the rest of the network's names.")
         self.ppi_focus_cb.toggled.connect(lambda on: self.ppi_viewer.set_focus_labels(on))
-        row1.addWidget(load_btn)
-        row1.addWidget(QLabel("Layout:"))
-        row1.addWidget(self.ppi_layout_pick)
-        row1.addWidget(QLabel("Colour:"))
-        row1.addWidget(self.ppi_color_pick)
-        row1.addWidget(QLabel("Show:"))
-        row1.addWidget(self.ppi_view_pick)
-        row1.addWidget(QLabel("Size:"))
-        row1.addWidget(self.ppi_size_pick)
-        row1.addWidget(self.ppi_labels_cb)
-        row1.addWidget(self.ppi_italic_cb)
-        row1.addWidget(self.ppi_focus_cb)
-        row1.addStretch(1)
 
-        # Row 2 — VIEW filter: a client-side slider that only hides edges in the
-        # already-loaded graph (it cannot show edges below the build threshold).
-        row2 = QHBoxLayout()
-        view_lbl = QLabel("View filter — hide edges below:")
-        row2.addWidget(view_lbl)
+        # VIEW filter: a client-side slider that only hides edges in the already-loaded
+        # graph (it cannot show edges below the build threshold).
         self.ppi_conf = QSlider(Qt.Orientation.Horizontal)
         self.ppi_conf.setRange(0, 100)
         self.ppi_conf.setValue(0)
         self.ppi_conf.setMaximumWidth(180)
         self.ppi_conf.setToolTip("View-only filter: hides interactions below this confidence in the "
                                  "network shown right now. It does NOT re-contact STRING and cannot go "
-                                 "below the build threshold — to show weaker edges, lower the rebuild "
-                                 "score on the right and click Rebuild.")
+                                 "below the build threshold — to show weaker edges, lower the STRING "
+                                 "combined score in the Rebuild tab and click Rebuild.")
         self.ppi_conf.valueChanged.connect(self._ppi_confidence_changed)
         self.ppi_conf_lbl = QLabel("0.00")
-        row2.addWidget(self.ppi_conf)
-        row2.addWidget(self.ppi_conf_lbl)
-        row2.addStretch(1)
-        # REBUILD: an on-panel score spinbox drives the rebuild, so changing it here and
-        # clicking Rebuild actually re-contacts STRING at that confidence (the old button
-        # silently used the far-away Figure-Style spinbox, so it looked like a no-op).
-        row2.addWidget(QLabel("Rebuild at score ≥"))
-        self.ppi_rebuild_score = self.ppi_score
-        self.ppi_rebuild_score.setToolTip("STRING combined-score cutoff to rebuild at (0-1000; 400 = "
-                                          "medium, 700 = high confidence). Lower it to pull in weaker "
-                                          "interactions, then click Rebuild.")
-        self.ppi_rebuild_score.valueChanged.connect(self._sync_score_to_figstyle)
-        row2.addWidget(self.ppi_rebuild_score)
+        # One spinbox drives both the Rebuild tab and the saved config, so the rebuild always
+        # uses the score the user just set (the old button read a far-away duplicate and looked
+        # like a no-op).
+        self.ppi_score.setToolTip("STRING combined-score cutoff to rebuild at (1-1000; 400 = "
+                                  "medium, 700 = high confidence). Lower it to pull in weaker "
+                                  "interactions, then click Rebuild.")
         rebuild_btn = QPushButton("Rebuild from STRING…")
-        rebuild_btn.setToolTip("Re-contact string-db.org and rebuild the network at the 'Rebuild at "
-                               "score' shown to the left. This replaces the current network.")
+        rebuild_btn.setToolTip("Re-contact string-db.org and rebuild the network at the STRING "
+                               "combined score shown above. This replaces the current network.")
         rebuild_btn.clicked.connect(self._regenerate_ppi)
         self.ppi_rebuild_button = rebuild_btn
         rebuild_btn.setEnabled(False)
-        row2.addWidget(rebuild_btn)
 
-        # Row 3 — EXPORT: save the current network as an image or Cytoscape files.
-        row3 = QHBoxLayout()
-        row3.addWidget(QLabel("Export:"))
+        # EXPORT: save the current network as an image or Cytoscape files.
         self.ppi_export_bg = QComboBox()
         self.ppi_export_bg.addItems(["White", "Transparent"])
         self.ppi_export_bg.setToolTip("Background of the exported PNG/SVG (labels stay dark either way).")
@@ -4431,12 +4506,6 @@ class MainWindow(QMainWindow):
         self.ppi_export_png = export_png
         self.ppi_export_svg = export_svg
         self.ppi_save_cyto = save_cyto
-        row3.addWidget(QLabel("background"))
-        row3.addWidget(self.ppi_export_bg)
-        row3.addWidget(export_png)
-        row3.addWidget(export_svg)
-        row3.addWidget(save_cyto)
-        row3.addStretch(1)
 
         self.ppi_status = QLabel("No network loaded — click “Load / refresh network”.")
         self.ppi_status.setWordWrap(True)
@@ -4514,12 +4583,11 @@ class MainWindow(QMainWindow):
         network_note.setWordWrap(True)
         network_note.setProperty("hint", True)
         network_form.addRow(network_note)
-        network_form.addRow("STRING combined score (0–1000)", self.ppi_score)
-        network_form.addRow("Hub labels in static figure", self.ppi_hub_labels)
+        network_form.addRow("STRING combined score (1–1000)", self.ppi_score)
         network_form.addRow(rebuild_btn)
         inspector.addItem(self._inspector_scrollable(network_page), "Rebuild")
         inspector.setItemToolTip(1, "Rebuild and replace the STRING network edge set")
-        self.ppi_construction_controls = [self.ppi_score, self.ppi_hub_labels, rebuild_btn]
+        self.ppi_construction_controls = [self.ppi_score, rebuild_btn]
         for control in self.ppi_construction_controls:
             control.setEnabled(False)
 
@@ -4823,13 +4891,22 @@ class MainWindow(QMainWindow):
     # core_enrichment column. These methods let the user pick a term, pull its genes' DESeq2
     # stats into a table (instant, pandas-only), and build a focused heatmap by reusing the
     # genes-of-interest R script via the "term" run mode — all from the finished run.
+    # Every clusterProfiler CSV that carries a per-term gene list: the combined/directional GO
+    # ORA, the per-ontology MF and CC tables (BP is the combined table's ontology), GSEA, KEGG,
+    # and the custom gene-set results. enricher() and GSEA() write the same enrichResult /
+    # gseaResult columns as enrichGO/gseGO, so geneID / core_enrichment, Description, p.adjust
+    # and Count / setSize are read identically on every one of them.
     _TERM_SOURCES = [
         ("results/enrichment/go_ora_up.csv", "GO up-regulated"),
         ("results/enrichment/go_ora_down.csv", "GO down-regulated"),
         ("results/enrichment/go_ora_all.csv", "GO combined"),
+        ("results/enrichment/go_ora_MF.csv", "GO molecular function"),
+        ("results/enrichment/go_ora_CC.csv", "GO cellular component"),
         ("results/enrichment/gsea.csv", "GO GSEA"),
         ("results/enrichment/kegg_ora.csv", "KEGG ORA"),
         ("results/enrichment/kegg_gsea.csv", "KEGG GSEA"),
+        ("results/enrichment/custom_ora.csv", "Custom gene sets (ORA)"),
+        ("results/enrichment/custom_gsea.csv", "Custom gene sets (GSEA)"),
     ]
 
     def _build_enrichment_terms_group(self) -> QWidget:
@@ -4968,16 +5045,23 @@ class MainWindow(QMainWindow):
         if id_map_path.exists() and id_map_path.stat().st_size > 0:
             try:
                 idm = pd.read_csv(id_map_path, dtype=str).fillna("")
-                sym_or_id = {}
+                sym_or_id: dict[str, list[str]] = {}
                 for _, r in idm.iterrows():
-                    key = (r.get("symbol") or "").strip() or (r.get("gene_id") or "").strip()
+                    # One entrez id can map to several symbols; run_enrichment.R joins them with
+                    # ";" ("ABC;DEF"), which matches no DESeq2 row as a single token. Try each
+                    # symbol, then the gene id, and keep the first that resolves.
+                    symbols = [s.strip() for s in (r.get("symbol") or "").split(";") if s.strip()]
+                    gene_id = (r.get("gene_id") or "").strip()
+                    keys = symbols + ([gene_id] if gene_id else [])
                     ent = (r.get("entrez") or "").strip()
-                    if ent and key:
-                        sym_or_id[ent] = key
-                for ent, key in sym_or_id.items():
-                    ri = by_symbol.get(key, by_id.get(key, by_base.get(key)))
-                    if ri is not None:
-                        entrez_to_row[ent] = ri
+                    if ent and keys:
+                        sym_or_id[ent] = keys
+                for ent, keys in sym_or_id.items():
+                    for key in keys:
+                        ri = by_symbol.get(key, by_id.get(key, by_base.get(key)))
+                        if ri is not None:
+                            entrez_to_row[ent] = ri
+                            break
             except Exception:
                 pass
         rows: list[int] = []
@@ -5091,25 +5175,9 @@ class MainWindow(QMainWindow):
                 "(Run Monitor) to produce them; afterwards this rebuilds the STRING PPI "
                 "network from those results without re-analyzing.")
             return
-        # Both score spinboxes are kept in lockstep (see _sync_score_*), so either reads
-        # the same value; use the on-panel one and rebuild at it.
-        score = int(self.ppi_rebuild_score.value())
-        self.config.ppi.score_threshold = score
-        self.config.ppi.hub_label_count = int(self.ppi_hub_labels.value())
+        self.config.ppi.score_threshold = int(self.ppi_score.value())
         self.manager.save_config(self.project_root, self.config)
         self._start_snakemake("ppi")
-
-    def _sync_score_to_rebuild(self, value: int) -> None:
-        if hasattr(self, "ppi_rebuild_score") and self.ppi_rebuild_score.value() != value:
-            self.ppi_rebuild_score.blockSignals(True)
-            self.ppi_rebuild_score.setValue(value)
-            self.ppi_rebuild_score.blockSignals(False)
-
-    def _sync_score_to_figstyle(self, value: int) -> None:
-        if hasattr(self, "ppi_score") and self.ppi_score.value() != value:
-            self.ppi_score.blockSignals(True)
-            self.ppi_score.setValue(value)
-            self.ppi_score.blockSignals(False)
 
     def _info_label(self, text: str, help_text: str) -> QWidget:
         # A form-row label with a small info button that explains a complex
@@ -5379,10 +5447,21 @@ class MainWindow(QMainWindow):
         self.fig_enrich_show = QSpinBox()
         self.fig_enrich_show.setRange(1, 100)
         self.fig_enrich_show.setValue(15)
-        self.fig_ppi_layout = QComboBox()
-        self.fig_ppi_layout.setEditable(True)  # accept layouts the R side may add
-        self.fig_ppi_layout.addItems(["fr", "stress", "kk", "drl", "circle", "grid"])
-        self.fig_ppi_layout.setCurrentText("fr")
+        # Meta-analysis figure detail. Ignored unless multi-study meta-analysis runs, so these sit
+        # beside the ordinary enrichment control rather than on the meta-analysis settings page.
+        self.fig_meta_label_top = QSpinBox()
+        self.fig_meta_label_top.setRange(0, 200)
+        self.fig_meta_label_top.setValue(10)
+        self.fig_meta_heatmap_top = QSpinBox()
+        self.fig_meta_heatmap_top.setRange(1, 500)
+        self.fig_meta_heatmap_top.setValue(50)
+        self.fig_meta_enrich_show = QSpinBox()
+        self.fig_meta_enrich_show.setRange(1, 100)
+        self.fig_meta_enrich_show.setValue(6)
+        # No "static PPI figure layout" control: build_string_network.R always places nodes with
+        # its deterministic component-wise shelf packer and only records the requested name, so
+        # the control promised an effect the figure never had. The interactive viewer's own
+        # Layout picker (PPI Network tab) is real and unaffected.
         def narrow_form(page: QWidget) -> QFormLayout:
             section_form = QFormLayout(page)
             section_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
@@ -5468,7 +5547,21 @@ class MainWindow(QMainWindow):
         detail_advanced.addRow(self.fig_pca_fixed_aspect)
         detail_advanced.addRow(self._info_label("Heatmap z limit", "Symmetric visual cap on heatmap row z-scores."), self.fig_heatmap_zlim)
         detail_advanced.addRow(self._info_label("Enrichment categories shown", "Display heuristic: number of terms shown; enrichment tables are unchanged."), self.fig_enrich_show)
-        detail_advanced.addRow(self._info_label("Static PPI figure layout", "Layout algorithm for the saved R network figure. This does not change the STRING edge set."), self.fig_ppi_layout)
+        detail_advanced.addRow(self._info_label(
+            "Meta-analysis: genes labelled on the volcano",
+            "Applies to the multi-study meta-analysis figures only. How many genes are named on the "
+            "cross-study volcano plot. Lower it when the labels crowd each other; the result tables "
+            "are unchanged. Ignored when meta-analysis is off."), self.fig_meta_label_top)
+        detail_advanced.addRow(self._info_label(
+            "Meta-analysis: genes in the effect-size heatmap",
+            "Applies to the multi-study meta-analysis figures only. How many genes are drawn in the "
+            "cross-study effect-size heatmap, taken from the top of the combined-significance "
+            "ranking. Ignored when meta-analysis is off."), self.fig_meta_heatmap_top)
+        detail_advanced.addRow(self._info_label(
+            "Meta-analysis: enrichment terms shown",
+            "Applies to the multi-study meta-analysis figures only. How many terms appear in the "
+            "cross-study enrichment dot plot. Display heuristic; the enrichment tables are "
+            "unchanged. Ignored when meta-analysis is off."), self.fig_meta_enrich_show)
         self.figure_detail_common_controls = (
             self.fig_volcano_top,
             self.fig_heatmap_top,
@@ -5482,19 +5575,17 @@ class MainWindow(QMainWindow):
             self.fig_pca_fixed_aspect,
             self.fig_heatmap_zlim,
             self.fig_enrich_show,
-            self.fig_ppi_layout,
+            self.fig_meta_label_top,
+            self.fig_meta_heatmap_top,
+            self.fig_meta_enrich_show,
         )
         # --- PPI network (STRING) controls: customise + regenerate in-app ---
         self.ppi_score = QSpinBox()
-        self.ppi_score.setRange(0, 1000)
+        # 0 is not a usable STRING cut-off: build_string_network.R clamps anything below 1
+        # back to 400, so offering 0 would show a threshold the run never applies.
+        self.ppi_score.setRange(1, 1000)
         self.ppi_score.setSingleStep(50)
         self.ppi_score.setValue(400)
-        # Keep this Figure-Style threshold and the PPI-tab "Rebuild at score" spinbox in
-        # lockstep, so either Regenerate button rebuilds at the value the user just set.
-        self.ppi_score.valueChanged.connect(self._sync_score_to_rebuild)
-        self.ppi_hub_labels = QSpinBox()
-        self.ppi_hub_labels.setRange(0, 100)
-        self.ppi_hub_labels.setValue(15)
         sections = QTabWidget()
         sections.setObjectName("figureStyleSections")
         sections.setMinimumWidth(0)
@@ -5617,13 +5708,13 @@ class MainWindow(QMainWindow):
         style.sample_labels = self.fig_sample_labels.isChecked()
         style.heatmap_zlim = self.fig_heatmap_zlim.value()
         style.enrich_show_category = self.fig_enrich_show.value()
-        style.ppi_layout = self.fig_ppi_layout.currentText().strip() or "fr"
-        # PPI score / hub-label controls live on this tab but feed config.ppi (not figures_style);
-        # persist them here so a normal Run honors them, not just Regenerate PPI.
+        style.meta_label_top = self.fig_meta_label_top.value()
+        style.meta_heatmap_top = self.fig_meta_heatmap_top.value()
+        style.meta_enrich_show_category = self.fig_meta_enrich_show.value()
+        # The PPI score control lives on this tab but feeds config.ppi (not figures_style);
+        # persist it here so a normal Run honors it, not just Regenerate PPI.
         if hasattr(self, "ppi_score"):
             self.config.ppi.score_threshold = self.ppi_score.value()
-        if hasattr(self, "ppi_hub_labels"):
-            self.config.ppi.hub_label_count = self.ppi_hub_labels.value()
         self.manager.save_config(self.project_root, self.config)
         return True
 
@@ -6074,10 +6165,7 @@ class MainWindow(QMainWindow):
         self.output_table.setRowCount(0)
         if hasattr(self, "_outputs_main_splitter"):
             self._outputs_main_splitter.setSizes([0, max(self._outputs_main_splitter.height(), 480)])
-        self.report_text.setPlainText(
-            "No reports yet. Complete a run, then generate or open the saved reports from this page."
-            if self.project_root is not None else ""
-        )
+        self._refresh_report_status()
         self.runtime_text.setPlainText(
             "Ready to estimate. The predicted range, resource assumptions and calibration basis will appear here."
             if self.project_root is not None else "")
@@ -6197,9 +6285,10 @@ class MainWindow(QMainWindow):
         self.rseqc.setChecked(getattr(wf, "rseqc", False))
         self.meta_analysis.setChecked(getattr(wf, "meta_analysis", False))
         self.per_study_enrichment.setChecked(getattr(wf, "per_study_enrichment", False))
-        # Re-sync the dependent enable after both checked-states are set.
-        self.per_study_enrichment.setEnabled(
-            self.meta_analysis.isEnabled() and self.meta_analysis.isChecked())
+        _ont_idx = self.meta_go_ontology.findData(self.config.enrichment.go_ontology)
+        self.meta_go_ontology.setCurrentIndex(_ont_idx if _ont_idx >= 0 else 0)
+        # Re-sync the dependent enables after both checked-states are set.
+        self._sync_meta_controls()
         _eng_idx = self.de_engine.findData(getattr(wf, "de_engine", "DESeq2"))
         self.de_engine.setCurrentIndex(_eng_idx if _eng_idx >= 0 else 0)
         _org_idx = self.organellar.findData(getattr(wf, "organellar_genes", "keep"))
@@ -6303,11 +6392,14 @@ class MainWindow(QMainWindow):
         self.fig_sample_labels.setChecked(fig.sample_labels)
         self.fig_heatmap_zlim.setValue(fig.heatmap_zlim)
         self.fig_enrich_show.setValue(fig.enrich_show_category)
-        self.fig_ppi_layout.setCurrentText(fig.ppi_layout or "fr")
-        self.ppi_score.setValue(self.config.ppi.score_threshold)
-        self.ppi_hub_labels.setValue(self.config.ppi.hub_label_count)
-        if hasattr(self, "ppi_rebuild_score"):
-            self.ppi_rebuild_score.setValue(self.config.ppi.score_threshold)
+        self.fig_meta_label_top.setValue(fig.meta_label_top)
+        self.fig_meta_heatmap_top.setValue(fig.meta_heatmap_top)
+        self.fig_meta_enrich_show.setValue(fig.meta_enrich_show_category)
+        # Show the threshold the run will actually apply: build_string_network.R clamps a
+        # stored value below 1 to 400, so a legacy 0 must hydrate as 400, not as the new
+        # spinbox minimum (which would silently rebuild a far denser network).
+        stored_score = self.config.ppi.score_threshold
+        self.ppi_score.setValue(stored_score if stored_score >= 1 else 400)
         goi_path = self.config.gene_sets.custom_gene_list
         if goi_path and self.project_root is not None and (self.project_root / goi_path).exists():
             self.goi_box.setPlainText((self.project_root / goi_path).read_text(encoding="utf-8").strip())
@@ -6382,9 +6474,15 @@ class MainWindow(QMainWindow):
         # Under WSL the run reads the configured sample sheet inside Linux, so a Windows-drive FASTQ path
         # (C:\...) is unresolvable — translate the file columns to /mnt/<drive>/... first.
         if getattr(self, "use_wsl", None) is not None and self.use_wsl.isChecked():
-            for _col in ("fastq_1", "fastq_2"):
-                if _col in df.columns:
-                    df[_col] = df[_col].map(lambda p: windows_to_wsl_path(p) if p else p)
+            try:
+                for _col in ("fastq_1", "fastq_2"):
+                    if _col in df.columns:
+                        df[_col] = df[_col].map(lambda p: windows_to_wsl_path(p) if p else p)
+            except UnsupportedUncPathError as exc:
+                # Reject the whole selection: a partially translated sheet would mix reachable
+                # and unreachable paths and fail the run at DAG build instead of here.
+                QMessageBox.warning(self, APP_NAME, str(exc))
+                return
         assert self.project_root is not None
         save_metadata(df, self.project_root / "config" / "samples.auto_generated.tsv")
         save_metadata(df, self._configured_samples_path())
@@ -6541,6 +6639,7 @@ class MainWindow(QMainWindow):
         # Don't clobber the microarray SYMBOL keytype (mirrors the L468 guard).
         if self.config.input.type != "microarray":
             enr.keytype = entry.get("enrichment_keytype") or None
+            enr.kegg_keytype = entry.get("kegg_keytype") or None
         ref.strain = str(entry.get("strain") or "")
         ref.genome_size_category = str(entry.get("genome_size_category") or "custom")
         ref.source = str(entry.get("source") or "")
@@ -6625,6 +6724,7 @@ class MainWindow(QMainWindow):
         self.config.workflow.rseqc = self.rseqc.isChecked()
         self.config.workflow.meta_analysis = self.meta_analysis.isChecked()
         self.config.workflow.per_study_enrichment = self.per_study_enrichment.isChecked()
+        self.config.enrichment.go_ontology = self.meta_go_ontology.currentData()  # type: ignore[assignment]
         self.config.workflow.de_engine = self.de_engine.currentData()  # type: ignore[assignment]
         self.config.workflow.organellar_genes = self.organellar.currentData()  # type: ignore[assignment]
         # Custom gene-set files are Snakemake inputs read INSIDE WSL, so a Browse-picked Windows/UNC
@@ -6638,9 +6738,18 @@ class MainWindow(QMainWindow):
                 return None
             is_windows_path = t.startswith("\\\\") or "\\" in t or (len(t) >= 2 and t[1] == ":")
             return windows_to_wsl_path(t) if is_windows_path else t
-        self.config.gene_sets.custom_gene_sets = _to_wsl_input(self.custom_gmt.text())
-        self.config.gene_sets.functional_annotation_table = _to_wsl_input(self.custom_annot.text())
-        self.config.gene_sets.background_gene_list = _to_wsl_input(self.custom_background.text())
+        # A network share has no WSL-side equivalent; refuse the save (like the other workflow
+        # validation failures above) instead of storing a path the run cannot open. All three are
+        # translated before any is stored, so a bad second field never half-updates the config.
+        try:
+            gene_set_paths = [_to_wsl_input(field.text()) for field in
+                              (self.custom_gmt, self.custom_annot, self.custom_background)]
+        except UnsupportedUncPathError as exc:
+            QMessageBox.warning(self, APP_NAME, str(exc) + "\n\nWorkflow settings were not saved.")
+            return False
+        (self.config.gene_sets.custom_gene_sets,
+         self.config.gene_sets.functional_annotation_table,
+         self.config.gene_sets.background_gene_list) = gene_set_paths
         self.config.fastp.qualified_quality_phred = self.fastp_q.value()
         self.config.fastp.length_required = self.fastp_len.value()
         self.config.fastp.trim_poly_g = self.trim_poly_g.isChecked()
@@ -6808,6 +6917,8 @@ class MainWindow(QMainWindow):
         # displayed by the GUI (instead of retaining the four-thread scaffold defaults).
         for rule_name, threads in recommend_rule_threads(self.cores.value()).items():
             setattr(self.config.rule_threads, rule_name, threads)
+        for rule_name, memory_gb in recommend_rule_memory_gb(self.ram.value()).items():
+            setattr(self.config.rule_memory_gb, rule_name, memory_gb)
         self.manager.save_config(self.project_root, self.config)
 
     def _estimate_runtime(self) -> None:
@@ -7805,6 +7916,16 @@ class MainWindow(QMainWindow):
         self._reports_worker = worker
         worker.start()
 
+    def _refresh_report_status(self) -> None:
+        # The Reports page must describe what is on disk: a run that already produced
+        # reports (this session or an earlier one) is shown, not "No reports yet".
+        if self.project_root is not None and (self.project_root / "results" / "reports" / "run_summary.txt").exists():
+            self._display_reports()
+            return
+        self.report_text.setPlainText(
+            "No reports yet. Complete a run, then generate or open the saved reports from this page."
+            if self.project_root is not None else "")
+
     def _display_reports(self) -> None:
         if getattr(self, "_closing", False) or self.project_root is None:
             return
@@ -7818,18 +7939,6 @@ class MainWindow(QMainWindow):
         if sanity.exists():
             sections.append(f"===== sanity_checks.txt =====\n{sanity.read_text(encoding='utf-8')}")
         self.report_text.setPlainText("\n\n".join(sections) if sections else "No reports generated yet.")
-
-    def _disable_combo_items(self, combo: QComboBox, labels: set[str], suffix: str = "") -> None:
-        # Show but disable scaffolded options so they can't be selected; append a
-        # suffix to make the unavailability obvious in the dropdown.
-        model = combo.model()
-        for i in range(combo.count()):
-            if combo.itemText(i) in labels:
-                item = model.item(i) if hasattr(model, "item") else None
-                if item is not None:
-                    item.setEnabled(False)
-                if suffix:
-                    combo.setItemText(i, combo.itemText(i) + suffix)
 
     def _refresh_output_table_pick(self) -> None:
         # Mode-aware table list: alignment-only counts.txt is meaningless for
@@ -7927,23 +8036,6 @@ class MainWindow(QMainWindow):
                                 "PPI network will be skipped. Select your organism on the "
                                 "Reference Manager tab, or disable Enrichment."}]
         return []
-
-    def _confirm_enrichment_config(self) -> bool:
-        # Enrichment on with no organism id silently produces nothing; confirm rather
-        # than let the user discover the empty result only after the run finishes.
-        if self.config is None or not self.config.workflow.enrichment:
-            return True
-        enr = self.config.enrichment
-        if enr.kegg_organism or enr.orgdb:
-            return True
-        reply = QMessageBox.question(
-            self, APP_NAME,
-            "Enrichment is enabled but no organism is configured, so GO/KEGG enrichment "
-            "and the STRING PPI network will be skipped.\n\nSelect your organism on the "
-            "Reference Manager tab first, or continue without enrichment?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No)
-        return reply == QMessageBox.StandardButton.Yes
 
     def _require_project(self) -> bool:
         if self.project_root is None:

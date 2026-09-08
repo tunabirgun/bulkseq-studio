@@ -50,7 +50,7 @@ def test_assemble_basic_and_json_safe(tmp_path):
     by = {n["data"]["id"]: n["data"] for n in g["elements"]["nodes"]}
     assert g["meta"]["node_count"] == 3 and g["meta"]["edge_count"] == 1
 
-    # (iii) dedup picks max-baseMean row (FBgn02 -> meanExpr 9.0); (iv) case-insensitive
+    # (iii) dedup picks the lowest-padj row (FBgn02 -> meanExpr 9.0); (iv) case-insensitive
     assert by["GALE"]["padj"] == 2e-5
     assert by["GALE"]["baseMean"] == 500.0
     assert by["GALE"]["meanExpr"] == 9.0
@@ -111,6 +111,48 @@ def test_join_by_gene_id_when_symbols_absent(tmp_path):
     assert d["meanExpr"] == 11.0
 
 
+def test_duplicate_symbol_resolves_to_the_most_significant_row(tmp_path):
+    # The static figure (build_string_network.R de_value_map) and this viewer must pick
+    # the SAME row for a duplicated symbol: lowest padj wins, even when another row has
+    # a far larger baseMean. The old max-baseMean rule picked g_high here.
+    nodes = [{"id": "DUP", "module": 1, "degree": 1, "betweenness": 0, "log2FC": float("nan")}]
+    deseq = [
+        {"gene_id": "g_high", "symbol": "DUP", "baseMean": 5000.0, "log2FoldChange": 0.2, "padj": 0.40},
+        {"gene_id": "g_sig", "symbol": "DUP", "baseMean": 12.0, "log2FoldChange": -3.5, "padj": 1e-8},
+    ]
+    norm = [{"gene_id": "g_high", "s1": 9.0, "s2": 9.0},
+            {"gene_id": "g_sig", "s1": 1.0, "s2": 3.0}]
+    _write(tmp_path, nodes, [], deseq, norm)
+    d = build_ppi_cytoscape_json(tmp_path)["elements"]["nodes"][0]["data"]
+    assert d["padj"] == 1e-8
+    assert d["baseMean"] == 12.0
+    assert d["log2FoldChange"] == -3.5
+    assert d["meanExpr"] == 2.0            # resolved through the winning row's gene_id
+    assert "_padj_rank" not in d           # internal ranking key never reaches the viewer
+
+
+def test_duplicate_symbol_tie_keeps_the_first_table_row(tmp_path):
+    nodes = [{"id": "TIE", "module": 1, "degree": 1, "betweenness": 0, "log2FC": float("nan")}]
+    deseq = [
+        {"gene_id": "first", "symbol": "TIE", "baseMean": 10.0, "log2FoldChange": 1.0, "padj": 0.01},
+        {"gene_id": "second", "symbol": "TIE", "baseMean": 900.0, "log2FoldChange": 2.0, "padj": 0.01},
+    ]
+    _write(tmp_path, nodes, [], deseq)
+    d = build_ppi_cytoscape_json(tmp_path)["elements"]["nodes"][0]["data"]
+    assert d["baseMean"] == 10.0 and d["log2FoldChange"] == 1.0
+
+
+def test_duplicate_symbol_with_missing_padj_never_wins(tmp_path):
+    nodes = [{"id": "NA1", "module": 1, "degree": 1, "betweenness": 0, "log2FC": float("nan")}]
+    deseq = [
+        {"gene_id": "no_padj", "symbol": "NA1", "baseMean": 900.0, "log2FoldChange": 5.0, "padj": float("nan")},
+        {"gene_id": "has_padj", "symbol": "NA1", "baseMean": 8.0, "log2FoldChange": -1.0, "padj": 0.4},
+    ]
+    _write(tmp_path, nodes, [], deseq)
+    d = build_ppi_cytoscape_json(tmp_path)["elements"]["nodes"][0]["data"]
+    assert d["padj"] == 0.4 and d["baseMean"] == 8.0
+
+
 def test_dedup_skips_nan_basemean_row(tmp_path):
     nodes = [{"id": "GENE", "module": 1, "degree": 1, "betweenness": 0, "log2FC": 2.0}]
     deseq = [{"gene_id": "g1", "symbol": "GENE", "baseMean": float("nan"), "log2FoldChange": 9.9, "padj": 0.5},
@@ -118,6 +160,6 @@ def test_dedup_skips_nan_basemean_row(tmp_path):
     norm = [{"gene_id": "g2", "s1": 5.0, "s2": 7.0}]
     _write(tmp_path, nodes, [], deseq, norm)
     d = {n["data"]["id"]: n["data"] for n in build_ppi_cytoscape_json(tmp_path)["elements"]["nodes"]}["GENE"]
-    assert d["padj"] == 1e-3          # the valid row wins, not the NaN-baseMean row
+    assert d["padj"] == 1e-3          # the significant row wins, not the padj=0.5 row
     assert d["baseMean"] == 100.0
     assert d["meanExpr"] == 6.0

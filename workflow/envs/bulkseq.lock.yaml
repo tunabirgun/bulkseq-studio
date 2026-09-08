@@ -66,12 +66,16 @@ dependencies:
   - bioconductor-limma=3.66.0=r45h01b2380_0
   - bioconductor-matrixgenerics=1.22.0=r45hdfd78af_1
   - bioconductor-org.at.tair.db=3.22.0=r45hdfd78af_0
+  - bioconductor-org.bt.eg.db=3.22.0=r45hdfd78af_0
   - bioconductor-org.ce.eg.db=3.22.0=r45hdfd78af_0
   - bioconductor-org.dm.eg.db=3.22.0=r45hdfd78af_0
   - bioconductor-org.dr.eg.db=3.22.0=r45hdfd78af_0
+  - bioconductor-org.gg.eg.db=3.22.0=r45hdfd78af_0
   - bioconductor-org.hs.eg.db=3.22.0=r45hdfd78af_0
   - bioconductor-org.mm.eg.db=3.22.0=r45hdfd78af_0
+  - bioconductor-org.rn.eg.db=3.22.0=r45hdfd78af_0
   - bioconductor-org.sc.sgd.db=3.22.0=r45hdfd78af_0
+  - bioconductor-org.ss.eg.db=3.22.0=r45hdfd78af_0
   - bioconductor-preprocesscore=1.72.0=r45h01b2380_0
   - bioconductor-qvalue=2.42.0=r45hdfd78af_0
   - bioconductor-rhdf5=2.54.1=r45h882589e_0

@@ -178,3 +178,24 @@ def test_volcano_y_scale_round_trips():
         assert False, "invalid volcano_y_scale must be rejected"
     except Exception:
         pass
+
+
+def test_bundled_default_config_matches_the_model_defaults():
+    # The bundled file is what run_summary diffs a project against; a key missing from it is
+    # invisible to the "Customized parameters" section (figure_overrides was such a key).
+    import yaml
+
+    from app.core.paths import data_path
+
+    def leaves(node, prefix=""):
+        for key, value in node.items():
+            if isinstance(value, dict) and value:
+                yield from leaves(value, f"{prefix}{key}.")
+            else:
+                yield f"{prefix}{key}", value
+
+    bundled = yaml.safe_load(data_path("default_config.yaml").read_text(encoding="utf-8"))
+    model = default_config("demo", BASE / "demo").model_dump(mode="json")
+    bundled.pop("project")
+    model.pop("project")
+    assert dict(leaves(bundled)) == dict(leaves(model))

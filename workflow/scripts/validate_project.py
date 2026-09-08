@@ -349,14 +349,23 @@ def check_samples(config: dict, samples_path: Path) -> list[dict[str, str]]:
 # testing (not just presence) also catches a package left binary-incompatible by an r-base
 # drift (the env pins r-base=4.5.2 for that reason). Fail fast here with a clear message
 # instead of dying minutes later in enrichment/figures/networks.
+# This script runs from the project's own workflow copy and cannot import app.core.readiness,
+# so the list is maintained here; tests/test_dependency_parity.py asserts it stays a subset of
+# readiness.R_ANALYSIS_PACKAGES and still contains every namespace the mandatory rules load
+# directly, which is what keeps the two lists one list in practice.
 _CORE_R_PACKAGES = [
     "DESeq2", "limma", "clusterProfiler", "GO.db", "DOSE", "enrichplot", "fgsea",
-    "AnnotationDbi", "ggplot2", "ggrepel", "pheatmap", "igraph", "STRINGdb",
+    "AnnotationDbi", "SummarizedExperiment", "ggplot2", "ggrepel", "pheatmap", "igraph",
+    "STRINGdb",
     # CRAN figure/plotting packages every route hard-loads in the mandatory figures +
     # sample-correlation rules (scales especially is only a transitive dep in the fallback
     # env spec, so a solve can drop it and pass the presence check), and msigdbr backs the
     # set-overlap rule that runs on every DE route.
     "scales", "svglite", "RColorBrewer", "msigdbr",
+    # Also hard-loaded by the mandatory rules: the check/JSON writers (jsonlite), figure
+    # layout and font resolution (gtable, systemfonts), the enrichment/figure scales
+    # (ggnewscale, ggridges) and the matrix summaries behind the heatmaps (matrixStats).
+    "jsonlite", "gtable", "systemfonts", "ggnewscale", "ggridges", "matrixStats",
 ]
 
 

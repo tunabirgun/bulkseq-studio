@@ -36,10 +36,17 @@ write_check <- function(path, status, message) {
   writeLines(json, path)
 }
 nrows <- function(x) if (is.null(x)) 0 else tryCatch(nrow(as.data.frame(x)), error = function(e) 0)
-# Same id normalization as run_enrichment.R (Ensembl .version strip; NCBI LOC<id> strip).
+# Same id normalization as run_enrichment.R, including its keytype gate: the LOC prefix
+# is stripped to the bare NCBI GeneID only off the SYMBOL route, where "LOC101927877" is
+# a legitimate gene symbol rather than a GeneID. The keytype is read from the rule params;
+# the custom_enrichment rule does not forward it yet, so an absent param keeps the previous
+# unconditional strip rather than silently changing which ids match the user's gene sets.
+keytype <- tryCatch(snakemake@params[["keytype"]], error = function(e) NULL)
 strip_version <- function(id) {
   v <- grepl("^ENS", id); id[v] <- sub("\\.\\d+$", "", id[v])
-  l <- grepl("^LOC[0-9]+$", id); id[l] <- sub("^LOC", "", id[l])
+  if (!identical(keytype, "SYMBOL")) {
+    l <- grepl("^LOC[0-9]+$", id); id[l] <- sub("^LOC", "", id[l])
+  }
   id
 }
 read_ids_csv <- function(p) {

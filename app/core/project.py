@@ -11,7 +11,8 @@ import yaml
 
 from app.constants import APP_VERSION, PROJECT_DIRS, SAFE_ID_PATTERN, WORKFLOW_VERSION
 from app.core.config_models import AppConfig, default_config
-from app.core.paths import data_path, is_wsl_unc_path, usable_disk_free_bytes, workflow_root
+from app.core.paths import (data_path, is_unsupported_unc_path, is_wsl_unc_path,
+                            usable_disk_free_bytes, workflow_root)
 
 
 _DECIMAL_COMMA_RE = re.compile(r"^-?\d+,\d+$")
@@ -83,6 +84,13 @@ def decimal_comma_warnings(project_root: Path) -> list[str]:
 def validate_working_directory(path: Path, min_free_gb: float = 5.0, use_wsl: bool = False) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = []
     path = path.expanduser()
+    # A non-WSL network share is writable from Windows but has no path the pipeline can use:
+    # windows_to_wsl_path raises on it, and a native Linux run cannot see it either. Report it
+    # here, where the user chose it, instead of at launch.
+    if is_unsupported_unc_path(path):
+        return [{"status": "FAIL", "message": (
+            f"'{path}' is a network share (UNC). The pipeline cannot reach it. Choose a folder "
+            "on a local drive, or a WSL folder (\\\\wsl.localhost\\<distro>\\...).")}]
     try:
         path.mkdir(parents=True, exist_ok=True)
         probe = path / ".bulkseq_write_test"

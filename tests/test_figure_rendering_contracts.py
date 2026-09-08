@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import html
+import json
+import os
 import re
 import shutil
 import subprocess
@@ -17,6 +19,148 @@ SCRIPTS = ROOT / "workflow" / "scripts"
 
 def _text(name: str) -> str:
     return (SCRIPTS / name).read_text(encoding="utf-8")
+
+
+def _skip_or_fail(reason: str) -> None:
+    """Skip when R is merely absent, fail when the caller declared R mandatory.
+
+    A rendering gate that silently skips is a gate that never runs: CI installs R and
+    sets BULKSEQ_REQUIRE_R=1, so a missing Rscript or R package there is a defect in the
+    job, not a property of the host.
+    """
+    if os.environ.get("BULKSEQ_REQUIRE_R"):
+        pytest.fail(reason)
+    pytest.skip(reason)
+
+
+def _rscript() -> str:
+    path = shutil.which("Rscript")
+    if not path:
+        _skip_or_fail("Rscript is unavailable on this host")
+    return path
+
+
+def _r_function_source(source: str, *names: str) -> str:
+    """Slice named top-level R functions out of a script so a test can execute them.
+
+    The volcano gate slices its helper between two marker comments; the layout helpers
+    have none, so match on the definition and follow the braces (skipping comments and
+    quoted text) to the closing one. An unbalanced slice fails here rather than turning
+    into an unhelpful R syntax error.
+    """
+    blocks: list[str] = []
+    for name in names:
+        start = source.index(f"{name} <- function")
+        depth = 0
+        index = start
+        end = -1
+        while index < len(source):
+            char = source[index]
+            if char == "#":
+                index = source.find("\n", index)
+                if index == -1:
+                    break
+            elif char in "\"'":
+                quote = char
+                index += 1
+                while index < len(source) and source[index] != quote:
+                    index += 2 if source[index] == "\\" else 1
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    end = index + 1
+                    break
+            index += 1
+        assert end > start, f"unbalanced braces while slicing {name}"
+        blocks.append(source[start:end])
+    return "\n\n".join(blocks)
+
+
+def _swap_cos_and_sin(source: str) -> str:
+    """Transpose the projection's cos/sin, the defect the executed angle gate must catch."""
+    swapped = re.sub(
+        r"\b(cos|sin)\b", lambda match: "sin" if match.group(1) == "cos" else "cos", source
+    )
+    assert swapped != source
+    return swapped
+
+
+# The two label-layout helpers answer the same question in different units -- the
+# sample-distance one converts to inches internally, the correlation one compares points
+# -- so each supplies its own probe and the fixture below stays shared.
+_SAMPLE_DISTANCE_PROBE = """
+metrics_of <- function(labels) {
+  m <- sample_distance_label_layout(labels, cell_width_pt = 1e6, fontsize = 12)
+  c(m$max_label_width_in * 72, m$max_label_height_in * 72)
+}
+angle_of <- function(labels, cell_pt) {
+  sample_distance_label_layout(labels, cell_width_pt = cell_pt, fontsize = 12)$angle
+}
+"""
+
+_CORRELATION_PROBE = """
+metrics_of <- function(labels) {
+  m <- measure_correlation_text(labels, 12)
+  c(max(m$width_pt), max(m$height_pt))
+}
+angle_of <- function(labels, cell_pt) {
+  correlation_label_layout(labels, cell_width_pt = cell_pt, fontsize = 12)$angle
+}
+"""
+
+# Measure the fixture, then derive every cell width from what was measured. A hardcoded
+# narrow width can fall below the upright column's own extent, where the helper returns 90
+# from its fallback instead of because 90 fits -- and a gate that cannot distinguish the
+# two passes even with the projection transposed.
+_ANGLE_FIXTURE = r"""
+long <- c("treated_replicate_identifier_0001", "untreated_replicate_identifier_02")
+short <- c("s1", "s2", "s3")
+gap_pt <- 2
+long_m <- metrics_of(long)
+short_m <- metrics_of(short)
+cat(sprintf(
+  paste0("long_width_pt=%.6f\nlong_height_pt=%.6f\nnarrow_pt=%.6f\nrotated_pt=%.6f\n",
+         "gap_pt=%.6f\nwide_angle=%g\nnarrow_angle=%g\nshort_angle=%g\n"),
+  long_m[1], long_m[2], long_m[2] + 4 * gap_pt, cos(pi / 4) * (long_m[1] + long_m[2]), gap_pt,
+  angle_of(long, long_m[1] + 4 * gap_pt),
+  angle_of(long, long_m[2] + 4 * gap_pt),
+  angle_of(short, short_m[1] + 4 * gap_pt)
+))
+"""
+
+
+def _run_r_values(rscript: str, tmp_path: Path, script: str, name: str) -> dict[str, float]:
+    path = tmp_path / name
+    path.write_text(script, encoding="utf-8")
+    result = subprocess.run(
+        [rscript, "--vanilla", str(path)], capture_output=True, text=True, timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    values: dict[str, float] = {}
+    for line in result.stdout.splitlines():
+        if "=" in line:
+            key, _, value = line.partition("=")
+            values[key.strip()] = float(value)
+    return values
+
+
+def _assert_measured_label_angles(
+    rscript: str, tmp_path: Path, helper: str, probe: str, name: str
+) -> None:
+    values = _run_r_values(rscript, tmp_path, helper + probe + _ANGLE_FIXTURE, name)
+    gap = values["gap_pt"]
+    # The narrow cell must sit inside the band where the upright column fits and neither
+    # the horizontal nor the diagonal one does, so 90 is a measured choice, not a fallback.
+    assert values["long_width_pt"] > values["long_height_pt"]
+    assert values["narrow_pt"] >= values["long_height_pt"] + gap
+    assert values["narrow_pt"] < values["rotated_pt"] + gap
+    assert values["narrow_pt"] < values["long_width_pt"] + gap
+    assert values["narrow_angle"] == 90, "long labels in a one-column cell must rotate upright"
+    assert values["wide_angle"] == 0, "labels that fit their cell must stay horizontal"
+    assert values["short_angle"] == 0, "short labels must stay horizontal"
 
 
 def _assert_gsea_title_contract(source: str) -> None:
@@ -311,9 +455,14 @@ def _assert_directional_go_scope_contract(source: str) -> None:
     assert "combined_n <- nrows(ego_all)" in source
     assert "up_n <- nrows(obj$ego_up)" in source
     assert "down_n <- nrows(obj$ego_down)" in source
-    assert "go_plot_obj <- obj$ego_up" in source
-    assert "go_plot_obj <- obj$ego_down" in source
-    assert "if (up_n >= down_n)" in source
+    # The direction decision moved into the shared helper sourced by the figures and the
+    # network export; the figures script keeps its own counts and cross-checks them.
+    scope = (SCRIPTS / "enrichment_scope.R").read_text(encoding="utf-8")
+    assert 'object <- obj[["ego_up"]]' in scope
+    assert 'object <- obj[["ego_down"]]' in scope
+    assert "if (up_n >= down_n)" in scope
+    assert "select_enrichment_scope(obj)" in source
+    assert "combined_n == selected$combined_n" in source
     assert "make_cnet(go_plot_obj" in source
     assert "make_emap(go_plot_obj" in source
     assert source.count("themed_dotplot(go_plot_obj") == 2
@@ -333,8 +482,6 @@ def _assert_sample_distance_label_contract(source: str) -> None:
     assert "sample_distance_label_layout <- function" in source
     assert "grid::grobWidth(g)" in source
     assert "grid::grobHeight(g)" in source
-    assert "candidate_angles <- c(0, 45, 90)" in source
-    assert "projected_widths + gap_in <= cell_spacing_in" in source
     assert "fit_sample_distance_heatmap <- function" in source
     assert "dist_min_cell_width_pt <- max(18, 1.6 * base_size)" in source
     assert "cellwidth = cell_width_pt, cellheight = cell_height_pt" in source
@@ -349,8 +496,6 @@ def _assert_correlation_geometry_contract(source: str) -> None:
     assert "correlation_minimum_cell_size <- function" in source
     assert "correlation_label_layout <- function" in source
     assert "fit_correlation_heatmap <- function" in source
-    assert "candidate_angles <- c(0, 45, 90)" in source
-    assert "projected + as.numeric(gap_pt) <= as.numeric(cell_width_pt)" in source
     assert "font_floor <- max(20, 1.8 * as.numeric(fontsize))" in source
     assert "cellwidth = cell_width_pt, cellheight = cell_height_pt" in source
     assert "finalize_heatmap_gtable(ph$gtable, min_w = 0, min_h = 0)" in source
@@ -397,9 +542,7 @@ def _assert_seam_free_continuous_svg(svg: str) -> None:
 
 
 def test_contrast_colour_mapping_is_semantic_and_order_invariant() -> None:
-    rscript = shutil.which("Rscript")
-    if not rscript:
-        pytest.skip("Rscript is unavailable on this host")
+    rscript = _rscript()
     style_path = (SCRIPTS / "figure_style.R").as_posix().replace("'", "\\'")
     expr = f"""
 source('{style_path}')
@@ -583,9 +726,7 @@ def test_volcano_ranked_key_contract_rejects_fixed_width_only_layout() -> None:
 def test_volcano_dense_capped_and_regular_key_renders_without_clipping(
     tmp_path: Path,
 ) -> None:
-    rscript = shutil.which("Rscript")
-    if not rscript:
-        pytest.skip("Rscript is unavailable on this host")
+    rscript = _rscript()
     package_probe = subprocess.run(
         [
             rscript,
@@ -598,7 +739,7 @@ def test_volcano_dense_capped_and_regular_key_renders_without_clipping(
         check=False,
     )
     if package_probe.returncode == 77:
-        pytest.skip("ggplot2 or svglite is unavailable in the R environment")
+        _skip_or_fail("ggplot2 or svglite is unavailable in the R environment")
     assert package_probe.returncode == 0, package_probe.stderr
 
     core = _text("make_figures.R")
@@ -731,6 +872,24 @@ def test_sample_distance_labels_adapt_to_rendered_geometry() -> None:
     _assert_sample_distance_label_contract(_text("make_figures.R"))
 
 
+def test_sample_distance_label_layout_returns_measured_angles(tmp_path: Path) -> None:
+    helper = _r_function_source(_text("make_figures.R"), "sample_distance_label_layout")
+    _assert_measured_label_angles(
+        _rscript(), tmp_path, helper, _SAMPLE_DISTANCE_PROBE, "sample-distance-angles.R"
+    )
+
+
+def test_sample_distance_angle_gate_rejects_a_transposed_projection(tmp_path: Path) -> None:
+    helper = _r_function_source(_text("make_figures.R"), "sample_distance_label_layout")
+    # Pin the reason: a transposed projection must be caught by the angle it returns, not
+    # by an R script that failed to run.
+    with pytest.raises(AssertionError, match="rotate upright"):
+        _assert_measured_label_angles(
+            _rscript(), tmp_path, _swap_cos_and_sin(helper), _SAMPLE_DISTANCE_PROBE,
+            "sample-distance-transposed.R",
+        )
+
+
 def test_volcano_threshold_guide_stays_inside_the_data_panel() -> None:
     source = _text("make_figures.R")
     assert 'annotate("segment", x = -xm, xend = xm,' in source
@@ -755,6 +914,26 @@ def test_sample_distance_label_contract_rejects_the_fixed_45_degree_layout() -> 
 
 def test_correlation_heatmaps_use_measured_fixed_cell_geometry() -> None:
     _assert_correlation_geometry_contract(_text("sample_correlation.R"))
+
+
+def test_correlation_label_layout_returns_measured_angles(tmp_path: Path) -> None:
+    helper = _r_function_source(
+        _text("sample_correlation.R"), "measure_correlation_text", "correlation_label_layout"
+    )
+    _assert_measured_label_angles(
+        _rscript(), tmp_path, helper, _CORRELATION_PROBE, "correlation-angles.R"
+    )
+
+
+def test_correlation_angle_gate_rejects_a_transposed_projection(tmp_path: Path) -> None:
+    helper = _r_function_source(
+        _text("sample_correlation.R"), "measure_correlation_text", "correlation_label_layout"
+    )
+    with pytest.raises(AssertionError, match="rotate upright"):
+        _assert_measured_label_angles(
+            _rscript(), tmp_path, _swap_cos_and_sin(helper), _CORRELATION_PROBE,
+            "correlation-transposed.R",
+        )
 
 
 def test_correlation_geometry_gate_rejects_the_previous_fixed_canvas() -> None:
@@ -813,9 +992,7 @@ def test_sample_distance_legend_contract_rejects_the_seamed_rect_stack() -> None
 
 
 def test_sample_distance_legend_transform_renders_one_svg_gradient(tmp_path: Path) -> None:
-    rscript = shutil.which("Rscript")
-    if not rscript:
-        pytest.skip("Rscript is unavailable on this host")
+    rscript = _rscript()
     core = _text("make_figures.R")
     start = core.index("smooth_continuous_legend <- function")
     end = core.index("# ---- Grouping factor", start)
@@ -846,7 +1023,7 @@ grid::grid.newpage(); grid::grid.draw(fixed$grobs[[1]]); grDevices::dev.off()
         timeout=30, check=False,
     )
     if result.returncode == 77:
-        pytest.skip("svglite is unavailable in the R environment")
+        _skip_or_fail("svglite is unavailable in the R environment")
     assert result.returncode == 0, result.stderr
     assert svg_path.is_file(), result.stdout + result.stderr
     _assert_seam_free_continuous_svg(svg_path.read_text(encoding="utf-8"))
@@ -1009,7 +1186,7 @@ def test_ppi_provenance_and_determinism_contract_is_declared() -> None:
     ppi = _text("build_string_network.R")
     rule = (ROOT / "workflow" / "rules" / "ppi.smk").read_text(encoding="utf-8")
     assert 'provenance="results/networks/string_ppi_provenance.json"' in rule
-    for constant in ("COMMUNITY_SEED", "LAYOUT_SEED", "LABEL_SEED"):
+    for constant in ("COMMUNITY_SEED", "LAYOUT_SEED"):
         assert f"{constant} <- 42L" in ppi
     for key in (
         "configured_version",
@@ -1028,3 +1205,142 @@ def test_ppi_provenance_and_determinism_contract_is_declared() -> None:
     assert "deterministic component-wise crossing-optimised circular shelf" in ppi
     assert "manual occupied STRING combined-score bands" in ppi
     assert "no node labels in the static topology panel" in ppi
+
+
+# ---- MA / volcano coordinate and degenerate-input gates ---------------------
+
+_CORE_FIGURE_KEYS = (
+    "pca", "dist", "ma", "volcano", "heatmap", "up_heatmap", "down_heatmap",
+    "pval", "disp", "cooks", "libsize",
+)
+
+
+def _core_figure_render_script(work: Path) -> str:
+    """Render make_figures.R on a synthetic DESeq2 object, twice.
+
+    'normal' carries a low-count cloud whose padj is NA (independent filtering) and a
+    shrunken effect column that differs from the raw one; 'allna' sets every padj to NA.
+    Counts are written to render_facts.json so the assertions are derived from the
+    fixture rather than restated.
+    """
+    scripts = SCRIPTS.as_posix().replace("'", "\'")
+    root = work.as_posix().replace("'", "\'")
+    outputs = ",\n    ".join(
+        f"{key}_png=file.path(w, paste0(tag, '_{key}.png')), "
+        f"{key}_svg=file.path(w, paste0(tag, '_{key}.svg'))"
+        for key in _CORE_FIGURE_KEYS
+    )
+    return f"""
+suppressPackageStartupMessages({{
+  library(DESeq2); library(ggplot2); library(ggrepel); library(pheatmap)
+  library(RColorBrewer); library(scales); library(svglite); library(jsonlite)
+}})
+w <- '{root}'
+set.seed(4)
+dds <- makeExampleDESeqDataSet(n = 240, m = 4, betaSD = 1.4)
+colData(dds)$condition <- factor(c('control', 'control', 'treated', 'treated'))
+counts(dds)[1:140, ] <- matrix(rpois(140 * 4, 1), nrow = 140)   # low-count cloud
+dds <- DESeq(dds, quiet = TRUE)
+res <- results(dds, contrast = c('condition', 'treated', 'control'))
+vsd <- vst(dds, blind = FALSE, nsub = 50)   # the low-count cloud leaves few high-count rows
+# Deterministic stand-in for LFC shrinkage: a distinct column, so a volcano drawn in the
+# shrunken coordinate is measurably different from one drawn in the raw coordinate.
+resLFC <- res
+resLFC$log2FoldChange <- res$log2FoldChange / 2
+
+setClass('Snakemake', representation(input = 'list', output = 'list', params = 'list',
+                                     config = 'list', log = 'list', scriptdir = 'character'))
+render <- function(tag, r, rl) {{
+  saveRDS(list(dds = dds, res = r, resLFC = rl, vsd = vsd), file.path(w, paste0(tag, '.rds')))
+  snakemake <<- new('Snakemake',
+    input = list(rds = file.path(w, paste0(tag, '.rds'))),
+    output = list(
+    {outputs}
+    ),
+    params = list(style = list(palette = 'Blue-Red', width_in = 7, height_in = 5, dpi = 100)),
+    config = list(deseq2 = list(alpha = 0.05, lfc_threshold = 1,
+      contrasts = list(list(factor = 'condition', numerator = 'treated', denominator = 'control')))),
+    log = list(file.path(w, paste0(tag, '.log'))), scriptdir = '{scripts}')
+  source(file.path('{scripts}', 'make_figures.R'), local = new.env())
+}}
+render('normal', res, resLFC)
+
+d <- as.data.frame(resLFC)
+d$gene <- rownames(d)
+sig <- !is.na(d$padj) & d$padj < 0.05 & abs(as.data.frame(res)$log2FoldChange) >= 1
+top <- d[order(d$padj), ][1, ]
+facts <- list(
+  n_finite_basemean = sum(is.finite(d$baseMean) & is.finite(d$log2FoldChange)),
+  n_padj = sum(!is.na(d$padj)),
+  n_sig = sum(sig),
+  top_label = top$gene,
+  top_raw = sprintf('%+.2f', as.data.frame(res)$log2FoldChange[match(top$gene, rownames(res))]),
+  top_shrunken = sprintf('%+.2f', top$log2FoldChange)
+)
+write_json(facts, file.path(w, 'render_facts.json'), auto_unbox = TRUE)
+
+res_na <- res; res_na$padj <- NA_real_
+rl_na <- resLFC; rl_na$padj <- NA_real_
+render('allna', res_na, rl_na)
+"""
+
+
+@pytest.fixture(scope="module")
+def core_figure_render(tmp_path_factory) -> tuple[Path, dict]:
+    rscript = _rscript()
+    probe = subprocess.run(
+        [rscript, "-e",
+         "quit(status=ifelse(all(vapply(c('DESeq2','ggplot2','ggrepel','pheatmap',"
+         "'svglite','ggnewscale','jsonlite'),requireNamespace,logical(1),quietly=TRUE)),0,77))"],
+        capture_output=True, text=True, timeout=300, check=False,
+    )
+    if probe.returncode == 77:
+        _skip_or_fail("the R figure packages are unavailable in this environment")
+    assert probe.returncode == 0, probe.stderr
+
+    work = tmp_path_factory.mktemp("core-figures")
+    script = work / "render.R"
+    script.write_text(_core_figure_render_script(work), encoding="utf-8")
+    result = subprocess.run(
+        [rscript, "--vanilla", str(script)], capture_output=True, text=True,
+        timeout=900, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    facts = json.loads((work / "render_facts.json").read_text(encoding="utf-8"))
+    return work, facts
+
+
+def _svg_point_count(path: Path) -> int:
+    return path.read_text(encoding="utf-8").count("<circle")
+
+
+def test_ma_plot_keeps_independently_filtered_genes(core_figure_render) -> None:
+    work, facts = core_figure_render
+    # The padj-NA low-count cloud is the region the caption tells readers to inspect, so
+    # every gene with a finite baseMean must be drawn; dropping them was the old behaviour.
+    assert facts["n_padj"] < facts["n_finite_basemean"]
+    assert _svg_point_count(work / "normal_ma.svg") >= facts["n_finite_basemean"]
+
+
+def test_volcano_effect_axis_shares_the_coordinate_of_its_guides(core_figure_render) -> None:
+    work, facts = core_figure_render
+    svg = html.unescape((work / "normal_volcano.svg").read_text(encoding="utf-8"))
+    # The ranked key reports the plotted effect. It must be the raw log2FC the dashed
+    # guides and the Up/Down colouring are defined on, not the shrunken display value.
+    assert facts["top_raw"] != facts["top_shrunken"]
+    assert f"01  {facts['top_label']}  ({facts['top_raw']})" in svg
+    assert f"({facts['top_shrunken']})" not in svg
+    assert "log2 fold change (shrunken)" not in svg
+
+
+def test_degenerate_all_na_padj_writes_placeholders_instead_of_failing(
+    core_figure_render,
+) -> None:
+    work, facts = core_figure_render
+    for key in _CORE_FIGURE_KEYS:
+        assert (work / f"allna_{key}.svg").is_file()
+        assert (work / f"allna_{key}.png").is_file()
+    volcano = html.unescape((work / "allna_volcano.svg").read_text(encoding="utf-8"))
+    assert "Volcano needs at least one gene with an adjusted p-value." in volcano
+    # The MA plot still carries every measured gene: significance is a colour, not a filter.
+    assert _svg_point_count(work / "allna_ma.svg") >= facts["n_finite_basemean"]
