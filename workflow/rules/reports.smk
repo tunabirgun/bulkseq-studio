@@ -70,7 +70,13 @@ rule final_reports:
         deseq2="results/deseq2/deseq2_results.csv",
         # No counts.txt in microarray mode (intensities) or deseq2-results mode (no counts).
         **({} if (MICROARRAY_MODE or DE_RESULTS_MODE) else {"counts": "results/counts/counts.txt"}),
-        **({"strandedness": "results/aligned/strandedness.txt"} if _REPORT_REALIZED_STRANDEDNESS else {}),
+        # "strandedness" is the legacy first-sample file (still the sanity-checked scalar
+        # when every sample agrees); "strandedness_per_sample" is what make_run_summary.py
+        # actually cross-checks the featureCounts header against (H1).
+        **({
+            "strandedness": "results/aligned/strandedness.txt",
+            "strandedness_per_sample": "results/aligned/strandedness_per_sample.tsv",
+        } if _REPORT_REALIZED_STRANDEDNESS else {}),
         # MultiQC only exists on the alignment route.
         **({} if (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE) else {"multiqc": "results/qc/multiqc/multiqc_report.html"}),
         **_REPORT_SINKS,

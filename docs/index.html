@@ -7,7 +7,7 @@
 <meta name="description" content="BulkSeq Studio is a free, open-source desktop app that runs a complete bulk RNA-seq or microarray differential-expression analysis on your own computer, no coding required.">
 <link rel="icon" type="image/svg+xml" href="assets/bulkseq_logo.svg">
 <link rel="stylesheet" href="assets/site.css?v=9">
-<link rel="stylesheet" href="assets/product-v029.css?v=3">
+<link rel="stylesheet" href="assets/product-v030.css?v=3">
 <script>
 try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (error) {}
 </script>
@@ -18,7 +18,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="">
-      <span class="brand-copy"><span class="brand-title">BulkSeq Studio</span><span class="ver">v0.29.1</span></span>
+      <span class="brand-copy"><span class="brand-title">BulkSeq Studio</span><span class="ver">v0.30.0</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu</button>
     <nav aria-label="Documentation">
@@ -32,7 +32,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
       </ul>
       <div class="ext">
         <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
-        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.29.1 ↗</a>
+        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.30.0 ↗</a>
         <a href="faq.html#cite">Citation</a>
       </div>
     </nav>
@@ -47,18 +47,20 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   <p>A free desktop app that takes you from raw reads or a count table to differential expression, functional enrichment, protein-interaction networks, and publication figures, without writing a single line of code.</p>
   <p class="support-line">Windows and Linux &middot; local processing &middot; open source</p>
   <div class="btn-row">
-    <a class="btn btn-primary" href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">Download public v0.29.1</a>
+    <a class="btn btn-primary" href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">Download public v0.30.0</a>
     <a class="btn btn-ghost" href="https://github.com/tunabirgun/bulkseq-studio">View on GitHub</a>
   </div>
 </div>
 
-<div class="note release-status"><span class="t">Current public release: 0.29.1</span> Download only the checksummed packages published on GitHub Releases. The separately versioned B1–B20 validation archive remains available on Zenodo.</div>
+<div class="note release-status"><span class="t">Current public release: 0.30.0</span> Download only the checksummed packages published on GitHub Releases. The separately versioned B1–B20 validation archive remains available on Zenodo.</div>
 
 <p class="lead">BulkSeq Studio is for biologists who want to analyse their own bulk RNA-seq or microarray data without learning the command line. A guided navigator groups the application into Project and data, Analysis setup, Validate and run, and Explore results; it runs a transparent <a href="https://snakemake.github.io/">Snakemake</a> pipeline and produces a count matrix, a differential-expression results table, GO/KEGG enrichment, a STRING interaction network, and figures. Everything runs locally: on Windows the pipeline runs inside WSL2, and on Linux it runs natively. Each run records the active parameters, tools, platform, reference, and input provenance needed to interpret what actually ran.</p>
 
 <div class="note warn"><span class="t">Notice for meta-analysis users (0.26.6)</span> Releases before 0.26.6 applied the Benjamini&ndash;Hochberg correction across every gene and then removed direction-discordant genes from the called set, so the correction covered a different family than the one reported. In the benchmark arm built to expose this the combination reported 58 false positives across five runs; the corrected code reports one. If you produced a meta-analysis result with 0.26.5 or earlier, re-run it. Single-study differential expression, enrichment and network output are unaffected.</div>
 
 <div class="note warn"><span class="t">Notice for output changes (0.29.0)</span> Version 0.29.0 changed GSEA rankings to use the model test statistic, split STRING seed selection by direction, computed the meta-analysis combined p-value in tail form so strongly concordant genes are ranked instead of tied at zero, and applied zero-anchored colour scales to genes-of-interest and enrichment-term heatmaps. Results from 0.28.0 or earlier can differ in enrichment tables, network membership, and figure ordering; re-run before publishing.</div>
+
+<div class="note warn"><span class="t">Notice for output changes (0.30.0)</span> Version 0.30.0 reaches KEGG enrichment for <em>Schizosaccharomyces pombe</em> through a measured NCBI GeneID bridge instead of returning empty tables (0 of 50 test genes mapped before, 18 of 50 after, against a universe of 2,061); organisms whose KEGG keys are locus tags, such as <em>Fusarium graminearum</em> and <em>Candida albicans</em>, are unchanged, and the limma-voom and edgeR routes do not yet carry the GeneID column and remain unmapped for <em>S. pombe</em>. Strandedness is now inferred and applied per sample instead of once per project, so a run mixing library types &mdash; most often a multi-study meta-analysis pooling studies prepared differently &mdash; now counts each sample with its own orientation; a project where every sample already shared one library type reproduces its 0.29.1 output exactly. An existing STAR project's next run re-derives the read length across every sample, rebuilds its index, and re-aligns, and an existing HISAT2 project re-aligns against its unchanged index, even when the resulting counts do not change. Re-run an <em>S. pombe</em> KEGG result or a mixed-library-type run from 0.29.1 or earlier before publishing.</div>
 
 <figure class="diagram">
   <img src="assets/bulkseq-workflow.svg" alt="BulkSeq Studio workflow diagram: input entry points (local FASTQ, SRA/ENA accession, and the shortcut count-matrix, microarray, and DESeq2-results modes) feeding four stages — QC and trimming, alignment and quantification, differential expression, and downstream outputs — plus an optional multi-study meta-analysis lane, with a legend." loading="lazy">
@@ -79,7 +81,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   </div>
   <div class="card feature">
     <h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg>QC, trimming & alignment</h3>
-    <p>FastQC and MultiQC report quality; trim with fastp, Trim Galore, or Trimmomatic; and choose the aligner: STAR (the default), HISAT2 (low memory, for large crop genomes), or Salmon (mapping-based, lightest of all). Optional rRNA depletion (SortMeRNA or the reference-free RiboDetector), a FastQ Screen contamination check, and RSeQC extended QC are built in. Both paired-end and single-end reads run through all three routes, which feed the same count matrix.</p>
+    <p>FastQC and MultiQC report quality; trim with fastp, Trim Galore, or Trimmomatic; and choose the aligner: STAR (the default), HISAT2 (low memory, for large crop genomes), or Salmon (mapping-based, lightest of all). Optional rRNA depletion (SortMeRNA or the reference-free RiboDetector), a FastQ Screen contamination check, and RSeQC extended QC are built in. Both paired-end and single-end reads run through all three routes, which feed the same count matrix. A lab or cluster that already has a built STAR, HISAT2, or Salmon index can point <code>config.yaml</code> at it and skip rebuilding it for every project, and a prebuilt transcriptome FASTA replaces the generated one as the Salmon index input.</p>
   </div>
   <div class="card feature">
     <h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="6" rx="1"/><rect x="12" y="7" width="3" height="10" rx="1"/><rect x="17" y="13" width="3" height="4" rx="1"/></svg>Differential expression</h3>
@@ -110,6 +112,10 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
     <p>Every choice on the Analysis settings page: trimmer, rRNA tool, contamination screen, the three aligners and quantifiers, the three DE engines, the design helper, GSVA, RSeQC, and enrichment. <a href="analysis.html">See the options →</a></p>
   </div>
   <div class="card feature">
+    <h3>Command line &amp; HPC</h3>
+    <p>Every <code>bulkseq</code> subcommand and its exit codes, running the workflow to completion with <code>bulkseq run</code>, and submitting the same pipeline to Slurm or Kubernetes. <a href="cli.html">Open the command line →</a></p>
+  </div>
+  <div class="card feature">
     <h3>Outputs</h3>
     <p>The result tables, publication figures, MultiQC report, enrichment and network files, the self-contained HTML report, and the provenance a finished run leaves behind. <a href="outputs.html">See what you get →</a></p>
   </div>
@@ -124,7 +130,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   </main>
 </div>
 
-<script src="assets/product-v029.js?v=3" defer></script>
+<script src="assets/product-v030.js?v=3" defer></script>
 <script src="assets/lightbox.js" defer></script>
 <script src="assets/toc.js" defer></script>
 </body>

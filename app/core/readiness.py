@@ -113,7 +113,7 @@ WSL_TOOLS = {
 # Load-tested with requireNamespace so missing compiled/transitive dependencies fail readiness.
 _R_PACKAGES_ALL = ("DESeq2", "edgeR", "limma", "GSVA", "clusterProfiler", "GO.db", "DOSE",
                    "enrichplot", "fgsea", "STRINGdb", "apeglm", "ashr", "GEOquery", "affy",
-                   "AnnotationDbi", "Biobase", "S4Vectors", "SummarizedExperiment",
+                   "AnnotationDbi", "KEGGREST", "Biobase", "S4Vectors", "SummarizedExperiment",
                    "metaRNASeq", "metafor", "HTSFilter", "tximport", "gprofiler2",
                    # CRAN figure/plotting + set-overlap packages hard-loaded by the mandatory
                    # figures/sample-correlation/set-overlap rules on every run; scales in
@@ -281,15 +281,23 @@ def check_wsl_bulkseq_environment(distro: str | None = None, env_name: str = WSL
 
     items.append(ReadinessItem(f"WSL env:{env_name}", "PASS", "micromamba environment found", "Linux bioinformatics tools"))
     log_paths = _tool_paths_from_install_log()
+    tools = tuple(WSL_TOOLS)
+    # One login shell for every tool instead of WSL_TOOLS logins: each `wsl.exe --` invocation
+    # costs about a second, and Check Environment is on the first-run path. A tool absent from
+    # the parsed output (truncated by the timeout, or never printed) is treated as missing, not
+    # silently passed.
+    batch_result = _run_wsl(distro, _wsl_batched_tool_probe_command(env_name, tools),
+                             timeout=_batch_probe_timeout(tools))
+    parsed = _parse_batched_tool_probe(batch_result.stdout)
     found: dict[str, tuple[bool, str]] = {}
-    for command in WSL_TOOLS:
-        result = _run_wsl(distro, _wsl_tool_probe_command(env_name, command))
-        if result.returncode == 0:
-            found[command] = (True, _short_output(result))
+    for command in tools:
+        ok, detail = parsed.get(command, (False, ""))
+        if ok:
+            found[command] = (True, detail)
         elif command in log_paths:
             found[command] = (True, f"{log_paths[command]} (from setup log)")
         else:
-            found[command] = (False, _short_output(result) or "not found in WSL bulkseq environment")
+            found[command] = (False, detail or "not found in WSL bulkseq environment")
     profile = _wsl_profile(distro, env_name, {k: v for k, (ok, v) in found.items() if ok})
     for command, purpose in WSL_TOOLS.items():
         ok, detail = found[command]
@@ -358,14 +366,37 @@ def _wsl_env_prefix_command(env_name: str) -> str:
     return f'if [ -d "{prefix}" ]; then echo "{prefix}"; else exit 1; fi'
 
 
-def _wsl_tool_probe_command(env_name: str, tool: str) -> str:
+def _batch_probe_timeout(tools: tuple[str, ...]) -> int:
+    # Base allowance for the login shell itself plus a per-tool margin; a single `test -x`
+    # per tool inside one shell is far cheaper than one login shell per tool.
+    return max(20, 5 + 2 * len(tools))
+
+
+def _wsl_batched_tool_probe_command(env_name: str, tools: tuple[str, ...]) -> str:
+    # A simple loop over a space-separated tool list, no arrays/nested $() beyond what
+    # _run_wsl already base64-transports intact. One line per tool: "<tool>\tOK\t<path>" or
+    # "<tool>\tMISSING\t".
     prefix_command = _wsl_env_prefix_command(env_name)
+    tool_list = " ".join(shlex.quote(t) for t in tools)
     return (
-        f"tool={tool!r}; "
         f"env_prefix=$({prefix_command}); "
+        f"for tool in {tool_list}; do "
         "path=\"$env_prefix/bin/$tool\"; "
-        "test -x \"$path\" && echo \"$path\""
+        "if [ -x \"$path\" ]; then echo \"$tool\tOK\t$path\"; else echo \"$tool\tMISSING\t\"; fi; "
+        "done"
     )
+
+
+def _parse_batched_tool_probe(output: str) -> dict[str, tuple[bool, str]]:
+    parsed: dict[str, tuple[bool, str]] = {}
+    for line in (output or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        tool, status = parts[0], parts[1]
+        detail = parts[2].strip() if len(parts) > 2 else ""
+        parsed[tool] = (status == "OK" and bool(detail), detail)
+    return parsed
 
 
 def _r_packages_check_code(packages: tuple[str, ...]) -> str:

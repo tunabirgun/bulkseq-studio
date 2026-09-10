@@ -111,6 +111,7 @@ from app.core.runtime_calibration import calibration_factor, record_run
 from app.core.runtime_estimator import estimate_runtime
 from app.core.sanity_checks import write_check
 from app.core.snakemake_runner import (
+    FAILURE_MARKERS,
     SnakemakeRunner,
     _new_run_tag,
     build_snakemake_command,
@@ -3713,8 +3714,7 @@ class MainWindow(QMainWindow):
         # the WSL launcher runs through `micromamba run`, which returns exit 0 even when
         # snakemake failed — so the process exit code alone would report a failed run as
         # "Completed". A definitive error line marks the run failed regardless of the code.
-        if re.search(r"Error in rule\s|WorkflowError|Exiting because a job execution failed"
-                     r"|MissingOutputException", line):
+        if FAILURE_MARKERS.search(line):
             self._run_error_detected = True
         # An R environment that cannot load its Bioconductor stack (a dropped GO.db or an
         # r-base drift) fails with one of these signatures: our validate_project load-test

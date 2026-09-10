@@ -112,6 +112,27 @@ def test_setup_check_surfaces_the_failure(vp, tmp_path, monkeypatch):
     assert any("gene_sets.custom_gene_list" in m["message"] for m in payload["messages"])
 
 
+def test_deprecated_protein_fasta_warns_but_does_not_fail(vp, tmp_path, monkeypatch):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "project: {}\ninput: {samples: samples.tsv}\n"
+        "reference: {protein_fasta: /old/protein.fa}\nworkflow: {}\nresources: {}\n",
+        encoding="utf-8")
+    samples = tmp_path / "samples.tsv"
+    samples.write_text("sample\tcondition\ns1\tA\n", encoding="utf-8")
+    out = tmp_path / "00_project_setup.json"
+    monkeypatch.setattr(vp, "check_r_packages", lambda config=None: [])
+    monkeypatch.setattr(
+        "sys.argv", ["validate_project.py", "--config", str(cfg),
+                     "--samples", str(samples), "--out", str(out)])
+    rc = vp.main()
+    assert rc == 0
+    import json
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    warnings = [m for m in payload["messages"] if m["status"] == "WARNING"]
+    assert any("reference.protein_fasta" in m["message"] for m in warnings)
+
+
 def _gated_config_inputs() -> set[tuple[str, str]]:
     """Re-derive, from the rule files, which config settings reach a rule's `input:` block.
 
@@ -156,3 +177,39 @@ def test_gating_table_entries_are_well_formed(vp):
     for section, key, effect in vp.GATING_PATHS:
         assert section and key and effect
         assert not effect.endswith("."), f"{section}.{key}: effect is inlined mid-sentence"
+
+
+def test_missing_star_index_fails_and_names_the_setting(vp, tmp_path):
+    msgs = vp.check_gating_paths(
+        {"reference": {"star_index": str(tmp_path / "star_index")}})
+    assert len(msgs) == 1
+    assert "reference.star_index" in msgs[0]["message"]
+
+
+def test_existing_star_index_directory_passes(vp, tmp_path):
+    (tmp_path / "star_index").mkdir()
+    assert vp.check_gating_paths({"reference": {"star_index": str(tmp_path / "star_index")}}) == []
+
+
+def test_missing_transcriptome_fasta_fails(vp, tmp_path):
+    msgs = vp.check_gating_paths(
+        {"reference": {"transcriptome_fasta": str(tmp_path / "tx.fa")}})
+    assert len(msgs) == 1
+    assert "reference.transcriptome_fasta" in msgs[0]["message"]
+
+
+def test_missing_salmon_index_fails(vp, tmp_path):
+    msgs = vp.check_gating_paths(
+        {"reference": {"salmon_index": str(tmp_path / "salmon_index")}})
+    assert len(msgs) == 1
+    assert "reference.salmon_index" in msgs[0]["message"]
+
+
+def test_hisat2_index_prefix_is_checked_by_its_shards_not_a_literal_file(vp, tmp_path):
+    """hisat2_index names a build prefix; the file at that exact path never exists."""
+    prefix = tmp_path / "genome"
+    cfg = {"reference": {"hisat2_index": str(prefix)}}
+    msgs = vp.check_gating_paths(cfg)
+    assert len(msgs) == 1 and "reference.hisat2_index" in msgs[0]["message"]
+    (tmp_path / "genome.1.ht2").write_bytes(b"")
+    assert vp.check_gating_paths(cfg) == []

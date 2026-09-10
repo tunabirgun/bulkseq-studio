@@ -53,21 +53,25 @@ write_check <- function(path, name, status, messages) {
   writeLines(json, path)
 }
 
-# Parse gene_id -> (gene_name, gene_biotype) from a GTF attribute column and
-# align to `gene_ids` (NA where unknown). Dependency-free regex parse; returns
-# all-NA when the GTF is absent (e.g. count-matrix mode has no reference).
+# Parse gene_id -> (gene_name, gene_biotype, NCBI GeneID) from a GTF attribute column
+# and align to `gene_ids` (NA where unknown). Dependency-free regex parse; returns
+# all-NA when the GTF is absent (e.g. count-matrix mode has no reference). The GeneID
+# comes from db_xref "GeneID:<n>", which NCBI RefSeq GTFs carry on the gene record; it
+# bridges a locus-tag gene id (e.g. S. pombe SPOM_SPAC212.11) to the numeric key KEGG
+# expects, for organisms whose KEGG code maps genes by NCBI GeneID rather than by the
+# locus tag itself (run_enrichment.R does the mapping; this only records the fact).
 annotate_from_gtf <- function(gtf_path, gene_ids) {
   na_vec <- setNames(rep(NA_character_, length(gene_ids)), gene_ids)
   if (is.null(gtf_path) || length(gtf_path) < 1 || !nzchar(gtf_path[[1]]) ||
       !file.exists(gtf_path[[1]])) {
-    return(list(symbol = na_vec, biotype = na_vec))
+    return(list(symbol = na_vec, biotype = na_vec, geneid = na_vec))
   }
   gtf <- tryCatch(
     read.delim(gtf_path[[1]], header = FALSE, sep = "\t", quote = "", comment.char = "#",
                colClasses = c("NULL", "NULL", "character", "NULL", "NULL",
                               "NULL", "NULL", "NULL", "character")),
     error = function(e) NULL)
-  if (is.null(gtf) || ncol(gtf) < 2) return(list(symbol = na_vec, biotype = na_vec))
+  if (is.null(gtf) || ncol(gtf) < 2) return(list(symbol = na_vec, biotype = na_vec, geneid = na_vec))
   names(gtf) <- c("feature", "attr")
   g <- gtf[gtf$feature == "gene", , drop = FALSE]
   if (nrow(g) == 0) g <- gtf  # some GTFs (e.g. minimal RefSeq) lack a gene feature
@@ -79,10 +83,13 @@ annotate_from_gtf <- function(gtf_path, gene_ids) {
   bt <- pull("gene_biotype")
   gt <- pull("gene_type")           # GENCODE uses gene_type; Ensembl gene_biotype
   bt[is.na(bt)] <- gt[is.na(bt)]
+  ncbi <- ifelse(grepl('db_xref "GeneID:[0-9]+"', a),
+                sub('.*db_xref "GeneID:([0-9]+)".*', "\\1", a), NA_character_)
   keep <- !is.na(gid) & !duplicated(gid)
-  gid <- gid[keep]; sym <- sym[keep]; bt <- bt[keep]
+  gid <- gid[keep]; sym <- sym[keep]; bt <- bt[keep]; ncbi <- ncbi[keep]
   idx <- match(gene_ids, gid)
-  list(symbol = setNames(sym[idx], gene_ids), biotype = setNames(bt[idx], gene_ids))
+  list(symbol = setNames(sym[idx], gene_ids), biotype = setNames(bt[idx], gene_ids),
+       geneid = setNames(ncbi[idx], gene_ids))
 }
 
 # ---- Import featureCounts matrix --------------------------------------------
@@ -183,6 +190,13 @@ resLFC <- tryCatch(
 
 vsd <- tryCatch(vst(dds, blind = FALSE), error = function(e) rlog(dds, blind = FALSE))
 
+# PC1/PC2 coordinates for the covariate-structure screen (check 23): same ntop default
+# make_figures.R uses for the PCA plot. Path is derived from the results output directory,
+# not a new snakemake@output entry, so the rule wiring is unchanged.
+pca_coords <- plotPCA(vsd, intgroup = con_factor, ntop = 500, returnData = TRUE)
+pca_out <- data.frame(sample_id = rownames(pca_coords), PC1 = pca_coords$PC1, PC2 = pca_coords$PC2)
+write.csv(pca_out, file.path(dirname(snakemake@output[["results"]]), "pca_coordinates.csv"), row.names = FALSE)
+
 # ---- Gene annotation (symbol + biotype from the GTF) ------------------------
 # Adds human-readable columns to the results CSV and a gene_id->symbol map the
 # figure/GOI scripts use for labels. Behaviour-preserving: DE statistics, row
@@ -190,11 +204,22 @@ vsd <- tryCatch(vst(dds, blind = FALSE), error = function(e) rlog(dds, blind = F
 gtf_path <- tryCatch(snakemake@params[["gtf"]], error = function(e) NULL)
 annot <- annotate_from_gtf(gtf_path, rownames(res))
 
+# Informational companion to the primary padj/|LFC| call above: H0: |LFC| <= L,
+# so padj < alpha is positive evidence the effect EXCEEDS the threshold. Does
+# not feed the up/down classification below; lfc_thr may be 0, so fall back to
+# 1.0 (a positive threshold is required by greaterAbs, same as the lessAbs
+# equivalence test further down).
+L_eq <- if (lfc_thr > 0) lfc_thr else 1.0
+res_greater <- results(dds, contrast = c(con_factor, numerator, denominator),
+                       lfcThreshold = L_eq, altHypothesis = "greaterAbs", alpha = alpha)
+
 # ---- Outputs ----------------------------------------------------------------
 res_out <- as.data.frame(res)
 res_out$gene_id <- rownames(res_out)
 res_out$symbol <- unname(annot$symbol[rownames(res_out)])
 res_out$biotype <- unname(annot$biotype[rownames(res_out)])
+res_out$ncbi_geneid <- unname(annot$geneid[rownames(res_out)])
+res_out$padj_lfc_ge_threshold <- res_greater$padj[match(res_out$gene_id, rownames(res_greater))]
 res_out <- res_out[order(res_out$padj), ]
 write.csv(res_out, snakemake@output[["results"]], row.names = FALSE)
 write.csv(as.data.frame(counts(dds, normalized = TRUE)), snakemake@output[["normalized"]])
@@ -222,9 +247,8 @@ write_check(snakemake@output[["deseq_check"]], "09_deseq2_qc",
 # ---- Equivalence / no-change test (TOST-style) ------------------------------
 # results(altHypothesis="lessAbs") tests H0: |LFC| >= L; padj < alpha is positive
 # evidence the gene's effect is SMALLER than L (not differentially expressed),
-# complementing the usual "is it different" test. lessAbs needs a POSITIVE
-# threshold; lfc_thr may be 0 (the filter is disabled), so fall back to 1.0.
-L_eq <- if (lfc_thr > 0) lfc_thr else 1.0
+# complementing the usual "is it different" test. L_eq is computed above,
+# alongside the greaterAbs companion test written into res_out.
 res_eq <- results(dds, contrast = c(con_factor, numerator, denominator),
                   lfcThreshold = L_eq, altHypothesis = "lessAbs", alpha = alpha)
 eq_out <- as.data.frame(res_eq)

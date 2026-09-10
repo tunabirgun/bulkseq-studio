@@ -834,7 +834,7 @@ def _enrichment_section(project: Path) -> str:
         "Down-regulated input IDs retained after mapping/exclusion:",
         "Mapped tested-gene universe", "GO effective annotated ORA universes:",
         "DO effective annotated ORA universe:", "OrgDb annotation identity:",
-        "KEGG identity verification:", "KEGG retrieval:",
+        "KEGG identity verification:", "KEGG retrieval:", "KEGG retrieval date (UTC):",
         "KEGG effective resource universe:", "KEGG supported foreground:",
         "KEGG eligible hypotheses/gene sets:", "KEGG ranked-list annotation:",
         "KEGG adjusted results:", "KEGG ORA status:", "KEGG GSEA status:",

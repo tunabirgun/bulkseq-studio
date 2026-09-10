@@ -32,6 +32,7 @@ PHASES = [
     ("20_duplicate_study_qc", "Sanity checks"),
     ("21_strandedness_qc", "Sanity checks"),
     ("22_sample_structure_qc", "Sanity checks"),
+    ("23_covariate_structure_qc", "Sanity checks"),
     ("sanity_checks", "Sanity checks"),
     # reference preparation (indices, transcriptome, reference checks)
     ("read_length", "Reference"),

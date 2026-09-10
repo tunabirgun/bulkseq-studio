@@ -44,7 +44,20 @@ GATING_PATHS: tuple[tuple[str, str, str], ...] = (
     ("input", "count_matrix", "count-matrix input mode"),
     ("input", "deseq2_results", "DESeq2-results input mode"),
     ("microarray", "expression_matrix", "the local-matrix microarray route"),
+    ("reference", "star_index", "skipping the STAR genome index build"),
+    ("reference", "hisat2_index", "skipping the HISAT2 genome index build"),
+    ("reference", "salmon_index", "skipping the Salmon transcriptome index build"),
+    ("reference", "transcriptome_fasta", "used for the Salmon index; the transcript-to-gene map is still derived from the annotation"),
 )
+
+# A HISAT2 index is named by its build prefix (e.g. ".../genome"), not a single file; the
+# shards on disk are "<prefix>.<N>.ht2" / "<prefix>.<N>.ht2l".
+_HISAT2_PREFIX_FIELD = ("reference", "hisat2_index")
+
+
+def _hisat2_prefix_exists(prefix: Path) -> bool:
+    return any(prefix.parent.glob(f"{prefix.name}.*.ht2")) or any(
+        prefix.parent.glob(f"{prefix.name}.*.ht2l"))
 
 _RESULTS_ONLY_SAMPLE_COLUMNS = ("sample_id", "condition", "layout", "fastq_1")
 _RESULTS_PROVENANCE_REQUIRED = (
@@ -117,7 +130,8 @@ def check_gating_paths(config: dict, base: Path | None = None) -> list[dict[str,
         path = Path(value)
         if base is not None and not path.is_absolute():
             path = Path(base) / path
-        if path.exists():
+        exists = _hisat2_prefix_exists(path) if (section, key) == _HISAT2_PREFIX_FIELD else path.exists()
+        if exists:
             continue
         msgs.append({"status": "FAIL", "message": (
             f"{section}.{key} points at a file that does not exist: {value}. "
@@ -355,7 +369,7 @@ def check_samples(config: dict, samples_path: Path) -> list[dict[str, str]]:
 # directly, which is what keeps the two lists one list in practice.
 _CORE_R_PACKAGES = [
     "DESeq2", "limma", "clusterProfiler", "GO.db", "DOSE", "enrichplot", "fgsea",
-    "AnnotationDbi", "SummarizedExperiment", "ggplot2", "ggrepel", "pheatmap", "igraph",
+    "AnnotationDbi", "KEGGREST", "SummarizedExperiment", "ggplot2", "ggrepel", "pheatmap", "igraph",
     "STRINGdb",
     # CRAN figure/plotting packages every route hard-loads in the mandatory figures +
     # sample-correlation rules (scales especially is only a transitive dep in the fallback
@@ -472,6 +486,12 @@ def main() -> int:
         # Path-valued settings that gate a rule input. The Snakefile checks these at parse time
         # too; repeating it here puts the same message in the sanity-check panel.
         messages.extend(check_gating_paths(payload))
+        # protein_fasta never had a reader; accept-and-ignore a value left over from an older
+        # config rather than silently dropping it.
+        if str(((payload.get("reference") or {}).get("protein_fasta") or "")).strip():
+            messages.append({"status": "WARNING", "message": (
+                "reference.protein_fasta is deprecated and read by no rule; it has no effect "
+                "on this run. Remove it from config.yaml.")})
     if not samples_path.exists():
         messages.append({"status": "FAIL", "message": f"Missing samples table: {samples_path}"})
     messages.extend(check_samples(payload, samples_path))

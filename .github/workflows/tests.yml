@@ -49,7 +49,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          python -m pip install -r requirements.txt -c constraints.txt
           python -m pip install "pytest>=8.2"
 
       # Qt needs these shared libraries present even under the offscreen platform plugin;
@@ -107,3 +107,73 @@ jobs:
         env:
           BULKSEQ_REQUIRE_R: "1"
         run: python -m pytest -q --tb=short tests/test_figure_rendering_contracts.py
+
+      # The three full-figure render tests need the Bioconductor stack (DESeq2), which the
+      # CRAN-only R above does not have. A separate micromamba layer supplies it, pinned to
+      # the exact builds in workflow/envs/bulkseq.lock.yaml so the tested code paths match
+      # the pipeline's own R. This is CI evidence with a cached solve, not a from-scratch
+      # environment build every run -- cache-environment keys off the spec file's hash.
+      - name: Write the minimal Bioconductor figure environment spec
+        run: |
+          cat > /tmp/r_figures_env.yml <<'EOF'
+          name: r-figures
+          channels:
+            - bioconda
+            - conda-forge
+          dependencies:
+            - r-base=4.5.2=h835929b_3
+            - bioconductor-deseq2=1.50.2=r45ha27e39d_0
+            - r-ggplot2=4.0.3=r45h785f33e_0
+            - r-ggrepel=0.9.8=r45h3697838_0
+            - r-pheatmap=1.0.13=r45hc72bb7e_1
+            - r-svglite=2.2.2=r45h8ff94db_0
+            - r-ggnewscale=0.5.2=r45hc72bb7e_1
+            - r-jsonlite=2.0.0=r45h54b55ab_1
+            - r-rcolorbrewer=1.1_3=r45h785f33e_4
+            - r-scales=1.4.0=r45hc72bb7e_1
+          EOF
+
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: /tmp/r_figures_env.yml
+          environment-name: r-figures
+          cache-environment: true
+          init-shell: bash
+
+      - name: Run the Bioconductor-dependent figure contracts
+        shell: bash -el {0}
+        env:
+          BULKSEQ_REQUIRE_R: "1"
+          BULKSEQ_REQUIRE_R_FULL: "1"
+        run: python -m pytest -q --tb=short tests/test_figure_rendering_contracts.py
+
+  # Static checks on the WSL/native-Linux bootstrap script. This is NOT clean-machine
+  # verification -- it never runs the script, so it cannot catch a broken micromamba URL,
+  # a channel that stopped serving a pinned build, or an environment that fails to solve.
+  # .github/workflows/environment.yml does that, on a schedule and on changes to this
+  # script or the env specs. This job only catches syntax errors and shellcheck findings
+  # before either of those slower runs would.
+  setup-script-static:
+    name: setup script (static)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: bash -n
+        run: bash -n scripts/setup_wsl_bioenv.sh
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: shellcheck
+        # -S warning: two pre-existing SC2016 info notes (intentional single quotes
+        # around unexpanded remote-side expressions) are not defects; gate on warning+.
+        run: shellcheck -S warning scripts/setup_wsl_bioenv.sh
+
+      - name: Extract and compile the embedded python3 bootstrap heredoc
+        run: |
+          awk '/^  python3 - "\$1" "\$2" "\$3" <<.PY.$/{flag=1; next} /^PY$/{flag=0} flag' \
+            scripts/setup_wsl_bioenv.sh > /tmp/bootstrap_with_python3.py
+          test -s /tmp/bootstrap_with_python3.py
+          python3 -m py_compile /tmp/bootstrap_with_python3.py

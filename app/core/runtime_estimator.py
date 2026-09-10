@@ -111,11 +111,10 @@ def estimate_runtime(
         need = {"STAR": 30, "HISAT2": 8, "Salmon": 8}.get(config.workflow.aligner, 8) * (ref_factor / 1.8)
         mem_factor = 1.0 if memory_gb >= need else min(2.0, 1.0 + 0.6 * (need - memory_gb) / max(need, 1e-6))
         align = (gbase * per_gbase * ref_factor * mem_factor) / compute_par
-        # reference.smk's star_index rule always builds the index from the genome FASTA +
-        # GTF; config.reference.star_index is not read by any rule and never short-circuits
-        # it, so the estimate always pays this cost when the aligner is STAR.
+        # reference.smk's star_index rule is skipped when config.reference.star_index names
+        # an existing prebuilt index, so the estimate only pays this cost otherwise.
         index = 0.0
-        if config.workflow.aligner == "STAR":
+        if config.workflow.aligner == "STAR" and not config.reference.star_index:
             index = INDEX_MINUTES.get(ref_cat, 10.0)
 
         # QC/trim/rRNA/quant per-gbase minutes, recalibrated from benchmark runs (rRNA is high

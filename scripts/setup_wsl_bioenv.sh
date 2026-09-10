@@ -172,9 +172,12 @@ mkdir -p "$HOME/.local/bin"
 # download never leaves a partial micromamba on PATH.
 bootstrap_with_python3() {
   python3 - "$1" "$2" "$3" <<'PY'
-import hashlib, io, os, stat, sys, tarfile, urllib.request
+import hashlib, io, os, stat, sys, tarfile, urllib.error, urllib.request
 url, dest, expected = sys.argv[1], sys.argv[2], sys.argv[3]
-data = urllib.request.urlopen(url, timeout=180).read()
+try:
+    data = urllib.request.urlopen(url, timeout=180).read()
+except (urllib.error.URLError, OSError) as exc:
+    raise SystemExit(f"download failed: {getattr(exc, 'reason', exc)}")
 digest = hashlib.sha256(data).hexdigest()
 if digest != expected:
     raise SystemExit(f"micromamba checksum mismatch: expected {expected}, got {digest}")
@@ -206,15 +209,19 @@ if [ -x "$MICROMAMBA" ]; then
   echo "micromamba already installed at $MICROMAMBA"
 else
   installed=0
+  fetch_failed=""
 
   echo "micromamba $MM_VERSION ($MM_PLATFORM), sha256 $MM_SHA256"
 
   # Preferred: python3 standard library. No system packages, no sudo.
   if command -v python3 >/dev/null 2>&1; then
     echo "Downloading micromamba with python3 (no system packages needed)..."
-    if bootstrap_with_python3 "$MM_URL" "$MICROMAMBA" "$MM_SHA256"; then
+    if py_out="$(bootstrap_with_python3 "$MM_URL" "$MICROMAMBA" "$MM_SHA256" 2>&1)"; then
+      echo "$py_out"
       installed=1
     else
+      echo "$py_out"
+      fetch_failed="python3: $(printf '%s\n' "$py_out" | tail -n 1)"
       echo "python3 bootstrap failed; trying curl/wget."
     fi
   fi
@@ -226,10 +233,10 @@ else
     mm_fetched=0
     if command -v curl >/dev/null 2>&1; then
       echo "Downloading micromamba with curl..."
-      curl -fsSL -o "$mm_archive" "$MM_URL" && mm_fetched=1
+      if curl_err="$(curl -fSsL -o "$mm_archive" "$MM_URL" 2>&1)"; then mm_fetched=1; else fetch_failed="curl: ${curl_err:-download failed}"; fi
     elif command -v wget >/dev/null 2>&1; then
       echo "Downloading micromamba with wget..."
-      wget -qO "$mm_archive" "$MM_URL" && mm_fetched=1
+      if wget_err="$(wget -qO "$mm_archive" "$MM_URL" 2>&1)"; then mm_fetched=1; else fetch_failed="wget: ${wget_err:-download failed}"; fi
     fi
     if [ "$mm_fetched" -eq 1 ] && verify_sha256 "$mm_archive" "$MM_SHA256"; then
       mm_dir="$(mktemp -d)"
@@ -250,9 +257,26 @@ else
     echo "Installing python3 via passwordless sudo apt..."
     sudo apt-get update
     sudo apt-get install -y python3 ca-certificates
-    if command -v python3 >/dev/null 2>&1 && bootstrap_with_python3 "$MM_URL" "$MICROMAMBA" "$MM_SHA256"; then
-      installed=1
+    if command -v python3 >/dev/null 2>&1; then
+      if py_out="$(bootstrap_with_python3 "$MM_URL" "$MICROMAMBA" "$MM_SHA256" 2>&1)"; then
+        echo "$py_out"
+        installed=1
+      else
+        echo "$py_out"
+        fetch_failed="python3: $(printf '%s\n' "$py_out" | tail -n 1)"
+      fi
     fi
+  fi
+
+  if [ "$installed" -eq 0 ] && [ -n "$fetch_failed" ]; then
+    echo ""
+    echo "ACTION REQUIRED: micromamba could not be downloaded from"
+    echo "    $MM_URL"
+    echo "The download failed with: $fetch_failed"
+    echo "Check the network connection and any proxy settings (http_proxy/https_proxy),"
+    echo "then click \"Install / repair core environment\" again."
+    echo ""
+    exit 3
   fi
 
   if [ "$installed" -eq 0 ]; then
@@ -326,7 +350,7 @@ attempt_install() {
 # NOT the exit code -- `micromamba run` can mask a non-zero status. A dropped GO.db or an
 # r-base ABI drift leaves these installed-but-unloadable, which is what kills enrichment
 # mid-run. Core/empty profile -> trivially "loads".
-R_STACK_PROBE='q<-c("DESeq2","edgeR","limma","GSVA","clusterProfiler","GO.db","DOSE","enrichplot","fgsea","STRINGdb","apeglm","ashr","GEOquery","affy","AnnotationDbi","Biobase","S4Vectors","SummarizedExperiment","metaRNASeq","metafor","HTSFilter","tximport","gprofiler2","ggplot2","ggrepel","ggnewscale","ggridges","gtable","pheatmap","igraph","jsonlite","matrixStats","scales","svglite","systemfonts","RColorBrewer","msigdbr","org.At.tair.db","org.Bt.eg.db","org.Ce.eg.db","org.Dm.eg.db","org.Dr.eg.db","org.Gg.eg.db","org.Hs.eg.db","org.Mm.eg.db","org.Rn.eg.db","org.Sc.sgd.db","org.Ss.eg.db"); ok<-function(p) isTRUE(tryCatch(suppressWarnings(suppressMessages(requireNamespace(p,quietly=TRUE))),error=function(e)FALSE)); bad<-q[!vapply(q,ok,logical(1))]; cat(if(length(bad)) paste0("R_STACK_BAD:",paste(bad,collapse=",")) else "R_STACK_OK")'
+R_STACK_PROBE='q<-c("DESeq2","edgeR","limma","GSVA","clusterProfiler","GO.db","DOSE","enrichplot","fgsea","STRINGdb","apeglm","ashr","GEOquery","affy","AnnotationDbi","KEGGREST","Biobase","S4Vectors","SummarizedExperiment","metaRNASeq","metafor","HTSFilter","tximport","gprofiler2","ggplot2","ggrepel","ggnewscale","ggridges","gtable","pheatmap","igraph","jsonlite","matrixStats","scales","svglite","systemfonts","RColorBrewer","msigdbr","org.At.tair.db","org.Bt.eg.db","org.Ce.eg.db","org.Dm.eg.db","org.Dr.eg.db","org.Gg.eg.db","org.Hs.eg.db","org.Mm.eg.db","org.Rn.eg.db","org.Sc.sgd.db","org.Ss.eg.db"); ok<-function(p) isTRUE(tryCatch(suppressWarnings(suppressMessages(requireNamespace(p,quietly=TRUE))),error=function(e)FALSE)); bad<-q[!vapply(q,ok,logical(1))]; cat(if(length(bad)) paste0("R_STACK_BAD:",paste(bad,collapse=",")) else "R_STACK_OK")'
 r_stack_loads() {
   [ "$PROFILE" = "full" ] || return 0
   local out
@@ -343,12 +367,14 @@ r_stack_loads() {
 if [ "$REBUILD" = "1" ] && env_exists; then
   remove_env
 fi
+INSTALLED_ENV_FILE="$ENV_FILE"
 if attempt_install "$ENV_FILE"; then
   :
 elif [ -n "$FALLBACK_ENV_FILE" ] && [ "$FALLBACK_ENV_FILE" != "$ENV_FILE" ]; then
   echo "Locked install failed (a pinned build may be unavailable, or this host is not linux-64);"
   echo "falling back to the floating spec $(basename "$FALLBACK_ENV_FILE")."
   attempt_install "$FALLBACK_ENV_FILE" || { echo "Environment setup failed." >&2; exit 1; }
+  INSTALLED_ENV_FILE="$FALLBACK_ENV_FILE"
 else
   echo "Environment setup failed." >&2
   exit 1
@@ -488,6 +514,25 @@ ENV_PREFIX="$MAMBA_ROOT/envs/$ENV_NAME"
 if [ -d "$ENV_PREFIX" ]; then
   printf '%s\n' "$PROFILE" > "$ENV_PREFIX/.bulkseq_profile"
   echo "Recorded environment profile '$PROFILE' in $ENV_PREFIX/.bulkseq_profile"
+
+  # Record which spec file was actually installed. environment_lock_md5 in run_summary.json
+  # hashes workflow/envs/bulkseq.lock.yaml regardless of what installed, so a fallback-solved
+  # environment (float spec, no exact build pins) reports the same hash as a lock-installed
+  # one. This marker names the file that was actually installed, so make_run_summary.py can
+  # tell the two apart.
+  spec_basename="$(basename "$INSTALLED_ENV_FILE")"
+  if command -v sha256sum >/dev/null 2>&1; then
+    spec_sha256="$(sha256sum "$INSTALLED_ENV_FILE" | cut -d' ' -f1)"
+  else
+    spec_sha256="$(shasum -a 256 "$INSTALLED_ENV_FILE" | cut -d' ' -f1)"
+  fi
+  spec_source="fallback"
+  if [ "$INSTALLED_ENV_FILE" = "$ENV_FILE" ]; then
+    spec_source="lock"
+    [ "$PROFILE" = "core" ] && spec_source="core"
+  fi
+  printf '%s\n%s\n%s\n' "$spec_basename" "$spec_sha256" "$spec_source" > "$ENV_PREFIX/.bulkseq_spec"
+  echo "Recorded installed spec '$spec_basename' (source: $spec_source) in $ENV_PREFIX/.bulkseq_spec"
 fi
 
 echo ""

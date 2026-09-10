@@ -3,6 +3,7 @@
 # are defined BEFORE the rule includes so included rules can reference them.
 import os
 import re
+import shlex
 import shutil
 import sys
 import pandas as pd
@@ -328,11 +329,18 @@ COUNTS_SUMMARY = COUNTS_RAW + ".summary"
 
 GENOME_FA = "references/genome.fa"
 ANNOTATION_GTF = "references/annotation.gtf"
-STAR_INDEX = "references/star_index"
-HISAT2_INDEX_DIR = "references/hisat2_index"
-HISAT2_INDEX = "references/hisat2_index/genome"  # bowtie/hisat2 index prefix
-TRANSCRIPTOME_FA = "references/transcripts.fa"
-SALMON_INDEX = "references/salmon_index"
+# A prebuilt index/transcriptome named in config.reference short-circuits the matching
+# build rule (guarded with `if not <PREBUILT>` in reference.smk); unset, every path below
+# is byte-identical to the always-built default.
+STAR_INDEX = REF.get("star_index") or "references/star_index"
+HISAT2_INDEX = REF.get("hisat2_index") or "references/hisat2_index/genome"  # bowtie/hisat2 index prefix
+HISAT2_INDEX_DIR = os.path.dirname(HISAT2_INDEX) or "."
+TRANSCRIPTOME_FA = REF.get("transcriptome_fasta") or "references/transcripts.fa"
+SALMON_INDEX = REF.get("salmon_index") or "references/salmon_index"
+STAR_INDEX_PREBUILT = bool(REF.get("star_index"))
+HISAT2_INDEX_PREBUILT = bool(REF.get("hisat2_index"))
+TRANSCRIPTOME_FA_PREBUILT = bool(REF.get("transcriptome_fasta"))
+SALMON_INDEX_PREBUILT = bool(REF.get("salmon_index"))
 
 
 def rule_threads(name, default=4):
@@ -450,6 +458,10 @@ def final_targets():
     if not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE):
         # MultiQC aggregates FastQC/fastp/STAR — irrelevant without alignment.
         targets.insert(0, "results/qc/multiqc/multiqc_report.html")
+        # Otherwise optional: with every configured index/transcriptome prebuilt, no rule
+        # would still require this gate, and a mismatched genome/annotation pair would
+        # never be caught.
+        targets.append(REFERENCE_GATE)
     if WF.get("figures", True):
         # deseq2-results mode can draw only the results-table figures; PCA / sample
         # distance / top-DEG heatmap need the counts/vst and degrade to placeholders.

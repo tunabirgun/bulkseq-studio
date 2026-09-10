@@ -58,7 +58,6 @@ reference:
   genome_fasta_url: null
   annotation_gtf_url: null
   transcriptome_fasta: null
-  protein_fasta: null
   star_index: null
   hisat2_index: null
   salmon_index: null

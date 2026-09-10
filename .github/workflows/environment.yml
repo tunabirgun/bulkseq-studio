@@ -1,0 +1,50 @@
+name: Environment
+
+# Live execution of scripts/setup_wsl_bioenv.sh -- CI running the real installer on a fresh
+# ubuntu-latest runner, not clean-machine verification. It cannot see a Windows/WSL2-specific
+# failure mode; it only proves the channels still solve and the R stack still loads on
+# native Linux, cheaply and on a schedule, instead of only when a user hits it.
+#
+# Kept separate from tests.yml and out of the release gate: scripts/release.ps1 matches
+# workflow runs by name ("Tests", "Build packages") and this workflow is neither.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/setup_wsl_bioenv.sh
+      - workflow/envs/**
+      - .github/workflows/environment.yml
+  pull_request:
+    paths:
+      - scripts/setup_wsl_bioenv.sh
+      - workflow/envs/**
+      - .github/workflows/environment.yml
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: environment-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  install-core:
+    name: install core profile (live)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the installer (core profile)
+        run: bash scripts/setup_wsl_bioenv.sh bulkseq core
+      - name: Print the recorded spec marker
+        run: cat "$HOME/micromamba/envs/bulkseq/.bulkseq_spec"
+
+  install-full:
+    name: install full profile (live)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the installer (full profile)
+        run: bash scripts/setup_wsl_bioenv.sh bulkseq full
+      - name: Print the recorded spec marker
+        run: cat "$HOME/micromamba/envs/bulkseq/.bulkseq_spec"

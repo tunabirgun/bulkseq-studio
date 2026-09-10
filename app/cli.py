@@ -25,12 +25,19 @@ from app.constants import APP_VERSION
 from app.core.config_models import AppConfig
 from app.core.metadata import load_metadata, validate_metadata
 from app.core.project import ProjectExistsError, ProjectManager, is_project_root
-from app.core.snakemake_runner import EXEC_PROFILES, build_snakemake_command
+from app.core.snakemake_runner import (
+    EXEC_PROFILES,
+    SnakemakeRunner,
+    build_snakemake_command,
+    run_snakemake_sync,
+    snakemake_run_state,
+)
 
 EXIT_OK = 0
 EXIT_USAGE = 2
 EXIT_INVALID = 3       # bad config key/value, or a project that is not one
 EXIT_GATE = 4          # sanity checks refuse the run
+EXIT_RUN_FAILED = 5    # the Snakemake run itself failed
 
 
 def _configure_streams() -> None:
@@ -297,6 +304,30 @@ def cmd_print_command(args) -> int:
     return EXIT_OK
 
 
+def cmd_run(args) -> int:
+    """Run the Snakemake workflow to completion, streaming its output to stderr.
+
+    Goes through run_snakemake_sync(), which calls the same build_snakemake_command() as
+    print-command and detects a snakemake-reported failure the way the GUI does, so a
+    masked exit-0 from `micromamba run` under WSL is still reported as a failure here.
+
+    Mirrors the GUI's resume flow: `--mode resume` against a lock left by a killed/crashed
+    run must unlock first (the GUI's _resume_interrupted does this before launching
+    --rerun-incomplete), or Snakemake refuses to start against a locked directory.
+    """
+    root = _resolve_project(args)
+    if root is None:
+        return EXIT_INVALID
+    config = _load(root)
+    if args.mode == "resume" and snakemake_run_state(root).get("locked"):
+        use_wsl = sys.platform.startswith("win") and args.exec_profile == "local"
+        unlock_cmd = build_snakemake_command(root, config, "unlock", use_wsl=use_wsl,
+                                              exec_profile=args.exec_profile)
+        SnakemakeRunner(root, unlock_cmd).unlock(config)
+    code = run_snakemake_sync(root, config, args.mode, exec_profile=args.exec_profile)
+    return EXIT_OK if code == 0 else EXIT_RUN_FAILED
+
+
 # ------------------------------------------------------------------------------ parser
 
 def build_parser() -> argparse.ArgumentParser:
@@ -356,6 +387,14 @@ def build_parser() -> argparse.ArgumentParser:
                           dest="exec_profile",
                           help="where jobs run: this machine, or a cluster scheduler")
     printcmd.set_defaults(func=cmd_print_command)
+
+    run = sub.add_parser("run", parents=[common],
+                         help="run the Snakemake workflow to completion")
+    run.add_argument("--mode", default="run", choices=["run", "dry-run", "resume"])
+    run.add_argument("--exec-profile", default="local", choices=list(EXEC_PROFILES),
+                     dest="exec_profile",
+                     help="where jobs run: this machine, or a cluster scheduler")
+    run.set_defaults(func=cmd_run)
 
     return parser
 

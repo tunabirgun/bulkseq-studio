@@ -13,10 +13,9 @@ def test_runtime_estimate_has_range() -> None:
     assert estimate["low_seconds"] > 0
 
 
-def test_star_index_build_time_is_included_regardless_of_reference_star_index() -> None:
-    # reference.smk's star_index rule always builds the index from GENOME_FA/ANNOTATION_GTF;
-    # config.reference.star_index has no rule that reads it and never skips the build, so the
-    # estimate must always pay this cost for the STAR aligner.
+def test_star_index_build_time_is_skipped_when_a_prebuilt_index_is_configured() -> None:
+    # reference.smk's star_index rule is skipped when config.reference.star_index is set, so
+    # the estimate must not pay the index-build cost in that case.
     def build(star_index: str | None):
         cfg = default_config("demo", Path("manual_test_runtime/demo"))
         cfg.workflow.aligner = "STAR"
@@ -27,6 +26,7 @@ def test_star_index_build_time_is_included_regardless_of_reference_star_index() 
     with_index_set = build("/pre/built/star_index")
     without_index_set = build(None)
 
-    assert with_index_set["compute_minutes"] >= INDEX_MINUTES["mammalian"]
-    assert with_index_set["compute_minutes"] == without_index_set["compute_minutes"]
-    assert any("STAR index build" in b for b in with_index_set["bottlenecks"])
+    assert without_index_set["compute_minutes"] >= INDEX_MINUTES["mammalian"]
+    assert with_index_set["compute_minutes"] < without_index_set["compute_minutes"]
+    assert not any("STAR index build" in b for b in with_index_set["bottlenecks"])
+    assert any("STAR index build" in b for b in without_index_set["bottlenecks"])

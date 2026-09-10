@@ -90,6 +90,9 @@ dependencies:
   # Direct S4/annotation namespaces loaded by ingestion, DE wrappers, correlation, and exports.
   # They are transitive in the lock today but must remain explicit in the fallback specification.
   - bioconductor-annotationdbi
+  # KEGGREST is called directly by run_enrichment.R (KEGG key-form probe and identity check);
+  # name it explicitly so a fallback solve cannot drop it.
+  - bioconductor-keggrest
   - bioconductor-biobase
   - bioconductor-s4vectors
   - bioconductor-summarizedexperiment

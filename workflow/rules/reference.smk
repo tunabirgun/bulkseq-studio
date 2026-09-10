@@ -169,65 +169,78 @@ rule reference_integrity_gate:
 
 
 rule read_length:
+    # sjdbOverhang should reflect the longest read STAR will index against, not just the
+    # first sample's -- a shorter first sample would under-set it for every other sample.
     input:
-        lambda wc: raw_fastq(FIRST_SAMPLE, 1),
+        lambda wc: [raw_fastq(s, 1) for s in SAMPLES],
     output:
         "results/qc/read_length.txt",
     shell:
         # Disable pipefail: head closes the pipe early, giving zcat a SIGPIPE.
-        r"set +o pipefail; zcat {input:q} | head -n 40000 | "
-        r"awk 'NR%4==2{{if(length($0)>m)m=length($0)}}END{{print m}}' > {output}"
-
-
-rule star_index:
-    input:
-        fa=GENOME_FA,
-        gtf=ANNOTATION_GTF,
-        rl="results/qc/read_length.txt",
-        check=REFERENCE_GATE,
-    output:
-        directory(STAR_INDEX),
-    threads:
-        rule_threads("star_index", 8)
-    resources:
-        mem_mb=rule_mem_mb("star_index", 24),
-    benchmark:
-        "benchmarks/star_index.tsv"
-    log:
-        "logs/star_index.log",
-    shell:
         r"""
-        mkdir -p {output}
-        GLEN=$(grep -v '^>' {input.fa} | tr -d '\n' | wc -c)
-        NBASES=$(python -c "import math,sys; print(min(14, int(math.log2(int(sys.argv[1]))/2 - 1)))" $GLEN)
-        RLEN=$(cat {input.rl}); OH=$((RLEN-1))
-        echo "genome_length=$GLEN genomeSAindexNbases=$NBASES sjdbOverhang=$OH" > {log}
-        STAR --runMode genomeGenerate --genomeDir {output} \
-             --genomeFastaFiles {input.fa} --sjdbGTFfile {input.gtf} \
-             --sjdbOverhang $OH --genomeSAindexNbases $NBASES \
-             --runThreadN {threads} >> {log} 2>&1
+        set +o pipefail
+        MAX=0
+        for f in {input:q}; do
+            R=$(zcat "$f" | head -n 40000 | awk 'NR%4==2{{if(length($0)>m)m=length($0)}}END{{print m+0}}')
+            [ "$R" -gt "$MAX" ] && MAX=$R
+        done
+        echo $MAX > {output}
         """
 
 
-# HISAT2 graph index (much lower RAM than STAR; viable for large crop genomes).
-rule hisat2_index:
-    input:
-        fa=GENOME_FA,
-        check=REFERENCE_GATE,
-    output:
-        directory(HISAT2_INDEX_DIR),
-    threads:
-        rule_threads("hisat2_index", 8)
-    resources:
-        mem_mb=rule_mem_mb("hisat2_index", 16),
-    benchmark:
-        "benchmarks/hisat2_index.tsv"
-    log:
-        "logs/hisat2_index.log",
-    shell:
-        "export PATH=\"${{MAMBA_ROOT_PREFIX:-$HOME/micromamba}}/envs/bulkseq/bin:${{PATH}}\" && "
-        "command -v hisat2-build >/dev/null 2>&1 || {{ echo 'hisat2 is not installed in the bulkseq environment; the HISAT2 aligner route needs it. In the app open Setup and click Install / repair core environment (or update the env from workflow/envs/bulkseq_core.yaml), then re-run.' >&2; exit 1; }}; "
-        "mkdir -p {output} && hisat2-build -p {threads} {input.fa:q} {output}/genome > {log} 2>&1"
+if not STAR_INDEX_PREBUILT:
+
+    rule star_index:
+        input:
+            fa=GENOME_FA,
+            gtf=ANNOTATION_GTF,
+            rl="results/qc/read_length.txt",
+            check=REFERENCE_GATE,
+        output:
+            directory(STAR_INDEX),
+        threads:
+            rule_threads("star_index", 8)
+        resources:
+            mem_mb=rule_mem_mb("star_index", 24),
+        benchmark:
+            "benchmarks/star_index.tsv"
+        log:
+            "logs/star_index.log",
+        shell:
+            r"""
+            mkdir -p {output}
+            GLEN=$(grep -v '^>' {input.fa} | tr -d '\n' | wc -c)
+            NBASES=$(python -c "import math,sys; print(min(14, int(math.log2(int(sys.argv[1]))/2 - 1)))" $GLEN)
+            RLEN=$(cat {input.rl}); OH=$((RLEN-1))
+            echo "genome_length=$GLEN genomeSAindexNbases=$NBASES sjdbOverhang=$OH" > {log}
+            STAR --runMode genomeGenerate --genomeDir {output} \
+                 --genomeFastaFiles {input.fa} --sjdbGTFfile {input.gtf} \
+                 --sjdbOverhang $OH --genomeSAindexNbases $NBASES \
+                 --runThreadN {threads} >> {log} 2>&1
+            """
+
+
+if not HISAT2_INDEX_PREBUILT:
+
+    # HISAT2 graph index (much lower RAM than STAR; viable for large crop genomes).
+    rule hisat2_index:
+        input:
+            fa=GENOME_FA,
+            check=REFERENCE_GATE,
+        output:
+            directory(HISAT2_INDEX_DIR),
+        threads:
+            rule_threads("hisat2_index", 8)
+        resources:
+            mem_mb=rule_mem_mb("hisat2_index", 16),
+        benchmark:
+            "benchmarks/hisat2_index.tsv"
+        log:
+            "logs/hisat2_index.log",
+        shell:
+            "export PATH=\"${{MAMBA_ROOT_PREFIX:-$HOME/micromamba}}/envs/bulkseq/bin:${{PATH}}\" && "
+            "command -v hisat2-build >/dev/null 2>&1 || {{ echo 'hisat2 is not installed in the bulkseq environment; the HISAT2 aligner route needs it. In the app open Setup and click Install / repair core environment (or update the env from workflow/envs/bulkseq_core.yaml), then re-run.' >&2; exit 1; }}; "
+            "mkdir -p {output} && hisat2-build -p {threads} {input.fa:q} {output}/genome > {log} 2>&1"
 
 
 # Transcriptome FASTA from genome + GTF (for the Salmon route), then the Salmon index.
@@ -237,7 +250,7 @@ rule make_transcriptome:
         gtf=ANNOTATION_GTF,
         check=REFERENCE_GATE,
     output:
-        fa=TRANSCRIPTOME_FA,
+        fa=TRANSCRIPTOME_FA if not TRANSCRIPTOME_FA_PREBUILT else "references/transcripts.auto.fa",
         tx2gene="references/tx2gene.tsv",
     log:
         "logs/make_transcriptome.log",
@@ -271,24 +284,26 @@ rule make_transcriptome:
         "rm -f {output.fa:q}.nogene.gtf {output.fa:q}.raw {output.tx2gene:q}.raw"
 
 
-rule salmon_index:
-    input:
-        txome=TRANSCRIPTOME_FA,
-    output:
-        directory(SALMON_INDEX),
-    threads:
-        rule_threads("salmon_index", 8)
-    resources:
-        mem_mb=rule_mem_mb("salmon_index", 16),
-    benchmark:
-        "benchmarks/salmon_index.tsv"
-    log:
-        "logs/salmon_index.log",
-    shell:
-        # --keepDuplicates: some NCBI RefSeq annotations list identical transcripts twice
-        # (RefSeq XM_ + the original WGS model). Without this, salmon collapses the pair and
-        # may keep the copy whose name is absent from tx2gene, zeroing those genes; keeping
-        # both lets the tx2gene-named copy carry the counts. No-op for clean assemblies.
-        "export PATH=\"${{MAMBA_ROOT_PREFIX:-$HOME/micromamba}}/envs/bulkseq/bin:${{PATH}}\" && "
-        "command -v salmon >/dev/null 2>&1 || {{ echo 'salmon is not installed in the bulkseq environment; the Salmon aligner route needs it. In the app open Setup and click Install / repair core environment (or update the env from workflow/envs/bulkseq_core.yaml), then re-run.' >&2; exit 1; }}; "
-        "salmon index -t {input.txome:q} -i {output:q} -k 31 -p {threads} --keepDuplicates > {log} 2>&1"
+if not SALMON_INDEX_PREBUILT:
+
+    rule salmon_index:
+        input:
+            txome=TRANSCRIPTOME_FA,
+        output:
+            directory(SALMON_INDEX),
+        threads:
+            rule_threads("salmon_index", 8)
+        resources:
+            mem_mb=rule_mem_mb("salmon_index", 16),
+        benchmark:
+            "benchmarks/salmon_index.tsv"
+        log:
+            "logs/salmon_index.log",
+        shell:
+            # --keepDuplicates: some NCBI RefSeq annotations list identical transcripts twice
+            # (RefSeq XM_ + the original WGS model). Without this, salmon collapses the pair and
+            # may keep the copy whose name is absent from tx2gene, zeroing those genes; keeping
+            # both lets the tx2gene-named copy carry the counts. No-op for clean assemblies.
+            "export PATH=\"${{MAMBA_ROOT_PREFIX:-$HOME/micromamba}}/envs/bulkseq/bin:${{PATH}}\" && "
+            "command -v salmon >/dev/null 2>&1 || {{ echo 'salmon is not installed in the bulkseq environment; the Salmon aligner route needs it. In the app open Setup and click Install / repair core environment (or update the env from workflow/envs/bulkseq_core.yaml), then re-run.' >&2; exit 1; }}; "
+            "salmon index -t {input.txome:q} -i {output:q} -k 31 -p {threads} --keepDuplicates > {log} 2>&1"

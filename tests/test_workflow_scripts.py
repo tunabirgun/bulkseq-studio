@@ -975,3 +975,70 @@ def test_count_matrix_route_never_mentions_strandedness(tmp_path: Path, monkeypa
     for route in ("aligned", "salmon"):
         result = _run_summarize_quantification(tmp_path, monkeypatch, rows, route)
         assert not any("strandedness" in m["message"] for m in result["messages"])
+
+
+def test_environment_spec_reads_marker_via_conda_prefix(tmp_path: Path, monkeypatch, mrs) -> None:
+    prefix = tmp_path / "envs" / "bulkseq"
+    prefix.mkdir(parents=True)
+    (prefix / ".bulkseq_spec").write_text("bulkseq.lock.yaml\nabc123\nlock\n", encoding="utf-8")
+    monkeypatch.setenv("CONDA_PREFIX", str(prefix))
+    monkeypatch.delenv("MAMBA_ROOT_PREFIX", raising=False)
+    spec = mrs.environment_spec()
+    assert spec == {"file": "bulkseq.lock.yaml", "sha256": "abc123", "source": "lock"}
+
+
+def test_environment_spec_absent_marker_reports_unknown(tmp_path: Path, monkeypatch, mrs) -> None:
+    prefix = tmp_path / "envs" / "bulkseq"
+    prefix.mkdir(parents=True)
+    monkeypatch.setenv("CONDA_PREFIX", str(prefix))
+    spec = mrs.environment_spec()
+    assert spec["source"] == "unknown"
+    assert spec["file"] is None
+
+
+def test_environment_spec_negative_fallback_source_is_not_reported_as_lock(tmp_path: Path, monkeypatch, mrs) -> None:
+    # The defect this marker exists to catch: a float-spec install must never be reported
+    # as the pinned lock.
+    prefix = tmp_path / "envs" / "bulkseq"
+    prefix.mkdir(parents=True)
+    (prefix / ".bulkseq_spec").write_text("bulkseq_full.yaml\ndef456\nfallback\n", encoding="utf-8")
+    monkeypatch.setenv("CONDA_PREFIX", str(prefix))
+    spec = mrs.environment_spec()
+    assert spec["source"] == "fallback"
+    assert spec["source"] != "lock"
+    assert spec["file"] == "bulkseq_full.yaml"
+
+
+def test_environment_spec_reports_core_source(tmp_path: Path, monkeypatch, mrs) -> None:
+    prefix = tmp_path / "envs" / "bulkseq"
+    prefix.mkdir(parents=True)
+    (prefix / ".bulkseq_spec").write_text("bulkseq_core.yaml\nc0re1\ncore\n", encoding="utf-8")
+    monkeypatch.setenv("CONDA_PREFIX", str(prefix))
+    spec = mrs.environment_spec()
+    assert spec["source"] == "core"
+
+
+def test_active_env_prefix_falls_back_to_sys_executable(tmp_path: Path, monkeypatch, mrs) -> None:
+    # Native-Linux/CLI runs invoke this script's own interpreter with neither CONDA_PREFIX
+    # nor MAMBA_ROOT_PREFIX set. sys.executable is <prefix>/bin/python3.
+    prefix = tmp_path / "envs" / "bulkseq"
+    (prefix / "bin").mkdir(parents=True)
+    (prefix / ".bulkseq_profile").write_text("core\n", encoding="utf-8")
+    fake_python = prefix / "bin" / "python3"
+    fake_python.write_text("", encoding="utf-8")
+    monkeypatch.delenv("CONDA_PREFIX", raising=False)
+    monkeypatch.delenv("MAMBA_ROOT_PREFIX", raising=False)
+    monkeypatch.setattr(mrs.sys, "executable", str(fake_python))
+    assert mrs._active_env_prefix() == prefix
+
+
+def test_active_env_prefix_negative_no_marker_returns_none(tmp_path: Path, monkeypatch, mrs) -> None:
+    # Without a .bulkseq_profile marker at the derived prefix, the fallback must not guess.
+    prefix = tmp_path / "envs" / "bulkseq"
+    (prefix / "bin").mkdir(parents=True)
+    fake_python = prefix / "bin" / "python3"
+    fake_python.write_text("", encoding="utf-8")
+    monkeypatch.delenv("CONDA_PREFIX", raising=False)
+    monkeypatch.delenv("MAMBA_ROOT_PREFIX", raising=False)
+    monkeypatch.setattr(mrs.sys, "executable", str(fake_python))
+    assert mrs._active_env_prefix() is None

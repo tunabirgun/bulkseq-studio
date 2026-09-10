@@ -135,6 +135,7 @@ def test_ast_dependency_gate_rejects_an_unknown_import_negative_control() -> Non
 HARD_R_NAMESPACE_TO_CONDA = {
     "affy": "bioconductor-affy",
     "AnnotationDbi": "bioconductor-annotationdbi",
+    "KEGGREST": "bioconductor-keggrest",
     "Biobase": "bioconductor-biobase",
     "clusterProfiler": "bioconductor-clusterprofiler",
     "DESeq2": "bioconductor-deseq2",

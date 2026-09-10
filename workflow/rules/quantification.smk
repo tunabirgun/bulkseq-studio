@@ -96,15 +96,14 @@ elif USE_STAR_GENECOUNTS:
         input:
             tabs=expand("results/aligned/{sample}_ReadsPerGene.out.tab", sample=SAMPLES),
             bais=expand("results/aligned/{sample}_Aligned.sortedByCoord.out.bam.bai", sample=SAMPLES),
-            strand="results/aligned/strandedness.txt",
+            strand="results/aligned/strandedness_per_sample.tsv",
         output:
             counts=COUNTS_RAW,
             summary=COUNTS_SUMMARY,
         log:
             "logs/star_genecounts.log",
         shell:
-            "S=$(cat {input.strand:q}); "
-            "python workflow/scripts/build_star_genecounts.py --strand $S "
+            "python workflow/scripts/build_star_genecounts.py --strand-file {input.strand:q} "
             "--out {output.counts:q} --summary {output.summary:q} {input.tabs:q} > {log:q} 2>&1"
 
 
@@ -115,12 +114,13 @@ else:
             bams=expand("results/aligned/{sample}_Aligned.sortedByCoord.out.bam", sample=SAMPLES),
             bais=expand("results/aligned/{sample}_Aligned.sortedByCoord.out.bam.bai", sample=SAMPLES),
             gtf=ANNOTATION_GTF,
-            strand="results/aligned/strandedness.txt",
+            strand="results/aligned/strandedness_per_sample.tsv",
         output:
             counts=COUNTS_RAW,
             summary=COUNTS_SUMMARY,
         params:
-            paired="-p --countReadPairs" if ALL_PAIRED else "",
+            bam_args=lambda wc, input: " ".join(f"--bam {shlex.quote(b)}" for b in input.bams),
+            paired="--paired" if ALL_PAIRED else "",
             feature=_FC.get("feature_type", "exon"),
             attribute=_FC.get("attribute_type", "gene_id"),
         threads:
@@ -132,11 +132,14 @@ else:
         log:
             "logs/featurecounts.log",
         shell:
-            "S=$(cat {input.strand:q}); "
-            "featureCounts -a {input.gtf:q} -o {output.counts:q} -T {threads} "
-            "--tmpDir {resources.tmpdir:q} "
-            "{params.paired} -t {params.feature} -g {params.attribute} -s $S -Q 10 "
-            "{input.bams:q} > {log:q} 2>&1"
+            # Run featureCounts once per BAM (each with its own -s) rather than one joint
+            # invocation: samples in the same run can disagree on library strandedness, and
+            # featureCounts takes a single -s for the whole invocation.
+            "python workflow/scripts/run_featurecounts_per_sample.py {params.bam_args} "
+            "--gtf {input.gtf:q} --strand-file {input.strand:q} "
+            "--out {output.counts:q} --summary {output.summary:q} "
+            "{params.paired} --feature {params.feature} --attribute {params.attribute} "
+            "--threads {threads} --tmpdir {resources.tmpdir:q} > {log:q} 2>&1"
 
 
 # Organellar (mitochondrial + chloroplast) gene handling. Only wired when the user

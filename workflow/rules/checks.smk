@@ -41,10 +41,10 @@ else:
         "checks/09_deseq2_qc.json",
         "checks/13_equivalence_qc.json",
     ]
-    # 06 alignment QC parses STAR's Log.final.out; only STAR produces it. HISAT2 and
-    # Salmon report their own mapping rate in their logs (results/aligned/*_hisat2_summary.txt,
-    # results/salmon/<sample>/logs), so the formal 06 check is STAR-only.
-    if not (USE_HISAT2 or USE_SALMON):
+    # 06 alignment QC parses STAR's Log.final.out or HISAT2's --summary-file output; Salmon
+    # reports its own mapping rate separately (results/salmon/<sample>/logs), so 06 is not
+    # produced for the Salmon route.
+    if not USE_SALMON:
         ALL_CHECKS.insert(3, "checks/06_alignment_qc.json")
 # limma-voom / edgeR do not run the DESeq2-specific equivalence (TOST) test.
 if ALT_DE_MODE and "checks/13_equivalence_qc.json" in ALL_CHECKS:
@@ -75,10 +75,18 @@ ALL_CHECKS.append("checks/19_orientation_qc.json")
 # Re-deposited (pseudo-replicated) study detection: META_MODE only (needs >1 study).
 if META_MODE:
     ALL_CHECKS.append("checks/20_duplicate_study_qc.json")
-    # Per-study strandedness divergence from the featureCounts summary: only when the pipeline
-    # aligns + runs featureCounts (i.e. not count-matrix / microarray / external results).
-    if not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE):
-        ALL_CHECKS.append("checks/21_strandedness_qc.json")
+# Strandedness QC: within-study consistency (any local-read alignment route, STAR or
+# HISAT2, single- or multi-study) plus the cross-study Assigned-fraction comparison
+# (only meaningful in META_MODE, where >1 study can be resolved). Runs wherever the
+# pipeline aligns + infers strandedness, i.e. not count-matrix / microarray / external
+# results / Salmon (Salmon infers library type internally and never writes strandedness).
+if not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE or USE_SALMON):
+    ALL_CHECKS.append("checks/21_strandedness_qc.json")
+# PCA covariate-structure screen: runs wherever run_deseq2.R writes pca_coordinates.csv, i.e.
+# the DESeq2 engine on single-study fastq, count-matrix and multi-study-meta routes. The
+# limma (microarray) and limma-voom/edgeR routes do not produce that file.
+if not (MICROARRAY_MODE or DE_RESULTS_MODE or ALT_DE_MODE):
+    ALL_CHECKS.append("checks/23_covariate_structure_qc.json")
 
 
 rule validate_project:
@@ -152,24 +160,28 @@ if META_MODE:
             "python workflow/scripts/check_duplicate_studies.py --samples {input.samples} "
             "--meta-dir {params.meta_dir} --out {output}"
 
-    if not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE):
+if not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE or USE_SALMON):
 
-        # Per-study strandedness divergence from the featureCounts summary. Depends on the summary
-        # (produced by featureCounts) and the meta result (ordering handle late in the sequence).
-        rule strandedness_check:
-            input:
-                # COUNTS_SUMMARY is the featureCounts .summary (counts.txt.summary, or
-                # counts.raw.txt.summary when organellar filtering renames the counts file).
-                summary=COUNTS_SUMMARY,
-                samples=config["input"]["samples"],
-                prev="checks/17_meta_analysis_qc.json",
-            output:
-                "checks/21_strandedness_qc.json",
-            benchmark:
-                "benchmarks/21_strandedness_qc.tsv"
-            shell:
-                "python workflow/scripts/check_strandedness.py --summary {input.summary} "
-                "--samples {input.samples} --out {output}"
+    # Strandedness QC on every local-read alignment route (STAR or HISAT2, single- or
+    # multi-study): within-study consistency from strandedness_per_sample.tsv always, plus
+    # the cross-study Assigned-fraction comparison from the featureCounts summary when >= 2
+    # studies can be resolved. Depends on the meta result in META_MODE (ordering handle late
+    # in the sequence, and per_study_*.csv already exist); otherwise on the orientation check.
+    rule strandedness_check:
+        input:
+            # COUNTS_SUMMARY is the featureCounts .summary (counts.txt.summary, or
+            # counts.raw.txt.summary when organellar filtering renames the counts file).
+            summary=COUNTS_SUMMARY,
+            samples=config["input"]["samples"],
+            strand_per_sample="results/aligned/strandedness_per_sample.tsv",
+            prev="checks/17_meta_analysis_qc.json" if META_MODE else "checks/19_orientation_qc.json",
+        output:
+            "checks/21_strandedness_qc.json",
+        benchmark:
+            "benchmarks/21_strandedness_qc.tsv"
+        shell:
+            "python workflow/scripts/check_strandedness.py --summary {input.summary} "
+            "--samples {input.samples} --strand-per-sample {input.strand_per_sample} --out {output}"
 
 
 if not DE_RESULTS_MODE:
@@ -186,6 +198,41 @@ if not DE_RESULTS_MODE:
         shell:
             "python workflow/scripts/check_sample_structure.py --correlations {input.correlations} "
             "--samples {input.samples} --out {output}"
+
+
+if not (MICROARRAY_MODE or DE_RESULTS_MODE or ALT_DE_MODE):
+
+    rule covariate_structure_check:
+        input:
+            pca="results/deseq2/pca_coordinates.csv",
+            samples=config["input"]["samples"],
+            prev="checks/09_deseq2_qc.json",
+        output:
+            "checks/23_covariate_structure_qc.json",
+        params:
+            design=_DESIGN,
+            contrast_factor=_CONTRAST.get("factor", "condition"),
+        benchmark:
+            "benchmarks/23_covariate_structure_qc.tsv"
+        shell:
+            "python workflow/scripts/check_covariate_structure.py --pca {input.pca} "
+            "--samples {input.samples} --design {params.design:q} "
+            "--contrast-factor {params.contrast_factor:q} --out {output}"
+
+
+if not USE_SALMON and USE_HISAT2:
+
+    # HISAT2 has no STAR-style Log.final.out; parse its --summary-file output into the same
+    # 06-shaped JSON so the HISAT2 route gets the mapping-rate gate too.
+    rule hisat2_alignment_check:
+        input:
+            summaries=expand("results/aligned/{sample}_hisat2_summary.txt", sample=SAMPLES),
+        output:
+            "checks/06_alignment_qc.json",
+        benchmark:
+            "benchmarks/06_alignment_qc.tsv"
+        shell:
+            "python workflow/scripts/summarize_alignment.py --hisat2-summaries {input.summaries} --out {output}"
 
 
 rule aggregate_sanity_checks:

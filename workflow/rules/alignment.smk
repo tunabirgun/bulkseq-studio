@@ -52,18 +52,22 @@ if not USE_SALMON:
                 r1=lambda wc: aligner_read(wc.sample, 1),
             output:
                 bam="results/aligned/{sample}_Aligned.sortedByCoord.out.bam",
+                summary="results/aligned/{sample}_hisat2_summary.txt",
             threads:
                 rule_threads("hisat2_align", 8)
             resources:
                 mem_mb=rule_mem_mb("hisat2_align", 8),
             params:
                 sort_mem=_hisat2_sort_mem_mb,
+                # The build prefix, not the containing directory: a prebuilt HISAT2 index
+                # (config.reference.hisat2_index) can name a prefix other than "genome".
+                prefix=HISAT2_INDEX,
             benchmark:
                 "benchmarks/hisat2_align_{sample}.tsv"
             log:
                 "logs/hisat2_align_{sample}.log",
             shell:
-                "hisat2 -p {threads} -x {input.idx}/genome -U {input.r1:q} "
+                "hisat2 -p {threads} -x {params.prefix:q} -U {input.r1:q} "
                 "--summary-file results/aligned/{wildcards.sample}_hisat2_summary.txt 2> {log} "
                 "| samtools sort -@ {threads} -m {params.sort_mem} "
                 "-T {resources.tmpdir}/sort_{wildcards.sample} -o {output.bam:q} - 2>> {log}"
@@ -77,12 +81,16 @@ if not USE_SALMON:
                 r2=lambda wc: aligner_read(wc.sample, 2),
             output:
                 bam="results/aligned/{sample}_Aligned.sortedByCoord.out.bam",
+                summary="results/aligned/{sample}_hisat2_summary.txt",
             threads:
                 rule_threads("hisat2_align", 8)
             resources:
                 mem_mb=rule_mem_mb("hisat2_align", 8),
             params:
                 sort_mem=_hisat2_sort_mem_mb,
+                # The build prefix, not the containing directory: a prebuilt HISAT2 index
+                # (config.reference.hisat2_index) can name a prefix other than "genome".
+                prefix=HISAT2_INDEX,
             benchmark:
                 "benchmarks/hisat2_align_{sample}.tsv"
             log:
@@ -91,7 +99,7 @@ if not USE_SALMON:
                 # hisat2 -> SAM on stdout -> samtools sort to the STAR-style BAM name so
                 # featureCounts and the whole downstream are unchanged. Alignment summary
                 # (overall rate) is written next to the BAM for inspection.
-                "hisat2 -p {threads} -x {input.idx}/genome -1 {input.r1:q} -2 {input.r2:q} "
+                "hisat2 -p {threads} -x {params.prefix:q} -1 {input.r1:q} -2 {input.r2:q} "
                 "--summary-file results/aligned/{wildcards.sample}_hisat2_summary.txt 2> {log} "
                 "| samtools sort -@ {threads} -m {params.sort_mem} "
                 "-T {resources.tmpdir}/sort_{wildcards.sample} -o {output.bam:q} - 2>> {log}"
@@ -144,21 +152,28 @@ if not USE_SALMON:
         shell:
             "samtools index {input.bam} && samtools flagstat {input.bam} > {output.flagstat}"
 
+    # config: featurecounts.strandedness, if the user sets it, is a manual override read
+    # only by make_run_summary.py/report provenance today -- it is not wired into any
+    # alignment or quantification rule, so there is nothing here for inference to
+    # override. If it is ever wired to skip inference, per-sample inference must be
+    # skipped the same way the single-sample inference would have been.
     if USE_HISAT2:
 
         # HISAT2 has no STAR-style ReadsPerGene table, so auto-detect strandedness by
-        # counting the first sample's BAM with featureCounts in forward (-s 1) and reverse
+        # counting each sample's BAM with featureCounts in forward (-s 1) and reverse
         # (-s 2) modes and comparing assigned fragments (same ratio thresholds as the STAR
-        # path). Paired libraries are counted with -p so fragments are not split across
-        # strand buckets. This matches STAR's behavior, so a stranded library is not
-        # silently miscounted as unstranded.
+        # path), independently per sample so a mixed-strandedness multi-study run is not
+        # miscounted from one sample's answer. Paired libraries are counted with -p so
+        # fragments are not split across strand buckets.
         rule infer_strandedness:
             input:
-                bam="results/aligned/" + (FIRST_SAMPLE or "NA") + "_Aligned.sortedByCoord.out.bam",
+                bams=expand("results/aligned/{sample}_Aligned.sortedByCoord.out.bam", sample=SAMPLES),
                 gtf=ANNOTATION_GTF,
             output:
-                "results/aligned/strandedness.txt",
+                legacy="results/aligned/strandedness.txt",
+                per_sample="results/aligned/strandedness_per_sample.tsv",
             params:
+                bam_args=lambda wc, input: " ".join(f"--bam {shlex.quote(b)}" for b in input.bams),
                 paired="--paired" if ALL_PAIRED else "",
                 feature=config.get("featurecounts", {}).get("feature_type", "exon"),
                 attribute=config.get("featurecounts", {}).get("attribute_type", "gene_id"),
@@ -167,37 +182,22 @@ if not USE_SALMON:
             log:
                 "logs/infer_strandedness.log",
             shell:
-                "python workflow/scripts/infer_strandedness_fc.py --bam {input.bam:q} "
-                "--gtf {input.gtf:q} --out {output:q} --threads {threads} "
-                "--tmpdir {resources.tmpdir:q} {params.paired} "
+                "python workflow/scripts/infer_strandedness_fc.py {params.bam_args} "
+                "--gtf {input.gtf:q} --out {output.legacy:q} --per-sample-out {output.per_sample:q} "
+                "--threads {threads} --tmpdir {resources.tmpdir:q} {params.paired} "
                 "--feature {params.feature} --attribute {params.attribute} > {log} 2>&1"
 
     else:
 
         rule infer_strandedness:
             input:
-                "results/aligned/" + (FIRST_SAMPLE or "NA") + "_ReadsPerGene.out.tab",
+                tabs=expand("results/aligned/{sample}_ReadsPerGene.out.tab", sample=SAMPLES),
             output:
-                "results/aligned/strandedness.txt",
-            run:
-                fwd = rev = 0
-                with open(input[0], encoding="utf-8") as handle:
-                    for line in handle:
-                        if line.startswith("N_"):
-                            continue
-                        parts = line.rstrip("\n").split("\t")
-                        if len(parts) < 4:
-                            continue
-                        try:
-                            fwd += int(parts[2])
-                            rev += int(parts[3])
-                        except ValueError:
-                            continue
-                total = fwd + rev
-                ratio = (rev / total) if total else 0.5
-                strand = 2 if ratio > 0.7 else (1 if ratio < 0.3 else 0)
-                with open(output[0], "w", encoding="utf-8") as out:
-                    out.write(f"{strand}\n")
+                legacy="results/aligned/strandedness.txt",
+                per_sample="results/aligned/strandedness_per_sample.tsv",
+            shell:
+                "python workflow/scripts/infer_strandedness_star.py --out {output.legacy:q} "
+                "--per-sample-out {output.per_sample:q} {input.tabs:q}"
 
         rule alignment_check:
             input:

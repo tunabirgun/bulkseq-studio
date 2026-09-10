@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -21,6 +22,107 @@ RUN_TAG_PREFIX = "BULKSEQ_RUN_TAG"
 
 def _new_run_tag() -> str:
     return f"{RUN_TAG_PREFIX}_{uuid.uuid4().hex}"
+
+
+# Snakemake prints one of these on any rule/workflow failure. Both front ends watch for
+# them because the WSL launcher runs through `micromamba run`, which returns exit 0 even
+# when snakemake failed — so the process exit code alone can report a failed run as
+# succeeded. A definitive error line marks the run failed regardless of the code.
+FAILURE_MARKERS = re.compile(
+    r"Error in rule\s|WorkflowError|Exiting because a job execution failed"
+    r"|MissingOutputException"
+    # The GUI escalates these as a broken R/Bioconductor environment rather than an ordinary
+    # rule failure, but a run that hits them has not produced valid output either — the CLI
+    # has no rebuild-offer path, so it must report failure here.
+    r"|will not load in the bulkseq env|there is no package called|unable to load shared object"
+)
+
+
+def run_snakemake_sync(project_root, config: AppConfig, mode: str, *, exec_profile: str = "local",
+                        on_line=None) -> int:
+    """Run a Snakemake command to completion, streaming output and returning an exit code.
+
+    Launch-equivalent to the GUI's SnakemakeRunner.start(): same cwd, child env, and stream
+    decoding, built through the same Popen setup so the two code paths cannot drift apart.
+    Detects a snakemake-reported failure the same way the GUI does (FAILURE_MARKERS), so a
+    masked exit-0 from `micromamba run` is still reported as a non-zero exit here. A Ctrl-C
+    stops the whole process tree the way the GUI's Stop does, not just this relay process.
+    """
+    project_root = Path(project_root)
+    use_wsl = sys.platform.startswith("win") and exec_profile == "local"
+    run_tag = _new_run_tag() if use_wsl else None
+    command = build_snakemake_command(project_root, config, mode, use_wsl=use_wsl,
+                                       run_tag=run_tag, exec_profile=exec_profile)
+    emit = on_line or (lambda line: print(line, file=sys.stderr))
+    failed_in_output = False
+    runner = SnakemakeRunner(project_root, command)
+    process = runner.start()
+    assert process.stdout is not None
+    try:
+        for line in process.stdout:
+            line = line.rstrip("\n")
+            emit(line)
+            if FAILURE_MARKERS.search(line):
+                failed_in_output = True
+        code = process.wait()
+    except KeyboardInterrupt:
+        runner.stop()
+        raise
+    if failed_in_output and code == 0:
+        return 1
+    return code
+
+
+def _snakemake_child_env(use_wsl: bool) -> dict[str, str]:
+    # Dot decimal separator for the native (Linux) run too, so a comma-decimal host
+    # locale cannot leak "0,05" into tool output. (WSL runs set this inside _wrap_wsl.)
+    env = {**os.environ, "LC_NUMERIC": "C"}
+    if not use_wsl:
+        # The WSL branch exports PATH inside _wrap_wsl; do the equivalent here so a
+        # native run finds the environment's tools.
+        prefix = native_path_prefix()
+        if prefix:
+            env["PATH"] = os.pathsep.join([*prefix, env.get("PATH", "")])
+        # Rule shells dereference MAMBA_ROOT_PREFIX (trimming.smk's Trimmomatic adapter
+        # lookup among them) and Snakemake runs them under `set -u`, so an unset variable
+        # aborts the job. WSL runs get it from the login shell; give a native run the same
+        # value the rules would have defaulted to.
+        env["MAMBA_ROOT_PREFIX"] = env.get("MAMBA_ROOT_PREFIX") or str(native_mamba_root())
+    return env
+
+
+def _launch_snakemake_popen(command: "SnakemakeCommand", project_root: Path) -> subprocess.Popen[str]:
+    """The one Popen construction both SnakemakeRunner.start() and run_snakemake_sync() use,
+    so cwd, child env, stream decoding and process-group setup cannot drift between the GUI
+    and CLI launch paths."""
+    creationflags = 0
+    if sys.platform.startswith("win"):
+        # Own process group so a native taskkill /T reaches the whole tree, and
+        # CREATE_NO_WINDOW so the wsl.exe console does not pop up over the GUI
+        # when launched from the windowed (no-console) packaged app.
+        creationflags = (
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        )
+    # The pipeline runs in a UTF-8 Linux environment; decode as such and never let one
+    # undecodable byte kill the reader (the default is the console code page, strict).
+    return subprocess.Popen(
+        command.command,
+        cwd=project_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+        bufsize=1,
+        creationflags=creationflags,
+        # POSIX counterpart of CREATE_NEW_PROCESS_GROUP above: setsid() puts the
+        # child in its own process group (pgid == pid) so Stop can signal the whole
+        # tree. Without it, terminating the Snakemake process leaves its children
+        # -- STAR, featureCounts, Rscript -- running for hours on the user's machine.
+        start_new_session=not sys.platform.startswith("win"),
+        env=_snakemake_child_env(command.use_wsl),
+    )
 
 
 @dataclass
@@ -428,7 +530,7 @@ def build_wsl_kill_command(run_tag: str, distro: str | None = None, signal: str 
     return cmd
 
 
-def _run_quiet(cmd: list[str], timeout: float = 30.0) -> None:
+def _run_quiet(cmd: list[str], timeout: float = 30.0, cwd: Path | None = None) -> None:
     """Fire-and-forget a short cleanup command; never raise."""
     creationflags = 0
     if sys.platform.startswith("win"):
@@ -441,6 +543,7 @@ def _run_quiet(cmd: list[str], timeout: float = 30.0) -> None:
             timeout=timeout,
             check=False,
             creationflags=creationflags,
+            cwd=cwd,
         )
     except (OSError, subprocess.SubprocessError):
         pass
@@ -457,52 +560,11 @@ class SnakemakeRunner:
         self._stopped = False
 
     def start(self) -> subprocess.Popen[str]:
-        creationflags = 0
-        if sys.platform.startswith("win"):
-            # Own process group so a native taskkill /T reaches the whole tree, and
-            # CREATE_NO_WINDOW so the wsl.exe console does not pop up over the GUI
-            # when launched from the windowed (no-console) packaged app.
-            creationflags = (
-                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-                | getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            )
-        # The pipeline runs in a UTF-8 Linux environment; decode as such and never let one
-        # undecodable byte kill the reader (the default is the console code page, strict).
-        self.process = subprocess.Popen(
-            self.command.command,
-            cwd=self.project_root,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            encoding="utf-8",
-            errors="replace",
-            text=True,
-            bufsize=1,
-            creationflags=creationflags,
-            # POSIX counterpart of CREATE_NEW_PROCESS_GROUP above: setsid() puts the
-            # child in its own process group (pgid == pid) so Stop can signal the whole
-            # tree. Without it, terminating the Snakemake process leaves its children
-            # -- STAR, featureCounts, Rscript -- running for hours on the user's machine.
-            start_new_session=not sys.platform.startswith("win"),
-            # Dot decimal separator for the native (Linux) run too, so a comma-decimal host
-            # locale cannot leak "0,05" into tool output. (WSL runs set this inside _wrap_wsl.)
-            env=self._child_env(),
-        )
+        self.process = _launch_snakemake_popen(self.command, self.project_root)
         return self.process
 
     def _child_env(self) -> dict[str, str]:
-        env = {**os.environ, "LC_NUMERIC": "C"}
-        if not self.use_wsl:
-            # The WSL branch exports PATH inside _wrap_wsl; do the equivalent here so a
-            # native run finds the environment's tools.
-            prefix = native_path_prefix()
-            if prefix:
-                env["PATH"] = os.pathsep.join([*prefix, env.get("PATH", "")])
-            # Rule shells dereference MAMBA_ROOT_PREFIX (trimming.smk's Trimmomatic adapter
-            # lookup among them) and Snakemake runs them under `set -u`, so an unset variable
-            # aborts the job. WSL runs get it from the login shell; give a native run the same
-            # value the rules would have defaulted to.
-            env["MAMBA_ROOT_PREFIX"] = env.get("MAMBA_ROOT_PREFIX") or str(native_mamba_root())
-        return env
+        return _snakemake_child_env(self.use_wsl)
 
     def _signal_native_group(self, sig: int) -> bool:
         """Signal the child's whole process group. True if the signal was delivered.
@@ -590,4 +652,4 @@ class SnakemakeRunner:
     def unlock(self, config: AppConfig) -> None:
         """Synchronously run `snakemake --unlock` to clear a stale directory lock."""
         cmd = build_unlock_command(self.project_root, config, use_wsl=self.use_wsl, distro=self.distro)
-        _run_quiet(cmd.command, timeout=60)
+        _run_quiet(cmd.command, timeout=60, cwd=self.project_root)

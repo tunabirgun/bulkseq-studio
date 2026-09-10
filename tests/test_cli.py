@@ -132,6 +132,72 @@ def test_cluster_runs_do_not_go_through_wsl(project, capsys) -> None:
     assert "wsl --" not in capsys.readouterr().out
 
 
+# ---- `bulkseq run` -------------------------------------------------------------
+
+def test_run_builds_the_same_argv_as_print_command(project, monkeypatch) -> None:
+    # run must go through the identical builder print-command uses, not a second
+    # hand-assembled argv that could drift from it. run_snakemake_sync mints its own
+    # random run tag (for Ctrl-C cleanup of the whole WSL process tree), so the tag itself
+    # is excluded from the comparison rather than the whole WSL-wrapped string.
+    import re
+
+    from app.core import snakemake_runner
+
+    config = ProjectManager().load_config(project)
+    expected = build_snakemake_command(project, config, "run",
+                                       use_wsl=sys.platform.startswith("win")).command
+
+    captured = {}
+
+    class _FakeProcess:
+        stdout = iter(["dummy line\n"])
+
+        def wait(self):
+            return 0
+
+    def _fake_popen(argv, **kwargs):
+        captured["argv"] = argv
+        return _FakeProcess()
+
+    monkeypatch.setattr(snakemake_runner.subprocess, "Popen", _fake_popen)
+    from app.cli import EXIT_OK as _OK
+    assert main(["run", "-C", str(project)]) == _OK
+    tag_re = re.compile(r"export BULKSEQ_RUN_TAG_[0-9a-f]+=1 && ")
+    actual = [tag_re.sub("", part) for part in captured["argv"]]
+    assert actual == expected
+
+
+def test_run_detects_a_masked_failure_marker(monkeypatch, project) -> None:
+    # `micromamba run` under WSL returns exit 0 even when snakemake failed; a marker line
+    # in the output must still fail the CLI run.
+    from app.core import snakemake_runner
+    from app.cli import EXIT_RUN_FAILED
+
+    class _FakeProcess:
+        stdout = iter(["some progress\n", "Error in rule star_align:\n", "more output\n"])
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(snakemake_runner.subprocess, "Popen",
+                        lambda argv, **kwargs: _FakeProcess())
+    assert main(["run", "-C", str(project)]) == EXIT_RUN_FAILED
+
+
+def test_run_succeeds_when_no_marker_and_exit_code_is_zero(monkeypatch, project) -> None:
+    from app.core import snakemake_runner
+
+    class _FakeProcess:
+        stdout = iter(["Finished job 0.\n"])
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(snakemake_runner.subprocess, "Popen",
+                        lambda argv, **kwargs: _FakeProcess())
+    assert main(["run", "-C", str(project)]) == EXIT_OK
+
+
 def test_cli_does_not_assemble_snakemake_flags_itself() -> None:
     # A regression guard with teeth: if someone hand-writes "--cores" or "--resources"
     # into the CLI, equivalence is gone the moment the GUI's builder changes.

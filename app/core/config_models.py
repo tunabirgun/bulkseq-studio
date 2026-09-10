@@ -205,8 +205,13 @@ class ReferenceConfig(BaseModel):
     annotation_format: Literal["gtf", "gff3", "unset"] = "unset"
     genome_fasta_url: str | None = None
     annotation_gtf_url: str | None = None
+    # Prebuilt transcriptome FASTA / aligner indexes: when set and the path exists, the
+    # workflow uses it and skips building it from genome_fasta + annotation_file. Unset,
+    # behaviour is unchanged. hisat2_index names the hisat2-build prefix (e.g.
+    # ".../genome"), not a single file. protein_fasta was removed: no rule ever read a
+    # protein FASTA, so a lingering value in an old config is accepted and ignored (with
+    # a setup-check warning naming it).
     transcriptome_fasta: str | None = None
-    protein_fasta: str | None = None
     star_index: str | None = None
     hisat2_index: str | None = None
     salmon_index: str | None = None

@@ -482,7 +482,7 @@ def test_kegg_key_form_is_derived_and_reaches_enrichkegg(tmp_path: Path) -> None
     command, script_path, runtime_path = _r_runtime(SCRIPT)
     code = f'''
 exprs <- parse(file={script_path!r})
-wanted <- c("resolve_kegg_keytype", "KEGG_KEY_FORMS", "run_kegg", "assess_kegg_resource",
+wanted <- c("resolve_kegg_keytype", "KEGG_KEY_FORMS", "run_kegg", "assess_kegg_resource", "kegg_query_date_utc", "kegg_package_version",
             "mapped_unique", "mapping_fraction", "safe_slot", "raw_result_count", "nrows",
             "build_deterministic_rank", "with_deterministic_gsea_ties",
             "ANNOTATION_WARNING_FRACTION", "KEGG_VALID_STATUSES",
@@ -612,7 +612,7 @@ def test_kegg_audit_separates_tested_hypotheses_from_adjusted_results(
     code = f'''
 suppressMessages(library(clusterProfiler))
 exprs <- parse(file={script_path!r})
-wanted <- c("raw_result_count", "nrows", "safe_slot", "run_kegg", "assess_kegg_resource",
+wanted <- c("raw_result_count", "nrows", "safe_slot", "run_kegg", "assess_kegg_resource", "kegg_query_date_utc", "kegg_package_version",
             "mapped_unique", "mapping_fraction", "build_deterministic_rank",
             "with_deterministic_gsea_ties", "ANNOTATION_WARNING_FRACTION",
             "KEGG_VALID_STATUSES", "KEGG_MIN_GENE_SET_SIZE", "KEGG_MAX_GENE_SET_SIZE")

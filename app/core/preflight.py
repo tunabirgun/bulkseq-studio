@@ -464,7 +464,7 @@ def _configured_local_paths(config: Mapping[str, Any]) -> dict[str, str]:
         "input": input_fields,
         "microarray": ("expression_matrix",),
         "reference": (
-            "genome_fasta", "annotation_file", "transcriptome_fasta", "protein_fasta",
+            "genome_fasta", "annotation_file", "transcriptome_fasta",
             "star_index", "hisat2_index", "salmon_index",
         ),
         "gene_sets": (

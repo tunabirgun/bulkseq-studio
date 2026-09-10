@@ -31,6 +31,49 @@ def _assigned_fractions(summary_path: Path) -> dict[str, float]:
     return {bam: (assigned[i] / totals[i] if totals[i] else 0.0) for i, bam in enumerate(bams)}
 
 
+def _load_strand_per_sample(path: Path) -> dict[str, tuple[int, float | None]]:
+    result: dict[str, tuple[int, float | None]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        parts = line.rstrip("\n").split("\t")
+        sid, code = parts[0], int(parts[1])
+        ratio = float(parts[2]) if len(parts) > 2 and parts[2] else None
+        result[sid] = (code, ratio)
+    return result
+
+
+def _within_study_messages(strand: dict[str, tuple[int, float | None]], df: pd.DataFrame) -> list[dict[str, str]]:
+    # Within-study consistency: a study whose samples disagree on the inferred code usually
+    # means a mislabeled/misassigned library, independent of the cross-study median check
+    # below (which needs >= 2 studies and only sees the featureCounts Assigned fraction).
+    has_dataset = "dataset" in df.columns and df["dataset"].astype(str).str.strip().ne("").any()
+    groups: dict[str, list[str]] = {}
+    if has_dataset:
+        for _, row in df.iterrows():
+            sid = str(row["sample_id"]).strip()
+            if sid:
+                groups.setdefault(str(row["dataset"]).strip() or "all", []).append(sid)
+    else:
+        groups["all"] = list(strand)
+
+    messages: list[dict[str, str]] = []
+    for study, sids in sorted(groups.items()):
+        known = [sid for sid in sids if sid in strand]
+        codes = {strand[sid][0] for sid in known}
+        if len(codes) <= 1:
+            continue
+        detail = ", ".join(
+            f"{sid}={strand[sid][0]}" + (f" (ratio={strand[sid][1]:.2f})" if strand[sid][1] is not None else "")
+            for sid in known
+        )
+        messages.append({"status": "REVIEW_REQUIRED", "message": (
+            f"Study '{study}' has samples with disagreeing inferred strandedness codes "
+            f"({detail}); featureCounts already applies each sample's own -s, but a mixed "
+            "call within one study usually means a mislabeled or misassigned library.")})
+    return messages
+
+
 def _bam_to_study(bams: list[str], df: pd.DataFrame) -> dict[str, str]:
     # Map each BAM column to a study by matching its sample_id substring. featureCounts names BAM
     # columns by their path, which embeds the sample_id (e.g. results/aligned/<sample_id>.bam).
@@ -56,12 +99,24 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--summary", required=True)
     parser.add_argument("--samples", required=True)
+    parser.add_argument("--strand-per-sample", default=None, help="strandedness_per_sample.tsv")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
     messages: list[dict[str, str]] = []
     summary_path = Path(args.summary)
     samples_path = Path(args.samples)
+
+    if args.strand_per_sample and samples_path.exists():
+        strand_path = Path(args.strand_per_sample)
+        if strand_path.exists():
+            df_all = pd.read_csv(samples_path, sep="\t", dtype=str).fillna("")
+            within_messages = _within_study_messages(_load_strand_per_sample(strand_path), df_all)
+            if within_messages:
+                messages.extend(within_messages)
+            else:
+                messages.append({"status": "PASS", "message": (
+                    "Every study's samples agree on inferred strandedness.")})
 
     if not summary_path.exists():
         messages.append({"status": "PASS", "message": f"featureCounts summary not found ({summary_path}); strandedness check skipped."})
@@ -91,14 +146,15 @@ def main() -> int:
             detail = ", ".join(f"{s}={m:.2f}" for s, m in sorted(medians.items()))
             if low or divergent:
                 messages.append({"status": "REVIEW_REQUIRED", "message": (
-                    f"Per-study median Assigned fraction diverges ({detail}). A single global "
-                    "featureCounts -s cannot fit studies with different library strandedness; the "
-                    "low-assignment study/studies likely need a different -s (rerun featureCounts "
-                    "per study with the strandedness that matches each library).")})
+                    f"Per-study median Assigned fraction diverges ({detail}) even though "
+                    "featureCounts already ran with each sample's own inferred -s. The "
+                    "low-assignment study/studies likely have a library problem other than "
+                    "strandedness (check GTF match, contamination, or the per-sample "
+                    "strandedness_per_sample.tsv inference for those samples).")})
             else:
                 messages.append({"status": "PASS", "message": (
-                    f"Per-study median Assigned fractions are consistent ({detail}); a single global "
-                    "featureCounts -s fits all studies.")})
+                    f"Per-study median Assigned fractions are consistent ({detail}); "
+                    "per-sample featureCounts strandedness fits all studies.")})
 
     status = max((m["status"] for m in messages), key=lambda s: PRIORITY.get(s, 0)) if messages else "PASS"
     payload = {"check": "21_strandedness_qc", "status": status, "messages": messages}

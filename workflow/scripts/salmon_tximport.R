@@ -35,6 +35,22 @@ t2g <- read.delim(as.character(snakemake@input[["tx2gene"]]), header = FALSE,
 t2g <- t2g[nzchar(t2g$tx) & nzchar(t2g$gene), ]
 message(sprintf("tx2gene: %d transcripts, %d genes", nrow(t2g), length(unique(t2g$gene))))
 
+# tximport silently drops any quant.sf transcript absent from tx2gene rather than failing,
+# so a stale/mismatched prebuilt index (config.reference.salmon_index or
+# transcriptome_fasta pointing at a different transcriptome than the tx2gene table used
+# here) would quietly under-count genes. Assert the full match up front instead.
+quant_tx <- unique(unlist(lapply(quants, function(q) read.delim(q, header = TRUE, stringsAsFactors = FALSE)$Name)))
+unmatched <- setdiff(quant_tx, t2g$tx)
+if (length(unmatched) > 0) {
+  stop(sprintf(paste0(
+    "salmon_tximport: %d/%d quant.sf transcript name(s) are absent from tx2gene column 1. ",
+    "The Salmon index and the tx2gene table must be built from the same transcriptome; ",
+    "check config.reference.salmon_index and transcriptome_fasta for a stale or mismatched ",
+    "prebuilt path. First unmatched: %s"),
+    length(unmatched), length(quant_tx),
+    paste(utils::head(unmatched, 5), collapse = ", ")))
+}
+
 # ignoreTxVersion = FALSE: tx2gene and the Salmon index FASTA are both produced by the
 # same gffread run, so the transcript ids (including any ".N" version, e.g. XM_015766610.2)
 # are byte-identical. Stripping the version from only the quant side would unmatch every

@@ -240,6 +240,7 @@ else:
             deseq_check="checks/09_deseq2_qc.json",
             unchanged="results/deseq2/unchanged_genes.csv",
             equivalence_check="checks/13_equivalence_qc.json",
+            pca_coordinates="results/deseq2/pca_coordinates.csv",
         params:
             design=_DESIGN,
             ref_factor=_REF_FACTOR,

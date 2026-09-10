@@ -241,6 +241,65 @@ def test_readiness_counts_items_not_cards() -> None:
     assert readiness_counts([i for i in items if i.status != "REVIEW_REQUIRED"]) == (2, 2)
 
 
+def test_batched_tool_probe_matches_per_tool_results(monkeypatch) -> None:
+    # One wsl.exe login shell must report exactly what WSL_TOOLS logins reported before:
+    # same items, same PASS/REVIEW_REQUIRED, same detail strings (including the setup-log
+    # fallback for a tool the batch reports missing).
+    import app.core.readiness as R
+    from app.core.readiness import WSL_TOOLS
+
+    tools = tuple(WSL_TOOLS)
+    present = set(list(tools)[::2])  # every other tool is "installed"
+    log_recoverable = tools[1]       # a missing tool that is recoverable from the setup log
+    log_paths = {log_recoverable: "/env/bin/" + log_recoverable}
+
+    def fake_run_wsl(distro, cmd, timeout=None):
+        if ".local/bin/micromamba" in cmd:
+            return _P(0, "/home/u/.local/bin/micromamba")
+        if "for tool in" in cmd:
+            lines = []
+            for t in tools:
+                if t in present:
+                    lines.append(f"{t}\tOK\t/env/bin/{t}")
+                else:
+                    lines.append(f"{t}\tMISSING\t")
+            return _P(0, "\n".join(lines))
+        if cmd.startswith('if [ -d'):
+            return _P(0, "/env")
+        if "bulkseq_profile" in cmd:
+            return _P(1)
+        return _P(1)
+
+    monkeypatch.setattr(R.shutil, "which", lambda x: "/usr/bin/wsl" if x == "wsl" else None)
+    monkeypatch.setattr(R, "_tool_paths_from_install_log", lambda *a, **k: dict(log_paths))
+    monkeypatch.setattr(R, "_run_wsl", fake_run_wsl)
+
+    items = check_wsl_bulkseq_environment()
+    by_name = {i.name: i for i in items}
+    for t in tools:
+        item = by_name[f"WSL {t}"]
+        if t in present:
+            assert item.detail == f"/env/bin/{t}", item
+        elif t in log_paths:
+            assert "(from setup log)" in item.detail, item
+        else:
+            assert item.status in ("REVIEW_REQUIRED", "WARNING"), item
+            assert item.detail == "not found in WSL bulkseq environment", item
+
+
+def test_batched_tool_probe_truncation_reports_unlisted_tools_missing() -> None:
+    from app.core.readiness import WSL_TOOLS, _parse_batched_tool_probe
+
+    tools = tuple(WSL_TOOLS)
+    truncated_output = f"{tools[0]}\tOK\t/env/bin/{tools[0]}\n{tools[1]}\tOK"  # cut mid-line
+    parsed = _parse_batched_tool_probe(truncated_output)
+    assert parsed[tools[0]] == (True, f"/env/bin/{tools[0]}")
+    # every tool the output never finished reporting must come back missing, not silently PASS
+    for t in tools[1:]:
+        ok, _ = parsed.get(t, (False, ""))
+        assert ok is False, t
+
+
 def test_validate_reference_empty_field_fails_cleanly() -> None:
     from pathlib import Path
     from app.core.reference_manager import validate_reference

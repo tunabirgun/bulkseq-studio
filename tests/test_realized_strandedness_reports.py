@@ -280,8 +280,66 @@ def _assert_report_rule_contract(source: str) -> None:
     assert '_REPORT_REALIZED_STRANDEDNESS = (' in source
     assert '{"fastq", "sra", "mixed"}' in source
     assert "and not USE_SALMON" in source
-    assert ('**({"strandedness": "results/aligned/strandedness.txt"} '
-            'if _REPORT_REALIZED_STRANDEDNESS else {}),') in source
+    assert '"strandedness": "results/aligned/strandedness.txt",' in source
+    assert '"strandedness_per_sample": "results/aligned/strandedness_per_sample.tsv",' in source
+
+
+def _write_per_sample_inputs(project: Path, per_sample: dict[str, int], legacy: int) -> None:
+    strand_path = project / "results" / "aligned" / "strandedness.txt"
+    strand_path.parent.mkdir(parents=True, exist_ok=True)
+    strand_path.write_text(f"{legacy}\n", encoding="utf-8")
+    tsv_path = project / "results" / "aligned" / "strandedness_per_sample.tsv"
+    tsv_path.write_text(
+        "".join(f"{sid}\t{code}\n" for sid, code in per_sample.items()), encoding="utf-8")
+    counts_path = project / "results" / "counts" / "counts.txt"
+    counts_path.parent.mkdir(parents=True, exist_ok=True)
+    header_s = " ".join(f"{sid}={code}" for sid, code in per_sample.items())
+    counts_path.write_text(
+        "# Program:featureCounts (run per-sample; merged, per-sample strandedness); "
+        f"per-sample -s: {header_s}\n"
+        "Geneid\tChr\tStart\tEnd\tStrand\tLength\t" + "\t".join(per_sample) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_per_sample_header_parses_and_matches_uniform_sidecar(mrs, tmp_path: Path) -> None:
+    _write_per_sample_inputs(tmp_path, {"s1": 2, "s2": 2}, legacy=2)
+    provenance = mrs.load_realized_strandedness(tmp_path, _config())
+    assert provenance["realized"]["per_sample"] == {"s1": 2, "s2": 2}
+    assert provenance["realized"]["uniform"] is True
+    assert provenance["featurecounts_header"] == {"per_sample": {"s1": 2, "s2": 2}, "path": "results/counts/counts.txt"}
+
+
+def test_per_sample_header_reports_mixed_and_renders(mrs, tmp_path: Path) -> None:
+    _write_per_sample_inputs(tmp_path, {"s1": 1, "s2": 2}, legacy=1)
+    provenance = mrs.load_realized_strandedness(tmp_path, _config())
+    assert provenance["realized"]["uniform"] is False
+    payload = {"strandedness": provenance}
+    text = mrs.realized_strandedness_text(payload)
+    assert "mixed" in text and "s1=forward" in text and "s2=reverse" in text
+
+
+def test_per_sample_header_mismatch_against_sidecar_fails(mrs, tmp_path: Path) -> None:
+    # The defect this gate exists to catch: featureCounts recording a different -s than
+    # the TSV that was supposed to drive it.
+    _write_per_sample_inputs(tmp_path, {"s1": 2, "s2": 2}, legacy=2)
+    counts_path = tmp_path / "results" / "counts" / "counts.txt"
+    counts_path.write_text(
+        "# Program:featureCounts (run per-sample; merged, per-sample strandedness); "
+        "per-sample -s: s1=2 s2=1\n"
+        "Geneid\tChr\tStart\tEnd\tStrand\tLength\ts1\ts2\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="mismatch for sample 's2'"):
+        mrs.load_realized_strandedness(tmp_path, _config())
+
+
+def test_legacy_single_s_header_still_parses_without_per_sample_tsv(mrs, tmp_path: Path) -> None:
+    # A pre-0.30 project re-running only the reports rule against its existing counts.txt.
+    _write_realized_inputs(tmp_path, strand="2", header_strand="2")
+    provenance = mrs.load_realized_strandedness(tmp_path, _config())
+    assert provenance["featurecounts_header"] == {"code": 2, "path": "results/counts/counts.txt"}
+    assert "per_sample" not in provenance["realized"]
 
 
 def test_final_reports_realized_strandedness_dependency_and_negative_control() -> None:
@@ -289,8 +347,7 @@ def test_final_reports_realized_strandedness_dependency_and_negative_control() -
     _assert_report_rule_contract(source)
 
     broken = source.replace(
-        '**({"strandedness": "results/aligned/strandedness.txt"} '
-        'if _REPORT_REALIZED_STRANDEDNESS else {}),\n',
+        '"strandedness_per_sample": "results/aligned/strandedness_per_sample.tsv",\n',
         "",
         1,
     )

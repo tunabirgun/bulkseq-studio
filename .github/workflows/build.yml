@@ -42,7 +42,7 @@ jobs:
         run: |
           python -m venv .venv
           .venv\Scripts\python.exe -m pip install --upgrade pip
-          .venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-build.txt
+          .venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-build.txt -c constraints.txt
 
       - name: Install Inno Setup
         shell: powershell
@@ -51,6 +51,77 @@ jobs:
       - name: Build installer + portable ZIP
         shell: powershell
         run: .\scripts\build_release.ps1
+
+      # Runs the installer on the CI runner itself, not a clean machine: it proves the
+      # installer's silent switches, registry key and update/uninstall branches work on a
+      # box that already has this repo's build tooling, not that a bare Windows image with
+      # nothing preinstalled can run it end to end.
+      - name: Install silently and verify
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = (Select-String -Path app\constants.py -Pattern 'APP_VERSION\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          $setup = "installer_output\BulkSeqStudio-Setup-$version.exe"
+          $exe = "$env:LOCALAPPDATA\Programs\BulkSeq Studio\BulkSeqStudio.exe"
+          $uninstKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{B7E4B2A1-6F1C-4E1A-9C2A-BULKSEQSTUDIO}}_is1"
+          $sentinel = "$env:RUNNER_TEMP\bulkseq-install-selftest.json"
+
+          function Assert-SelfTest {
+            param($Sentinel)
+            Remove-Item $Sentinel -ErrorAction SilentlyContinue
+            $env:QT_QPA_PLATFORM = "offscreen"
+            $env:BULKSEQ_SKIP_READINESS_DIALOG = "1"
+            $env:BULKSEQ_SELFTEST = "1"
+            $env:BULKSEQ_SELFTEST_OUT = $Sentinel
+            # The known frozen-teardown crash (0xC0000409) can follow a passing self-test,
+            # so the sentinel's pass:true is the gate, not the process exit code.
+            $p = Start-Process -FilePath $exe -PassThru
+            if (-not $p.WaitForExit(90000)) {
+              try { $p.Kill() } catch {}
+              throw "self-test process did not exit within 90s"
+            }
+            if (-not (Test-Path $Sentinel)) { throw "self-test sentinel was not written" }
+            $result = Get-Content $Sentinel -Raw | ConvertFrom-Json
+            if ($result.pass -ne $true) { throw "self-test reported failure: $($result | ConvertTo-Json)" }
+          }
+
+          function Run-Installer {
+            param($Exe, $Log)
+            $p = Start-Process -FilePath $Exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$Log" -Wait -PassThru
+            if ($p.ExitCode -ne 0) {
+              Get-Content $Log -ErrorAction SilentlyContinue
+              throw "installer exited with code $($p.ExitCode)"
+            }
+          }
+
+          Run-Installer $setup "$env:RUNNER_TEMP\install-1.log"
+          if (-not (Test-Path $uninstKey)) { throw "uninstall registry key missing after install" }
+          if (-not (Test-Path $exe)) { throw "installed executable missing: $exe" }
+          Assert-SelfTest $sentinel
+
+          # Second install exercises the update branch (InitializeSetup detects the
+          # existing install and uninstalls it before reinstalling).
+          Run-Installer $setup "$env:RUNNER_TEMP\install-2.log"
+          if (-not (Test-Path $uninstKey)) { throw "uninstall registry key missing after update install" }
+          if (-not (Test-Path $exe)) { throw "installed executable missing after update install: $exe" }
+          Assert-SelfTest $sentinel
+
+          $uninstString = (Get-ItemProperty $uninstKey).UninstallString
+          $uninstString = $uninstString -replace '"', ''
+          Run-Installer $uninstString "$env:RUNNER_TEMP\uninstall.log"
+          $waited = 0
+          while ((Test-Path $uninstKey) -and $waited -lt 30000) { Start-Sleep -Milliseconds 500; $waited += 500 }
+          if (Test-Path $uninstKey) {
+            Get-Content "$env:RUNNER_TEMP\uninstall.log" -ErrorAction SilentlyContinue
+            throw "uninstall registry key still present after uninstall"
+          }
+
+      - name: Print installer logs on failure
+        if: failure()
+        shell: powershell
+        run: |
+          Get-ChildItem "$env:RUNNER_TEMP\install-*.log", "$env:RUNNER_TEMP\uninstall.log" -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "----- $($_.Name) -----"; Get-Content $_.FullName }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -83,7 +154,7 @@ jobs:
         run: |
           python3 -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/python -m pip install -r requirements.txt -r requirements-build.txt
+          .venv/bin/python -m pip install -r requirements.txt -r requirements-build.txt -c constraints.txt
 
       - name: Build onedir with PyInstaller
         run: .venv/bin/python -m PyInstaller packaging/BulkSeqStudio.spec --noconfirm

@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import platform
 import re
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -18,6 +20,55 @@ def env_lock_md5() -> str | None:
     if not lock.exists():
         return None
     return hashlib.md5(lock.read_bytes()).hexdigest()
+
+
+SPEC_MARKER = ".bulkseq_spec"
+
+
+def _active_env_prefix() -> Path | None:
+    # scripts/setup_wsl_bioenv.sh writes SPEC_MARKER into the env prefix it installed.
+    # Under `micromamba run -n <env> ...` (how this script is invoked) CONDA_PREFIX is
+    # that env's directory; fall back to MAMBA_ROOT_PREFIX/envs/bulkseq for a bare shell.
+    prefix = os.environ.get("CONDA_PREFIX")
+    if prefix:
+        return Path(prefix)
+    root = os.environ.get("MAMBA_ROOT_PREFIX")
+    if root:
+        return Path(root) / "envs" / "bulkseq"
+    # Native-Linux and CLI invocations run this script's own interpreter (bin/python3
+    # under the env prefix) with neither variable set. sys.executable is two levels
+    # below the prefix (<prefix>/bin/python3), so check that path for the profile marker.
+    candidate = Path(sys.executable).resolve().parent.parent
+    if (candidate / ".bulkseq_profile").exists():
+        return candidate
+    return None
+
+
+def environment_spec() -> dict:
+    # environment_lock_md5 always hashes bulkseq.lock.yaml, so a run on a fallback-solved
+    # environment (no exact build pins) reports the same hash as a lock-installed one. The
+    # spec marker records what was actually installed; absent on environments set up before
+    # it existed.
+    prefix = _active_env_prefix()
+    marker = prefix / SPEC_MARKER if prefix else None
+    if marker is None or not marker.exists():
+        return {"file": None, "sha256": None, "source": "unknown"}
+    lines = marker.read_text(encoding="utf-8").splitlines()
+    lines += [""] * (3 - len(lines))
+    file_name, sha256, source = lines[0].strip(), lines[1].strip(), lines[2].strip()
+    return {
+        "file": file_name or None,
+        "sha256": sha256 or None,
+        "source": source if source in {"lock", "core", "fallback"} else "unknown",
+    }
+
+
+def environment_spec_line(p: dict) -> str:
+    spec = p.get("environment_spec") or {}
+    if spec.get("source") == "unknown":
+        return "Installed environment spec: unknown (no marker; environment predates this record)"
+    return (f"Installed environment spec: {spec.get('file')} (source: {spec.get('source')}, "
+            f"sha256: {spec.get('sha256')})")
 
 
 def workflow_git_commit() -> str | None:
@@ -167,6 +218,7 @@ def route_active_workflow(payload: dict) -> dict:
 
 _STRANDEDNESS_LABELS = {0: "unstranded", 1: "forward", 2: "reverse"}
 _STRANDEDNESS_PATH = "results/aligned/strandedness.txt"
+_STRANDEDNESS_PER_SAMPLE_PATH = "results/aligned/strandedness_per_sample.tsv"
 _COUNTS_PATH = "results/counts/counts.txt"
 _LOCAL_READ_INPUT_TYPES = {"fastq", "sra", "mixed"}
 
@@ -196,8 +248,17 @@ def _single_strandedness_token(path: Path, source_name: str) -> int:
     return int(token)
 
 
-def _featurecounts_header_strandedness(path: Path) -> int:
-    """Extract the one realized ``-s`` argument from a featureCounts output header."""
+_LEGACY_HEADER_KEY = "*"
+
+
+def _featurecounts_header_strandedness(path: Path) -> dict[str, int]:
+    """Extract the realized ``-s`` argument(s) from a featureCounts output header.
+
+    A per-sample-merged header (run_featurecounts_per_sample.py) carries one ``-s`` per
+    sample as ``per-sample -s: sid=val sid=val ...``; the result is keyed by sample id. A
+    pre-0.30 project's counts.txt, from a single joint featureCounts invocation, carries
+    exactly one ``-s`` for the whole run; the result is keyed ``_LEGACY_HEADER_KEY``.
+    """
     try:
         with path.open(encoding="utf-8") as handle:
             comments: list[str] = []
@@ -210,6 +271,15 @@ def _featurecounts_header_strandedness(path: Path) -> int:
     header = " ".join(comments)
     if "Program:featureCounts" not in header:
         raise ValueError(f"featureCounts output lacks its program header: {path}")
+    per_sample = re.search(r"per-sample -s:\s*(.+)$", header)
+    if per_sample:
+        pairs = re.findall(r"(\S+)=([0-9]+)", per_sample.group(1))
+        if not pairs:
+            raise ValueError(f"featureCounts header per-sample -s block is empty in {path}")
+        bad = [v for _, v in pairs if v not in {"0", "1", "2"}]
+        if bad:
+            raise ValueError(f"featureCounts header -s must be 0, 1, or 2; found {bad[0]!r} in {path}")
+        return {sid: int(v) for sid, v in pairs}
     # featureCounts writes command tokens either quoted ("-s" "2") or unquoted
     # (-s 2). Match the exact option, then require one value so a duplicated or damaged
     # command line cannot be accepted as provenance.
@@ -224,7 +294,19 @@ def _featurecounts_header_strandedness(path: Path) -> int:
         raise ValueError(
             f"featureCounts header -s must be 0, 1, or 2; found {value!r} in {path}"
         )
-    return int(value)
+    return {_LEGACY_HEADER_KEY: int(value)}
+
+
+def _load_per_sample_strandedness(path: Path) -> dict[str, int]:
+    strands: dict[str, int] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        sid, _, rest = line.partition("\t")
+        code = rest.split("\t")[0].strip()  # tolerate an appended ratio column (check 21)
+        if sid and code:
+            strands[sid] = int(code)
+    return strands
 
 
 def load_realized_strandedness(root: Path, config: dict) -> dict | None:
@@ -233,29 +315,47 @@ def load_realized_strandedness(root: Path, config: dict) -> dict | None:
         return None
     strand_path = root / _STRANDEDNESS_PATH
     code = _single_strandedness_token(strand_path, "realized strandedness file")
+    per_sample_path = root / _STRANDEDNESS_PER_SAMPLE_PATH
+    per_sample = _load_per_sample_strandedness(per_sample_path) if per_sample_path.exists() else {}
     configured = (config.get("featurecounts") or {}).get("strandedness")
-    provenance: dict = {
-        "configured": {"code": configured},
-        "realized": {
-            "code": code,
-            "label": _STRANDEDNESS_LABELS[code],
-            "path": _STRANDEDNESS_PATH,
-        },
+    realized: dict = {
+        "code": code,
+        "label": _STRANDEDNESS_LABELS[code],
+        "path": _STRANDEDNESS_PATH,
     }
+    if per_sample:
+        codes = set(per_sample.values())
+        realized["per_sample"] = per_sample
+        realized["uniform"] = len(codes) <= 1
+    provenance: dict = {"configured": {"code": configured}, "realized": realized}
     workflow = config.get("workflow") or {}
     quantifier = str(workflow.get("quantifier") or "featureCounts")
     if quantifier.casefold() == "featurecounts":
-        header_code = _featurecounts_header_strandedness(root / _COUNTS_PATH)
-        if header_code != code:
-            raise ValueError(
-                "Realized strandedness mismatch: "
-                f"{_STRANDEDNESS_PATH} records {code}, but {_COUNTS_PATH} records "
-                f"featureCounts -s {header_code}"
-            )
-        provenance["featurecounts_header"] = {
-            "code": header_code,
-            "path": _COUNTS_PATH,
-        }
+        header = _featurecounts_header_strandedness(root / _COUNTS_PATH)
+        if _LEGACY_HEADER_KEY in header:
+            header_code = header[_LEGACY_HEADER_KEY]
+            if header_code != code:
+                raise ValueError(
+                    "Realized strandedness mismatch: "
+                    f"{_STRANDEDNESS_PATH} records {code}, but {_COUNTS_PATH} records "
+                    f"featureCounts -s {header_code}"
+                )
+            provenance["featurecounts_header"] = {"code": header_code, "path": _COUNTS_PATH}
+        else:
+            if per_sample and set(header) != set(per_sample):
+                raise ValueError(
+                    "Realized strandedness mismatch: featureCounts header records samples "
+                    f"{sorted(header)}, but {_STRANDEDNESS_PER_SAMPLE_PATH} records "
+                    f"{sorted(per_sample)}"
+                )
+            for sid, header_code in header.items():
+                expected = per_sample.get(sid, code)
+                if header_code != expected:
+                    raise ValueError(
+                        f"Realized strandedness mismatch for sample {sid!r}: "
+                        f"{_COUNTS_PATH} records featureCounts -s {header_code}, expected {expected}"
+                    )
+            provenance["featurecounts_header"] = {"per_sample": header, "path": _COUNTS_PATH}
     return provenance
 
 
@@ -272,6 +372,10 @@ def realized_strandedness_text(payload: dict) -> str | None:
             or label != _STRANDEDNESS_LABELS[code] or not isinstance(path, str)
             or not path.strip()):
         return None
+    per_sample = realized.get("per_sample")
+    if isinstance(per_sample, dict) and per_sample and not realized.get("uniform", True):
+        detail = ", ".join(f"{sid}={_STRANDEDNESS_LABELS.get(c, c)}" for sid, c in sorted(per_sample.items()))
+        return f"mixed (realized per-sample from {path}: {detail})"
     return f"{label} ({code}; realized from {path})"
 
 
@@ -1043,6 +1147,7 @@ def main() -> int:
         "workflow_version": project.get("workflow_version"),
         "workflow_git_commit": workflow_git_commit(),
         "environment_lock_md5": env_lock_md5(),
+        "environment_spec": environment_spec(),
         "snakemake_version": versions.get("snakemake"),
         "project": project,
         "input": config.get("input", {}),
@@ -1113,6 +1218,7 @@ def render_text(p: dict) -> str:
               f"App version: {p['app_version']}    Workflow version: {p['workflow_version']}",
               f"Workflow commit: {p.get('workflow_git_commit') or 'n/a (packaged build)'}",
               f"Environment lock md5: {p.get('environment_lock_md5') or 'n/a'}",
+              environment_spec_line(p),
               f"Snakemake: {p['snakemake_version']}", ""]
     is_microarray = input_type == "microarray"
     is_uploaded_results = input_type == "deseq2_results"
@@ -1230,6 +1336,7 @@ def render_tools_references(p: dict) -> str:
              f"App version: {p['app_version']}    Workflow version: {p['workflow_version']}",
              f"Workflow commit: {p.get('workflow_git_commit') or 'n/a (packaged build)'}",
              f"Environment lock md5: {p.get('environment_lock_md5') or 'n/a'}",
+             environment_spec_line(p),
              input_description, ""]
     strandedness_text = realized_strandedness_text(p)
     if strandedness_text:
