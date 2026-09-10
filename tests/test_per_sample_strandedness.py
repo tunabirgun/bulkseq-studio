@@ -211,7 +211,15 @@ def _bash_available() -> bool:
     import shutil
 
     if sys.platform.startswith("win"):
-        return shutil.which("wsl") is not None
+        # wsl.exe ships with Windows even when no distribution is installed (the GitHub
+        # runner): only a distribution that runs a command counts.
+        if shutil.which("wsl") is None:
+            return False
+        try:
+            probe = subprocess.run(["wsl", "--", "true"], capture_output=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return probe.returncode == 0
     return shutil.which("bash") is not None
 
 

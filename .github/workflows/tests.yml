@@ -131,6 +131,9 @@ jobs:
             - r-jsonlite=2.0.0=r45h54b55ab_1
             - r-rcolorbrewer=1.1_3=r45h785f33e_4
             - r-scales=1.4.0=r45hc72bb7e_1
+            # densCols in make_figures.R needs the Recommended package KernSmooth, which
+            # conda's r-base does not bundle (the full lock carries it through r-recommended).
+            - r-kernsmooth=2.23_26=r45ha0a88a1_1
           EOF
 
       - uses: mamba-org/setup-micromamba@v2
