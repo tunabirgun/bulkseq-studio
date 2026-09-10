@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -10,6 +11,7 @@ import pytest
 from PySide6.QtCore import QPoint, QSettings
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QApplication,
     QComboBox,
     QLabel,
@@ -858,5 +860,68 @@ def test_primary_layouts_remain_usable_at_desktop_sizes(width: int, height: int)
                 area,
                 context=f"PPI Network / inspector scroll area {area_index + 1}",
             )
+    finally:
+        window.close()
+
+
+def _normalize_caption(text: str) -> str:
+    """Reduce a widget caption to the plain words a listener would hear.
+
+    Qt escapes a literal "&" as "&&"; a lone "&" marks a keyboard mnemonic and is not part of
+    the label. Multi-line button captions in this app use "\\n" purely as a layout wrap, and
+    "..." can appear either as three dots or the single "…" glyph. Case-normalize and map
+    ampersand variants to "and" for comparison.
+    """
+    text = text.replace("&&", "\x00").replace("&", "").replace("\x00", "&")
+    text = text.replace("…", "...").replace("\n", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    text = text.casefold()
+    text = re.sub(r"\s+&\s+|\s+&&\s+", " and ", text)
+    return text
+
+
+# Pre-existing (i.e. not touched by this patch) button captions whose accessible name does not
+# contain the visible caption as a contiguous substring -- a real WCAG 2.5.3 gap, tracked here so
+# the walker below still catches any *other* regression rather than being skipped wholesale.
+# Keyed on the exact (caption, accessible name) pair, not on object name (several of these
+# buttons have none) or on caption alone (the same short caption, e.g. "Results", is reused
+# elsewhere with a compliant accessible name). Do not add a newly fixed pair here -- that would
+# make the defect-injection check for that fix pass for the wrong reason.
+_LABEL_IN_NAME_KNOWN_GAPS = {
+    ("Refresh terms", "Refresh enrichment terms"),
+    ("Save gene list", "Save genes of interest"),
+    ("Generate gene figures", "Generate genes-of-interest figures from existing results"),
+    ("Use custom reference files", "Show custom reference fields"),
+    ("Autofill replicates", "Autofill replicate numbers by condition"),
+    ("Import table...", "Import sample metadata from TSV, CSV, or XLSX"),
+    ("Export TSV...", "Export sample metadata as TSV"),
+}
+
+
+def test_every_button_accessible_name_contains_its_visible_caption() -> None:
+    # WCAG 2.5.3 Label in Name: where a control has a visible text caption, the accessible name
+    # must contain that text so a speech-input or screen-reader user can match what they see
+    # against what they hear. A glyph-only caption (e.g. the "ⓘ" info buttons) carries no text
+    # label and is exempt by definition. The task navigator's page-link buttons intentionally
+    # announce the destination page name instead of their short rail caption, and that is already
+    # asserted by test_task_navigator_preserves_every_page_and_reaches_each_one -- exclude them by
+    # their own "taskNavigatorItem" marker property rather than re-litigating that design here.
+    window = _window(1366, 768)
+    try:
+        checked = 0
+        for button in window.findChildren(QAbstractButton):
+            if button.property("taskNavigatorItem"):
+                continue
+            caption = _normalize_caption(button.text())
+            if not re.search(r"[A-Za-z0-9]", caption):
+                continue  # glyph-only caption: no text label for the name to contain
+            name = _normalize_caption(button.accessibleName())
+            if not name:
+                continue  # accessible-name presence is a separate check, not label-in-name
+            checked += 1
+            if (caption, name) in _LABEL_IN_NAME_KNOWN_GAPS:
+                continue
+            assert caption in name, (button.objectName(), button.text(), button.accessibleName())
+        assert checked > 20, "the walk did not exercise a meaningful number of buttons"
     finally:
         window.close()

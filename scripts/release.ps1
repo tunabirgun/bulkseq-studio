@@ -74,6 +74,35 @@ if ($head -ne $upstream) {
     throw "HEAD ($head) differs from its upstream ($upstream). Push (or pull) before publishing."
 }
 
+# Verify CI workflows are successful before creating/updating the release.
+Write-Host "Checking GitHub Actions workflows for $head ..."
+$runListJson = & $gh run list --commit $head --json workflowName,status,conclusion --limit 20
+if ($LASTEXITCODE -ne 0) { throw "gh run list failed" }
+
+$runs = $runListJson | ConvertFrom-Json
+$testsRun = $null
+$buildRun = $null
+
+foreach ($run in $runs) {
+    if ($run.workflowName -eq "Tests" -and -not $testsRun) {
+        $testsRun = $run
+    } elseif ($run.workflowName -eq "Build packages" -and -not $buildRun) {
+        $buildRun = $run
+    }
+}
+
+if (-not $testsRun) { throw "Tests workflow not found for commit $head" }
+if (-not $buildRun) { throw "Build packages workflow not found for commit $head" }
+
+if ($testsRun.status -ne "completed") { throw "Tests workflow status is $($testsRun.status), expected completed" }
+if ($buildRun.status -ne "completed") { throw "Build packages workflow status is $($buildRun.status), expected completed" }
+
+if ($testsRun.conclusion -ne "success") { throw "Tests workflow conclusion is $($testsRun.conclusion), expected success" }
+if ($buildRun.conclusion -ne "success") { throw "Build packages workflow conclusion is $($buildRun.conclusion), expected success" }
+
+Write-Host "Tests: $($testsRun.conclusion)"
+Write-Host "Build packages: $($buildRun.conclusion)"
+
 Write-Host "Publishing $tag from $head ..."
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "SilentlyContinue"

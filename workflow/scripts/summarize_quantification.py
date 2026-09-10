@@ -7,12 +7,23 @@ from pathlib import Path
 
 PRIORITY = {"FAIL": 4, "REVIEW_REQUIRED": 3, "WARNING": 2, "PASS": 1}
 
+# A low assignment rate has a different plausible cause per route: featureCounts (-s) and
+# STAR gene-counts (--strand) both take an explicit strandedness code, so a wrong one is a
+# real candidate; Salmon runs with -l A (auto-detected library type), so it is not.
+ROUTE_LOW_ASSIGN_CAUSE = {
+    "aligned": "likely wrong strandedness setting",
+    "salmon": "strandedness is auto-detected (-l A) and not a plausible cause here; "
+              "check the reference transcriptome/annotation matches the samples",
+}
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--summary", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--route", default="aligned", choices=sorted(ROUTE_LOW_ASSIGN_CAUSE))
     args = parser.parse_args()
+    low_cause = ROUTE_LOW_ASSIGN_CAUSE[args.route]
 
     # featureCounts .summary: first column = status category, remaining columns =
     # per-BAM counts. Assignment rate = Assigned / total per sample.
@@ -55,9 +66,9 @@ def main() -> int:
             if rate >= 60:
                 messages.append({"status": "PASS", "message": f"{name}: {rate:.1f}% reads assigned to genes."})
             elif rate >= 40:
-                messages.append({"status": "WARNING", "message": f"{name}: {rate:.1f}% assigned (check strandedness)."})
+                messages.append({"status": "WARNING", "message": f"{name}: {rate:.1f}% assigned ({low_cause})."})
             else:
-                messages.append({"status": "REVIEW_REQUIRED", "message": f"{name}: {rate:.1f}% assigned (low; likely wrong -s strandedness)."})
+                messages.append({"status": "REVIEW_REQUIRED", "message": f"{name}: {rate:.1f}% assigned (low; {low_cause})."})
 
     status = max((m["status"] for m in messages), key=lambda s: PRIORITY.get(s, 0)) if messages else "REVIEW_REQUIRED"
     payload = {"check": "07_quantification_qc", "status": status, "messages": messages}

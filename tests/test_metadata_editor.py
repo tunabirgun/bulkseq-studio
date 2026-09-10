@@ -29,6 +29,14 @@ def test_load_to_dataframe_roundtrip() -> None:
     assert out["condition"].tolist() == ["control", "treated"]
 
 
+def test_table_has_an_accessible_name() -> None:
+    # I4: the grid is the primary editable surface of the Metadata page; a screen-reader or
+    # voice-control user needs a name for it, not just "table".
+    _app()
+    table = MetadataTable()
+    assert table.accessibleName() == "Sample metadata table"
+
+
 def test_add_and_rename_column() -> None:
     _app()
     table = MetadataTable()

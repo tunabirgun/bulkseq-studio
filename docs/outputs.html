@@ -18,7 +18,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="">
-      <span class="brand-copy"><span class="brand-title">BulkSeq Studio</span><span class="ver">v0.29.0</span></span>
+      <span class="brand-copy"><span class="brand-title">BulkSeq Studio</span><span class="ver">v0.29.1</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu</button>
     <nav aria-label="Documentation">
@@ -32,7 +32,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
       </ul>
       <div class="ext">
         <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
-        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.29.0 ↗</a>
+        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.29.1 ↗</a>
         <a href="faq.html#cite">Citation</a>
       </div>
     </nav>
@@ -75,6 +75,9 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 <h2>Quality report</h2>
 <p>The <strong>MultiQC report</strong> gathers FastQC, trimming, alignment, and (when enabled) FastQ Screen contamination and RSeQC read-distribution / gene-body-coverage statistics for every sample into one HTML page. Open it from <strong>MultiQC</strong> in the <strong>After the run</strong> row on the Run monitor page, or from <strong>Open MultiQC Report</strong> on the Reports page.</p>
 
+<h2>Sanity checks</h2>
+<p>Every run includes two per-sample checks that flag an unexpected library with a warning or a review-required status. Check 06 (STAR route only) reads the fraction of reads STAR mapped uniquely: below 70% is a warning and below 50% is review-required. Check 07 reads the fraction of reads assigned to a gene on every FASTQ route: below 60% is a warning and below 40% is review-required. On the STAR and HISAT2 routes the fraction comes from the featureCounts (or STAR gene-count) summary and a low value is attributed to the strandedness setting, which those tools take as an explicit code; on the Salmon route the fraction is the gene-level tximport counts over Salmon's processed reads, library type is auto-detected (<code>-l A</code>), and a low value is attributed to a reference or annotation mismatch instead. A count-matrix project has no unassigned category, so check 07 reports library sizes and flags empty or outlying columns.</p>
+
 <h2>Self-contained HTML report (Read-Along)</h2>
 <p>Every run also writes a single-file <strong><code>results_report.html</code></strong>, built as a dual-track <em>Read-Along</em> report that serves a non-specialist and a bioinformatician from the same document. Each section opens with a plain-language key finding — what was compared, how many genes changed and in which direction, and the strongest genes — with the statistics glossed inline and collected in an end glossary, above the full sortable tables with their exact numbers. The overview is a compact row of headline stat chips plus the run cards; the figures are grouped and lettered (Quality, Differential expression, Function), each with a plain caption and a technical caption, and the click-to-open, zoomable figure gallery is preserved. Everything is embedded with no external assets, so you can email it, drop it in a shared folder, or archive it and it still renders on its own — a way to hand the result to a collaborator without shipping the whole project folder. It also prints and saves to PDF cleanly — every collapsible section opens, wide tables wrap instead of clipping, and the figures and direction colours are kept — for a lab notebook or a manuscript supplement, and the sortable tables and the figure viewer are operable by keyboard and screen reader.</p>
 
@@ -99,7 +102,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 <h2>Enrichment tables and networks</h2>
 <ul>
   <li><strong>Enrichment tables</strong> — the GO, KEGG, and custom gene-set over-representation and GSEA results as CSV, run separately on the up- and down-regulated sets.</li>
-  <li><strong>STRING network files</strong> — the protein-interaction network exported as GraphML, SIF, and cytoscape.js JSON (cyjs) for editing in Cytoscape. The enrichment-map export carries a <code>scope</code> column naming the over-representation object it was built from (combined, up- or down-regulated, or the ranked GSEA list when no over-representation scope has two or more terms), the same choice the enrichment figures make. The results report lists the top hub proteins by degree and betweenness beside the network figure, and the network provenance records the configured and the realized STRING score threshold and the up- and down-regulated seed counts.</li>
+  <li><strong>STRING network files</strong> — the protein-interaction network exported as GraphML, SIF, and cytoscape.js JSON (cyjs) for editing in Cytoscape. The enrichment-map export carries a <code>scope</code> column naming the over-representation object it was built from (combined, up- or down-regulated, or the ranked GSEA list when no over-representation scope has two or more terms), the same choice the enrichment figures make. The results report lists the top hub proteins by degree and betweenness beside the network figure, and the network provenance records the configured and realized STRING score thresholds, the STRING database version and query date, and the up- and down-regulated seed counts.</li>
   <li><strong>Protein network page</strong> — the same network rendered live in the app with pointer and keyboard node navigation (see below).</li>
 </ul>
 
@@ -119,7 +122,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 
 <figure>
   <img src="assets/screenshot-ppi-interactive.png" alt="The interactive Protein network page showing a STRING graph with accessible node details and layout, colour, size, confidence, and export controls">
-  <figcaption>The interactive Protein network page. Hover or keyboard-focus a protein for its symbol, mean expression, log2 fold-change, adjusted p-value, and degree; recolour by fold-change or module, resize by topology, filter by confidence, and focus a protein and its interactors. <strong>Load / refresh network</strong> loads the network the run produced and <strong>Rebuild from STRING</strong> rebuilds it at a chosen confidence score on the 1 to 1000 STRING scale; then export PNG, SVG, or Cytoscape files (GraphML / SIF / cyjs).</figcaption>
+  <figcaption>The interactive Protein network page. Hover or keyboard-focus a protein for its symbol, mean expression, log2 fold-change, adjusted p-value, and degree; recolour by fold-change or module, resize by topology, filter by confidence, and focus a protein and its interactors. The interactive view draws the most connected 300 proteins by degree and reports "showing N of M" when the network is pruned; the exported tables and provenance JSON keep the full network. <strong>Load / refresh network</strong> loads the network the run produced and <strong>Rebuild from STRING</strong> rebuilds it at a chosen confidence score on the 1 to 1000 STRING scale; then export PNG, SVG, or Cytoscape files (GraphML / SIF / cyjs).</figcaption>
 </figure></section>
     <footer class="footer">
       <p>Free and open-source under the MIT License · <a href="https://github.com/tunabirgun" target="_blank" rel="noopener">tunabirgun</a></p>

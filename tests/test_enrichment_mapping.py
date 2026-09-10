@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -15,8 +17,16 @@ from app.core.paths import windows_to_wsl_path
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "workflow" / "scripts" / "run_enrichment.R"
 SCOPE_SCRIPT = ROOT / "workflow" / "scripts" / "enrichment_scope.R"
+ENRICHMENT_SMK = ROOT / "workflow" / "rules" / "enrichment.smk"
 CATALOG = ROOT / "app" / "data" / "reference_catalog.yaml"
 KEGG_KEY_FORMS = {"kegg", "ncbi-geneid", "ncbi-proteinid", "uniprot"}
+
+
+def _load_enrich_map() -> dict[str, tuple[str, str, str]]:
+    source = ENRICHMENT_SMK.read_text(encoding="utf-8")
+    match = re.search(r"_ENRICH_MAP\s*=\s*(\{.*?\n\})", source, re.DOTALL)
+    assert match, "_ENRICH_MAP dict literal not found in enrichment.smk"
+    return ast.literal_eval(match.group(1))
 
 
 def _r_runtime(script: Path) -> tuple[list[str], str, Callable[[Path], str]]:
@@ -662,3 +672,45 @@ cat("KEGG-style ORA hypothesis accounting OK\\n")
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "KEGG-style ORA hypothesis accounting OK" in completed.stdout
+
+
+def test_enrich_map_fallback_covers_every_catalog_organism_with_an_orgdb() -> None:
+    # enrichment.smk's _ENRICH_MAP is the fallback used when a hand-edited config or the
+    # CLI sets only reference.organism_name (no GUI organism-preset population). Every
+    # catalog organism with a working OrgDb must resolve through it, with the same OrgDb
+    # the catalog declares; the list here is derived from the catalog, never hardcoded.
+    entries = yaml.safe_load(CATALOG.read_text(encoding="utf-8"))["references"]
+    catalog_orgdb = {
+        entry["organism_name"].strip().lower(): entry["orgdb"]
+        for entry in entries
+        if entry.get("orgdb")
+    }
+    catalog_enrichment_keytype = {
+        entry["organism_name"].strip().lower(): entry.get("enrichment_keytype")
+        for entry in entries
+        if entry.get("orgdb")
+    }
+    catalog_kegg_organism = {
+        entry["organism_name"].strip().lower(): entry.get("kegg_organism")
+        for entry in entries
+        if entry.get("orgdb")
+    }
+    assert catalog_orgdb, "no catalog organism declares an orgdb"
+    enrich_map = _load_enrich_map()
+    missing = sorted(name for name in catalog_orgdb if name not in enrich_map)
+    assert not missing, f"_ENRICH_MAP in enrichment.smk is missing: {missing}"
+    mismatched = sorted(
+        name for name, orgdb in catalog_orgdb.items()
+        if enrich_map[name][0] != orgdb
+    )
+    assert not mismatched, f"_ENRICH_MAP OrgDb disagrees with the catalog for: {mismatched}"
+    mismatched_keytype = sorted(
+        name for name, keytype in catalog_enrichment_keytype.items()
+        if enrich_map[name][1] != keytype
+    )
+    assert not mismatched_keytype, f"_ENRICH_MAP enrichment_keytype disagrees with the catalog for: {mismatched_keytype}"
+    mismatched_kegg = sorted(
+        name for name, kegg in catalog_kegg_organism.items()
+        if enrich_map[name][2] != kegg
+    )
+    assert not mismatched_kegg, f"_ENRICH_MAP kegg_organism disagrees with the catalog for: {mismatched_kegg}"

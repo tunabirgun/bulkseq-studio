@@ -13,6 +13,10 @@ _ENRICH_MAP = {
     "danio rerio": ("org.Dr.eg.db", "ENSEMBL", "dre"),
     "saccharomyces cerevisiae": ("org.Sc.sgd.db", "ENSEMBL", "sce"),
     "arabidopsis thaliana": ("org.At.tair.db", "TAIR", "ath"),
+    "rattus norvegicus": ("org.Rn.eg.db", "ENSEMBL", "rno"),
+    "gallus gallus": ("org.Gg.eg.db", "ENSEMBL", "gga"),
+    "sus scrofa": ("org.Ss.eg.db", "ENSEMBL", "ssc"),
+    "bos taurus": ("org.Bt.eg.db", "ENSEMBL", "bta"),
 }
 _ORG = str(config.get("reference", {}).get("organism_name", "")).lower()
 _MAPPED = next((v for k, v in _ENRICH_MAP.items() if k in _ORG), ("", "", ""))

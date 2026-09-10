@@ -16,6 +16,7 @@ class MetadataTable(QTableWidget):
         self.setHorizontalHeaderLabels(self.default_columns())
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.setAlternatingRowColors(True)
+        self.setAccessibleName("Sample metadata table")
 
     @staticmethod
     def default_columns() -> list[str]:

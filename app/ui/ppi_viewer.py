@@ -45,6 +45,7 @@ class PpiViewer(QWidget):
         super().__init__(parent)
         self._ready = False
         self._pending_graph: dict | None = None
+        self._pending_render_callback = None
         self._theme: dict | None = None
         self._fallback = None
         self._content: QWidget | None = None
@@ -142,8 +143,9 @@ class PpiViewer(QWidget):
             self._run("setTheme", self._theme)
         if self._pending_graph is not None:
             self._show_content()
-            self._inject(self._pending_graph)
+            self._inject(self._pending_graph, self._pending_render_callback)
             self._pending_graph = None
+            self._pending_render_callback = None
 
     def _run(self, fn: str, *args) -> None:
         if self.view is None or not self._ready:
@@ -151,11 +153,18 @@ class PpiViewer(QWidget):
         js_args = ",".join(json.dumps(a) for a in args)
         self.view.page().runJavaScript(f"window.PPI && PPI.{fn}({js_args})")
 
-    def _inject(self, elements: dict) -> None:
+    def _inject(self, elements: dict, callback=None) -> None:
         # allow_nan=False guarantees no bare NaN (invalid JSON that would break
         # the page); the assembler nulls missing values beforehand.
         payload = json.dumps({"elements": elements}, allow_nan=False)
-        self.view.page().runJavaScript(f"window.PPI && PPI.render({payload})")
+        script = f"window.PPI && PPI.render({payload})"
+        # PPI.render() returns the post-prune {nodes, edges} counts actually drawn (viewer.js
+        # caps the display at BUDGET=300 by degree); a caller that needs to reconcile the
+        # requested network size against what is on screen passes a callback for that JSON string.
+        if callback is not None:
+            self.view.page().runJavaScript(script, callback)
+        else:
+            self.view.page().runJavaScript(script)
 
     def _show_content(self) -> None:
         if self._content is not None:
@@ -217,13 +226,16 @@ class PpiViewer(QWidget):
     def clear_network(self, message: str | None = None) -> None:
         """Clear pending/rendered content and restore the explicit empty state."""
         self._pending_graph = None
+        self._pending_render_callback = None
         if self._fallback is not None:
             self._fallback.clear()
         if self.view is not None and self._ready:
             self._inject({"nodes": [], "edges": []})
         self.set_empty_state(message)
 
-    def load_graph(self, elements: dict) -> None:
+    def load_graph(self, elements: dict, on_rendered=None) -> None:
+        """Render `elements`; `on_rendered`, if given, receives the drawn {nodes, edges}
+        counts as a JSON string once the (possibly pruned) render completes."""
         if self.view is None:
             return
         if not isinstance(elements, dict) or not elements.get("nodes"):
@@ -231,9 +243,10 @@ class PpiViewer(QWidget):
             return
         self._show_content()
         if self._ready:
-            self._inject(elements)
+            self._inject(elements, on_rendered)
         else:
             self._pending_graph = elements
+            self._pending_render_callback = on_rendered
 
     def load_static(self, png_or_svg: str | Path) -> None:
         if self._fallback is not None and Path(png_or_svg).exists():

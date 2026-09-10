@@ -159,6 +159,51 @@ def test_web_network_hides_empty_state_and_keeps_canvas_interactive(monkeypatch,
     qapp.processEvents()
 
 
+def test_load_graph_forwards_the_post_prune_render_callback(monkeypatch, tmp_path, qapp):
+    # I2: PPI.render() returns the post-prune {nodes, edges} counts actually drawn (viewer.js
+    # prunes above its node-display budget); load_graph's on_rendered callback must receive
+    # that JSON string via runJavaScript's own callback, both on the immediate (ready) path
+    # and the queued (not-yet-ready) path.
+    html = tmp_path / "viewer.html"
+    html.write_text("<html></html>", encoding="utf-8")
+    monkeypatch.setattr(ppi_viewer_module, "WEBENGINE_AVAILABLE", True)
+    monkeypatch.setattr(ppi_viewer_module, "QWebEngineView", _FakeWebEngineView)
+    monkeypatch.setattr(ppi_viewer_module, "viewer_html_path", lambda: html)
+
+    elements = {
+        "nodes": [{"data": {"id": "A"}}, {"data": {"id": "B"}}],
+        "edges": [{"data": {"source": "A", "target": "B"}}],
+    }
+
+    # Ready path: the page is already loaded, so _inject runs immediately.
+    viewer = PpiViewer()
+    viewer._on_loaded(True)
+    qapp.processEvents()
+    viewer.view.page().runJavaScript = lambda script, callback=None: (
+        callback('{"nodes": 2, "edges": 1}') if callback else None)
+    received: list[str] = []
+    viewer.load_graph(elements, on_rendered=received.append)
+    assert received == ['{"nodes": 2, "edges": 1}']
+
+    # Queued path: load_graph is called before the page reports loadFinished, so the
+    # callback must be stashed and fired once _on_loaded actually injects it.
+    viewer2 = PpiViewer()
+    qapp.processEvents()
+    viewer2.view.page().runJavaScript = lambda script, callback=None: (
+        callback('{"nodes": 2, "edges": 1}') if callback else None)
+    received2: list[str] = []
+    viewer2.load_graph(elements, on_rendered=received2.append)
+    assert received2 == []  # not yet injected -- the page has not loaded
+    viewer2._on_loaded(True)
+    qapp.processEvents()
+    assert received2 == ['{"nodes": 2, "edges": 1}']
+
+    for v in (viewer, viewer2):
+        v.close()
+        v.deleteLater()
+    qapp.processEvents()
+
+
 def test_web_assets_expose_keyboard_and_assistive_technology_route():
     asset_root = Path(__file__).parents[1] / "app" / "assets" / "web" / "ppi"
     html = (asset_root / "viewer.html").read_text(encoding="utf-8")
@@ -308,6 +353,62 @@ def test_real_webengine_keyboard_traversal_updates_accessible_state():
         "selected": 1,
         "status": "GENEA, log2 fold change 1.20, degree 1, module 1, 1 neighbour",
     }
+
+
+def test_real_webengine_render_callback_reports_the_post_prune_counts():
+    """I2: confirm runJavaScript's callback actually fires under offscreen Qt for
+    PPI.render(), and that it reports viewer.js's real BUDGET=300 prune -- not a fake page's
+    canned reply."""
+    project_root = Path(__file__).parents[1]
+    probe = textwrap.dedent(
+        '''
+        import json
+        from PySide6.QtCore import QEventLoop, QTimer
+        from app.ui.ppi_viewer import PpiViewer
+
+        app_qt = __import__("PySide6.QtWidgets", fromlist=["QApplication"]).QApplication
+        app = app_qt.instance() or app_qt([])
+        viewer = PpiViewer()
+        ready_loop = QEventLoop()
+        QTimer.singleShot(5000, ready_loop.quit)
+        if viewer.view:
+            viewer.view.loadFinished.connect(lambda ok: ready_loop.quit() if ok else None)
+        ready_loop.exec()
+        assert viewer.available and viewer._ready
+
+        n = 350  # above viewer.js's BUDGET=300, so this must prune
+        nodes = [{"data": {"id": f"G{i}", "symbol": f"G{i}", "degree": i}} for i in range(n)]
+        edges = [{"data": {"source": f"G{i}", "target": f"G{i+1}", "weight": 0.5}}
+                 for i in range(n - 1)]
+
+        received = []
+        viewer.load_graph({"nodes": nodes, "edges": edges}, on_rendered=received.append)
+        wait = QEventLoop()
+        QTimer.singleShot(4000, wait.quit)
+        poll = QTimer()
+        poll.setInterval(20)
+        poll.timeout.connect(lambda: wait.quit() if received else None)
+        poll.start()
+        wait.exec()
+        assert received, "runJavaScript callback never fired"
+        print(received[0])
+        '''
+    )
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    env["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --no-sandbox"
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=project_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=25,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    payload = __import__("json").loads(completed.stdout.strip().splitlines()[-1])
+    assert payload == {"nodes": 300, "edges": 299}
 
 
 def test_empty_state_repaints_light_dark_light(static_viewer, qapp):

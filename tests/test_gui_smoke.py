@@ -101,6 +101,60 @@ def test_config_round_trip_through_widgets() -> None:
     window.close()
 
 
+def test_multi_contrast_message_states_only_the_first_is_analysed() -> None:
+    # S4: workflow/rules/deseq2.smk reads only contrasts[0]; the message shown for a
+    # hand-edited multi-contrast config (config/contrasts.yaml) must say the others are not
+    # analysed by the run, not just that they are "preserved on save".
+    from app.core.config_models import Contrast
+
+    _app()
+    window = MainWindow()
+    workdir = Path("manual_test_gui") / uuid4().hex
+    window.workdir.setText(str(workdir))
+    window.project_name.setText("multi_contrast")
+    window._create_benchmark_project("pasilla_paired_subset")
+
+    window.config.deseq2.contrasts = [
+        Contrast(name="a_vs_b", factor="condition", numerator="a", denominator="b"),
+        Contrast(name="c_vs_d", factor="condition", numerator="c", denominator="d"),
+    ]
+    window._populate_widgets_from_config()
+
+    assert not window.contrast_info.isHidden()
+    text = window.contrast_info.text().lower()
+    assert "only this first contrast is analysed by the run" in text
+    assert "c vs d" in text
+    window.close()
+
+
+def test_ppi_status_reconciles_after_the_viewer_prunes_to_its_budget() -> None:
+    # I2: viewer.js prunes the interactive display to its node-display budget (currently 300)
+    # by degree; the status line -- built synchronously from the Python-side (full) counts --
+    # must be corrected once the async render callback reports how many were actually drawn.
+    _app()
+    window = MainWindow()
+
+    window._ppi_full_counts = (812, 2400)
+    window._ppi_drawn_counts = (812, 2400)
+    window._on_ppi_rendered('{"nodes": 300, "edges": 900}', 812, 2400)
+
+    assert window._ppi_drawn_counts == (300, 900)
+    assert window.ppi_status.text() == (
+        "Showing the 300 most connected of 812 proteins (900 of 2400 interactions). "
+        "Hover a protein for details; click to highlight its neighbours; drag and scroll "
+        "to explore.")
+    assert window._ppi_pruned_caption() == (
+        " — showing the 300 most connected of 812 proteins (900 of 2400 interactions)")
+
+    # No pruning (drawn == full): the status line is left alone and the export caption
+    # (reused by _save_ppi_export) is empty.
+    window.ppi_status.setText("unchanged")
+    window._on_ppi_rendered('{"nodes": 812, "edges": 2400}', 812, 2400)
+    assert window.ppi_status.text() == "unchanged"
+    assert window._ppi_pruned_caption() == ""
+    window.close()
+
+
 def test_a_stored_config_carrying_the_removed_hub_label_count_still_opens() -> None:
     # ppi.hub_label_count was dropped once the static network figure stopped drawing labels.
     # A project written by an older version still carries it; loading must ignore the extra key
@@ -243,6 +297,101 @@ def test_env_broken_run_offers_rebuild() -> None:
     window._on_run_finished(1)
     QApplication.processEvents()
     assert called["n"] == 1
+    window.close()
+
+
+def test_run_failure_expands_execution_details_and_scrolls_to_the_error_line() -> None:
+    # I1: the "Error in rule" hint lives inside a log panel that starts collapsed (the "Show
+    # command and log" disclosure). On failure the panel must expand itself and the cursor must
+    # already sit on the error line, so the cause is visible without the user scrolling by hand.
+    _app()
+    window = MainWindow()
+    assert window.execution_details_toggle.isChecked() is False
+
+    for i in range(30):
+        window._on_run_line(f"padding line {i}")
+    window._on_run_line("Error in rule deseq2:")
+    window._on_run_line("    jobid: 3")
+    for i in range(30):
+        window._on_run_line(f"trailer line {i}")
+    assert window._run_error_detected is True
+
+    window._stop_in_progress = False
+    window._run_mode = None
+    window._on_run_finished(1)
+    QApplication.processEvents()
+
+    assert window.execution_details_toggle.isChecked() is True
+    assert "Error in rule" in window.log_text.textCursor().block().text()
+    window.close()
+
+
+def test_run_failure_without_error_in_rule_text_still_scrolls_to_the_true_cause() -> None:
+    # A run can fail with only a different marker present (no literal "Error in rule" line
+    # anywhere in the real log). The hint text appended afterwards contains the phrase "Error in
+    # rule" itself, so the scroll target must be computed before that hint is appended, or the
+    # cursor would land on our own hint instead of the actual cause.
+    _app()
+    window = MainWindow()
+
+    for i in range(10):
+        window._on_run_line(f"padding line {i}")
+    window._on_run_line("Exiting because a job execution failed.")
+    for i in range(10):
+        window._on_run_line(f"trailer line {i}")
+    assert window._run_error_detected is True
+
+    window._stop_in_progress = False
+    window._run_mode = None
+    window._on_run_finished(1)
+    QApplication.processEvents()
+
+    assert window.execution_details_toggle.isChecked() is True
+    assert "Exiting because a job execution failed" in window.log_text.textCursor().block().text()
+    window.close()
+
+
+def test_run_failure_scroll_does_not_find_previous_run_error() -> None:
+    # I1: after two consecutive failed runs, the cursor should land on the current run's
+    # error, not the previous run's error. _scroll_log_to_first_error must start searching
+    # from _run_log_start (the character position when the run began), not from the document start.
+    _app()
+    window = MainWindow()
+
+    # First failed run
+    for i in range(10):
+        window._on_run_line(f"padding line {i}")
+    window._on_run_line("Error in rule first_rule:")
+    window._on_run_line("    jobid: 1")
+    for i in range(10):
+        window._on_run_line(f"trailer line {i}")
+    assert window._run_error_detected is True
+
+    window._stop_in_progress = False
+    window._run_mode = None
+    window._on_run_finished(1)
+    QApplication.processEvents()
+
+    assert "first_rule" in window.log_text.textCursor().block().text()
+
+    # Simulate the start of a second run: set the log start marker as _start_snakemake_impl does
+    window._run_log_start = window.log_text.document().characterCount() - 1
+    window._run_error_detected = False
+
+    # Second failed run
+    window._on_run_line("Error in rule second_rule:")
+    window._on_run_line("    jobid: 2")
+    for i in range(10):
+        window._on_run_line(f"trailer line {i}")
+    assert window._run_error_detected is True
+
+    window._stop_in_progress = False
+    window._run_mode = None
+    window._on_run_finished(1)
+    QApplication.processEvents()
+
+    # The cursor should be on the second error, not the first
+    assert "second_rule" in window.log_text.textCursor().block().text()
     window.close()
 
 

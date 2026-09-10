@@ -21,6 +21,17 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 _FAKE_GH = (
     "@echo off\r\n"
     'echo %*>>"%FAKE_GH_LOG%"\r\n'
+    'if "%1 %2"=="run list" (\r\n'
+    "  powershell -NoProfile -Command \"$runs=@(); "
+    "if ($env:RELEASE_BREAK -ne 'build-missing') { "
+    "$runs += [pscustomobject]@{workflowName='Build packages'; status=$(if ($env:RELEASE_BREAK -eq 'in-progress') {'in_progress'} else {'completed'}); conclusion='success'} "
+    "}; "
+    "if ($env:RELEASE_BREAK -ne 'test-missing') { "
+    "$runs += [pscustomobject]@{workflowName='Tests'; status=$(if ($env:RELEASE_BREAK -eq 'test-in-progress') {'in_progress'} else {'completed'}); conclusion=$(if ($env:RELEASE_BREAK -eq 'test-fail') {'failure'} else {'success'})} "
+    "}; "
+    "@($runs) | ConvertTo-Json -Depth 4\"\r\n"
+    "  exit /b 0\r\n"
+    ")\r\n"
     'if "%1 %2"=="release view" (\r\n'
     '  if "%4"=="--json" (\r\n'
     "    powershell -NoProfile -Command \"$a=Get-ChildItem $env:RELEASE_OUTPUT -File | "
@@ -133,3 +144,43 @@ def test_checksum_manifest_uses_lf_so_sha256sum_c_can_verify_it(tmp_path: Path) 
     release = (REPO_ROOT / "scripts" / "release.ps1").read_text(encoding="utf-8")
     assert "Set-Content -LiteralPath $checksumManifest" not in release
     assert "[System.IO.File]::WriteAllText($checksumManifest" in release
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
+def test_release_succeeds_when_both_ci_workflows_pass(tmp_path: Path) -> None:
+    root, output = _release_fixture(tmp_path)
+    completed, calls = _run_release(tmp_path, root, output)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "Tests: success" in completed.stdout
+    assert "Build packages: success" in completed.stdout
+    assert "run list" in calls
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
+def test_release_fails_when_tests_workflow_failed(tmp_path: Path) -> None:
+    root, output = _release_fixture(tmp_path)
+    completed, calls = _run_release(tmp_path, root, output, "test-fail")
+    assert completed.returncode != 0
+    assert "Tests" in completed.stdout + completed.stderr
+    assert "failure" in completed.stdout + completed.stderr
+    assert "release create" not in calls
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
+def test_release_fails_when_build_packages_workflow_missing(tmp_path: Path) -> None:
+    root, output = _release_fixture(tmp_path)
+    completed, calls = _run_release(tmp_path, root, output, "build-missing")
+    assert completed.returncode != 0
+    assert "Build packages" in completed.stdout + completed.stderr
+    assert "not found" in completed.stdout + completed.stderr
+    assert "release create" not in calls
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
+def test_release_fails_when_workflows_not_completed(tmp_path: Path) -> None:
+    root, output = _release_fixture(tmp_path)
+    completed, calls = _run_release(tmp_path, root, output, "in-progress")
+    assert completed.returncode != 0
+    assert "in_progress" in completed.stdout + completed.stderr
+    assert "expected completed" in completed.stdout + completed.stderr
+    assert "release create" not in calls

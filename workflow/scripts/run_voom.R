@@ -123,6 +123,16 @@ if (!(numerator %in% lv) || !(denominator %in% lv)) {
 # ---- Design: group-means + optional additive covariates from the formula ----
 # Same parameterization as run_limma.R: an explicit numerator-vs-denominator
 # contrast (reference level is irrelevant here) with additive covariate adjustment.
+# limma-voom here is fit as ~ 0 + grp + covariates; an interaction/nesting operator would be
+# silently stripped by all.vars() below and refit as a plain additive term, so refuse it
+# instead of reassuring the user about a model that was never fitted.
+if (isTRUE(grepl("[:*^/]", design_formula))) {
+  stop(sprintf(paste0(
+    "Design formula '%s' contains an interaction or nesting operator (':', '*', '^', or '/'). ",
+    "The limma-voom engine fits an additive group-means design (~ 0 + grp + covariates) and does ",
+    "not expose interaction coefficients. Use DESeq2 with an explicit design to test this term, ",
+    "or drop it from the design formula."), design_formula))
+}
 form_vars <- tryCatch(all.vars(as.formula(design_formula)), error = function(e) character(0))
 covariates <- setdiff(form_vars, con_factor)
 # A design covariate absent from the sample sheet (typo/renamed column) would otherwise be
@@ -141,11 +151,16 @@ if (length(covariates)) {
 }
 colnames(design)[seq_along(lv)] <- level_names
 
+# The formula actually fitted (additive group-means), not the typed one, so the check
+# message never affirms a term (e.g. an interaction) that was not fitted.
+fitted_formula <- if (length(covariates)) {
+  paste("~ 0 +", con_factor, "+", paste(covariates, collapse = " + "))
+} else paste("~ 0 +", con_factor)
 full_rank <- qr(design)$rank == ncol(design)
 design_checks <- list(list(
   status = if (full_rank) "PASS" else "FAIL",
-  message = if (full_rank) sprintf("Design %s is full rank.", design_formula)
-            else sprintf("Design %s is not full rank.", design_formula)))
+  message = if (full_rank) sprintf("Design %s is full rank.", fitted_formula)
+            else sprintf("Design %s is not full rank.", fitted_formula)))
 if (min(table(grp)) < 2) {
   design_checks[[length(design_checks) + 1]] <- list(status = "WARNING",
     message = "At least one condition has fewer than two replicates.")

@@ -12,7 +12,7 @@ DOCS_ROOT = ROOT / "docs"
 README_PATH = ROOT / "README.md"
 # The public software version controls the site shell. The deposited benchmark archive has its
 # own version and must not be relabelled when the application advances.
-PUBLIC_VERSION = "0.29.0"
+PUBLIC_VERSION = "0.29.1"
 ARCHIVE_VERSION = "0.26.6"
 
 
@@ -191,6 +191,19 @@ def _validation_errors(
     if len(question_headings) != 17 or ":scope > h2" not in product_js:
         errors.append("faq.html: all 17 question headings must be accordion-enabled h2 siblings")
 
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    released_versions = re.findall(r"^## (\d+\.\d+\.\d+)", changelog, re.MULTILINE)
+    if PUBLIC_VERSION in released_versions:
+        current_idx = released_versions.index(PUBLIC_VERSION)
+        prior_with_scientific = None
+        changelog_sections = re.split(r"^## (?=\d+\.\d+\.\d+)", changelog, flags=re.MULTILINE)
+        for i in range(current_idx, len(released_versions)):
+            if f"(*scientific*)" in changelog_sections[i+1] if i+1 < len(changelog_sections) else "":
+                prior_with_scientific = released_versions[i]
+                break
+        if prior_with_scientific and f"({prior_with_scientific})" not in pages["index.html"]:
+            errors.append(f"index.html: missing notice for scientific output changes in {prior_with_scientific}")
+
     release_sources = {
         "README.md": readme,
         "index.html": pages["index.html"],
@@ -237,7 +250,8 @@ def _replace_once(source: str, old: str, new: str) -> str:
         ("index.html", "<p class=\"lead\">BulkSeq Studio is for biologists", "<p class=\"lead\">BulkSeq Studio is for\nbiologists", "one physical line"),
         ("guide.html", "</section>", f'<img src="assets/screenshot-linux.png" alt="BulkSeq Studio {PUBLIC_VERSION} AppImage">\n</section>', "relabels the earlier Linux screenshot"),
         ("guide.html", "<h2>What is WSL2, and why does Windows need it?</h2>", "<h3>What is WSL2, and why does Windows need it?</h3>", "heading hierarchy skips"),
-        ("README.md", "Version 0.29.0 is the current public release.", "Version 0.29.0 is a source candidate.", "source-candidate claim"),
+        ("README.md", "Version 0.29.1 is the current public release.", "Version 0.29.1 is a source candidate.", "source-candidate claim"),
+        ("index.html", "Notice for output changes (0.29.0)", "Notice for output changes", "missing notice for scientific output changes"),
     ],
     ids=(
         "stale-product-shell",
@@ -248,6 +262,7 @@ def _replace_once(source: str, old: str, new: str) -> str:
         "fake-linux-screenshot",
         "heading-level-skip",
         "unpublished-source-candidate",
+        "stale-scientific-notice",
     ),
 )
 def test_documentation_gate_rejects_negative_mutations(

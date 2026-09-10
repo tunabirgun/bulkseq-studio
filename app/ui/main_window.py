@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import json
 import os
 import re
 import sys
@@ -63,6 +64,7 @@ from PySide6.QtGui import (
     QPalette,
     QPixmap,
     QShortcut,
+    QTextCursor,
 )
 from PySide6.QtCore import Qt, QUrl
 
@@ -319,6 +321,7 @@ class MainWindow(QMainWindow):
         self.readiness_dialog: ReadinessDialog | None = None
         self._run_active = False
         self._run_mode: str | None = None
+        self._run_log_start = 0
         self._stop_in_progress = False
         self._recovery_offered = False
         self._pending_recover = False  # set on the locked-resume / auto-recovery path; consumed by _on_run_finished
@@ -1970,7 +1973,8 @@ class MainWindow(QMainWindow):
         more_toggle.setCheckable(True)
         more_toggle.setArrowType(Qt.ArrowType.RightArrow)
         more_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        more_toggle.setAccessibleName("Show more sample-table tools")
+        more_toggle.setAccessibleName("More table tools")
+        more_toggle.setAccessibleDescription("Show more sample-table tools")
         layout.addWidget(more_toggle)
         more_box = QWidget()
         more_box.setProperty("uiRole", "disclosureContent")
@@ -1990,7 +1994,7 @@ class MainWindow(QMainWindow):
             ("Files", (
                 ("Import table…", "Import sample metadata from TSV, CSV, or XLSX", self._import_metadata),
                 ("Export TSV…", "Export sample metadata as TSV", self._export_metadata),
-                ("Restore generated", "Restore the last generated sample sheet", self._restore_auto_metadata),
+                ("Restore generated", "Restore generated sample sheet", self._restore_auto_metadata),
             )),
         )
         row_labels: list[QLabel] = []
@@ -2006,11 +2010,18 @@ class MainWindow(QMainWindow):
             for text, accessible_name, slot in specs:
                 btn = QPushButton(text)
                 btn.clicked.connect(slot)
-                btn.setAccessibleName(accessible_name)
-                btn.setToolTip(
-                    tooltips.get("Restore generated", accessible_name)
-                    if text == "Restore generated" else accessible_name
-                )
+                if text in ("Autofill replicates", "Import table…", "Export TSV…"):
+                    btn.setAccessibleName(text)
+                    btn.setAccessibleDescription(accessible_name)
+                    btn.setToolTip(accessible_name)
+                else:
+                    btn.setAccessibleName(accessible_name)
+                    btn.setToolTip(
+                        tooltips.get("Restore generated", accessible_name)
+                        if text == "Restore generated" else accessible_name
+                    )
+                    if text == "Restore generated":
+                        btn.setAccessibleDescription(tooltips["Restore generated"])
                 btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
                 command_row.addWidget(btn)
                 self.metadata_advanced_buttons.append(btn)
@@ -2095,7 +2106,8 @@ class MainWindow(QMainWindow):
         custom_toggle.setCheckable(True)
         custom_toggle.setArrowType(Qt.ArrowType.RightArrow)
         custom_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        custom_toggle.setAccessibleName("Show custom reference fields")
+        custom_toggle.setAccessibleName("Use custom reference files")
+        custom_toggle.setAccessibleDescription("Show custom reference fields")
         layout.addWidget(custom_toggle)
         custom_group = QGroupBox("Custom reference")
         custom_layout = QVBoxLayout(custom_group)
@@ -3551,6 +3563,17 @@ class MainWindow(QMainWindow):
             self.execution_details_toggle.setChecked(False)
         self._execution_details_had_content = has_content
 
+    def _scroll_log_to_first_error(self) -> None:
+        """Move the log's cursor to the first failure marker so it is on screen."""
+        cursor = self.log_text.textCursor()
+        cursor.setPosition(getattr(self, "_run_log_start", 0))
+        self.log_text.setTextCursor(cursor)
+        for marker in ("Error in rule", "WorkflowError",
+                       "Exiting because a job execution failed", "MissingOutputException"):
+            if self.log_text.find(marker):
+                self.log_text.ensureCursorVisible()
+                return
+
     def _set_run_status(self, text: str, status: str | None = None) -> None:
         """Set the run-status label from a *semantic* status key, not a hex colour.
 
@@ -3943,7 +3966,18 @@ class MainWindow(QMainWindow):
                 else f"Failed (exit code {code})"
             self._set_run_status(status, "FAIL")
             self.phase_label.setText("")
+            # The diagnostic text below (and the error line itself) lives in the log inside the
+            # execution-details disclosure, which starts collapsed. On failure, force it open and
+            # jump to the actual error so the cause is visible without the user hunting for it.
+            if hasattr(self, "execution_details_toggle"):
+                self.execution_details_toggle.setChecked(True)
             if failed_in_output:
+                # Find the marker in the streamed log BEFORE appending the hint below — the hint
+                # text itself contains the phrase "Error in rule", so searching after appending it
+                # would match our own hint instead of the actual cause when the run only tripped a
+                # different marker (e.g. "Exiting because a job execution failed" with no literal
+                # "Error in rule" line elsewhere in the log).
+                self._scroll_log_to_first_error()
                 self.log_text.append(
                     "A step failed. Scroll up for the 'Error in rule' line and its reason; the "
                     "full detail is in the rule's log under logs/ in the project folder.")
@@ -4664,7 +4698,16 @@ class MainWindow(QMainWindow):
         meta = graph.get("meta", {})
         n_nodes = int(meta.get("node_count", 0))
         n_edges = int(meta.get("edge_count", 0))
-        self.ppi_viewer.load_graph(graph["elements"])
+        # The full (pre-prune) counts stay the record of what the network actually contains
+        # (also what any provenance file records); the viewer may draw fewer (viewer.js caps
+        # the interactive display at its BUDGET, currently 300 nodes, by degree). The drawn
+        # count only comes back once PPI.render() finishes in the page, so the status line
+        # below is provisional until _on_ppi_rendered corrects it if pruning happened.
+        self._ppi_full_counts = (n_nodes, n_edges)
+        self._ppi_drawn_counts = (n_nodes, n_edges)
+        self.ppi_viewer.load_graph(
+            graph["elements"],
+            on_rendered=lambda payload: self._on_ppi_rendered(payload, n_nodes, n_edges))
         # The graph is pre-filtered at build time; the slider can only tighten.
         floor = int(round(float(meta.get("score_floor", 0.0)) * 100))
         self.ppi_conf.blockSignals(True)
@@ -4696,6 +4739,34 @@ class MainWindow(QMainWindow):
             self.ppi_status.setText(
                 f"{n_nodes} proteins, {n_edges} interactions. Hover a protein for details; "
                 "click to highlight its neighbours; drag and scroll to explore.")
+
+    def _on_ppi_rendered(self, payload, n_nodes: int, n_edges: int) -> None:
+        """PPI.render()'s runJavaScript callback: reconcile the status line with what the
+        viewer actually drew (viewer.js prunes to its node-display budget by degree above
+        that budget), once the (async) render completes."""
+        try:
+            drawn = json.loads(payload) if payload else {}
+            drawn_nodes = int(drawn.get("nodes", n_nodes))
+            drawn_edges = int(drawn.get("edges", n_edges))
+        except Exception:
+            return
+        self._ppi_drawn_counts = (drawn_nodes, drawn_edges)
+        if drawn_nodes < n_nodes:
+            self.ppi_status.setText(
+                f"Showing the {drawn_nodes} most connected of {n_nodes} proteins "
+                f"({drawn_edges} of {n_edges} interactions). Hover a protein for details; "
+                "click to highlight its neighbours; drag and scroll to explore.")
+
+    def _ppi_pruned_caption(self) -> str:
+        """' — showing the N most connected of M proteins (E of F interactions)' once the
+        viewer has reported drawing fewer nodes than the full network; '' otherwise. The full
+        counts (this reconciliation never changes them) are what any provenance file records."""
+        drawn_nodes, drawn_edges = getattr(self, "_ppi_drawn_counts", (0, 0))
+        full_nodes, full_edges = getattr(self, "_ppi_full_counts", (0, 0))
+        if full_nodes <= 0 or drawn_nodes >= full_nodes:
+            return ""
+        return (f" — showing the {drawn_nodes} most connected of {full_nodes} proteins "
+                f"({drawn_edges} of {full_edges} interactions)")
 
     def _set_ppi_network_controls(self, enabled: bool) -> None:
         """Gate only controls that operate on an already-loaded network."""
@@ -4779,7 +4850,10 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, APP_NAME, f"Export failed: {exc}")
             return
-        self.ppi_status.setText(f"Exported {fmt.upper()} to {path}")
+        # The exported image is exactly what the viewer drew, i.e. the post-prune network;
+        # say so when it is fewer proteins than the full network (no caption is embedded in
+        # the PNG/SVG file itself -- this is the only export-adjacent text this app writes).
+        self.ppi_status.setText(f"Exported {fmt.upper()} to {path}{self._ppi_pruned_caption()}")
 
     def _build_goi_group(self) -> QWidget:
         # No group title — the enclosing "Genes of Interest" tab already names it.
@@ -4810,11 +4884,13 @@ class MainWindow(QMainWindow):
         self.goi_box.setAccessibleName("Genes of interest")
         self.goi_box.setAccessibleDescription(full_help)
         save = QPushButton("Save gene list")
-        save.setAccessibleName("Save genes of interest")
+        save.setAccessibleName("Save gene list")
+        save.setAccessibleDescription("Save this genes-of-interest list in the project configuration.")
         save.setToolTip("Save this genes-of-interest list in the project configuration.")
         save.clicked.connect(self._save_goi)
         generate = QPushButton("Generate gene figures")
-        generate.setAccessibleName("Generate genes-of-interest figures from existing results")
+        generate.setAccessibleName("Generate gene figures")
+        generate.setAccessibleDescription("Generate genes-of-interest figures from existing results")
         generate.setToolTip("Build the genes-of-interest heatmap, expression plots, and table "
                             "from the already-computed DESeq2 results — no re-alignment or "
                             "re-analysis. Requires a completed run.")
@@ -4928,16 +5004,21 @@ class MainWindow(QMainWindow):
         action_column.setContentsMargins(0, 2, 0, 0)
         action_column.setSpacing(6)
         refresh = QPushButton("Refresh terms")
-        refresh.setAccessibleName("Refresh enrichment terms")
+        refresh.setAccessibleName("Refresh terms")
+        refresh.setAccessibleDescription("Reload extractable terms from the finished run.")
         refresh.setToolTip("Reload extractable terms from the finished run.")
         refresh.clicked.connect(self._populate_term_picker)
         self.term_table_btn = QPushButton("Extract genes\n→ table")
-        self.term_table_btn.setAccessibleName("Extract enrichment-term genes to table")
+        self.term_table_btn.setAccessibleName("Extract genes → table")
+        self.term_table_btn.setAccessibleDescription(
+            "Extracts this enrichment term's member genes to a DESeq2 table.")
         self.term_table_btn.setToolTip("Write this term's genes with their DESeq2 stats to a CSV "
                                        "and show it in the table — instant, from existing results.")
         self.term_table_btn.clicked.connect(lambda: self._extract_term_genes(heatmap=False))
         self.term_heatmap_btn = QPushButton("Build heatmap\n+ expression")
-        self.term_heatmap_btn.setAccessibleName("Build enrichment-term heatmap and expression table")
+        self.term_heatmap_btn.setAccessibleName("Build heatmap + expression table")
+        self.term_heatmap_btn.setAccessibleDescription(
+            "Builds a focused heatmap and expression table for this enrichment term's genes.")
         self.term_heatmap_btn.setToolTip("Reuses the finished DESeq2 results — no re-alignment "
                                          "or re-analysis. Adds a focused heatmap for the term's genes.")
         self.term_heatmap_btn.clicked.connect(lambda: self._extract_term_genes(heatmap=True))
@@ -6342,8 +6423,9 @@ class MainWindow(QMainWindow):
             if contrasts and len(contrasts) > 1:
                 others = ", ".join(f"{c.numerator} vs {c.denominator}" for c in contrasts[1:])
                 self.contrast_info.setText(
-                    f"Editing contrast 1 of {len(contrasts)}. The others are preserved on "
-                    f"save: {others}.")
+                    f"Editing contrast 1 of {len(contrasts)}. Only this first contrast is "
+                    f"analysed by the run; the others are preserved on save but not analysed: "
+                    f"{others}.")
                 self.contrast_info.setVisible(True)
             else:
                 self.contrast_info.setVisible(False)
@@ -7824,6 +7906,7 @@ class MainWindow(QMainWindow):
         self._run_mode = mode
         self._recovery_offered = False
         self._run_error_detected = False
+        self._run_log_start = self.log_text.document().characterCount() - 1
         self._env_broken_detected = False
         self._mapping_checked = set()
         self._mapping_halt_decided = False

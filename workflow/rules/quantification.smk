@@ -181,12 +181,21 @@ elif ORGANELLAR_FILTER and ORGANELLAR_MODE == "separate":
             "--out-counts {output.counts:q} --organellar-dir results/organellar --log {log:q}"
 
 
+# The message a low assignment rate carries differs by route (see
+# summarize_quantification.py): Salmon auto-detects library type (-l A), so
+# strandedness is not a plausible cause there the way it is for featureCounts/STAR.
+_QUANT_ROUTE = "salmon" if USE_SALMON else "aligned"
+
+
 rule quantification_check:
     input:
         summary=COUNTS_SUMMARY,
     output:
         "checks/07_quantification_qc.json",
+    params:
+        route=_QUANT_ROUTE,
     benchmark:
         "benchmarks/07_quantification_qc.tsv"
     shell:
-        "python workflow/scripts/summarize_quantification.py --summary {input.summary} --out {output}"
+        "python workflow/scripts/summarize_quantification.py --summary {input.summary} "
+        "--out {output} --route {params.route}"

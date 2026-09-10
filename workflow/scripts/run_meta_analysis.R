@@ -247,9 +247,9 @@ if (exists("snakemake")) {
             else if (nrow(meta) < 0.5 * min_genes)
               sprintf(" Only %d of ~%d genes are shared -- a low overlap can signal mismatched gene-id namespaces or annotations.", nrow(meta), min_genes)
             else ""
-    msg <- sprintf("Meta-analysis over %d of %d studies (%s): %d shared genes; %d meta-DEGs at FDR<%.3g; %d study(ies) excluded.%s",
+    msg <- sprintf("Meta-analysis over %d of %d studies (%s): %d shared genes; %d meta-DEGs at FDR<%.3g; %d study(ies) excluded.%s Each study is fit as ~ %s (the main run's other covariates are not applied per study).",
                    length(fanout$per_study), n_datasets, paste(names(fanout$per_study), collapse = ", "),
-                   nrow(meta), n_sig, alpha, length(fanout$excluded), warn)
+                   nrow(meta), n_sig, alpha, length(fanout$excluded), warn, con_factor)
     status <- if (nrow(meta) == 0) "FAIL" else if (n_sig > 0) "PASS" else "REVIEW_REQUIRED"
   }
   esc <- function(s) gsub('"', '\\\\"', s)

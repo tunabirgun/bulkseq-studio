@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.29.1 — 2026-09-10
+
+Patch release: guards, messages, interface and documentation corrections from the post-0.29.0 review. No produced number changes for a run that succeeded under 0.29.0; the workflow version is bumped so existing projects pick up the engine guard and the wider enrichment map.
+
+### Fixed
+
+- **limma-voom, edgeR and the microarray limma engine refuse a design formula with an interaction or nesting operator.** These engines fit an additive group-means design (`~ 0 + group + covariates`) rebuilt from the formula's variables, so a typed `~ genotype*treatment` was silently fitted without its interaction while the check message echoed the typed formula as full rank. The run now stops with a message naming the formula and the fitted design, and the full-rank message reports the design actually fitted. DESeq2 fits the typed formula as before.
+- **The meta-analysis check states the per-study design.** Each study is fitted with the contrast factor only (`~ condition`); covariates in the design apply to the joint model, and the 17_meta_analysis_qc message now says so.
+- **The contrast list says that only the first contrast is analysed.** Additional contrasts are preserved on save but not run.
+- **A failed run shows its error.** The execution log expands on failure and scrolls to the first `Error in rule` (or WorkflowError / MissingOutputException) line of the run that just failed instead of leaving the hint inside a collapsed panel.
+- **The interactive protein network reports pruning.** The viewer draws the most connected proteins (up to 300); when it prunes, the status line and the export status read "showing the N most connected of M proteins" while the tables and provenance keep the full network.
+- **Accessible names contain their visible captions** (WCAG 2.5.3) for the eleven buttons that did not, a test now walks every button in the main window, and the sample table has an accessible name.
+- **The runtime estimate no longer assumes a prebuilt STAR index.** The workflow always builds the index; the estimator branch that zeroed that step when `reference.star_index` was set is removed. A host whose runtime calibration was recorded with that field set will re-converge over its next runs.
+- **Rat, chicken, pig and cow reach the OrgDb enrichment route on hand-edited configurations and the CLI.** The workflow's organism map lacked the four entries the catalogue declares; a test now derives the expected map from the catalogue.
+- **The quantification check names a plausible cause per route.** A low assignment rate is attributed to the strandedness setting only on the featureCounts and STAR gene-count routes; Salmon runs with automatic library detection, so a low rate there points at a reference or annotation mismatch, and count-matrix imports have no unassigned category.
+- **The release script requires green CI before it tags.** It reads the Tests and Build packages runs for the exact commit and refuses unless both completed successfully.
+
+### Changed
+
+- **Documentation.** The site landing page carries a notice for the 0.29.0 output changes, and a docs gate now requires such a notice for any changelog entry marked scientific; the archive section states which deposited output classes predate 0.29.0; the README qualifies the meta-analysis p-value statement (finite up to a combined |Z| of about 38; per-study p-values at the double-precision floor still saturate it); the analysis page states the built-in over-representation universe (tested genes), the STRING version default and where the realized version and query date are printed, the two-level contrast rule with the interaction-formula refusal, and the per-study meta-analysis design; the outputs page documents the mapping (06) and assignment (07) thresholds and the network pruning rule; the FAQ's S. pombe KEGG explanation states the catalogue's key form and the open locus-tag question.
+
 ## 0.29.0 — 2026-09-08
 
 > **Scientific output changes.** Several tables and figures differ from 0.28.0 for the same input: GSEA rankings, KEGG GSEA availability, STRING seed selection, meta-analysis combined p-values, and the genes-of-interest heatmap colour scale. Re-run any result you intend to publish, and see the items marked *scientific* below.

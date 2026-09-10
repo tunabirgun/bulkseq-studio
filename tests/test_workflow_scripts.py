@@ -928,3 +928,50 @@ def test_set_overlap_dotplot_paints_both_colour_and_fill() -> None:
     source = (_SCRIPTS / "run_set_overlap.R").read_text(encoding="utf-8")
     assert "scale_colour_gradientn(colours = pal_spec$seq(255)" in source
     assert "scale_fill_gradientn(colours = pal_spec$seq(255)" in source
+
+
+def _run_summarize_quantification(tmp_path: Path, monkeypatch, summary_rows, route: str) -> dict:
+    import importlib.util
+    import sys
+
+    summary = tmp_path / "counts.txt.summary"
+    summary.write_text("\n".join("\t".join(row) for row in summary_rows) + "\n", encoding="utf-8")
+    out = tmp_path / "check.json"
+    script = _SCRIPTS / "summarize_quantification.py"
+    spec = importlib.util.spec_from_file_location("summarize_quantification", script)
+    mod = importlib.util.module_from_spec(spec)
+    monkeypatch.setattr(sys, "argv", [
+        "summarize_quantification.py", "--summary", str(summary), "--out", str(out),
+        "--route", route,
+    ])
+    spec.loader.exec_module(mod)
+    mod.main()
+    return json.loads(out.read_text(encoding="utf-8"))
+
+
+def test_low_assignment_message_is_route_aware(tmp_path: Path, monkeypatch) -> None:
+    # featureCounts (-s) and STAR gene-counts (--strand) both take an explicit strandedness
+    # code; Salmon runs with -l A (auto-detected), so strandedness is not a plausible cause
+    # for a low rate there.
+    rows = [
+        ["Status", "s1"],
+        ["Assigned", "30"],
+        ["Unassigned_NoFeatures", "70"],
+    ]
+    aligned = _run_summarize_quantification(tmp_path, monkeypatch, rows, "aligned")
+    assert any("strandedness" in m["message"] for m in aligned["messages"])
+    assert not any("auto-detected" in m["message"] for m in aligned["messages"])
+
+    salmon = _run_summarize_quantification(tmp_path, monkeypatch, rows, "salmon")
+    assert not any("strandedness setting" in m["message"] for m in salmon["messages"])
+    assert any("auto-detected" in m["message"] for m in salmon["messages"])
+
+
+def test_count_matrix_route_never_mentions_strandedness(tmp_path: Path, monkeypatch) -> None:
+    # ingest_counts.py's summary carries only an Assigned row (workflow/scripts/ingest_counts.py),
+    # so has_unassigned is False and the route-specific cause is never reached regardless of
+    # --route; a count matrix has no alignment step, so strandedness cannot be the cause.
+    rows = [["Status", "s1", "s2"], ["Assigned", "5", "0"]]
+    for route in ("aligned", "salmon"):
+        result = _run_summarize_quantification(tmp_path, monkeypatch, rows, route)
+        assert not any("strandedness" in m["message"] for m in result["messages"])
