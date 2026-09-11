@@ -154,18 +154,24 @@ begin
 
   { Both Update (Yes) and Uninstall (No) remove the existing version first. Inno's
     uninstaller relaunches itself from a temp copy, so Exec returns before removal
-    completes; wait until the uninstall key is gone so a following install cannot race
-    the old uninstaller (up to ~30 s, then proceed regardless). }
+    completes. It undoes the install in reverse order: the uninstall registry key,
+    written last at install, is deleted first, and the uninstaller's own unins000.exe
+    and unins000.dat go last. Waiting on the key alone let the old uninstaller finish
+    after the new files were written and delete the new unins000.exe (seen in CI and
+    locally), so wait until its files are gone as well, then give the temp copy a
+    moment to exit (up to ~60 s, then proceed regardless). }
   uninst := RemoveQuotes(uninst);
   if uninst <> '' then
   begin
     Exec(uninst, '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART', '', SW_HIDE, ewWaitUntilTerminated, rc);
     waited := 0;
-    while StillInstalled() and (waited < 30000) do
+    while (StillInstalled() or FileExists(uninst) or FileExists(ChangeFileExt(uninst, '.dat')))
+          and (waited < 60000) do
     begin
       Sleep(500);
       waited := waited + 500;
     end;
+    Sleep(1500);
   end;
 
   { Guarantee a completely clean slate: delete any leftover install directory the
