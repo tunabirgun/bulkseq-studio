@@ -18,7 +18,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="">
-      <span class="brand-copy"><span class="brand-title">BulkSeq Studio</span><span class="ver">v0.30.0</span></span>
+      <span class="brand-copy"><span class="brand-title">BulkSeq Studio</span><span class="ver">v0.30.1</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu</button>
     <nav aria-label="Documentation">
@@ -32,7 +32,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
       </ul>
       <div class="ext">
         <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
-        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.30.0 ↗</a>
+        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.30.1 ↗</a>
         <a href="faq.html#cite">Citation</a>
       </div>
     </nav>
@@ -42,20 +42,20 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
     <section id="install"><p class="kicker">Get started</p>
 <h1>Install &amp; setup</h1>
 <p class="lead">BulkSeq Studio is free and runs on Windows and Linux. You download one file, launch it, and let the app set up the bioinformatics tools for you the first time — no coding, and on Windows no administrator account for the install itself.</p>
-<div class="note release-status"><span class="t">Current public release: 0.30.0</span> Use only the checksummed packages published on GitHub Releases. The B1–B20 validation archive is separately versioned as 0.26.6 on Zenodo.</div>
+<div class="note release-status"><span class="t">Current public release: 0.30.1</span> Use only the checksummed packages published on GitHub Releases. The B1–B20 validation archive is separately versioned as 0.26.6 on Zenodo.</div>
 
 <div class="tablewrap" tabindex="0" role="region" aria-label="Windows and Linux release packages; scroll horizontally on small screens">
 <table>
   <thead><tr><th>Platform</th><th>Package</th><th>Use</th><th>Launch</th></tr></thead>
   <tbody>
-    <tr><td>Windows</td><td><code>BulkSeqStudio-Setup-0.30.0.exe</code></td><td>Per-user installation and Start Menu entry.</td><td>Open the installer; the application install itself does not require an administrator account.</td></tr>
-    <tr><td>Windows</td><td><code>BulkSeqStudio-Portable-0.30.0.zip</code></td><td>No installation.</td><td>Extract the ZIP and open <code>BulkSeqStudio.exe</code>.</td></tr>
-    <tr><td>Linux</td><td><code>BulkSeqStudio-0.30.0-x86_64.AppImage</code></td><td>Single-file desktop application. Needs glibc 2.34 or newer (Ubuntu 22.04 or later); the floor comes from the bundled Qt for Python wheels.</td><td><code>chmod +x BulkSeqStudio-0.30.0-x86_64.AppImage</code>, then run it.</td></tr>
-    <tr><td>Linux</td><td><code>BulkSeqStudio-Portable-0.30.0-linux-x86_64.tar.gz</code></td><td>Portable directory.</td><td>Extract it and run <code>BulkSeq Studio/BulkSeqStudio</code>.</td></tr>
+    <tr><td>Windows</td><td><code>BulkSeqStudio-Setup-0.30.1.exe</code></td><td>Per-user installation and Start Menu entry.</td><td>Open the installer; the application install itself does not require an administrator account.</td></tr>
+    <tr><td>Windows</td><td><code>BulkSeqStudio-Portable-0.30.1.zip</code></td><td>No installation.</td><td>Extract the ZIP and open <code>BulkSeqStudio.exe</code>.</td></tr>
+    <tr><td>Linux</td><td><code>BulkSeqStudio-0.30.1-x86_64.AppImage</code></td><td>Single-file desktop application. Needs glibc 2.34 or newer (Ubuntu 22.04 or later); the floor comes from the bundled Qt for Python wheels.</td><td><code>chmod +x BulkSeqStudio-0.30.1-x86_64.AppImage</code>, then run it.</td></tr>
+    <tr><td>Linux</td><td><code>BulkSeqStudio-Portable-0.30.1-linux-x86_64.tar.gz</code></td><td>Portable directory.</td><td>Extract it and run <code>BulkSeq Studio/BulkSeqStudio</code>.</td></tr>
   </tbody>
 </table>
 </div>
-<p>Download these files only from the <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">public v0.30.0 release</a>. Verify them against the attached <code>SHA256SUMS.txt</code>: on Windows use <code>Get-FileHash FILE -Algorithm SHA256</code>; on Linux use <code>grep '  FILENAME$' SHA256SUMS.txt | sha256sum -c -</code>, replacing <code>FILENAME</code> with the one package you downloaded.</p>
+<p>Download these files only from the <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest">public v0.30.1 release</a>. Verify them against the attached <code>SHA256SUMS.txt</code>: on Windows use <code>Get-FileHash FILE -Algorithm SHA256</code>; on Linux use <code>grep '  FILENAME$' SHA256SUMS.txt | sha256sum -c -</code>, replacing <code>FILENAME</code> with the one package you downloaded.</p>
 <p>Close BulkSeq Studio before you run the Windows installer: Setup refuses to modify an installation that is still open, so quit the application first and then start the installer.</p>
 
 <h2>What is WSL2, and why does Windows need it?</h2>
@@ -66,7 +66,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
 <ol class="steps">
   <li>
     <h3>Download and open the app</h3>
-    <p>Download version 0.30.0 from the public Releases page and select its approved package for your platform.</p>
+    <p>Download version 0.30.1 from the public Releases page and select its approved package for your platform.</p>
   </li>
   <li>
     <h3>Let the Environment setup screen check your machine</h3>

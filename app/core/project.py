@@ -192,7 +192,8 @@ class ProjectManager:
             )
         self._write_yaml(
             project_root / "workflow" / "workflow_metadata.yaml",
-            {"workflow_version": WORKFLOW_VERSION,
+            {"app_version": APP_VERSION,
+             "workflow_version": WORKFLOW_VERSION,
              "workflow_digest": self._bundled_workflow_digest(),
              "copied_at": datetime.now().isoformat(timespec="seconds")},
         )

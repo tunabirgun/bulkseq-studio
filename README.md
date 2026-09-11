@@ -2,9 +2,9 @@
 
 BulkSeq Studio is a cross-platform desktop application for reproducible bulk RNA-seq and microarray analysis. Its PySide6 interface drives a transparent Snakemake workflow from raw reads or processed inputs through differential expression, enrichment, protein-interaction networks, figures, reports, and route-aware provenance.
 
-> **Release status — 10 September 2026.** Version 0.30.0 is the current public release. Use only the checksummed packages published on GitHub Releases. The separately versioned B1–B20 validation archive remains deposited as version 0.26.6 on Zenodo.
+> **Release status — 11 September 2026.** Version 0.30.1 is the current public release. Use only the checksummed packages published on GitHub Releases. The separately versioned B1–B20 validation archive remains deposited as version 0.26.6 on Zenodo.
 
-[Read the complete documentation](https://tunabirgun.github.io/bulkseq-studio/) · [Download public v0.30.0](https://github.com/tunabirgun/bulkseq-studio/releases/latest) · [View source](https://github.com/tunabirgun/bulkseq-studio) · [Report an issue](https://github.com/tunabirgun/bulkseq-studio/issues)
+[Read the complete documentation](https://tunabirgun.github.io/bulkseq-studio/) · [Download public v0.30.1](https://github.com/tunabirgun/bulkseq-studio/releases/latest) · [View source](https://github.com/tunabirgun/bulkseq-studio) · [Report an issue](https://github.com/tunabirgun/bulkseq-studio/issues)
 
 ![BulkSeq Studio in light mode with the four-stage task navigator and the Analysis settings page](docs/screenshot-overview-light.png)
 
@@ -52,6 +52,12 @@ A `bulkseq run [--mode run|dry-run|resume] [--exec-profile local|slurm|kubernete
 > **0.30.0 output changes.** *S. pombe* KEGG enrichment now reaches its tables through a measured NCBI GeneID bridge instead of returning empty results, and strandedness is inferred and applied per sample rather than once per project, so a run mixing library types now counts each sample with its own orientation. An existing STAR project's next run re-derives the read length across all samples, rebuilds its index, and re-aligns, and an existing HISAT2 project re-aligns against its unchanged index; counts are unchanged when every sample already shared one read length and library type, and differ only for a mixed run. [CHANGELOG.md](CHANGELOG.md) has the complete entry.
 
 0.30.0 carries two kinds of installation evidence. In continuous integration, the Windows installer build silently installs the freshly built package, runs its frozen self-test, reinstalls over the update branch, and uninstalls; the R test job runs the Bioconductor-dependent figure contracts against a cached micromamba layer pinned to the pipeline's own R/Bioconductor builds; a static job lints the WSL/native-Linux setup script; and a separate Environment workflow installs the core and full profiles live on changes to the script or environment specs, weekly, and on demand. CI runners keep caches, so none of that is clean-machine evidence. Separately, on a fresh, disposable WSL Ubuntu 24.04.4 distribution created for this release and removed afterwards, the full environment installed from the pinned lock file (5.5 and 8 minutes on two fresh distributions), every installed tool reported its version, the R stack loaded, and a synthetic yeast count-matrix project from the 0.29.0 validation reproduced its previously recorded 709 differentially expressed genes end to end. Re-running the installer on the finished environment changed nothing and finished in under two minutes; after an R package was deliberately removed, the installer refused an unrequested rebuild, named the broken packages, and the authorised rebuild (`BULKSEQ_REBUILD=1`, the Rebuild button in Check Environment) recovered the environment in 6.5 minutes; with no network, the installer stops with a one-line message naming the download URL and the cause.
+
+### What changed in 0.30.1
+
+- `run_summary.json`, `run_summary.txt`, and `tools_references.txt` report the app and workflow version that actually executed, read from `workflow/workflow_metadata.yaml` (the app now records its own version there when it copies the workflow; a copy made before 0.30.1 reports the app version as not recorded); the project's creation-time app and workflow versions are kept as separate `project_created_app_version` and `project_created_workflow_version` fields, and the JSON also carries the workflow digest and copy timestamp.
+- `bulkseq run` re-syncs an outdated project's workflow copy before building the Snakemake command, as the graphical interface already did.
+- The Windows and Linux release artifacts exclude the git-tracked GUI benchmark harness under `installer_output/gui-benchmark-runs/`, and the warm-theme-toggle timing test holds only the warm toggles to its ceiling, with a negative control that proves the gate still fails on a forced slow path.
 
 ### What changed in 0.30.0
 

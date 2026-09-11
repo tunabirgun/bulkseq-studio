@@ -1042,3 +1042,101 @@ def test_active_env_prefix_negative_no_marker_returns_none(tmp_path: Path, monke
     monkeypatch.delenv("MAMBA_ROOT_PREFIX", raising=False)
     monkeypatch.setattr(mrs.sys, "executable", str(fake_python))
     assert mrs._active_env_prefix() is None
+
+
+# ---- workflow_provenance: workflow_metadata.yaml, not the creation stamp, is the source ----
+
+
+def _write_workflow_metadata(root: Path, **fields) -> None:
+    import yaml
+    (root / "workflow").mkdir(parents=True, exist_ok=True)
+    (root / "workflow" / "workflow_metadata.yaml").write_text(
+        yaml.safe_dump(fields, sort_keys=False), encoding="utf-8")
+
+
+def test_workflow_provenance_prefers_metadata_over_creation_stamp(tmp_path: Path, mrs) -> None:
+    _write_workflow_metadata(tmp_path, app_version="0.30.0", workflow_version="0.30.1",
+                              workflow_digest="a" * 64, copied_at="2026-09-10T12:00:00")
+    project = {"app_version": "0.29.0", "workflow_version": "0.29.0"}
+
+    prov = mrs.workflow_provenance(tmp_path, project)
+
+    assert prov == {"executed_version": "0.30.1", "executed_app_version": "0.30.0",
+                    "digest": "a" * 64, "copied_at": "2026-09-10T12:00:00"}
+
+
+def test_workflow_provenance_falls_back_when_metadata_absent(tmp_path: Path, mrs) -> None:
+    project = {"app_version": "0.29.0", "workflow_version": "0.29.0"}
+
+    prov = mrs.workflow_provenance(tmp_path, project)
+
+    assert prov == {"executed_version": "0.29.0", "executed_app_version": None, "digest": None, "copied_at": None}
+
+
+@pytest.mark.parametrize("body", ["not: [valid, yaml:", "- just\n- a\n- list\n", "workflow_digest: only\n"])
+def test_workflow_provenance_falls_back_on_malformed_metadata(tmp_path: Path, mrs, body) -> None:
+    (tmp_path / "workflow").mkdir(parents=True)
+    (tmp_path / "workflow" / "workflow_metadata.yaml").write_text(body, encoding="utf-8")
+    project = {"app_version": "0.29.0", "workflow_version": "0.29.0"}
+
+    prov = mrs.workflow_provenance(tmp_path, project)
+
+    assert prov == {"executed_version": "0.29.0", "executed_app_version": None, "digest": None, "copied_at": None}
+
+
+def test_workflow_provenance_negative_never_reports_stamp_when_metadata_disagrees(tmp_path: Path, mrs) -> None:
+    # Regression: project stamp says 0.29.0, but workflow/ was re-synced
+    # to 0.30.1 after creation. The executed version must be 0.30.1, never the stale stamp.
+    _write_workflow_metadata(tmp_path, workflow_version="0.30.1", workflow_digest="b" * 64,
+                              copied_at="2026-09-10T09:00:00")
+    project = {"app_version": "0.29.0", "workflow_version": "0.29.0"}
+
+    prov = mrs.workflow_provenance(tmp_path, project)
+
+    assert prov["executed_version"] != "0.29.0"
+    assert prov["executed_version"] == "0.30.1"
+
+
+def test_workflow_provenance_with_metadata_lacking_app_version(tmp_path: Path, mrs) -> None:
+    # Pre-0.30.1 metadata.yaml has no app_version field; executed_app_version must be None
+    # so the fallback to project.get("app_version") activates in the payload.
+    _write_workflow_metadata(tmp_path, workflow_version="0.30.0", workflow_digest="c" * 64,
+                              copied_at="2026-09-10T08:00:00")
+    project = {"app_version": "0.29.0", "workflow_version": "0.29.0"}
+
+    prov = mrs.workflow_provenance(tmp_path, project)
+
+    assert prov == {"executed_version": "0.30.0", "executed_app_version": None,
+                    "digest": "c" * 64, "copied_at": "2026-09-10T08:00:00"}
+
+
+def test_workflow_version_summary_reports_executed_version_and_creation_stamps(mrs) -> None:
+    payload = {
+        "workflow_version": "0.30.1", "workflow_digest": "c" * 64, "workflow_copied_at": "2026-09-10T09:00:00",
+        "project_created_app_version": "0.29.0", "project_created_workflow_version": "0.29.0",
+    }
+    line = mrs.workflow_version_summary(payload)
+    assert line == ("Workflow version: 0.30.1 (digest cccccccccccc, copied 2026-09-10T09:00:00); "
+                     "project created with app 0.29.0 / workflow 0.29.0")
+
+
+def test_workflow_version_summary_labels_the_stamp_fallback(mrs) -> None:
+    payload = {"workflow_version": "0.29.0", "workflow_digest": None, "workflow_copied_at": None,
+               "project_created_app_version": "0.29.0", "project_created_workflow_version": "0.29.0"}
+    line = mrs.workflow_version_summary(payload)
+    assert line == "Workflow version: 0.29.0 (project creation stamp; no workflow_metadata.yaml)"
+
+
+def test_render_text_and_tools_references_use_executed_workflow_version(mrs) -> None:
+    payload = _base_payload(
+        workflow_version="0.30.1", workflow_digest="d" * 64, workflow_copied_at="2026-09-10T09:00:00",
+        project_created_app_version="0.29.0", project_created_workflow_version="0.29.0",
+        enrichment={}, ppi={}, microarray={}, gene_sets={}, r_packages={}, sanity_checks="",
+    )
+    text = mrs.render_text(payload)
+    refs = mrs.render_tools_references(payload)
+    assert "Workflow version: 0.30.1 (digest dddddddddddd" in text
+    assert "0.29.0" in text  # only inside the "project created with" clause
+    assert "Workflow version: 0.29.0" not in text
+    assert "Workflow version: 0.30.1 (digest dddddddddddd" in refs
+    assert "Workflow version: 0.29.0" not in refs

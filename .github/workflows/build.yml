@@ -126,7 +126,13 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: BulkSeqStudio-windows
-          path: installer_output/*
+          # gui-benchmark-runs/*.py are tracked in git under installer_output/ (the
+          # test harness needs a fixed on-disk path) even though the rest of that
+          # directory is gitignored build output; exclude it so a fresh checkout
+          # does not smuggle the dev-only harness into the release artifact.
+          path: |
+            installer_output/*
+            !installer_output/gui-benchmark-runs/**
           if-no-files-found: error
 
   linux:
@@ -239,5 +245,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: BulkSeqStudio-linux
-          path: installer_output/*
+          # See the Windows job's upload step: gui-benchmark-runs/*.py are tracked
+          # in git under installer_output/ and must not ship as a release asset.
+          path: |
+            installer_output/*
+            !installer_output/gui-benchmark-runs/**
           if-no-files-found: error

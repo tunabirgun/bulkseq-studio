@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.30.1 — 2026-09-11
+
+Patch release: run-provenance, CLI, and CI/build-hygiene fixes from the post-0.30.0 review. No produced number changes; the workflow version is bumped because a workflow script changed, so an existing project re-copies the workflow on its next run.
+
+### Fixed
+
+- **The run summary and tools-references report the workflow version that actually executed.** `run_summary.json`, `run_summary.txt`, and `tools_references.txt` now read the executed workflow version from `workflow/workflow_metadata.yaml` instead of the project's creation-time stamp; when the app re-syncs an outdated project's workflow copy, the reported version now reflects the copy that actually ran instead of the version the project was created under. The app now also records its own version in `workflow_metadata.yaml` when it copies the workflow, so the reported app version is the one that executed; a workflow copy made before 0.30.1 carries no app version and the reports say `not recorded` instead of repeating the creation stamp. The project's original creation stamps are kept as separate `project_created_app_version` and `project_created_workflow_version` fields rather than being overwritten.
+- **`bulkseq run` re-syncs an outdated project workflow copy before running,** matching the interface, instead of running against a stale copy left behind by an earlier app version.
+- **The theme-toggle timing test no longer counts the cold first paint against its budget.** Only the warm toggles are held to the 500 ms ceiling (the warm median and 95th-percentile bounds are unchanged), and a negative control forces every toggle onto the cold path and asserts the gate fails.
+- **Release packages no longer include the GUI benchmark harness.** The two harness scripts under `installer_output/gui-benchmark-runs/` are tracked in git although the rest of `installer_output/` is ignored, so a fresh CI checkout placed them where the `installer_output/*` upload glob swept them into the Windows and Linux release artifacts; both upload steps now exclude that directory, and a test guards the workflow file.
+
 ## 0.30.0 — 2026-09-10
 
 > **Scientific output changes.** *S. pombe* KEGG enrichment and mixed-library-type strandedness now differ from 0.29.1 for the same input. Re-run any result you intend to publish, and see the items marked *scientific* below.

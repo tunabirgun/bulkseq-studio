@@ -109,6 +109,21 @@ def test_full_harness_rejects_nonpositive_validation_timeout() -> None:
         ])
 
 
+def test_release_artifact_excludes_gui_benchmark_harness() -> None:
+    """The two harness scripts live under installer_output/ (a fixed path the
+    harness needs) but must never ship inside a release artifact: they are
+    tracked in git despite the rest of installer_output/ being gitignored, so
+    a fresh CI checkout repopulates gui-benchmark-runs/ before the upload step
+    globs installer_output/*."""
+    workflow = (REPO / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
+    upload_blocks = workflow.split("uses: actions/upload-artifact@v4")[1:]
+    assert len(upload_blocks) == 2, "expected one upload-artifact step per build job"
+    for block in upload_blocks:
+        step = block.split("if-no-files-found")[0]
+        assert "installer_output/*" in step
+        assert "!installer_output/gui-benchmark-runs/**" in step
+
+
 def test_large_input_timeout_is_used_for_validation_dry_run_and_launch() -> None:
     preflight_source = (HARNESS_DIR / "run_gui_preflight.py").read_text(encoding="utf-8")
     full_source = (HARNESS_DIR / "run_gui_full.py").read_text(encoding="utf-8")

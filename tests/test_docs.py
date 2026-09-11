@@ -12,7 +12,7 @@ DOCS_ROOT = ROOT / "docs"
 README_PATH = ROOT / "README.md"
 # The public software version controls the site shell. The deposited benchmark archive has its
 # own version and must not be relabelled when the application advances.
-PUBLIC_VERSION = "0.30.0"
+PUBLIC_VERSION = "0.30.1"
 ARCHIVE_VERSION = "0.26.6"
 
 
@@ -22,6 +22,35 @@ def _product_stem(version: str) -> str:
 
 
 PRODUCT_STEM = _product_stem(PUBLIC_VERSION)
+
+
+def _versions_with_scientific_notice() -> list[str]:
+    """Returns released versions whose changelog section contains '(*scientific*)'."""
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    released_versions = re.findall(r"^## (\d+\.\d+\.\d+)", changelog, re.MULTILINE)
+    changelog_sections = re.split(r"^## (?=\d+\.\d+\.\d+)", changelog, flags=re.MULTILINE)
+    versions_with_scientific = []
+    for i, version in enumerate(released_versions):
+        section = changelog_sections[i + 1] if i + 1 < len(changelog_sections) else ""
+        if "(*scientific*)" in section:
+            versions_with_scientific.append(version)
+    return versions_with_scientific
+
+
+def _latest_scientific_version(public_version: str) -> str:
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    released_versions = re.findall(r"^## (\d+\.\d+\.\d+)", changelog, re.MULTILINE)
+    if public_version not in released_versions:
+        return public_version
+    versions_with_scientific = _versions_with_scientific_notice()
+    start = released_versions.index(public_version)
+    for version in released_versions[start:]:
+        if version in versions_with_scientific:
+            return version
+    return public_version
+
+
+LATEST_SCIENTIFIC_VERSION = _latest_scientific_version(PUBLIC_VERSION)
 EXPECTED_FOOTER = """    <footer class="footer">
       <p>Free and open-source under the MIT License · <a href="https://github.com/tunabirgun" target="_blank" rel="noopener">tunabirgun</a></p>
     </footer>"""
@@ -195,11 +224,11 @@ def _validation_errors(
     released_versions = re.findall(r"^## (\d+\.\d+\.\d+)", changelog, re.MULTILINE)
     if PUBLIC_VERSION in released_versions:
         current_idx = released_versions.index(PUBLIC_VERSION)
+        versions_with_scientific = _versions_with_scientific_notice()
         prior_with_scientific = None
-        changelog_sections = re.split(r"^## (?=\d+\.\d+\.\d+)", changelog, flags=re.MULTILINE)
-        for i in range(current_idx, len(released_versions)):
-            if f"(*scientific*)" in changelog_sections[i+1] if i+1 < len(changelog_sections) else "":
-                prior_with_scientific = released_versions[i]
+        for version in released_versions[current_idx:]:
+            if version in versions_with_scientific:
+                prior_with_scientific = version
                 break
         if prior_with_scientific and f"({prior_with_scientific})" not in pages["index.html"]:
             errors.append(f"index.html: missing notice for scientific output changes in {prior_with_scientific}")
@@ -251,7 +280,7 @@ def _replace_once(source: str, old: str, new: str) -> str:
         ("guide.html", "</section>", f'<img src="assets/screenshot-linux.png" alt="BulkSeq Studio {PUBLIC_VERSION} AppImage">\n</section>', "relabels the earlier Linux screenshot"),
         ("guide.html", "<h2>What is WSL2, and why does Windows need it?</h2>", "<h3>What is WSL2, and why does Windows need it?</h3>", "heading hierarchy skips"),
         ("README.md", f"Version {PUBLIC_VERSION} is the current public release.", f"Version {PUBLIC_VERSION} is a source candidate.", "source-candidate claim"),
-        ("index.html", f"Notice for output changes ({PUBLIC_VERSION})", "Notice for output changes", "missing notice for scientific output changes"),
+        ("index.html", f"Notice for output changes ({LATEST_SCIENTIFIC_VERSION})", "Notice for output changes", "missing notice for scientific output changes"),
     ],
     ids=(
         "stale-product-shell",

@@ -16,7 +16,7 @@ import pytest
 
 from app.cli import EXIT_INVALID, EXIT_OK, main
 from app.cli_banner import banner_text, should_show_banner
-from app.constants import APP_VERSION
+from app.constants import APP_VERSION, WORKFLOW_VERSION
 from app.core.project import ProjectManager
 from app.core.snakemake_runner import build_snakemake_args, build_snakemake_command
 
@@ -196,6 +196,49 @@ def test_run_succeeds_when_no_marker_and_exit_code_is_zero(monkeypatch, project)
     monkeypatch.setattr(snakemake_runner.subprocess, "Popen",
                         lambda argv, **kwargs: _FakeProcess())
     assert main(["run", "-C", str(project)]) == EXIT_OK
+
+
+def test_run_resyncs_a_stale_project_workflow_before_running(monkeypatch, project, capsys) -> None:
+    # Mirrors the GUI's pre-run re-sync: a CLI run must not execute a project's stale
+    # workflow/ copy just because it never goes through main_window.py's launch path.
+    from app.core import snakemake_runner
+
+    meta = project / "workflow" / "workflow_metadata.yaml"
+    meta.write_text("workflow_version: 0.1.0\nworkflow_digest: 0\ncopied_at: '2020-01-01T00:00:00'\n",
+                    encoding="utf-8")
+
+    class _FakeProcess:
+        stdout = iter(["Nothing to be done.\n"])
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(snakemake_runner.subprocess, "Popen", lambda argv, **kwargs: _FakeProcess())
+    assert main(["run", "--mode", "dry-run", "-C", str(project)]) == EXIT_OK
+
+    err = capsys.readouterr().err
+    assert f"Updated project workflow scripts to match this app version ({WORKFLOW_VERSION})." in err
+    assert f"workflow_version: {WORKFLOW_VERSION}" in meta.read_text(encoding="utf-8")
+
+
+def test_run_leaves_a_current_project_workflow_alone(monkeypatch, project, capsys) -> None:
+    from app.core import snakemake_runner
+
+    meta = project / "workflow" / "workflow_metadata.yaml"
+    before = meta.read_text(encoding="utf-8")  # created_project already stamped at WORKFLOW_VERSION
+
+    class _FakeProcess:
+        stdout = iter(["Nothing to be done.\n"])
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(snakemake_runner.subprocess, "Popen", lambda argv, **kwargs: _FakeProcess())
+    assert main(["run", "--mode", "dry-run", "-C", str(project)]) == EXIT_OK
+
+    err = capsys.readouterr().err
+    assert "Updated project workflow scripts" not in err
+    assert meta.read_text(encoding="utf-8") == before
 
 
 def test_cli_does_not_assemble_snakemake_flags_itself() -> None:

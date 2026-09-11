@@ -319,6 +319,15 @@ def cmd_run(args) -> int:
     if root is None:
         return EXIT_INVALID
     config = _load(root)
+    # Mirrors the GUI's pre-run re-sync (main_window.py's launch flow): an existing project
+    # keeps its own copy of workflow/, so an app update's workflow fix would not reach a CLI
+    # run unless re-synced here too. Best-effort: never block the run if the copy fails.
+    try:
+        synced = ProjectManager().sync_workflow_if_outdated(root)
+        if synced:
+            print(f"Updated project workflow scripts to match this app version ({synced}).", file=sys.stderr)
+    except Exception as exc:
+        print(f"Could not refresh project workflow scripts: {exc}", file=sys.stderr)
     if args.mode == "resume" and snakemake_run_state(root).get("locked"):
         use_wsl = sys.platform.startswith("win") and args.exec_profile == "local"
         unlock_cmd = build_snakemake_command(root, config, "unlock", use_wsl=use_wsl,

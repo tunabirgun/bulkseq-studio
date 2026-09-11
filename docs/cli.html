@@ -18,7 +18,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
   <aside class="sidebar">
     <a class="brand" href="index.html">
       <img src="assets/bulkseq_logo.svg" alt="">
-      <span class="brand-copy"><span class="brand-title">BulkSeq Studio</span><span class="ver">v0.30.0</span></span>
+      <span class="brand-copy"><span class="brand-title">BulkSeq Studio</span><span class="ver">v0.30.1</span></span>
     </a>
     <button class="menu-toggle" aria-expanded="false">Menu</button>
     <nav aria-label="Documentation">
@@ -32,7 +32,7 @@ try { if (localStorage.getItem('bsq-theme') === 'dark') document.documentElement
       </ul>
       <div class="ext">
         <a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
-        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.30.0 ↗</a>
+        <a href="https://github.com/tunabirgun/bulkseq-studio/releases/latest" target="_blank" rel="noopener">Download public v0.30.1 ↗</a>
         <a href="faq.html#cite">Citation</a>
       </div>
     </nav>
@@ -71,7 +71,7 @@ bulkseq --help</code></pre>
 </figure>
 
 <div class="note"><span class="t">Before a long run.</span> <code>bulkseq check</code> validates the sample sheet and design, and <code>bulkseq print-command</code> prints the exact Snakemake invocation without executing it. On a cluster, reading that line before submitting is the cheapest way to catch a wrong profile or a missing partition.</div>
-<p><code>bulkseq run [--mode run|dry-run|resume] [--exec-profile local|slurm|kubernetes]</code> executes the workflow to completion and streams its output, going through the same <code>build_snakemake_command()</code> as <code>print-command</code> and the graphical interface. It exits non-zero on a failed run, including a failure that <code>micromamba run</code> would otherwise mask as a successful exit code.</p>
+<p><code>bulkseq run [--mode run|dry-run|resume] [--exec-profile local|slurm|kubernetes]</code> executes the workflow to completion and streams its output, going through the same <code>build_snakemake_command()</code> as <code>print-command</code> and the graphical interface. Since 0.30.1, it first re-syncs an outdated project's <code>workflow/</code> copy the way the graphical interface does, so a project created under an older app version runs the current workflow instead of its stale copy. It exits non-zero on a failed run, including a failure that <code>micromamba run</code> would otherwise mask as a successful exit code.</p>
 
 <h2>Every subcommand</h2>
 <div class="tablewrap" tabindex="0" role="region" aria-label="bulkseq subcommands; scroll horizontally on small screens">
@@ -108,7 +108,7 @@ bulkseq --help</code></pre>
 </div>
 
 <h3>Running to completion</h3>
-<p><code>bulkseq run</code> executes the same argument vector <code>print-command</code> would show you, so read that line before a long study rather than after; a test builds a project both ways and asserts the two argv lists match, aside from a per-run cleanup tag <code>run</code> adds under WSL2.</p>
+<p><code>bulkseq run</code> executes the same argument vector <code>print-command</code> would show you, so read that line before a long study rather than after; a test builds a project both ways and asserts the two argv lists match, aside from a per-run cleanup tag <code>run</code> adds under WSL2. Before building that command, <code>run</code> re-syncs the project's workflow copy if it is outdated, matching the graphical interface.</p>
 <pre><code># see what would run, without running it
 bulkseq run -C myproject --mode dry-run
 echo $?            # 0: the workflow graph resolved; nothing was executed

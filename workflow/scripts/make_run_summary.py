@@ -1111,6 +1111,40 @@ def ppi_provenance_lines(payload: dict) -> list[str]:
     ]
 
 
+def workflow_provenance(root: Path, project: dict) -> dict:
+    # The project's config.yaml project block stamps app/workflow version only at project
+    # creation. app/core/project.py's sync_workflow_if_outdated re-copies workflow/ (and
+    # writes workflow/workflow_metadata.yaml) whenever a newer app opens an existing
+    # project, so that file -- not the stamp -- reflects what actually ran. Fall back to
+    # the creation stamp, explicitly labelled, when the metadata file is absent or unusable.
+    creation_stamp = project.get("workflow_version")
+    meta_path = root / "workflow" / "workflow_metadata.yaml"
+    if meta_path.exists():
+        try:
+            data = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            data = None
+        if isinstance(data, dict) and data.get("workflow_version"):
+            return {
+                "executed_version": str(data["workflow_version"]),
+                "executed_app_version": str(data["app_version"]) if data.get("app_version") else None,
+                "digest": str(data["workflow_digest"]) if data.get("workflow_digest") else None,
+                "copied_at": str(data["copied_at"]) if data.get("copied_at") else None,
+            }
+    return {"executed_version": creation_stamp, "executed_app_version": None, "digest": None, "copied_at": None}
+
+
+def workflow_version_summary(p: dict) -> str:
+    executed = p.get("workflow_version")
+    digest = p.get("workflow_digest")
+    if digest:
+        return (f"Workflow version: {executed} (digest {str(digest)[:12]}, "
+                f"copied {p.get('workflow_copied_at') or 'unknown'}); "
+                f"project created with app {p.get('project_created_app_version')} "
+                f"/ workflow {p.get('project_created_workflow_version')}")
+    return f"Workflow version: {executed} (project creation stamp; no workflow_metadata.yaml)"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
@@ -1140,11 +1174,17 @@ def main() -> int:
     session_text = session_path.read_text(encoding="utf-8") if session_path.exists() else ""
     session_info = parse_session_info(session_text)
     project = config.get("project", {})
+    workflow_prov = workflow_provenance(root, project)
 
     payload = {
         "run_date": datetime.now().isoformat(timespec="seconds"),
-        "app_version": project.get("app_version"),
-        "workflow_version": project.get("workflow_version"),
+        "app_version": workflow_prov["executed_app_version"],
+        "workflow_version": workflow_prov["executed_version"],
+        "workflow_executed_version": workflow_prov["executed_version"],
+        "workflow_digest": workflow_prov["digest"],
+        "workflow_copied_at": workflow_prov["copied_at"],
+        "project_created_app_version": project.get("app_version"),
+        "project_created_workflow_version": project.get("workflow_version"),
         "workflow_git_commit": workflow_git_commit(),
         "environment_lock_md5": env_lock_md5(),
         "environment_spec": environment_spec(),
@@ -1215,7 +1255,7 @@ def render_text(p: dict) -> str:
               f"Project name: {p['project'].get('name')}",
               f"Working directory: {p['project'].get('working_directory')}",
               f"Run date: {p['run_date']}",
-              f"App version: {p['app_version']}    Workflow version: {p['workflow_version']}",
+              f"App version: {p['app_version'] or 'not recorded (workflow copied before 0.30.1)'}    {workflow_version_summary(p)}",
               f"Workflow commit: {p.get('workflow_git_commit') or 'n/a (packaged build)'}",
               f"Environment lock md5: {p.get('environment_lock_md5') or 'n/a'}",
               environment_spec_line(p),
@@ -1333,7 +1373,7 @@ def render_tools_references(p: dict) -> str:
     lines = ["Tools, References and Databases", "===============================", "",
              f"Project: {p['project'].get('name')}",
              f"Run date: {p['run_date']}",
-             f"App version: {p['app_version']}    Workflow version: {p['workflow_version']}",
+             f"App version: {p['app_version'] or 'not recorded (workflow copied before 0.30.1)'}    {workflow_version_summary(p)}",
              f"Workflow commit: {p.get('workflow_git_commit') or 'n/a (packaged build)'}",
              f"Environment lock md5: {p.get('environment_lock_md5') or 'n/a'}",
              environment_spec_line(p),
