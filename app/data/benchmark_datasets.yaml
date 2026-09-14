@@ -375,3 +375,293 @@ benchmarks:
       - {sample_id: GSM154628, condition: cbc2}
       - {sample_id: GSM154629, condition: cbc2}
       - {sample_id: GSM154631, condition: cbc2}
+  - id: fg_spores_mycelium_paired
+    name: Fusarium graminearum PH-1 spores vs mycelium paired-end
+    organism_name: Fusarium graminearum PH-1
+    reference_preset: Fusarium graminearum PH-1
+    genome_size_category: fungal
+    contrast:
+      name: spores_vs_mycelium
+      factor: condition
+      numerator: spores
+      denominator: mycelium
+      reference_level: mycelium
+    reference:
+      source: NCBI RefSeq
+      release: RefSeq ASM24013v3
+      assembly: ASM24013v3
+      annotation_format: gtf
+      genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/240/135/GCF_000240135.3_ASM24013v3/GCF_000240135.3_ASM24013v3_genomic.fna.gz
+      annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/240/135/GCF_000240135.3_ASM24013v3/GCF_000240135.3_ASM24013v3_genomic.gtf.gz
+      genome_md5: ac33f0ca12087c03a69ee83557c2c586
+      annotation_md5: 0b3da4174e6bc37111a3b6c7792c2cf1
+    source_study: PRJNA239711 (SRP039087)
+    study_title: Genome-wide gene expression analysis of Fusarium graminearum isolate PH-1 in spores and
+      mycelium
+    geo_series: GSE55477
+    source_publication: Zhao et al. (2014) BMC Genomics 15:191, DOI 10.1186/1471-2164-15-191 (PubMed 24625133),
+      the publication ENA links from PRJNA239711
+    description: >-
+      Six-sample paired-end developmental contrast in the reference Fusarium graminearum strain PH-1: three
+      spore and three mycelium biological replicates, 90 bp mates on an Illumina HiSeq 2000. This is the
+      primary fungal guardrail benchmark: a compact (~36 Mb) genome, a large and stable differential signal
+      between two developmental stages, and an unstranded library, so a run exercises the STAR + featureCounts
+      + DESeq2 route and the KEGG/STRING fungal enrichment path end to end in well under an hour of compute.
+    notes:
+      - One ENA run per biological sample; three biological replicates per developmental stage, as stated
+        in the study's own overall design.
+      - organism_name names the bundled Fusarium graminearum PH-1 reference preset, which is also the sequenced
+        strain here (ENA scientific_name Fusarium graminearum PH-1, taxon 229533).
+      - 'No Bioconductor OrgDb exists for F. graminearum: GO comes from g:Profiler (fgraminearum), KEGG
+        uses organism code fgr with locus_tag keys, and STRING uses taxon 229533.'
+      - The library is unstranded; the pipeline auto-detects strandedness, so a detected value other than
+        0 means the run, not the catalogue, has drifted.
+      - Use allow_pending_sra validation until the FASTQ files are downloaded. Subset download ~5.4 GB.
+    expected:
+      status: first recorded in the 0.2x-era runs; the STAR + featureCounts + DESeq2 result was reproduced
+        from FASTQ under workflow version 0.31.0 on 2026-09-13, its count matrix and DESeq2 table identical
+        to a v0.29.1 run of the same reads
+      de_genes: 5734
+      de_criterion: padj < 0.05, no log2 fold-change filter
+      de_up_abs_log2fc_gt_1: 2723
+      de_down_abs_log2fc_gt_1: 2478
+      de_route: STAR + featureCounts + DESeq2
+      strandedness: 0
+      strandedness_basis: auto-inferred as 0 (unstranded) on all six samples in the 0.31.0 reproduction
+    samples:
+      - sample_id: spores_1
+        condition: spores
+        replicate: 1
+        batch: srp039087
+        layout: paired
+        original_accession: SRR1179892
+        geo_accession: GSM1337550
+        experiment_accession: SRX478841
+        read_count: 6600511
+        base_count: 1188091980
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR117/002/SRR1179892/SRR1179892_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR117/002/SRR1179892/SRR1179892_2.fastq.gz
+        fastq_1_md5: f7fbd6717cf122f12cc0191bdf49cac2
+        fastq_2_md5: 5a892e96f881bb3079b501322ab2036f
+        download_bytes: 995613553
+      - sample_id: spores_2
+        condition: spores
+        replicate: 2
+        batch: srp039087
+        layout: paired
+        original_accession: SRR1179893
+        geo_accession: GSM1337551
+        experiment_accession: SRX478842
+        read_count: 6920185
+        base_count: 1245633300
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR117/003/SRR1179893/SRR1179893_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR117/003/SRR1179893/SRR1179893_2.fastq.gz
+        fastq_1_md5: 5f70597fcf9a5b41c7d97ae936daab74
+        fastq_2_md5: d680e6de354d3572bf8ad488d321ab87
+        download_bytes: 1104442333
+      - sample_id: spores_3
+        condition: spores
+        replicate: 3
+        batch: srp039087
+        layout: paired
+        original_accession: SRR1179894
+        geo_accession: GSM1337552
+        experiment_accession: SRX478843
+        read_count: 6787007
+        base_count: 1221661260
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR117/004/SRR1179894/SRR1179894_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR117/004/SRR1179894/SRR1179894_2.fastq.gz
+        fastq_1_md5: 6c628fff27e10d5f43a7fa3140a204ec
+        fastq_2_md5: c1831a8927ec2f856f00704eb5f628e1
+        download_bytes: 1020429589
+      - sample_id: mycelium_1
+        condition: mycelium
+        replicate: 1
+        batch: srp039087
+        layout: paired
+        original_accession: SRR1179895
+        geo_accession: GSM1337553
+        experiment_accession: SRX478844
+        read_count: 6395973
+        base_count: 1151275140
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR117/005/SRR1179895/SRR1179895_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR117/005/SRR1179895/SRR1179895_2.fastq.gz
+        fastq_1_md5: 4b0f821e6e4964be3572f11e6f37ad9a
+        fastq_2_md5: 333ac71e3914f86bd2e6afff7e2ed771
+        download_bytes: 971925804
+      - sample_id: mycelium_2
+        condition: mycelium
+        replicate: 2
+        batch: srp039087
+        layout: paired
+        original_accession: SRR1179896
+        geo_accession: GSM1337554
+        experiment_accession: SRX478845
+        read_count: 5572223
+        base_count: 1003000140
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR117/006/SRR1179896/SRR1179896_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR117/006/SRR1179896/SRR1179896_2.fastq.gz
+        fastq_1_md5: 2edcbe4625e56b41fb78a2e9e25364ba
+        fastq_2_md5: b6aafa35cfef90d540c3e17dabd21bb6
+        download_bytes: 800984270
+      - sample_id: mycelium_3
+        condition: mycelium
+        replicate: 3
+        batch: srp039087
+        layout: paired
+        original_accession: SRR1179897
+        geo_accession: GSM1337555
+        experiment_accession: SRX478846
+        read_count: 5583334
+        base_count: 1005000120
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR117/007/SRR1179897/SRR1179897_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR117/007/SRR1179897/SRR1179897_2.fastq.gz
+        fastq_1_md5: f6906f497f2b423e491b89039c09c210
+        fastq_2_md5: 1ae29b13a4c609a4772f9cf383e6be4c
+        download_bytes: 800338320
+  - id: fg_heat_shock_paired
+    name: Fusarium graminearum Z-3639 heat-shock paired-end
+    organism_name: Fusarium graminearum PH-1
+    reference_preset: Fusarium graminearum PH-1
+    genome_size_category: fungal
+    contrast:
+      name: temp_37_vs_temp_25
+      factor: condition
+      numerator: temp_37
+      denominator: temp_25
+      reference_level: temp_25
+    reference:
+      source: NCBI RefSeq
+      release: RefSeq ASM24013v3
+      assembly: ASM24013v3
+      annotation_format: gtf
+      genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/240/135/GCF_000240135.3_ASM24013v3/GCF_000240135.3_ASM24013v3_genomic.fna.gz
+      annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/240/135/GCF_000240135.3_ASM24013v3/GCF_000240135.3_ASM24013v3_genomic.gtf.gz
+      genome_md5: ac33f0ca12087c03a69ee83557c2c586
+      annotation_md5: 0b3da4174e6bc37111a3b6c7792c2cf1
+    source_study: PRJNA314297 (SRP071140)
+    study_title: RNA-seq analysis of Fusarium graminearum Z-3639 in heat stress
+    geo_series: GSE78885
+    source_publication: Bui et al. (2016) Scientific Reports 6:28154, DOI 10.1038/srep28154 (PubMed 27306495),
+      the publication ENA links from PRJNA314297
+    description: >-
+      Six-sample paired-end heat-shock contrast in Fusarium graminearum wild-type strain Z-3639: three cultures
+      held at 25 C and three shifted to 37 C for 15 min, 151 bp mates on an Illumina HiSeq 2000. The library
+      is reverse-stranded, which makes this the catalogue's strandedness case: it is the dataset that exposes
+      a strandedness regression, because counting it as unstranded changes the differential result rather
+      than merely slowing it down.
+    notes:
+      - >-
+        The sequenced strain is the wild type Z-3639 (ENA scientific_name Fusarium graminearum, taxon 5518);
+        reads are mapped to the bundled Fusarium graminearum PH-1 reference preset, and the PH-1 taxon 229533
+        is used as the STRING species proxy. Interpret strain-specific loci accordingly.
+      - >-
+        Reverse-stranded library: the 0.2x-era runs counted it with featureCounts -s 2. The pipeline auto-detects
+        strandedness, so a detected value other than 2 is a regression in detection, not a property of the
+        data.
+      - 'No Bioconductor OrgDb exists for F. graminearum: GO comes from g:Profiler (fgraminearum), KEGG
+        uses organism code fgr with locus_tag keys, and STRING uses taxon 229533.'
+      - Three biological replicates per temperature, one ENA run each, as stated in the study's own overall
+        design.
+      - Use allow_pending_sra validation until the FASTQ files are downloaded. Subset download ~9.5 GB.
+    expected:
+      status: first recorded in the 0.2x-era runs; the STAR + featureCounts + DESeq2 result was reproduced
+        from FASTQ under workflow version 0.31.0 on 2026-09-13, its count matrix and DESeq2 table identical
+        to a v0.29.1 run of the same reads
+      de_genes: 5836
+      de_criterion: padj < 0.05, no log2 fold-change filter, settled by the 0.31.0 reproduction (the 0.11.0
+        changelog stated the count without a significance threshold)
+      de_route: STAR + featureCounts + DESeq2 at -s 2; the HISAT2 route gave 5,812 in the same 0.11.0 validation
+      strandedness: 2
+      strandedness_basis: counted with featureCounts -s 2 in the 0.2x-era runs
+    samples:
+      - sample_id: temp_25_1
+        condition: temp_25
+        replicate: 1
+        batch: srp071140
+        layout: paired
+        original_accession: SRR3203806
+        geo_accession: GSM2080415
+        experiment_accession: SRX1613192
+        read_count: 8656160
+        base_count: 2614160320
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR320/006/SRR3203806/SRR3203806_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR320/006/SRR3203806/SRR3203806_2.fastq.gz
+        fastq_1_md5: 93cc90071eec60beaa7a7e685a4a2618
+        fastq_2_md5: 701873b0c02cace783bfc51cd2f5fcb9
+        download_bytes: 1758487638
+      - sample_id: temp_25_2
+        condition: temp_25
+        replicate: 2
+        batch: srp071140
+        layout: paired
+        original_accession: SRR3203807
+        geo_accession: GSM2080416
+        experiment_accession: SRX1613193
+        read_count: 7952448
+        base_count: 2401639296
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR320/007/SRR3203807/SRR3203807_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR320/007/SRR3203807/SRR3203807_2.fastq.gz
+        fastq_1_md5: 557a50a345209d74c1af4caab81b7672
+        fastq_2_md5: d0563b5ae1a86cd842dd60fdda5da7dc
+        download_bytes: 1621215801
+      - sample_id: temp_25_3
+        condition: temp_25
+        replicate: 3
+        batch: srp071140
+        layout: paired
+        original_accession: SRR3203808
+        geo_accession: GSM2080417
+        experiment_accession: SRX1613194
+        read_count: 8835715
+        base_count: 2668385930
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR320/008/SRR3203808/SRR3203808_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR320/008/SRR3203808/SRR3203808_2.fastq.gz
+        fastq_1_md5: 2beda5b1a06ec5a953dda06c723ab3bf
+        fastq_2_md5: 154badc7851236cef279e8796e55292c
+        download_bytes: 1819190075
+      - sample_id: temp_37_1
+        condition: temp_37
+        replicate: 1
+        batch: srp071140
+        layout: paired
+        original_accession: SRR3203809
+        geo_accession: GSM2080418
+        experiment_accession: SRX1613195
+        read_count: 9460409
+        base_count: 2857043518
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR320/009/SRR3203809/SRR3203809_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR320/009/SRR3203809/SRR3203809_2.fastq.gz
+        fastq_1_md5: 64c438d3bd6a18f84c93ba94bd6a9af9
+        fastq_2_md5: df68fff9a41700fbfdc8980b4ec28648
+        download_bytes: 1908449085
+      - sample_id: temp_37_2
+        condition: temp_37
+        replicate: 2
+        batch: srp071140
+        layout: paired
+        original_accession: SRR3203810
+        geo_accession: GSM2080419
+        experiment_accession: SRX1613196
+        read_count: 9277129
+        base_count: 2801692958
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR320/000/SRR3203810/SRR3203810_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR320/000/SRR3203810/SRR3203810_2.fastq.gz
+        fastq_1_md5: 2a2a48c3cbc1f764d68d06d4858dc8a9
+        fastq_2_md5: c4d188d4bd9db62b62dff1f513046520
+        download_bytes: 960665649
+      - sample_id: temp_37_3
+        condition: temp_37
+        replicate: 3
+        batch: srp071140
+        layout: paired
+        original_accession: SRR3203811
+        geo_accession: GSM2080420
+        experiment_accession: SRX1613197
+        read_count: 10278136
+        base_count: 3103997072
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR320/001/SRR3203811/SRR3203811_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR320/001/SRR3203811/SRR3203811_2.fastq.gz
+        fastq_1_md5: 78373193d1b0157df7e731306ea49103
+        fastq_2_md5: 92e5e7b3a6b0db64becac63fa5e65169
+        download_bytes: 2094381103

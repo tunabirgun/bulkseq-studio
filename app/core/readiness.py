@@ -80,11 +80,15 @@ BIOINFORMATICS_TOOLS = {
     **OPTIONAL_ROUTE_TOOLS,
 }
 
-# The R-package probe LOAD-tests the whole Bioconductor stack (requireNamespace loads each
-# namespace + its compiled code), which is slow cold — measured ~9s warm, so allow generous
-# headroom on a cold/slow machine. It runs on a background thread (ReadinessCheckThread), so a
-# long wait never blocks the UI. A short timeout here would false-fail a healthy-but-cold env.
-R_PROBE_TIMEOUT_SEC = 120
+# Named phases the check reports while it runs, so the dialog can say what it is waiting on
+# instead of showing one frozen line while the slowest probe runs.
+PHASE_TOOLS = "Checking bioinformatics tools"
+PHASE_WSL = "Checking the WSL distribution"
+
+
+def _no_phase(text: str) -> None:
+    """Default for callers that do not report progress (the CLI, the tests)."""
+
 
 WSL_ENV_NAME = "bulkseq"
 WSL_TOOLS = {
@@ -127,6 +131,24 @@ _R_PACKAGES_ALL = ("DESeq2", "edgeR", "limma", "GSVA", "clusterProfiler", "GO.db
                    "org.At.tair.db", "org.Bt.eg.db", "org.Ce.eg.db", "org.Dm.eg.db", "org.Dr.eg.db", "org.Gg.eg.db", "org.Hs.eg.db", "org.Mm.eg.db", "org.Rn.eg.db", "org.Sc.sgd.db", "org.Ss.eg.db")
 
 R_ANALYSIS_PACKAGES = _R_PACKAGES_ALL
+
+# What the R load test costs: it LOADS each namespace (requireNamespace runs its compiled code),
+# so the cost scales with the list -- measured ~9 s warm and ~100 s cold on the first launch
+# after an update, for the 49 packages above, i.e. ~2 s per package cold on top of R's start-up.
+# The timeout is derived from them, so adding a package widens the allowance instead of
+# leaving a fixed number that false-fails a healthy-but-cold environment.
+_R_PROBE_STARTUP_SEC = 30
+_R_PROBE_COLD_SEC_PER_PACKAGE = 2
+
+
+def r_probe_timeout(packages: tuple[str, ...]) -> int:
+    """Seconds to allow the R-package load test, derived from the list it loads."""
+    return _R_PROBE_STARTUP_SEC + _R_PROBE_COLD_SEC_PER_PACKAGE * len(packages)
+
+
+PHASE_R_STACK = ("Load-testing the R and Bioconductor stack "
+                 "(this can take about two minutes on the first run after an update)")
+
 
 
 def _env_search_path() -> str:
@@ -184,7 +206,7 @@ def _tool_item(name: str, command: str, detail: str, ok: bool, purpose: str,
     return ReadinessItem(name, "REVIEW_REQUIRED", detail, purpose)
 
 
-def check_readiness() -> list[ReadinessItem]:
+def check_readiness(on_phase=_no_phase) -> list[ReadinessItem]:
     is_windows = sys.platform.startswith("win")
     items: list[ReadinessItem] = []
     items.append(ReadinessItem("Python", "PASS", sys.executable, "GUI"))
@@ -207,6 +229,7 @@ def check_readiness() -> list[ReadinessItem]:
     # the profile split is the WSL probe's business; on Linux it is the environment check.
     native_profile = "full" if is_windows else installed_profile(
         _native_profile_marker(), _which_in_env("Rscript") is not None)
+    on_phase(PHASE_TOOLS)
     for command, purpose in BIOINFORMATICS_TOOLS.items():
         found = _which_in_env(command)
         not_found = "not found on PATH or inside this Windows session" if is_windows else "not found on PATH"
@@ -219,6 +242,7 @@ def check_readiness() -> list[ReadinessItem]:
         # broken ext4.vhdx passes shutil.which yet fails every `wsl -- bash`). Probe a real
         # launch so a no-distro machine gets a clear "install a distribution" action instead
         # of a confusing "micromamba missing" that no in-WSL install can fix.
+        on_phase(PHASE_WSL)
         if shutil.which("wsl") is None:
             items.append(ReadinessItem("WSL distribution", "REVIEW_REQUIRED",
                                        "wsl.exe is not available", "Linux execution"))
@@ -227,7 +251,7 @@ def check_readiness() -> list[ReadinessItem]:
         elif wsl_has_working_distro():
             items.append(ReadinessItem("WSL distribution", "PASS",
                                        "a Linux distribution is installed and starts", "Linux execution"))
-            items.extend(check_wsl_bulkseq_environment())
+            items.extend(check_wsl_bulkseq_environment(on_phase=on_phase))
         else:
             items.append(ReadinessItem("WSL distribution", "REVIEW_REQUIRED",
                                        "no Linux distribution is installed in WSL, or it will not start "
@@ -235,6 +259,7 @@ def check_readiness() -> list[ReadinessItem]:
             items.append(ReadinessItem(f"WSL env:{WSL_ENV_NAME}", "REVIEW_REQUIRED",
                                        "waiting for a WSL Linux distribution", "Linux bioinformatics tools"))
     else:
+        on_phase(PHASE_R_STACK)
         items.append(_native_r_packages_item(native_profile))
     return items
 
@@ -246,7 +271,8 @@ def _native_profile_marker() -> str | None:
         return None
 
 
-def check_wsl_bulkseq_environment(distro: str | None = None, env_name: str = WSL_ENV_NAME) -> list[ReadinessItem]:
+def check_wsl_bulkseq_environment(distro: str | None = None, env_name: str = WSL_ENV_NAME,
+                                  on_phase=_no_phase) -> list[ReadinessItem]:
     if shutil.which("wsl") is None:
         return [ReadinessItem(f"WSL env:{env_name}", "REVIEW_REQUIRED", "wsl.exe is not available", "Linux bioinformatics tools")]
 
@@ -286,6 +312,7 @@ def check_wsl_bulkseq_environment(distro: str | None = None, env_name: str = WSL
     # costs about a second, and Check Environment is on the first-run path. A tool absent from
     # the parsed output (truncated by the timeout, or never printed) is treated as missing, not
     # silently passed.
+    on_phase(PHASE_TOOLS)
     batch_result = _run_wsl(distro, _wsl_batched_tool_probe_command(env_name, tools),
                              timeout=_batch_probe_timeout(tools))
     parsed = _parse_batched_tool_probe(batch_result.stdout)
@@ -307,7 +334,9 @@ def check_wsl_bulkseq_environment(distro: str | None = None, env_name: str = WSL
         # analysis stack broken for an environment that was installed exactly as asked.
         items.append(_r_packages_item("WSL R packages", "", False, profile))
         return items
-    rp = _run_wsl(distro, _wsl_r_packages_probe_command(env_name, R_ANALYSIS_PACKAGES), timeout=R_PROBE_TIMEOUT_SEC)
+    on_phase(PHASE_R_STACK)
+    rp = _run_wsl(distro, _wsl_r_packages_probe_command(env_name, R_ANALYSIS_PACKAGES),
+                  timeout=r_probe_timeout(R_ANALYSIS_PACKAGES))
     items.append(_r_packages_item("WSL R packages", _short_output(rp), rp.returncode == 0, profile))
     return items
 
@@ -405,7 +434,7 @@ def _r_packages_check_code(packages: tuple[str, ...]) -> str:
     # presence — a package can be installed yet fail to load when a transitive dependency like
     # GO.db was dropped, or an r-base bump left it ABI-incompatible. A presence check
     # (installed.packages) would call that "OK" and hide the exact break this probe exists to
-    # catch. This is why the caller gives it R_PROBE_TIMEOUT_SEC: a cold full-stack load is slow.
+    # catch. This is why the caller derives its timeout from the list: a cold load is slow.
     pkg_vec = ", ".join(f'"{p}"' for p in packages)
     return (
         f'p<-c({pkg_vec}); '
@@ -443,7 +472,8 @@ def _native_r_packages_item(profile: str = "full") -> ReadinessItem:
         return _r_packages_item("R packages", "Rscript not on PATH", False, profile)
     try:
         rp = subprocess.run([rscript, "-e", _r_packages_check_code(R_ANALYSIS_PACKAGES)],
-                            capture_output=True, text=True, timeout=R_PROBE_TIMEOUT_SEC, check=False)
+                            capture_output=True, text=True,
+                            timeout=r_probe_timeout(R_ANALYSIS_PACKAGES), check=False)
         text = (rp.stdout or rp.stderr or "").strip()
         out = text.splitlines()[-1][:240] if text else ""
         return _r_packages_item("R packages", out, rp.returncode == 0, profile)

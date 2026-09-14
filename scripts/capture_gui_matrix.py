@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QToolButton,
 )
 
+from app.constants import SCAFFOLD_METADATA_COLUMNS
 from app.core.project import ProjectManager
 from app.ui.main_window import MainWindow
 from app.ui.readiness_dialog import ReadinessDialog, STATE_ACTION, STATE_OPTIONAL, STATE_READY
@@ -131,12 +132,12 @@ def _create_synthetic_project(workspace: Path) -> Path:
     manager.save_config(root, config)
     _write_tsv(
         root / "config" / "samples.tsv",
-        ["sample_id", "condition", "layout", "fastq_1", "fastq_2", "replicate", "batch"],
+        list(SCAFFOLD_METADATA_COLUMNS),
         [
-            ["control_1", "control", "single", "", "", 1, "A"],
-            ["control_2", "control", "single", "", "", 2, "B"],
-            ["treated_1", "treated", "single", "", "", 1, "A"],
-            ["treated_2", "treated", "single", "", "", 2, "B"],
+            ["control_1", "Control library 1", "control", "single", "", "", 1, "A"],
+            ["control_2", "Control library 2", "control", "single", "", "", 2, "B"],
+            ["treated_1", "Treated library 1", "treated", "single", "", "", 1, "A"],
+            ["treated_2", "Treated library 2", "treated", "single", "", "", 2, "B"],
         ],
     )
     _write_tsv(

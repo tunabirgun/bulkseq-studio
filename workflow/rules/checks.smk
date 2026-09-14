@@ -82,10 +82,10 @@ if META_MODE:
 # results / Salmon (Salmon infers library type internally and never writes strandedness).
 if not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE or USE_SALMON):
     ALL_CHECKS.append("checks/21_strandedness_qc.json")
-# PCA covariate-structure screen: runs wherever run_deseq2.R writes pca_coordinates.csv, i.e.
-# the DESeq2 engine on single-study fastq, count-matrix and multi-study-meta routes. The
-# limma (microarray) and limma-voom/edgeR routes do not produce that file.
-if not (MICROARRAY_MODE or DE_RESULTS_MODE or ALT_DE_MODE):
+# PCA covariate-structure screen: runs wherever the DE rule writes pca_coordinates.csv, i.e.
+# every route that fits a local model (DESeq2, edgeR, limma-voom, microarray limma). The
+# external-results route has no expression matrix to compute PCs from.
+if not DE_RESULTS_MODE:
     ALL_CHECKS.append("checks/23_covariate_structure_qc.json")
 
 
@@ -200,7 +200,7 @@ if not DE_RESULTS_MODE:
             "--samples {input.samples} --out {output}"
 
 
-if not (MICROARRAY_MODE or DE_RESULTS_MODE or ALT_DE_MODE):
+if not DE_RESULTS_MODE:
 
     rule covariate_structure_check:
         input:

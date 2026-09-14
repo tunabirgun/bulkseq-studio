@@ -1,10 +1,11 @@
-"""Verified replacement for tests/test_packaging_spec.py::
-test_release_script_creates_release_after_expected_missing_release_probe.
+"""Behavioural tests for scripts/release.ps1 against a fake GitHub CLI.
 
-release.ps1 now asserts a clean tree and HEAD == @{u}, passes --target, and reads the
-published release back, so the fixture needs a real git repo with an upstream and a fake gh
-that answers `release view <tag> --json ...`. The two extra tests are the negative controls
-for the new gates.
+release.ps1 asserts a clean tree and HEAD == @{u}, gates on the CI workflows, downloads the
+packages from the verified Build packages run, passes --target, and reads the published
+release back. The fixture therefore needs a real git repo with an upstream, a directory
+standing in for the run's artifacts, and a fake gh that answers `run list`, `run download`
+and `release view <tag> --json ...`. Every test other than the happy paths is a negative
+control for one of those gates.
 """
 from __future__ import annotations
 
@@ -21,32 +22,79 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 _FAKE_GH = (
     "@echo off\r\n"
     'echo %*>>"%FAKE_GH_LOG%"\r\n'
-    'if "%1 %2"=="run list" (\r\n'
-    "  powershell -NoProfile -Command \"$runs=@(); "
+    'if "%1 %2 %3"=="run list --workflow" goto :envlist\r\n'
+    'if "%1 %2"=="run list" goto :runlist\r\n'
+    'if "%1 %2"=="run download" goto :download\r\n'
+    'if "%1 %2"=="release view" goto :releaseview\r\n'
+    'if "%1 %2"=="release create" exit /b 0\r\n'
+    "exit /b 2\r\n"
+    "\r\n"
+    ":envlist\r\n"
+    "powershell -NoProfile -Command \"$c=$(if ($env:RELEASE_BREAK -eq 'env-fail') {'failure'} "
+    "else {'success'}); $d=$(if ($env:RELEASE_BREAK -eq 'env-old') "
+    "{(Get-Date).ToUniversalTime().AddDays(-60)} else {(Get-Date).ToUniversalTime()}); "
+    "ConvertTo-Json -Depth 4 -InputObject @([pscustomobject]"
+    "@{conclusion=$c; status='completed'; createdAt=$d.ToString('o')})\"\r\n"
+    "exit /b 0\r\n"
+    "\r\n"
+    ":runlist\r\n"
+    "powershell -NoProfile -Command \"$runs=@(); "
     "if ($env:RELEASE_BREAK -ne 'build-missing') { "
-    "$runs += [pscustomobject]@{workflowName='Build packages'; status=$(if ($env:RELEASE_BREAK -eq 'in-progress') {'in_progress'} else {'completed'}); conclusion='success'} "
+    "$runs += [pscustomobject]@{workflowName='Build packages'; databaseId=4242; "
+    "status=$(if ($env:RELEASE_BREAK -eq 'in-progress') {'in_progress'} else {'completed'}); "
+    "conclusion='success'} "
     "}; "
     "if ($env:RELEASE_BREAK -ne 'test-missing') { "
-    "$runs += [pscustomobject]@{workflowName='Tests'; status=$(if ($env:RELEASE_BREAK -eq 'test-in-progress') {'in_progress'} else {'completed'}); conclusion=$(if ($env:RELEASE_BREAK -eq 'test-fail') {'failure'} else {'success'})} "
+    "$runs += [pscustomobject]@{workflowName='Tests'; databaseId=4243; "
+    "status=$(if ($env:RELEASE_BREAK -eq 'test-in-progress') {'in_progress'} else {'completed'}); "
+    "conclusion=$(if ($env:RELEASE_BREAK -eq 'test-fail') {'failure'} else {'success'})} "
     "}; "
     "@($runs) | ConvertTo-Json -Depth 4\"\r\n"
-    "  exit /b 0\r\n"
-    ")\r\n"
-    'if "%1 %2"=="release view" (\r\n'
-    '  if "%4"=="--json" (\r\n'
-    "    powershell -NoProfile -Command \"$a=Get-ChildItem $env:RELEASE_OUTPUT -File | "
+    "exit /b 0\r\n"
+    "\r\n"
+    ":download\r\n"
+    'if "%RELEASE_BREAK%"=="download-fail" goto :downloadfail\r\n'
+    "powershell -NoProfile -Command \"Copy-Item -Path (Join-Path (Join-Path "
+    "$env:RELEASE_ARTIFACTS '%~5') '*') -Destination '%~7' -Force\"\r\n"
+    "exit /b 0\r\n"
+    ":downloadfail\r\n"
+    "1>&2 echo artifact not found\r\n"
+    "exit /b 1\r\n"
+    "\r\n"
+    ":releaseview\r\n"
+    'if not "%4"=="--json" goto :releasemissing\r\n'
+    "powershell -NoProfile -Command \"$a=Get-ChildItem $env:RELEASE_OUTPUT -File | "
     "ForEach-Object { [pscustomobject]@{name=$_.Name; size=$(if ($env:RELEASE_BREAK -eq 'size' "
     "-and $_.Name -like '*.AppImage') {1} else {$_.Length})} } | Where-Object { -not "
     "($env:RELEASE_BREAK -eq 'drop' -and $_.name -like '*.zsync') }; [pscustomobject]"
     "@{assets=@($a); tagName='v0.28.0'; targetCommitish=$env:RELEASE_HEAD} "
     '| ConvertTo-Json -Depth 4"\r\n'
-    "    exit /b 0\r\n"
-    "  )\r\n"
-    "  1>&2 echo release not found& exit /b 1\r\n"
-    ")\r\n"
-    'if "%1 %2"=="release create" exit /b 0\r\n'
-    "exit /b 2\r\n"
+    "exit /b 0\r\n"
+    ":releasemissing\r\n"
+    "1>&2 echo release not found\r\n"
+    "exit /b 1\r\n"
 )
+
+# What the Build packages run attaches, per artifact name. `gh run download -n <name>`
+# lands these files at the root of the target directory (verified against the real
+# artifacts of the v0.30.1 build run), so the fake copies one directory's contents.
+CI_ARTIFACTS = {
+    "BulkSeqStudio-windows": (
+        "BulkSeqStudio-Setup-0.28.0.exe",
+        "BulkSeqStudio-Portable-0.28.0.zip",
+    ),
+    "BulkSeqStudio-linux": (
+        "BulkSeqStudio-0.28.0-x86_64.AppImage",
+        "BulkSeqStudio-0.28.0-x86_64.AppImage.zsync",
+        "BulkSeqStudio-Portable-0.28.0-linux-x86_64.tar.gz",
+    ),
+}
+DOWNLOADED_NAMES = tuple(name for names in CI_ARTIFACTS.values() for name in names)
+
+
+def _artifact_payload(name: str) -> bytes:
+    """Content that only the downloaded copy of a file can have."""
+    return f"from-ci:{name}".encode("ascii")
 
 
 def _git(*args: str, cwd: Path) -> str:
@@ -55,7 +103,8 @@ def _git(*args: str, cwd: Path) -> str:
     return done.stdout.strip()
 
 
-def _release_fixture(tmp_path: Path, *, dirty: bool = False, unpushed: bool = False):
+def _release_fixture(tmp_path: Path, *, dirty: bool = False, unpushed: bool = False,
+                     stale: bool = False):
     root = tmp_path / "release-root"
     (root / "scripts").mkdir(parents=True)
     (root / "app").mkdir()
@@ -64,11 +113,15 @@ def _release_fixture(tmp_path: Path, *, dirty: bool = False, unpushed: bool = Fa
     shutil.copy2(REPO_ROOT / "scripts" / "release.ps1", root / "scripts" / "release.ps1")
     (root / "app" / "constants.py").write_text('APP_VERSION = "0.28.0"\n', encoding="utf-8")
     (root / ".gitignore").write_text("installer_output/\n", encoding="utf-8")
-    for name in ("BulkSeqStudio-Setup-0.28.0.exe", "BulkSeqStudio-Portable-0.28.0.zip",
-                 "BulkSeqStudio-0.28.0-x86_64.AppImage",
-                 "BulkSeqStudio-0.28.0-x86_64.AppImage.zsync",
-                 "BulkSeqStudio-Portable-0.28.0-linux-x86_64.tar.gz"):
-        (output / name).write_bytes(name.encode("ascii"))
+
+    artifacts = tmp_path / "ci-artifacts"
+    for artifact, names in CI_ARTIFACTS.items():
+        (artifacts / artifact).mkdir(parents=True)
+        for name in names:
+            (artifacts / artifact / name).write_bytes(_artifact_payload(name))
+    if stale:
+        for name in DOWNLOADED_NAMES:
+            (output / name).write_bytes(b"stale local build")
 
     remote = tmp_path / "remote.git"
     _git("init", "--bare", str(remote), cwd=tmp_path)
@@ -97,6 +150,7 @@ def _run_release(tmp_path: Path, root: Path, output: Path, break_mode: str = "")
     env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
     env["FAKE_GH_LOG"] = str(log)
     env["RELEASE_OUTPUT"] = str(output)
+    env["RELEASE_ARTIFACTS"] = str(tmp_path / "ci-artifacts")
     env["RELEASE_HEAD"] = _git("rev-parse", "HEAD", cwd=root)
     env["RELEASE_BREAK"] = break_mode
     completed = subprocess.run(
@@ -116,7 +170,7 @@ def test_release_script_creates_release_after_expected_missing_release_probe(tmp
     # The tag must name the verified commit, and the release must be read back afterwards.
     assert f'--target {_git("rev-parse", "HEAD", cwd=root)}' in calls
     assert "--json assets,tagName,targetCommitish" in calls
-    assert "Verified 6 assets" in completed.stdout
+    assert f"Verified {len(DOWNLOADED_NAMES) + 1} assets" in completed.stdout
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
@@ -184,3 +238,53 @@ def test_release_fails_when_workflows_not_completed(tmp_path: Path) -> None:
     assert "in_progress" in completed.stdout + completed.stderr
     assert "expected completed" in completed.stdout + completed.stderr
     assert "release create" not in calls
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
+def test_release_publishes_the_artifacts_of_the_verified_build_run(tmp_path: Path) -> None:
+    """The five packages must come from the Build packages run the gate just approved."""
+    root, output = _release_fixture(tmp_path)
+    completed, calls = _run_release(tmp_path, root, output)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    for artifact in CI_ARTIFACTS:
+        assert f"run download 4242 -n {artifact}" in calls
+    for name in DOWNLOADED_NAMES:
+        assert (output / name).read_bytes() == _artifact_payload(name)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
+def test_release_stops_when_an_artifact_cannot_be_downloaded(tmp_path: Path) -> None:
+    """A failed download must leave nothing behind: the prior local build is cleared first,
+    so there is no same-named file left for a later step to mistake for the CI package."""
+    root, output = _release_fixture(tmp_path, stale=True)
+    completed, calls = _run_release(tmp_path, root, output, "download-fail")
+    assert completed.returncode != 0
+    assert "run download failed" in completed.stdout + completed.stderr
+    assert "release create" not in calls
+    assert not any((output / name).exists() for name in DOWNLOADED_NAMES)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
+def test_release_replaces_a_stale_local_build_with_the_downloaded_one(tmp_path: Path) -> None:
+    """A local build of the same version has the same names and would pass every check."""
+    root, output = _release_fixture(tmp_path, stale=True)
+    completed, _ = _run_release(tmp_path, root, output)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    for name in DOWNLOADED_NAMES:
+        assert (output / name).read_bytes() == _artifact_payload(name)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
+@pytest.mark.parametrize("break_mode,message", [("env-fail", "failure"), ("env-old", "60 days old")])
+def test_release_reports_the_environment_workflow_without_gating_on_it(
+    tmp_path: Path, break_mode, message
+) -> None:
+    """Environment is path-filtered and scheduled: it is reported, never a release gate."""
+    root, output = _release_fixture(tmp_path)
+    completed, calls = _run_release(tmp_path, root, output, break_mode)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert 'run list --workflow Environment' in calls
+    warnings = completed.stdout + completed.stderr
+    assert "Environment workflow last run" in warnings
+    assert message in warnings
+    assert "release create v0.28.0" in calls

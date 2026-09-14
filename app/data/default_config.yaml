@@ -150,6 +150,7 @@ enrichment:
   keytype: null
   kegg_keytype: null
   kegg_organism: null
+  kegg_key_form: null
   taxon_id: null
   # backend: clusterprofiler keeps the auto OrgDb->gprofiler->none chain; set to
   # gprofiler to force the g:Profiler GO route. gprofiler_organism is the g:Profiler

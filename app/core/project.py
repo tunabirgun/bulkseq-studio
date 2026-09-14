@@ -9,7 +9,8 @@ from typing import Any
 
 import yaml
 
-from app.constants import APP_VERSION, PROJECT_DIRS, SAFE_ID_PATTERN, WORKFLOW_VERSION
+from app.constants import (APP_VERSION, PROJECT_DIRS, SAFE_ID_PATTERN, SCAFFOLD_METADATA_COLUMNS,
+                           WORKFLOW_VERSION)
 from app.core.config_models import AppConfig, default_config
 from app.core.paths import (data_path, is_unsupported_unc_path, is_wsl_unc_path,
                             usable_disk_free_bytes, workflow_root)
@@ -158,8 +159,13 @@ class ProjectManager:
         self._write_yaml(root / "config" / "contrasts.yaml", {"contrasts": []})
         self._write_yaml(root / "config" / "gene_sets.yaml", {"gene_sets": {}})
         (root / "config" / "sra_accessions.txt").write_text("", encoding="utf-8")
-        (root / "config" / "samples.auto_generated.tsv").write_text("sample_id\tcondition\tlayout\tfastq_1\tfastq_2\treplicate\tbatch\n", encoding="utf-8")
-        (root / "config" / "samples.tsv").write_text("sample_id\tcondition\tlayout\tfastq_1\tfastq_2\treplicate\tbatch\n", encoding="utf-8")
+        # Written as bytes, not text: write_text translates "\n" to the host's newline, so the
+        # same scaffold produced a CRLF sheet on Windows and an LF one on Linux. save_metadata
+        # preserves whatever terminator it finds, so a new sheet is the one place to settle on
+        # line feeds and keep a project's sample sheet identical wherever it was created.
+        scaffold_header = ("\t".join(SCAFFOLD_METADATA_COLUMNS) + "\n").encode("utf-8")
+        (root / "config" / "samples.auto_generated.tsv").write_bytes(scaffold_header)
+        (root / "config" / "samples.tsv").write_bytes(scaffold_header)
         self._write_yaml(root / "references" / "project_reference.lock.yaml", {"reference": None, "locked": False})
 
         cfg = default_config(safe_name, root)

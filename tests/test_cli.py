@@ -198,6 +198,90 @@ def test_run_succeeds_when_no_marker_and_exit_code_is_zero(monkeypatch, project)
     assert main(["run", "-C", str(project)]) == EXIT_OK
 
 
+def test_run_drains_the_output_queued_while_the_last_line_was_printed(monkeypatch, project) -> None:
+    # The reader thread finishes the stream while the consumer is still inside emit() for an
+    # earlier line, so the tail sits in the queue when the consumer loop ends -- and the tail is
+    # where "Error in rule" appears. Without the post-wait drain those lines are never scanned
+    # and a failed run reports success.
+    import time
+
+    from app.core import snakemake_runner
+
+    class _FakeProcess:
+        stdout = iter(["some progress\n", "more output\n", "Error in rule star_align:\n"])
+
+        def wait(self):
+            return 0
+
+    seen: list[str] = []
+
+    def slow_first_line(line):
+        seen.append(line)
+        if len(seen) == 1:
+            time.sleep(0.4)  # long enough for the reader to queue the rest and exit
+
+    monkeypatch.setattr(snakemake_runner.subprocess, "Popen", lambda argv, **kwargs: _FakeProcess())
+    config = ProjectManager().load_config(project)
+    assert snakemake_runner.run_snakemake_sync(project, config, "run", on_line=slow_first_line) == 1
+    assert seen == ["some progress", "more output", "Error in rule star_align:"]
+
+
+def test_run_takes_a_ctrl_c_while_the_pipe_is_quiet(monkeypatch, project) -> None:
+    # The interrupt must land while nothing is being printed -- a real run is quiet for hours
+    # while an aligner works. A pipe read in the consumer thread swallows it until the next
+    # line arrives (verified: interrupt_main() is not observed inside readline() on a pipe),
+    # so the consumer must be waiting on the queue, not on the pipe.
+    import _thread
+    import os
+    import threading
+    import time
+
+    from app.core import snakemake_runner
+
+    read_fd, write_fd = os.pipe()
+    stream = os.fdopen(read_fd, "r", encoding="utf-8")
+    writer = os.fdopen(write_fd, "w", encoding="utf-8")
+    writer.write("Building DAG of jobs...\n")
+    writer.flush()
+
+    class _FakeProcess:
+        stdout = stream
+
+        def wait(self):  # pragma: no cover - the interrupt lands first
+            return 0
+
+    stopped = []
+
+    def fake_stop(self):  # the real one kills the tree, which is what closes the pipe
+        stopped.append(True)
+        writer.close()
+
+    monkeypatch.setattr(snakemake_runner.subprocess, "Popen", lambda argv, **kwargs: _FakeProcess())
+    monkeypatch.setattr(snakemake_runner.SnakemakeRunner, "stop", fake_stop)
+    config = ProjectManager().load_config(project)
+
+    interrupt = threading.Timer(0.5, _thread.interrupt_main)
+    # Bounds a regression: without it a consumer blocked on the pipe would hang the suite.
+    watchdog = threading.Timer(5.0, writer.close)
+    interrupt.start()
+    watchdog.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            snakemake_runner.run_snakemake_sync(project, config, "run", on_line=lambda line: None)
+        elapsed = time.monotonic() - started
+    finally:
+        interrupt.cancel()
+        watchdog.cancel()
+        for handle in (writer, stream):
+            try:
+                handle.close()
+            except OSError:
+                pass
+    assert stopped == [True], "the interrupt must stop the whole process tree, not just unwind"
+    assert elapsed < 2.0, f"the interrupt took {elapsed:.1f}s to land; it was swallowed by the read"
+
+
 def test_run_resyncs_a_stale_project_workflow_before_running(monkeypatch, project, capsys) -> None:
     # Mirrors the GUI's pre-run re-sync: a CLI run must not execute a project's stale
     # workflow/ copy just because it never goes through main_window.py's launch path.

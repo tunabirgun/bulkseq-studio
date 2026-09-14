@@ -44,6 +44,36 @@ jobs:
           .venv\Scripts\python.exe -m pip install --upgrade pip
           .venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-build.txt -c constraints.txt
 
+      # The frozen build is only as pinned as the environment it is built from: pip resolves
+      # requirements.txt's floors and can satisfy them with something the pins do not name.
+      # This compares what is actually installed against every == pin, by normalized name.
+      - name: Verify the installed dependency set
+        shell: bash
+        run: |
+          PY=$([ -x .venv/bin/python ] && echo .venv/bin/python || echo .venv/Scripts/python.exe)
+          "$PY" -m pip check
+          "$PY" -m pip freeze > "$RUNNER_TEMP/pip-freeze.txt"
+          "$PY" - "$RUNNER_TEMP/pip-freeze.txt" constraints.txt requirements-build.txt <<'PY'
+          import re, sys
+
+          def pins(path):
+              found = {}
+              for line in open(path, encoding="utf-8"):
+                  name, sep, version = line.split("#", 1)[0].strip().partition("==")
+                  if sep:
+                      found[re.sub(r"[-_.]+", "-", name.strip()).lower()] = version.strip()
+              return found
+
+          installed = pins(sys.argv[1])
+          expected = {name: (version, path) for path in sys.argv[2:] for name, version in pins(path).items()}
+          mismatched = [f"{name}: {path} pins {version}, installed {installed.get(name, 'nothing')}"
+                        for name, (version, path) in expected.items() if installed.get(name) != version]
+          print(f"{len(expected)} pinned packages checked against {len(installed)} installed")
+          if mismatched or not expected:
+              print("\n".join(mismatched) or "no pins found to compare")
+              sys.exit(1)
+          PY
+
       - name: Install Inno Setup
         shell: powershell
         run: choco install innosetup --no-progress -y
@@ -126,13 +156,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: BulkSeqStudio-windows
-          # gui-benchmark-runs/*.py are tracked in git under installer_output/ (the
-          # test harness needs a fixed on-disk path) even though the rest of that
-          # directory is gitignored build output; exclude it so a fresh checkout
-          # does not smuggle the dev-only harness into the release artifact.
-          path: |
-            installer_output/*
-            !installer_output/gui-benchmark-runs/**
+          path: installer_output/*
           if-no-files-found: error
 
   linux:
@@ -161,6 +185,36 @@ jobs:
           python3 -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/python -m pip install -r requirements.txt -r requirements-build.txt -c constraints.txt
+
+      # The frozen build is only as pinned as the environment it is built from: pip resolves
+      # requirements.txt's floors and can satisfy them with something the pins do not name.
+      # This compares what is actually installed against every == pin, by normalized name.
+      - name: Verify the installed dependency set
+        shell: bash
+        run: |
+          PY=$([ -x .venv/bin/python ] && echo .venv/bin/python || echo .venv/Scripts/python.exe)
+          "$PY" -m pip check
+          "$PY" -m pip freeze > "$RUNNER_TEMP/pip-freeze.txt"
+          "$PY" - "$RUNNER_TEMP/pip-freeze.txt" constraints.txt requirements-build.txt <<'PY'
+          import re, sys
+
+          def pins(path):
+              found = {}
+              for line in open(path, encoding="utf-8"):
+                  name, sep, version = line.split("#", 1)[0].strip().partition("==")
+                  if sep:
+                      found[re.sub(r"[-_.]+", "-", name.strip()).lower()] = version.strip()
+              return found
+
+          installed = pins(sys.argv[1])
+          expected = {name: (version, path) for path in sys.argv[2:] for name, version in pins(path).items()}
+          mismatched = [f"{name}: {path} pins {version}, installed {installed.get(name, 'nothing')}"
+                        for name, (version, path) in expected.items() if installed.get(name) != version]
+          print(f"{len(expected)} pinned packages checked against {len(installed)} installed")
+          if mismatched or not expected:
+              print("\n".join(mismatched) or "no pins found to compare")
+              sys.exit(1)
+          PY
 
       - name: Build onedir with PyInstaller
         run: .venv/bin/python -m PyInstaller packaging/BulkSeqStudio.spec --noconfirm
@@ -245,9 +299,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: BulkSeqStudio-linux
-          # See the Windows job's upload step: gui-benchmark-runs/*.py are tracked
-          # in git under installer_output/ and must not ship as a release asset.
-          path: |
-            installer_output/*
-            !installer_output/gui-benchmark-runs/**
+          path: installer_output/*
           if-no-files-found: error

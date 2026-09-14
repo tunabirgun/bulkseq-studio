@@ -1,47 +1,26 @@
 from __future__ import annotations
 
-import os
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Callable
 
 import pytest
 
-from app.core.paths import windows_to_wsl_path
+from _runtime import rscript_runtime
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "workflow" / "scripts" / "run_custom_enrichment.R"
 
 
 def _r_runtime(script: Path) -> tuple[list[str], str, Callable[[Path], str]]:
-    rscript = shutil.which("Rscript")
-    if rscript:
-        return [rscript, "--vanilla"], script.as_posix(), lambda path: str(path)
-    wsl = shutil.which("wsl.exe")
-    if os.name == "nt" and wsl:
-        prefix = subprocess.run(
-            [wsl, "--", "bash", "-lc", (
-                'if [ -x "$HOME/micromamba/envs/bulkseq/bin/Rscript" ]; then '
-                'echo "$HOME/micromamba/envs/bulkseq/bin/Rscript"; '
-                'elif [ -x "/root/micromamba/envs/bulkseq/bin/Rscript" ]; then '
-                'echo "/root/micromamba/envs/bulkseq/bin/Rscript"; '
-                'elif [ -x "$HOME/.local/share/mamba/envs/bulkseq/bin/Rscript" ]; then '
-                'echo "$HOME/.local/share/mamba/envs/bulkseq/bin/Rscript"; '
-                'else exit 1; fi'
-            )],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
-        if prefix.returncode == 0 and prefix.stdout.strip():
-            return (
-                [wsl, "--", prefix.stdout.strip(), "--vanilla"],
-                windows_to_wsl_path(script),
-                windows_to_wsl_path,
-            )
-    pytest.skip("Rscript is not available for the custom-enrichment regression")
+    # The pure ordering contract runs in a base-R-only runtime; the engine probe inside
+    # the harness only fires when clusterProfiler is there, so prefer a runtime that has
+    # it and fall back to any R rather than skipping.
+    runtime = rscript_runtime("clusterProfiler") or rscript_runtime()
+    if runtime is None:
+        pytest.skip("Rscript is not available for the custom-enrichment regression")
+    command, convert = runtime
+    return command, convert(script), convert
 
 
 def test_custom_gsea_rank_is_deterministic_and_reports_exact_ties(tmp_path: Path) -> None:

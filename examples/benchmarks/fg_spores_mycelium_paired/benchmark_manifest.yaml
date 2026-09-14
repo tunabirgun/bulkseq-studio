@@ -1,0 +1,58 @@
+id: fg_spores_mycelium_paired
+name: Fusarium graminearum PH-1 spores vs mycelium paired-end
+organism_name: Fusarium graminearum PH-1
+source_study: PRJNA239711 (SRP039087)
+geo_series: GSE55477
+source_publication: Zhao et al. (2014) BMC Genomics 15:191, DOI 10.1186/1471-2164-15-191 (PubMed 24625133),
+  the publication ENA links from PRJNA239711
+selection_policy: 'All six ENA runs of the study: one run per biological sample, three biological replicates
+  per developmental stage.'
+reference_assembly: ASM24013v3
+expected:
+  status: first recorded in the 0.2x-era runs; the STAR + featureCounts + DESeq2 result was reproduced
+    from FASTQ under workflow version 0.31.0 on 2026-09-13, its count matrix and DESeq2 table identical
+    to a v0.29.1 run of the same reads
+  de_genes: 5734
+  de_criterion: padj < 0.05, no log2 fold-change filter
+  de_up_abs_log2fc_gt_1: 2723
+  de_down_abs_log2fc_gt_1: 2478
+  de_route: STAR + featureCounts + DESeq2
+  strandedness: 0
+  strandedness_basis: auto-inferred as 0 (unstranded) on all six samples in the 0.31.0 reproduction
+selected_runs:
+  - sample_id: spores_1
+    geo_accession: GSM1337550
+    experiment_accession: SRX478841
+    run_accession: SRR1179892
+    condition: spores
+    read_count: 6600511
+  - sample_id: spores_2
+    geo_accession: GSM1337551
+    experiment_accession: SRX478842
+    run_accession: SRR1179893
+    condition: spores
+    read_count: 6920185
+  - sample_id: spores_3
+    geo_accession: GSM1337552
+    experiment_accession: SRX478843
+    run_accession: SRR1179894
+    condition: spores
+    read_count: 6787007
+  - sample_id: mycelium_1
+    geo_accession: GSM1337553
+    experiment_accession: SRX478844
+    run_accession: SRR1179895
+    condition: mycelium
+    read_count: 6395973
+  - sample_id: mycelium_2
+    geo_accession: GSM1337554
+    experiment_accession: SRX478845
+    run_accession: SRR1179896
+    condition: mycelium
+    read_count: 5572223
+  - sample_id: mycelium_3
+    geo_accession: GSM1337555
+    experiment_accession: SRX478846
+    run_accession: SRR1179897
+    condition: mycelium
+    read_count: 5583334

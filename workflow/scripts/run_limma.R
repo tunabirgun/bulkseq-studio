@@ -1,20 +1,13 @@
-# Muffle only the benign "package X was built under R version 4.5.3" load warning: the r45 ABI
-# is stable, so the 4.5.3-built conda packages run correctly under the pinned r-base 4.5.2;
-# real warnings still surface. Shadow library()/require() so it works under Snakemake's
-# script runner at any call-stack depth (a top-level globalCallingHandlers does not).
-# Aligning r-base to 4.5.3 would force salmon off 1.10.3 onto the 2.x Rust rewrite, so we
-# muffle the harmless warning instead of changing the benchmarked environment.
-local({
-  .m <- function(f) function(...) withCallingHandlers(f(...), warning = function(w) if (grepl("built under R version", conditionMessage(w), fixed = TRUE)) invokeRestart("muffleWarning"))
-  assign("library", .m(base::library), envir = globalenv())
-  assign("require", .m(base::require), envir = globalenv())
-})
-
 # Microarray differential expression with limma (0.4.0). Reads a normalized
 # log2 expression matrix (from ingest_geo.R) and emits the SAME artifacts as
 # run_deseq2.R (results CSV, up/down, deseq2_objects.rds, normalized, checks
 # 08/09) so figures/enrichment/GOI stay backend-agnostic. The RDS carries
 # assay_kind = "log2_intensity" so the figure scripts skip count-scale transforms.
+
+# Shared engine helpers: load-warning muffling, write_check, GTF annotation, the
+# featureCounts reader, contrast guards and the design-term detectors. Sourced before any
+# library() call so the muffling is installed first.
+source(file.path(snakemake@scriptdir, "de_common.R"))
 
 suppressMessages({
   library(limma)
@@ -36,17 +29,6 @@ alpha <- as.numeric(snakemake@params[["alpha"]])
 lfc_thr <- as.numeric(snakemake@params[["lfc_threshold"]])
 if (is.na(lfc_thr) || lfc_thr < 0) {
   stop("deseq2.lfc_threshold must be a number >= 0 (0 disables the fold-change filter).")
-}
-
-write_check <- function(path, name, status, messages) {
-  esc <- function(s) gsub('"', '\\\\"', s)
-  msg_json <- paste0(
-    sprintf('    {"status": "%s", "message": "%s"}', vapply(messages, `[[`, "", "status"),
-            vapply(lapply(messages, `[[`, "message"), esc, "")),
-    collapse = ",\n")
-  json <- sprintf('{\n  "check": "%s",\n  "status": "%s",\n  "messages": [\n%s\n  ]\n}',
-                  name, status, msg_json)
-  writeLines(json, path)
 }
 
 # ---- Expression matrix (genes x samples, log2 intensities) ------------------
@@ -75,18 +57,13 @@ grp <- coldata[[con_factor]]
 lv <- levels(grp)
 
 # Contrast guards (mirror run_deseq2.R).
-if (!nzchar(numerator) || !nzchar(denominator)) stop("Contrast numerator and denominator must both be set.")
-if (identical(numerator, denominator)) stop("Contrast numerator and denominator must differ.")
-if (!(numerator %in% lv) || !(denominator %in% lv)) {
-  stop(sprintf("Contrast levels '%s'/'%s' not found in factor '%s' (levels: %s).",
-               numerator, denominator, con_factor, paste(lv, collapse = ", ")))
-}
+check_contrast(numerator, denominator, lv, con_factor)
 
 # ---- Design: group-means + optional additive covariates from the formula ----
 # limma here is fit as ~ 0 + grp + covariates; an interaction/nesting operator would be
 # silently stripped by all.vars() below and refit as a plain additive term, so refuse it
 # instead of reassuring the user about a model that was never fitted.
-if (isTRUE(grepl("[:*^/]", design_formula))) {
+if (has_interaction(design_formula)) {
   stop(sprintf(paste0(
     "Design formula '%s' contains an interaction or nesting operator (':', '*', '^', or '/'). ",
     "The limma engine fits an additive group-means design (~ 0 + grp + covariates) and does not ",
@@ -125,18 +102,7 @@ if (min(table(grp)) < 2) {
   design_checks[[length(design_checks) + 1]] <- list(status = "WARNING",
     message = "At least one condition has fewer than two replicates.")
 }
-# A numeric column with few distinct values (batch coded 1/2/3) is fitted as a linear trend,
-# not as a factor; flag it so the user relabels the levels if they meant groups.
-for (v in covariates) {
-  x <- coldata[[v]]
-  n_lv <- length(unique(x[!is.na(x)]))
-  if (is.numeric(x) && n_lv <= 10) design_checks[[length(design_checks) + 1]] <- list(
-    status = "REVIEW_REQUIRED",
-    message = sprintf(paste0(
-      "Design term '%s' is numeric with %d distinct values and is fitted as a continuous covariate ",
-      "(a linear trend), not as a factor. If these are group labels (batch, run, donor), use ",
-      "non-numeric labels such as 'b1', 'b2' so they are modelled as levels."), v, n_lv))
-}
+design_checks <- c(design_checks, numeric_covariate_checks(coldata, covariates))
 design_status <- if (!full_rank) "FAIL" else if (any(vapply(design_checks, function(m)
   identical(m$status, "REVIEW_REQUIRED"), logical(1)))) "REVIEW_REQUIRED" else "PASS"
 write_check(snakemake@output[["design_check"]], "08_metadata_design_qc", design_status, design_checks)
@@ -146,20 +112,20 @@ fit <- lmFit(expr_mat, design)
 contrast_str <- paste0(make.names(numerator), " - ", make.names(denominator))
 cmat <- makeContrasts(contrasts = contrast_str, levels = design)
 fit2 <- contrasts.fit(fit, cmat)
+# Informational companion to the primary padj/|log2FC| call: H0 |log2FC| <= L, so adj.P < alpha is
+# positive evidence the effect EXCEEDS the threshold. treat() is limma's native form of DESeq2's
+# altHypothesis="greaterAbs"; it re-moderates against the threshold, so it is computed from the
+# contrast fit rather than from the eBayes'd object, with the same trend/robust settings. Does not
+# feed the up/down split below.
+L_eq <- require_lfc_threshold(if (lfc_thr > 0) lfc_thr else 1.0)
+treat_tab <- topTreat(treat(fit2, lfc = L_eq, trend = TRUE, robust = TRUE),
+                      number = Inf, sort.by = "none")
 fit2 <- eBayes(fit2, trend = TRUE, robust = TRUE)
 # sort.by="none" keeps topTable in matrix row order (figures index assay(vsd) by
 # order(res$padj) positionally; a pre-sorted res would mis-index the heatmap).
 tt <- topTable(fit2, number = Inf, sort.by = "none", adjust.method = "BH")
 
-# Moderated coefficient standard error used by limma's t statistic. topTable does
-# not expose this column directly, but eBayes stores both factors needed to derive
-# it without approximation: stdev.unscaled * sqrt(posterior residual variance).
-lfc_se <- as.numeric(fit2$stdev.unscaled[, 1] * sqrt(fit2$s2.post))
-names(lfc_se) <- rownames(fit2$coefficients)
-lfc_se <- unname(lfc_se[rownames(tt)])
-if (length(lfc_se) != nrow(tt) || any(!is.finite(lfc_se)) || any(lfc_se <= 0)) {
-  stop("limma produced an invalid moderated log2-fold-change standard error.")
-}
+lfc_se <- moderated_lfc_se(fit2, rownames(tt))
 
 # Map limma columns onto the DESeq2 results schema.
 res <- data.frame(
@@ -184,16 +150,21 @@ dds <- vsd  # same object; make_goi guards counts(dds) -> assay(vsd) for microar
 # expression matrix (sort.by="none"). Fail loudly here if a refactor breaks it.
 stopifnot(identical(rownames(SummarizedExperiment::assay(vsd)), rownames(res)))
 
+# PC1/PC2 for the covariate-structure screen (check 23), from the log2 intensity matrix
+# (run_deseq2.R uses plotPCA on its VST instead).
+write_pca_coordinates(expr_mat, snakemake@output[["pca_coordinates"]])
+
 # ---- Outputs (match run_deseq2.R) -------------------------------------------
 res_out <- res
 res_out$gene_id <- rownames(res_out)
 res_out$symbol <- rownames(res_out)   # microarray rows are already gene symbols
 res_out$biotype <- NA_character_      # not available for probe-collapsed intensities
+res_out$padj_lfc_ge_threshold <- treat_tab$adj.P.Val[match(res_out$gene_id, rownames(treat_tab))]
 res_out <- res_out[order(res_out$padj), ]
 write.csv(res_out, snakemake@output[["results"]], row.names = FALSE)
 write.csv(as.data.frame(expr_mat), snakemake@output[["normalized"]])
 saveRDS(list(dds = dds, res = res, resLFC = resLFC, vsd = vsd,
-             assay_kind = "log2_intensity",
+             assay_kind = "log2_intensity", lfc_threshold_test = "treat",
              symbol_map = setNames(rownames(res), rownames(res))),
         snakemake@output[["rds"]])
 
@@ -212,6 +183,7 @@ deseq_checks <- list(list(status = if (n_sig > 0) "PASS" else "REVIEW_REQUIRED",
 write_check(snakemake@output[["deseq_check"]], "09_deseq2_qc",
             if (n_sig > 0) "PASS" else "REVIEW_REQUIRED", deseq_checks)
 
-writeLines(capture.output(sessionInfo()), snakemake@output[["session"]])
+writeLines(c(sprintf("Fold-change threshold test: treat (H0 |log2FC| <= %g)", L_eq), "",
+             capture.output(sessionInfo())), snakemake@output[["session"]])
 sink(type = "message")
 close(log_con)

@@ -22,6 +22,8 @@ suppressMessages({
   library(svglite)
 })
 source(file.path(snakemake@scriptdir, "figure_style.R"))
+# sample_label_map(): the shared sample_id -> display-label rule (functions only, no dependency).
+source(file.path(snakemake@scriptdir, "de_common.R"))
 
 log_con <- file(snakemake@log[[1]], open = "wt")
 sink(log_con, type = "message")
@@ -261,12 +263,17 @@ if (length(present) < 1) {
 # ---- Focused heatmap (z-scored VST) ----------------------------------------
 mat <- assay(vsd)[present, , drop = FALSE]
 rownames(mat) <- lab_for(rownames(vsd)[present])
+# Per-sample column labels (optional library_name; sample id otherwise). Identity map for a sheet
+# without the column. The exported GOI expression CSV below keeps its sample_id column names.
+sample_lab <- sample_label_map(colData(dds))
+colnames(mat) <- unname(sample_lab[colnames(mat)])
 mat <- t(scale(t(mat)))
 # Row z-scores need a zero-anchored diverging ramp with symmetric breaks (as in
 # make_figures.R), so z=0 is the neutral colour rather than the data midpoint.
 zlim <- as.numeric(gp("heatmap_zlim", 2.5))
 mat <- pmin(pmax(mat, -zlim), zlim)
 ann <- as.data.frame(colData(dds)[, group_var, drop = FALSE])
+rownames(ann) <- unname(sample_lab[rownames(ann)])  # pheatmap matches annotation rows by name
 ph <- pheatmap(mat, scale = "none", annotation_col = ann, show_rownames = TRUE,
                show_colnames = sample_labels,  # hide sample names to declutter a many-sample run
                labels_row = italic_labels(rownames(mat), gene_symbol_italic),
@@ -283,6 +290,13 @@ ph <- pheatmap(mat, scale = "none", annotation_col = ann, show_rownames = TRUE,
 gutter <- min(2.6, 0.6 + 0.070 * max(nchar(rownames(mat)), 1))
 ww <- min(max(gutter + ncol(mat) * 10 / 72 + 1.7, fig_w), 44)
 hh <- min(max(length(present) * 12 / 72 + 3.1, 4), 44)
+# A library name is longer than a sample id, and pheatmap draws the column labels rotated below
+# the map, so the estimate above can be shorter than the drawn gtable and would clip them. Grow
+# the canvas to the gtable's own height in that case; a sheet without library names keeps the
+# estimate it has today.
+if (!identical(unname(sample_lab), names(sample_lab))) {
+  hh <- min(max(hh, grid::convertHeight(sum(ph$gtable$heights), "in", valueOnly = TRUE)), 44)
+}
 png(out[["heatmap_png"]], width = ww, height = hh, units = "in", res = fig_dpi)
 grid::grid.newpage(); grid::grid.draw(ph$gtable); dev.off()
 svglite(out[["heatmap_svg"]], width = ww, height = hh)

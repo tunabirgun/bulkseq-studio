@@ -1,5 +1,6 @@
 # Publish the verified Windows and Linux packages.
-# Download both CI artifact sets first (this script does not build).
+# The packages are downloaded from the Build packages run for this commit; this script
+# neither builds them nor accepts a local build.
 # The tag/version is read from app\constants.py (APP_VERSION).
 # Requires the GitHub CLI (gh) authenticated: gh auth login.
 $ErrorActionPreference = "Stop"
@@ -19,38 +20,14 @@ function Get-Sha256Hex([string] $path) {
 
 $version = ((Select-String -Path "app\constants.py" -Pattern 'APP_VERSION\s*=\s*"([^"]+)"').Matches.Groups[1].Value)
 $tag = "v$version"
-$installer = Join-Path $root "installer_output\BulkSeqStudio-Setup-$version.exe"
-$portable  = Join-Path $root "installer_output\BulkSeqStudio-Portable-$version.zip"
-$appImage = Join-Path $root "installer_output\BulkSeqStudio-$version-x86_64.AppImage"
+$outputDir = Join-Path $root "installer_output"
+$installer = Join-Path $outputDir "BulkSeqStudio-Setup-$version.exe"
+$portable  = Join-Path $outputDir "BulkSeqStudio-Portable-$version.zip"
+$appImage = Join-Path $outputDir "BulkSeqStudio-$version-x86_64.AppImage"
 $zsync = "$appImage.zsync"
-$linuxPortable = Join-Path $root "installer_output\BulkSeqStudio-Portable-$version-linux-x86_64.tar.gz"
+$linuxPortable = Join-Path $outputDir "BulkSeqStudio-Portable-$version-linux-x86_64.tar.gz"
 $packageAssets = @($installer, $portable, $appImage, $zsync, $linuxPortable)
-foreach ($f in $packageAssets) {
-    if (-not (Test-Path $f)) { throw "Missing artifact: $f  (build locally or download the verified CI artifact first)" }
-    if ((Get-Item -LiteralPath $f).Length -le 0) { throw "Empty artifact: $f" }
-}
-
-# Derive the checksum manifest from the exact payload being released, then read it
-# back and independently recompute every digest before any tag or upload is made.
-$checksumManifest = Join-Path $root "installer_output\SHA256SUMS.txt"
-$checksumLines = foreach ($f in $packageAssets) {
-    $hash = Get-Sha256Hex $f
-    "$hash  $(Split-Path -Leaf $f)"
-}
-# LF line endings: the manifest is consumed by `sha256sum -c` on Linux and macOS, which
-# treats a trailing CR as part of the file name and verifies nothing.
-[System.IO.File]::WriteAllText($checksumManifest, (($checksumLines -join "`n") + "`n"), (New-Object System.Text.ASCIIEncoding))
-$recorded = Get-Content -LiteralPath $checksumManifest
-if ($recorded.Count -ne $packageAssets.Count) { throw "Checksum manifest entry count mismatch" }
-foreach ($f in $packageAssets) {
-    $name = Split-Path -Leaf $f
-    $expectedLine = $recorded | Where-Object { $_ -match "^[0-9a-f]{64}  $([regex]::Escape($name))$" }
-    if (@($expectedLine).Count -ne 1) { throw "Missing or duplicate checksum for $name" }
-    $expected = ($expectedLine -split "  ", 2)[0]
-    $actual = Get-Sha256Hex $f
-    if ($actual -ne $expected) { throw "Checksum mismatch for $name" }
-}
-$assets = @($packageAssets) + @($checksumManifest)
+$checksumManifest = Join-Path $outputDir "SHA256SUMS.txt"
 
 # Locate gh (PATH, or the default winget install location).
 $gh = (Get-Command gh -ErrorAction SilentlyContinue).Source
@@ -76,7 +53,7 @@ if ($head -ne $upstream) {
 
 # Verify CI workflows are successful before creating/updating the release.
 Write-Host "Checking GitHub Actions workflows for $head ..."
-$runListJson = & $gh run list --commit $head --json workflowName,status,conclusion --limit 20
+$runListJson = & $gh run list --commit $head --json workflowName,status,conclusion,databaseId --limit 20
 if ($LASTEXITCODE -ne 0) { throw "gh run list failed" }
 
 $runs = $runListJson | ConvertFrom-Json
@@ -102,6 +79,70 @@ if ($buildRun.conclusion -ne "success") { throw "Build packages workflow conclus
 
 Write-Host "Tests: $($testsRun.conclusion)"
 Write-Host "Build packages: $($buildRun.conclusion)"
+
+# The Environment workflow stays out of the release gate on purpose: it is path-filtered and
+# scheduled, so it usually has no run for this commit at all. Its last result is still worth
+# seeing -- a failing or long-stale run means the pinned channels may no longer solve for a
+# new user, which no package check here would notice. Reported, never thrown.
+$environmentJson = & $gh run list --workflow "Environment" --limit 1 --json conclusion,status,createdAt
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Environment workflow could not be queried; its state is unknown (not a release gate)."
+} else {
+    $environmentRun = $null
+    try { $environmentRun = @($environmentJson | ConvertFrom-Json)[0] } catch { }
+    if (-not $environmentRun) {
+        Write-Warning "Environment workflow has no runs; the live installer check is unproven (not a release gate)."
+    } else {
+        $age = "an unknown number of"
+        try {
+            $created = [datetime]::Parse(
+                [string] $environmentRun.createdAt,
+                [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::RoundtripKind)
+            $age = [int] ((Get-Date).ToUniversalTime() - $created.ToUniversalTime()).TotalDays
+        } catch { }
+        Write-Warning "Environment workflow last run: $($environmentRun.conclusion) ($($environmentRun.status)), $age days old (not a release gate)."
+    }
+}
+
+# Take the packages from the run that was just verified. A local build of the same version
+# is indistinguishable from the CI one by name, so remove the prior products first: a stale
+# file left in place would pass every check below and ship unbuilt bytes.
+foreach ($f in ($packageAssets + @($checksumManifest))) {
+    Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+}
+New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+foreach ($artifact in @("BulkSeqStudio-windows", "BulkSeqStudio-linux")) {
+    Write-Host "Downloading $artifact from run $($buildRun.databaseId) ..."
+    & $gh run download $buildRun.databaseId -n $artifact -D $outputDir
+    if ($LASTEXITCODE -ne 0) { throw "gh run download failed for artifact $artifact" }
+}
+
+foreach ($f in $packageAssets) {
+    if (-not (Test-Path $f)) { throw "Missing artifact: $f  (run $($buildRun.databaseId) did not attach it)" }
+    if ((Get-Item -LiteralPath $f).Length -le 0) { throw "Empty artifact: $f" }
+}
+
+# Derive the checksum manifest from the exact payload being released, then read it
+# back and independently recompute every digest before any tag or upload is made.
+$checksumLines = foreach ($f in $packageAssets) {
+    $hash = Get-Sha256Hex $f
+    "$hash  $(Split-Path -Leaf $f)"
+}
+# LF line endings: the manifest is consumed by `sha256sum -c` on Linux and macOS, which
+# treats a trailing CR as part of the file name and verifies nothing.
+[System.IO.File]::WriteAllText($checksumManifest, (($checksumLines -join "`n") + "`n"), (New-Object System.Text.ASCIIEncoding))
+$recorded = Get-Content -LiteralPath $checksumManifest
+if ($recorded.Count -ne $packageAssets.Count) { throw "Checksum manifest entry count mismatch" }
+foreach ($f in $packageAssets) {
+    $name = Split-Path -Leaf $f
+    $expectedLine = $recorded | Where-Object { $_ -match "^[0-9a-f]{64}  $([regex]::Escape($name))$" }
+    if (@($expectedLine).Count -ne 1) { throw "Missing or duplicate checksum for $name" }
+    $expected = ($expectedLine -split "  ", 2)[0]
+    $actual = Get-Sha256Hex $f
+    if ($actual -ne $expected) { throw "Checksum mismatch for $name" }
+}
+$assets = @($packageAssets) + @($checksumManifest)
 
 Write-Host "Publishing $tag from $head ..."
 $previousErrorActionPreference = $ErrorActionPreference

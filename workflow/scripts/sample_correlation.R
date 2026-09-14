@@ -25,6 +25,8 @@ suppressMessages({
 
 # Shared palette/theme/getp helpers (sourced; resolved via scriptdir).
 source(file.path(snakemake@scriptdir, "figure_style.R"))
+# sample_label_map(): the shared sample_id -> display-label rule (functions only, no dependency).
+source(file.path(snakemake@scriptdir, "de_common.R"))
 
 log_con <- file(snakemake@log[[1]], open = "wt")
 sink(log_con, type = "message")
@@ -153,6 +155,12 @@ if (is.list(de_cfg)) {
 cd <- as.data.frame(SummarizedExperiment::colData(vsd))
 if (!(group_var %in% colnames(cd))) group_var <- colnames(cd)[1]
 ann <- cd[, group_var, drop = FALSE]
+# Per-sample axis labels (optional library_name; sample id otherwise). Identity map for a sheet
+# without the column, so those figures are unchanged. The exported correlation CSV keeps its
+# sample_id dimnames; only what is drawn is relabelled, and the annotation rownames move with the
+# matrix because pheatmap matches the two by name.
+sample_lab <- sample_label_map(SummarizedExperiment::colData(vsd))
+rownames(ann) <- unname(sample_lab[rownames(ann)])
 
 placeholder <- function(png_path, svg_path, msg) {
   draw <- function() { plot.new(); text(0.5, 0.5, msg, cex = 1.1) }
@@ -166,7 +174,8 @@ save_corr <- function(method, png_path, svg_path, csv_path) {
   # hclust when the matrix still has NA, and degrade to a placeholder on any error.
   ok <- tryCatch({
     cm <- cor(m, method = method, use = "pairwise.complete.obs")
-    write.csv(cm, csv_path)
+    write.csv(cm, csv_path)  # machine-read export: stays keyed by sample_id
+    dimnames(cm) <- list(unname(sample_lab[rownames(cm)]), unname(sample_lab[colnames(cm)]))
     cluster <- !anyNA(cm)  # hclust cannot handle NA distances
     # Correlations here are all positive (no zero crossover), so a sequential ramp
     # over the observed range is honest; RdBu would imply a false zero-correlation

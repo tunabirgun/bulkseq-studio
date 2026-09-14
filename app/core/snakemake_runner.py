@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+import queue
 import re
 import shlex
 import signal
 import subprocess
 import sys
+import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +40,12 @@ FAILURE_MARKERS = re.compile(
 )
 
 
+# How long the consumer waits on the queue before looking for a pending signal, and how long
+# a Ctrl-C waits for the reader to notice the closed pipe after the tree was killed.
+_OUTPUT_POLL_SEC = 0.1
+_READER_JOIN_SEC = 5.0
+
+
 def run_snakemake_sync(project_root, config: AppConfig, mode: str, *, exec_profile: str = "local",
                         on_line=None) -> int:
     """Run a Snakemake command to completion, streaming output and returning an exit code.
@@ -47,6 +55,13 @@ def run_snakemake_sync(project_root, config: AppConfig, mode: str, *, exec_profi
     Detects a snakemake-reported failure the same way the GUI does (FAILURE_MARKERS), so a
     masked exit-0 from `micromamba run` is still reported as a non-zero exit here. A Ctrl-C
     stops the whole process tree the way the GUI's Stop does, not just this relay process.
+
+    A reader thread drains the pipe and the calling thread consumes a queue on a short
+    timeout. Reading the pipe in the calling thread instead blocks it inside the C-level
+    read, where a signal is only checked once the read returns: during a long quiet phase
+    (an aligner running for an hour without printing) Ctrl-C is then not seen until the
+    next output line, so the run keeps going. One code path on every platform -- the same
+    block is what makes the interrupt land on Windows, in WSL and on macOS alike.
     """
     project_root = Path(project_root)
     use_wsl = sys.platform.startswith("win") and exec_profile == "local"
@@ -58,19 +73,49 @@ def run_snakemake_sync(project_root, config: AppConfig, mode: str, *, exec_profi
     runner = SnakemakeRunner(project_root, command)
     process = runner.start()
     assert process.stdout is not None
+    lines: queue.SimpleQueue[str] = queue.SimpleQueue()
+    reader = threading.Thread(target=_pump_output, args=(process.stdout, lines), daemon=True)
+    reader.start()
+
+    def consume(raw: str) -> bool:
+        line = raw.rstrip("\n")
+        emit(line)
+        return bool(FAILURE_MARKERS.search(line))
+
     try:
-        for line in process.stdout:
-            line = line.rstrip("\n")
-            emit(line)
-            if FAILURE_MARKERS.search(line):
-                failed_in_output = True
+        while reader.is_alive():
+            try:
+                raw = lines.get(timeout=_OUTPUT_POLL_SEC)
+            except queue.Empty:
+                raw = None
+            # Fall through rather than `continue`: a signal raised while leaving the except
+            # block escapes the KeyboardInterrupt handler below (CPython 3.12, reproduced
+            # 40/40), and the interrupt is the one thing this loop exists to notice.
+            if raw is not None:
+                failed_in_output |= consume(raw)
         code = process.wait()
     except KeyboardInterrupt:
         runner.stop()
+        reader.join(timeout=_READER_JOIN_SEC)
         raise
+    # The reader can queue its last lines between one is_alive() check and the next, and the
+    # tail is exactly where "Error in rule" appears -- so finish the queue before the verdict.
+    while True:
+        try:
+            failed_in_output |= consume(lines.get_nowait())
+        except queue.Empty:
+            break
     if failed_in_output and code == 0:
         return 1
     return code
+
+
+def _pump_output(stream, lines: "queue.SimpleQueue[str]") -> None:
+    try:
+        for line in stream:
+            lines.put(line)
+    except (OSError, ValueError):
+        pass
 
 
 def _snakemake_child_env(use_wsl: bool) -> dict[str, str]:

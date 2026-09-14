@@ -28,6 +28,10 @@ concurrency:
   group: environment-${{ github.ref }}
   cancel-in-progress: true
 
+# Nothing here writes to the repository: the jobs only install and run the environment.
+permissions:
+  contents: read
+
 jobs:
   install-core:
     name: install core profile (live)
@@ -48,3 +52,138 @@ jobs:
         run: bash scripts/setup_wsl_bioenv.sh bulkseq full
       - name: Print the recorded spec marker
         run: cat "$HOME/micromamba/envs/bulkseq/.bulkseq_spec"
+
+  # macOS is not reachable from the Windows/Linux development boxes, and a macos runner
+  # cannot answer a dependency question any faster than a solver can. CONDA_OVERRIDE_OSX
+  # lets an ubuntu runner solve for osx-arm64, so the split-prefix decision (the alignment
+  # tools pin libdeflate <1.23, r-base 4.5.2 pins >=1.24) and the list of packages with no
+  # osx-arm64 build are both re-checked on every change to the environment files.
+  osx-arm64-solve:
+    name: osx-arm64 solve (dry run)
+    runs-on: ubuntu-latest
+    env:
+      # The packages this project cannot install on osx-arm64, each followed by the
+      # dependency that makes it unavailable where that is not the package itself (see the
+      # gating lists in app/core/readiness.py). This one list
+      # drives the filter and the assertions below: when a build lands, the package starts
+      # solving, the "still unavailable" check fails, and the line is what gets edited.
+      UNAVAILABLE: >-
+        sortmerna
+        fastq-screen:perl-gd
+        bioconductor-gsva
+        bioconductor-affy:bioconductor-affyio
+      # __osx is a virtual package the Linux runner cannot report. Without it every solve
+      # below fails on the missing __osx instead of on the package under test.
+      CONDA_OVERRIDE_OSX: "11.0"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          # Pinned: the solver's answer is the result this job reports, so it must not
+          # change under the job without the change being visible here.
+          micromamba-version: 2.8.1-1
+          init-shell: bash
+
+      - name: Derive the osx-arm64 specs from the environment files
+        run: |
+          mkdir -p "$RUNNER_TEMP/osx"
+          python3 - "$RUNNER_TEMP/osx" <<'PY'
+          import os
+          import sys
+
+          out = sys.argv[1]
+          unavailable = {}
+          for item in os.environ["UNAVAILABLE"].split():
+              package, _, cause = item.partition(":")
+              unavailable[package] = cause or package
+
+          def entries(path):
+              found, inside = [], False
+              for line in open(path, encoding="utf-8"):
+                  if line.startswith("dependencies:"):
+                      inside = True
+                  elif inside and line.strip().startswith("- "):
+                      found.append(line.strip()[2:].strip())
+              return found
+
+          def name(spec):
+              for separator in "=<> ":
+                  spec = spec.split(separator)[0]
+              return spec
+
+          def write(stem, specs):
+              with open(f"{out}/{stem}.yaml", "w", encoding="utf-8") as handle:
+                  handle.write("name: probe\nchannels:\n  - conda-forge\n  - bioconda\n")
+                  handle.write("dependencies:\n")
+                  handle.writelines(f"  - {spec}\n" for spec in specs)
+              return specs
+
+          core = entries("workflow/envs/bulkseq_core.yaml")
+          full = entries("workflow/envs/bulkseq_full.yaml")
+          r_block = [s for s in full if name(s).startswith(("r-", "bioconductor-"))]
+          r_base = next(s for s in r_block if name(s) == "r-base")
+
+          requested = {name(spec): spec for spec in core + r_block}
+          unknown = sorted(set(unavailable) - set(requested))
+          if unknown:
+              sys.exit(f"UNAVAILABLE names packages no environment file requests: {unknown}")
+
+          tools = write("tools", [s for s in core if name(s) not in unavailable])
+          r_only = write("r", [s for s in r_block if name(s) not in unavailable])
+          write("tools_unfiltered", core)
+          write("full_unfiltered", full)
+          # Each unavailable package on its own, an R package against the pinned r-base:
+          # bioconductor-affy installs on osx-arm64 under an older R and is unavailable only
+          # at this pin. A command-line tool is probed without r-base, because the pin would
+          # fail it on the libdeflate conflict and hide whether the tool itself is there.
+          tool_names = {name(spec) for spec in core}
+          for package in unavailable:
+              spec = requested[package]
+              write(f"one_{package}", [spec] if package in tool_names else [r_base, spec])
+          print(f"{len(tools)} tool specs, {len(r_only)} R specs, filtered {sorted(unavailable)}")
+          PY
+
+      - name: The filtered tool and R specs must solve for osx-arm64
+        shell: bash -el {0}
+        run: |
+          for spec in tools r; do
+            micromamba create --dry-run --yes --platform osx-arm64 --name probe \
+              --file "$RUNNER_TEMP/osx/$spec.yaml"
+          done
+
+      - name: Every filtered-out package must still be unavailable on osx-arm64
+        shell: bash -el {0}
+        run: |
+          solve() {
+            micromamba create --dry-run --yes --platform osx-arm64 --name probe \
+              --file "$RUNNER_TEMP/osx/$1.yaml" > "$RUNNER_TEMP/osx/$1.log" 2>&1
+          }
+          failed=0
+          # The unfiltered specs are what the filter exists for: if they solve, the
+          # filtering (and the split prefix it feeds) is no longer describing reality.
+          for spec in tools_unfiltered full_unfiltered; do
+            if solve "$spec"; then
+              echo "::error::$spec solved for osx-arm64; the documented unavailability is stale"
+              failed=1
+            fi
+          done
+          for item in $UNAVAILABLE; do
+            package="${item%%:*}"
+            cause="${item##*:}"
+            if solve "one_$package"; then
+              echo "::error::$package now installs on osx-arm64: drop it from UNAVAILABLE," \
+                   "from app/core/readiness.py and from the macOS notes"
+              failed=1
+              continue
+            fi
+            for named in "$package" "$cause"; do
+              grep -qF -- "$named" "$RUNNER_TEMP/osx/one_$package.log" || {
+                echo "::error::the $package solve failed without naming $named"
+                cat "$RUNNER_TEMP/osx/one_$package.log"
+                failed=1
+              }
+            done
+          done
+          exit "$failed"

@@ -16,7 +16,8 @@ ENA_API = "https://www.ebi.ac.uk/ena/portal/api/filereport"
 GEO_ACC_API = "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi"
 ENA_FIELDS = (
     "run_accession,experiment_accession,sample_accession,library_layout,"
-    "read_count,base_count,fastq_bytes,fastq_ftp,fastq_md5,sample_title,scientific_name"
+    "read_count,base_count,fastq_bytes,fastq_ftp,fastq_md5,library_name,sample_title,"
+    "scientific_name"
 )
 
 _GSE_RE = re.compile(r"^GSE\d+$", re.IGNORECASE)
@@ -192,6 +193,10 @@ def metadata_to_samples(meta: pd.DataFrame) -> pd.DataFrame:
         rows.append(
             {
                 "sample_id": run,
+                # The submitter's library label, blank when the archive has none. Never filled
+                # from sample_title: they are different fields, and relabelling one as the other
+                # would make the column mean nothing.
+                "library_name": str(record.get("library_name", "")),
                 "original_accession": run,
                 "experiment_accession": str(record.get("experiment_accession", "")),
                 "layout": layout,

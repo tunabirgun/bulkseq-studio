@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 APP_NAME = "BulkSeq Studio"
-APP_VERSION = "0.30.1"
-WORKFLOW_VERSION = "0.30.1"
+APP_VERSION = "0.31.0"
+WORKFLOW_VERSION = "0.31.0"
 # Named mutex held by a running application; packaging/installer.iss AppMutex must match.
 APP_MUTEX_NAME = "BulkSeqStudioRunning"
 
@@ -44,6 +44,7 @@ PROJECT_DIRS = [
 
 REQUIRED_METADATA_COLUMNS = ["sample_id", "condition", "layout", "fastq_1"]
 OPTIONAL_METADATA_COLUMNS = [
+    "library_name",
     "fastq_2",
     "gsm_accession",
     "platform",
@@ -60,4 +61,36 @@ OPTIONAL_METADATA_COLUMNS = [
     "organism",
     "library_prep",
     "sequencing_run",
+    # Free-text label the ENA/SRA importer writes; part of the schema, never a covariate.
+    "sample_title",
+    "title",
 ]
+
+# Descriptive / provenance columns that are never candidate covariates: the sample identifier,
+# read-file paths, ingest provenance, and the free-text labels (library_name, sample_title, title) that
+# describe a sample rather than group it. The covariate-structure screen and the design helper
+# both exclude these. workflow/scripts/check_covariate_structure.py keeps a literal copy because
+# it runs inside the pipeline environment without `app` importable; the two are pinned together
+# by tests/test_metadata_schema.py.
+DESCRIPTIVE_METADATA_COLUMNS = frozenset({
+    "sample_id",
+    "library_name",
+    "sample_title",
+    "title",
+    "fastq_1",
+    "fastq_2",
+    "gsm_accession",
+    "original_accession",
+    "original_filename",
+    "detected_pair_id",
+})
+
+# Header of a freshly scaffolded sample sheet: the required schema with the optional library
+# name after sample_id, plus the optional columns a new project starts with. Written by
+# app/core/project.py and mirrored by scripts/capture_gui_matrix.py.
+SCAFFOLD_METADATA_COLUMNS = (
+    REQUIRED_METADATA_COLUMNS[:1]
+    + ["library_name"]
+    + REQUIRED_METADATA_COLUMNS[1:]
+    + ["fastq_2", "replicate", "batch"]
+)

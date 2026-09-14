@@ -5,20 +5,25 @@ import csv
 import json
 import math
 import re
+from functools import lru_cache
 from pathlib import Path
 
 
 PRIORITY = {"FAIL": 4, "REVIEW_REQUIRED": 3, "WARNING": 2, "PASS": 1}
-ADJ_R2_REVIEW_THRESHOLD = 0.5
 P_REVIEW_THRESHOLD = 0.05
 
-# File/path/download-metadata columns from the sample-sheet schema (app/constants.py
-# REQUIRED_METADATA_COLUMNS + OPTIONAL_METADATA_COLUMNS): identifiers, read-file paths and
-# ingest provenance, none of which are candidate biological/technical covariates. Copied
-# rather than imported so this script runs standalone under WSL without `app`; kept in sync
-# with app/constants.py by tests/test_check_covariate_structure.py.
+# Descriptive columns that are never candidate covariates: the sample identifier, read-file
+# paths, ingest provenance, and the free-text labels (library_name, sample_title, title) that describe
+# a sample rather than group it. A free-text label whose values happen to partition the samples
+# the way the contrast does reaches the perfectly-aliased branch below and reports a confounder
+# that does not exist. Literal copy of app.constants.DESCRIPTIVE_METADATA_COLUMNS — this script
+# runs in the pipeline environment, without `app` importable; the two are pinned together by
+# tests/test_metadata_schema.py.
 EXCLUDED_COLUMNS = {
     "sample_id",
+    "library_name",
+    "sample_title",
+    "title",
     "fastq_1",
     "fastq_2",
     "gsm_accession",
@@ -101,6 +106,39 @@ def _f_test_pvalue(f_stat: float, df1: int, df2: int) -> float:
     return _betai(df2 / 2.0, df1 / 2.0, x)
 
 
+def _f_quantile(alpha: float, df1: int, df2: int) -> float:
+    """The f with P(F(df1, df2) > f) = alpha, by bisection on _f_test_pvalue."""
+    lo, hi = 0.0, 1.0
+    while _f_test_pvalue(hi, df1, df2) > alpha:
+        lo, hi = hi, hi * 2.0
+    while hi - lo > 1e-9 * hi:
+        mid = 0.5 * (lo + hi)
+        if _f_test_pvalue(mid, df1, df2) > alpha:
+            lo = mid
+        else:
+            hi = mid
+    return hi
+
+
+@lru_cache(maxsize=None)
+def chance_adj_r2(n: int, df1: int, df2: int, alpha: float = P_REVIEW_THRESHOLD) -> float:
+    # The adjusted R^2 that only alpha of random label assignments reach at this (n, k).
+    # adj_r2 = 1 - (n-1)/(F*df1 + df2) is monotone in F, so this is the null F quantile
+    # mapped through that identity -- an effect-size floor that scales with n instead of a
+    # fixed constant that only bound at small n.
+    if df1 <= 0 or df2 <= 0:
+        return 1.0
+    return 1.0 - (n - 1) / (_f_quantile(alpha, df1, df2) * df1 + df2)
+
+
+def screen_column(a: dict, n: int) -> tuple[bool, float]:
+    # The floor and the p-value are one test: adjusted R^2 is monotone in F, so adj R^2 clears
+    # the null 95th percentile exactly when p < 0.05. Both are kept so the message can state
+    # how large an effect had to be at this n.
+    floor = chance_adj_r2(n, a["df1"], a["df2"])
+    return a["adj_r2"] > floor and a["p"] < P_REVIEW_THRESHOLD, floor
+
+
 def _anova(values: list[float], levels: list[str]) -> dict:
     # One-way ANOVA (equivalent to OLS on dummy-coded levels + intercept): raw R^2 has a
     # null expectation of (k-1)/(n-1), so it is reported alongside the adjusted R^2 and the
@@ -142,8 +180,9 @@ def evaluate(sample_ids: list[str], columns: dict[str, list[str]],
             "check": "23_covariate_structure_qc",
             "status": "WARNING",
             "messages": [{"status": "WARNING", "message": (
-                f"PCA coordinates missing for {len(missing)} sample(s); covariate-structure "
-                "screen was not assessed.")}],
+                "Covariate-structure screen was not assessed, so an unmodelled covariate "
+                "could go unnoticed; re-run it once the PCA table covers every sample. "
+                f"PCA coordinates missing for {len(missing)} sample(s).")}],
         }
 
     pc1 = [pca[s][0] for s in sample_ids]
@@ -165,31 +204,37 @@ def evaluate(sample_ids: list[str], columns: dict[str, list[str]],
             contrast_partition = {v: frozenset(i for i, cv in enumerate(contrast_levels) if cv == v) for v in set(contrast_levels)}
             if set(partition.values()) == set(contrast_partition.values()):
                 messages.append({"status": "REVIEW_REQUIRED", "message": (
-                    f"Column '{col}' is perfectly aliased with the contrast factor "
-                    f"'{contrast_factor}'; its contribution cannot be distinguished from the "
-                    "contrast effect.")})
+                    "A sample-sheet column is perfectly aliased with the contrast factor: do "
+                    "not add it to the design formula, and check whether the grouping is "
+                    "genuinely confounded, because its contribution cannot be distinguished "
+                    f"from the contrast effect. Column '{col}', contrast factor "
+                    f"'{contrast_factor}'.")})
                 continue
         anova_pc1 = _anova(pc1, values)
         anova_pc2 = _anova(pc2, values)
         pc, a = ("PC1", anova_pc1) if anova_pc1["adj_r2"] >= anova_pc2["adj_r2"] else ("PC2", anova_pc2)
         numeric_note = " (numeric column treated as categorical)" if _looks_numeric(values) else ""
+        n, k = len(sample_ids), a["df1"] + 1
+        flagged, floor = screen_column(a, n)
         detail = (
-            f"raw R^2={a['r2']:.2f}, adjusted R^2={a['adj_r2']:.2f}, "
-            f"F({a['df1']},{a['df2']})={a['f']:.2f}, p={a['p']:.3g}"
+            f"Column '{col}'{numeric_note}, best of PC1/PC2 is {pc}: raw R^2={a['r2']:.2f}, "
+            f"adjusted R^2={a['adj_r2']:.2f} against a chance ceiling of {floor:.2f} at n={n}, "
+            f"k={k}, F({a['df1']},{a['df2']})={a['f']:.2f}, p={a['p']:.3g}"
         )
-        if a["adj_r2"] > ADJ_R2_REVIEW_THRESHOLD and a["p"] < P_REVIEW_THRESHOLD:
+        if flagged:
             messages.append({"status": "REVIEW_REQUIRED", "message": (
-                f"Column '{col}'{numeric_note} explains {pc} variance beyond chance ({detail}); "
-                "consider whether it should be added to the design formula as a covariate.")})
+                f"{pc} separates samples by an unmodelled sample-sheet column beyond chance: "
+                "consider adding it to the design formula as a covariate, or confirm it is not "
+                f"confounded with the contrast. The screen is advisory. {detail}.")})
         else:
             messages.append({"status": "PASS", "message": (
-                f"Column '{col}'{numeric_note} does not explain PC1/PC2 variance beyond chance "
-                f"({pc}: {detail}).")})
+                "No unmodelled structure to act on: this column's share of PC1/PC2 variance "
+                f"is within chance, so the design formula needs no change for it. {detail}.")})
 
     if tested == 0:
         messages.append({"status": "PASS", "message": (
-            "No sample-sheet columns outside the design formula were eligible for the "
-            "covariate-structure screen.")})
+            "No design change indicated: no sample-sheet column outside the design formula "
+            "was eligible for the covariate-structure screen.")})
 
     status = max((m["status"] for m in messages), key=lambda s: PRIORITY.get(s, 0))
     return {"check": "23_covariate_structure_qc", "status": status, "messages": messages}
@@ -217,7 +262,8 @@ def main() -> int:
             "check": "23_covariate_structure_qc",
             "status": "WARNING",
             "messages": [{"status": "WARNING", "message": (
-                f"Covariate-structure screen WARNING: {exc}; not assessed.")}],
+                "Covariate-structure screen was not assessed, so an unmodelled covariate "
+                f"could go unnoticed; fix the input it could not read and re-run. Reason: {exc}.")}],
         }
 
     out = Path(args.out)

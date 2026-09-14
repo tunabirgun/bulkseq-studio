@@ -17,8 +17,6 @@
       <feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#000" flood-opacity="0.08"/>
     </filter>
   </defs>
-
-  <!-- top histogram -->
   <g filter="url(#softShadow)">
     <rect x="170" y="455" width="40" height="110" rx="18" fill="#0B65B1"/>
     <rect x="235" y="390" width="40" height="175" rx="18" fill="#0D78B9"/>
@@ -32,8 +30,6 @@
     <rect x="755" y="385" width="40" height="180" rx="18" fill="#1080CA"/>
     <rect x="820" y="455" width="40" height="110" rx="18" fill="#0B65B1"/>
   </g>
-
-  <!-- middle gene track -->
   <g filter="url(#softShadow)">
     <rect x="90" y="615" width="820" height="14" rx="7" fill="url(#blueGrad)"/>
     <rect x="170" y="590" width="130" height="64" rx="18" fill="url(#blueGrad)"/>
@@ -41,8 +37,6 @@
     <rect x="605" y="590" width="105" height="64" rx="18" fill="url(#blueGrad)"/>
     <path d="M770 590 H865 L895 622 L865 654 H770 Q750 654 750 634 V610 Q750 590 770 590 Z" fill="url(#blueGrad)"/>
   </g>
-
-  <!-- bottom read lines -->
   <g filter="url(#softShadow)">
     <rect x="190" y="705" width="110" height="18" rx="9" fill="url(#blueGrad)"/>
     <rect x="335" y="705" width="120" height="18" rx="9" fill="url(#blueGrad)"/>

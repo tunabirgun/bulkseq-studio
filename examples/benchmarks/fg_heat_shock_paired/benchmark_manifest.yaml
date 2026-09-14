@@ -1,0 +1,57 @@
+id: fg_heat_shock_paired
+name: Fusarium graminearum Z-3639 heat-shock paired-end
+organism_name: Fusarium graminearum PH-1
+source_study: PRJNA314297 (SRP071140)
+geo_series: GSE78885
+source_publication: Bui et al. (2016) Scientific Reports 6:28154, DOI 10.1038/srep28154 (PubMed 27306495),
+  the publication ENA links from PRJNA314297
+selection_policy: 'All six ENA runs of the study: one run per biological sample, three biological replicates
+  per temperature.'
+reference_assembly: ASM24013v3
+expected:
+  status: first recorded in the 0.2x-era runs; the STAR + featureCounts + DESeq2 result was reproduced
+    from FASTQ under workflow version 0.31.0 on 2026-09-13, its count matrix and DESeq2 table identical
+    to a v0.29.1 run of the same reads
+  de_genes: 5836
+  de_criterion: padj < 0.05, no log2 fold-change filter, settled by the 0.31.0 reproduction (the 0.11.0
+    changelog stated the count without a significance threshold)
+  de_route: STAR + featureCounts + DESeq2 at -s 2; the HISAT2 route gave 5,812 in the same 0.11.0 validation
+  strandedness: 2
+  strandedness_basis: counted with featureCounts -s 2 in the 0.2x-era runs
+selected_runs:
+  - sample_id: temp_25_1
+    geo_accession: GSM2080415
+    experiment_accession: SRX1613192
+    run_accession: SRR3203806
+    condition: temp_25
+    read_count: 8656160
+  - sample_id: temp_25_2
+    geo_accession: GSM2080416
+    experiment_accession: SRX1613193
+    run_accession: SRR3203807
+    condition: temp_25
+    read_count: 7952448
+  - sample_id: temp_25_3
+    geo_accession: GSM2080417
+    experiment_accession: SRX1613194
+    run_accession: SRR3203808
+    condition: temp_25
+    read_count: 8835715
+  - sample_id: temp_37_1
+    geo_accession: GSM2080418
+    experiment_accession: SRX1613195
+    run_accession: SRR3203809
+    condition: temp_37
+    read_count: 9460409
+  - sample_id: temp_37_2
+    geo_accession: GSM2080419
+    experiment_accession: SRX1613196
+    run_accession: SRR3203810
+    condition: temp_37
+    read_count: 9277129
+  - sample_id: temp_37_3
+    geo_accession: GSM2080420
+    experiment_accession: SRX1613197
+    run_accession: SRR3203811
+    condition: temp_37
+    read_count: 10278136

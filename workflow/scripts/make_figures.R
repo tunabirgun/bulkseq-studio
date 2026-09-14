@@ -27,6 +27,9 @@ suppressMessages({
 
 # Shared palette/theme/getp/save_gg helpers (sourced; resolved via scriptdir).
 source(file.path(snakemake@scriptdir, "figure_style.R"))
+# sample_label_map(): the shared sample_id -> display-label rule. de_common.R defines functions
+# only, so sourcing it here adds no statistics and no dependency.
+source(file.path(snakemake@scriptdir, "de_common.R"))
 
 log_con <- file(snakemake@log[[1]], open = "wt")
 sink(log_con, type = "message")
@@ -127,6 +130,43 @@ save_grid <- function(gtable, png_path, svg_path, w = fig_w, h = fig_h) {
   svglite(svg_path, width = w, height = h, bg = "white")
   draw_grid(gtable); dev.off()
 }
+
+# Extent of the largest label under the figure's font, in inches (a multi-line label measures as
+# its widest line by its total height). The heatmaps size themselves from measured text; the
+# per-sample ggplot axes below have a fixed canvas, so a long library name would otherwise push a
+# tick label off the device edge or leave ggrepel no room but the point itself.
+label_extent_in <- function(labels, fontsize, fontfamily = NULL, fontface = 1L) {
+  labels <- as.character(labels)
+  labels <- labels[!is.na(labels) & nzchar(labels)]
+  if (!length(labels)) return(c(width = 0, height = 0))
+  grDevices::pdf(NULL, width = 7, height = 7)
+  on.exit(grDevices::dev.off(), add = TRUE)
+  grid::grid.newpage()
+  text_gp <- grid::gpar(fontsize = fontsize, fontface = fontface,
+                        fontfamily = if (is.null(fontfamily)) "" else fontfamily)
+  grobs <- lapply(labels, function(x) grid::textGrob(x, gp = text_gp))
+  c(width = max(vapply(grobs, function(g) grid::convertWidth(
+      grid::grobWidth(g), "in", valueOnly = TRUE), numeric(1))),
+    height = max(vapply(grobs, function(g) grid::convertHeight(
+      grid::grobHeight(g), "in", valueOnly = TRUE), numeric(1))))
+}
+
+# Break labels onto several lines so none is wider than `target_in`. The character budget is
+# derived from the measured width of the labels themselves rather than assumed, so it holds for
+# any font. A label with no break opportunity (one long token) stays on one line.
+wrap_labels_to <- function(labels, target_in, fontsize, fontfamily = NULL) {
+  labels <- as.character(labels)
+  widest <- label_extent_in(labels, fontsize, fontfamily)[["width"]]
+  if (widest <= target_in) return(labels)
+  chars_per_in <- max(nchar(labels)) / widest
+  width_chars <- max(8L, as.integer(floor(target_in * chars_per_in)))
+  vapply(labels, function(s) paste(strwrap(s, width = width_chars), collapse = "\n"),
+         character(1), USE.NAMES = FALSE)
+}
+# theme_bw() sets axis text to rel(0.8) of the base size, and make_style_theme() turns it bold
+# when label_bold is on; measure at both so a grown canvas is not short of the drawn text.
+axis_text_size <- 0.8 * base_size
+axis_text_face <- if (label_bold) 2L else 1L
 
 # Base-graphics figures (plotDispEsts, boxplot) to PNG + SVG.
 save_base <- function(draw_fn, png_path, svg_path, w = fig_w, h = fig_h) {
@@ -476,6 +516,14 @@ if (is.list(de_cfg)) {
 }
 if (has_counts && !(group_var %in% colnames(colData(dds)))) group_var <- colnames(colData(dds))[1]
 
+# Per-sample display labels (optional library_name; sample id otherwise). Every per-sample text
+# label below is drawn through this map, and it is the identity map for a sheet without the
+# column, so those figures are unchanged. The counts/VST matrix, its column order and every
+# annotation lookup still key on sample_id.
+sample_lab <- if (has_counts) sample_label_map(colData(dds)) else character(0)
+relabel_samples <- function(x) unname(sample_lab[as.character(x)])
+sample_labels_differ <- has_counts && !identical(unname(sample_lab), names(sample_lab))
+
 # Significance thresholds from config (used by MA + volcano).
 num_cfg <- function(key, default) {
   v <- tryCatch(as.numeric(de_cfg[[key]]), error = function(e) default)
@@ -490,6 +538,28 @@ lfc_thr <- if (is.list(de_cfg)) num_cfg("lfc_threshold", 1) else 1
 if (has_counts) {
 pca <- plotPCA(vsd, intgroup = group_var, ntop = pca_ntop, returnData = TRUE)
 pv <- round(100 * attr(pca, "percentVar"))
+# plotPCA's `name` column is the sample id and feeds nothing but the point label. Relabel it
+# before ggplot() takes its copy of the frame; afterwards the layer no longer sees the change.
+pca$name <- relabel_samples(pca$name)
+pca_dim <- fig_dim("pca")
+pca_expand <- c(0.08, 0.08)
+pca_point_padding <- 0.3
+if (sample_labels && sample_labels_differ) {
+  # A library name is many times wider than a sample id, and ggrepel keeps max.overlaps = Inf, so
+  # it draws a label even where it has nowhere to put it -- across the very marker it names.
+  # Three measured corrections, every one of them inert for a sheet without library names: wrap
+  # the text to a quarter of the canvas, give the panel a label's worth of extra room on each
+  # axis, and widen the point padding, which is measured in lines of the label font and so by
+  # default clears little more than the marker's own radius. geom_text_repel's size = 3 is
+  # millimetres of font size, drawn at ggplot2's 1.2 line spacing. Repel remains a heuristic:
+  # with many long repeated names it can still seat one label on its point, and the
+  # figures_style `sample_labels` toggle turns the per-sample labels off.
+  pca$name <- wrap_labels_to(pca$name, pca_dim[1] / 4, 3 * .pt, base_family)
+  pca_box <- label_extent_in(pca$name, 3 * .pt, base_family)
+  pca_dim <- pca_dim + c(pca_box[["width"]], nrow(pca) * pca_box[["height"]] / 2)
+  pca_expand <- pmax(pca_expand, unname(pca_box[c("width", "height")]) / pca_dim)
+  pca_point_padding <- max(0.3, (point_size / 2 + 0.5) / (3 * 1.2))
+}
 # The shared mapping is named, contrast-aware and therefore independent of the
 # order in which samples happen to occur in pca/colData.
 pca_disc <- contrast_color_map(unique(as.character(pca$group)), contrast_cfg,
@@ -499,27 +569,30 @@ p_pca <- ggplot(pca, aes(PC1, PC2, colour = group)) +
 if (sample_labels) {
   p_pca <- p_pca +
     geom_text_repel(aes(label = name), family = base_family, size = 3, seed = 1,
-                    min.segment.length = 0, box.padding = 0.5, point.padding = 0.3,
+                    min.segment.length = 0, box.padding = 0.5,
+                    point.padding = pca_point_padding,
                     max.overlaps = Inf, segment.colour = "grey55", show.legend = FALSE)
 }
 p_pca <- p_pca +
   scale_colour_manual(values = pca_disc, name = group_var) +
-  scale_x_continuous(expand = expansion(mult = 0.08)) +
-  scale_y_continuous(expand = expansion(mult = 0.08)) +
+  scale_x_continuous(expand = expansion(mult = pca_expand[1])) +
+  scale_y_continuous(expand = expansion(mult = pca_expand[2])) +
   labs(x = paste0("PC1 (", pv[1], "%)"), y = paste0("PC2 (", pv[2], "%)")) +
   style_theme(theme_bw)
 # coord_fixed preserves Euclidean score distances (config toggle); skip it when a
 # single PC dominates so the panel is not squeezed into a thin band.
 if (pca_fixed_aspect) p_pca <- p_pca + coord_fixed()
-pca_dim <- fig_dim("pca")
 save_gg(p_pca, out[["pca_png"]], out[["pca_svg"]], w = pca_dim[1], h = pca_dim[2])
 
 # ---- Sample-distance heatmap -----------------------------------------------
 sampleDists <- dist(t(assay(vsd)), method = "euclidean")
 mat <- as.matrix(sampleDists)
-# Short sample IDs on the matrix; the group factor moves to an annotation track.
-rownames(mat) <- colnames(mat) <- colnames(vsd)
+# Sample labels on the matrix; the group factor moves to an annotation track. The distances
+# themselves were computed from the sample-id-keyed matrix above; only the dimnames are display
+# text, and the annotation rownames move with them because pheatmap matches the two by name.
+rownames(mat) <- colnames(mat) <- relabel_samples(colnames(vsd))
 dist_ann <- as.data.frame(colData(vsd)[, group_var, drop = FALSE])
+rownames(dist_ann) <- relabel_samples(rownames(dist_ann))
 ann_levels <- unique(as.character(dist_ann[[group_var]]))
 ann_cols <- contrast_color_map(ann_levels, contrast_cfg, pal_spec$discrete)
 # Distance is non-negative and sequential, not diverging (no false midpoint).
@@ -567,7 +640,7 @@ dist_min_cell_width_pt <- max(18, 1.6 * base_size)
 dist_min_cell_height_pt <- max(18, 1.6 * base_size)
 if (sample_labels) {
   dist_render <- fit_sample_distance_heatmap(
-    make_distance_heatmap, colnames(vsd),
+    make_distance_heatmap, rownames(mat),  # the drawn labels, so the fit measures their extents
     dist_min_cell_width_pt, dist_min_cell_height_pt, dist_floor,
     fontsize = base_size, fontfamily = base_family
   )
@@ -795,6 +868,7 @@ if (n_top >= 1) {  # heatmap_top_n = 1 stays a supported setting; 0 rows cannot 
 top_names <- rownames(res)[head(ord, n_top)]
 hm <- assay(vsd)[top_names, , drop = FALSE]
 rownames(hm) <- label_for(top_names)
+colnames(hm) <- relabel_samples(colnames(hm))
 hm <- t(scale(t(hm)))
 # Signed row z-scores need a zero-anchored diverging ramp with symmetric breaks,
 # so z=0 maps to the neutral colour (not the data midpoint). Cap at +/- zlim.
@@ -802,6 +876,7 @@ zlim <- heatmap_zlim
 hm <- pmin(pmax(hm, -zlim), zlim)
 hm_breaks <- seq(-zlim, zlim, length.out = 256)
 ann <- as.data.frame(colData(dds)[, group_var, drop = FALSE])
+rownames(ann) <- relabel_samples(rownames(ann))  # pheatmap matches annotation rows by name
 hm_levels <- unique(as.character(ann[[group_var]]))
 hm_ann_cols <- contrast_color_map(hm_levels, contrast_cfg, pal_spec$discrete)
 fs_row <- if (heatmap_fs_row > 0) heatmap_fs_row else max(4, base_size - 4)
@@ -853,10 +928,12 @@ make_dir_heatmap <- function(direction, png_path, svg_path) {
   top_names <- rownames(res)[head(ord, n_top)]
   hm <- assay(vsd)[top_names, , drop = FALSE]
   rownames(hm) <- label_for(top_names)
+  colnames(hm) <- relabel_samples(colnames(hm))
   hm <- t(scale(t(hm)))
   hm <- pmin(pmax(hm, -heatmap_zlim), heatmap_zlim)
   hm_breaks <- seq(-heatmap_zlim, heatmap_zlim, length.out = 256)
   ann <- as.data.frame(colData(dds)[, group_var, drop = FALSE])
+  rownames(ann) <- relabel_samples(rownames(ann))
   hm_levels <- unique(as.character(ann[[group_var]]))
   hm_ann_cols <- contrast_color_map(hm_levels, contrast_cfg, pal_spec$discrete)
   fs_row <- if (heatmap_fs_row > 0) heatmap_fs_row else max(4, base_size - 4)
@@ -956,12 +1033,28 @@ if (!is_intensity && has_counts) {
       style_theme(theme_bw) +
       theme(axis.text.x = element_text(angle = 45, hjust = 1))
     cooks_dim <- fig_dim("cooks_distance")
+    if (sample_labels_differ) {
+      # as.data.frame() ran the sample ids through make.names, so the factor levels are the
+      # syntactic forms; map those back to the display labels. Added only when a library name
+      # actually changes a label, so a sheet without the column keeps the axis it has today,
+      # mangled ids included.
+      ck_map <- setNames(relabel_samples(colnames(cooks)), make.names(colnames(cooks)))
+      # A library name is far wider than a sample id: at 45 degrees the leftmost label runs off
+      # the fixed canvas. Upright labels are centred on their tick, so they overhang by half a
+      # line height rather than by their width, and only the device height has to grow -- the
+      # same resolution the sample-distance and correlation fitters reach for long labels.
+      p_cooks <- p_cooks +
+        scale_x_discrete(labels = function(x) ifelse(x %in% names(ck_map), ck_map[x], x)) +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+      cooks_dim <- cooks_dim +
+        c(0, label_extent_in(ck_map, axis_text_size, base_family, axis_text_face)[["width"]])
+    }
     save_gg(p_cooks, out[["cooks_png"]], out[["cooks_svg"]], w = cooks_dim[1], h = cooks_dim[2])
   } else {
     save_placeholder("Cook's distances unavailable", out[["cooks_png"]], out[["cooks_svg"]])
   }
   libsz <- colSums(counts(dds))
-  libdf <- data.frame(sample = names(libsz), reads = as.numeric(libsz))
+  libdf <- data.frame(sample = relabel_samples(names(libsz)), reads = as.numeric(libsz))
   p_lib <- ggplot(libdf, aes(reads, reorder(sample, reads))) +
     geom_col(fill = pal_spec$discrete[1], alpha = 0.85, colour = "grey30", linewidth = 0.2) +
     scale_x_continuous(labels = scales::label_number(scale_cut = scales::cut_short_scale()),
@@ -969,9 +1062,17 @@ if (!is_intensity && has_counts) {
     labs(x = "assigned reads (library size)", y = NULL) +
     style_theme(theme_bw)
   lib_dim <- fig_dim("library_size")
+  if (sample_labels_differ) {
+    # Horizontal y-axis labels: ggplot widens the label strip inside a fixed canvas and squeezes
+    # the panel until the last x tick falls off the edge. Widen the device by the same amount.
+    lib_dim <- lib_dim + c(
+      label_extent_in(libdf$sample, axis_text_size, base_family, axis_text_face)[["width"]], 0)
+  }
   save_gg(p_lib, out[["libsize_png"]], out[["libsize_svg"]], w = lib_dim[1], h = lib_dim[2])
 } else {
-  na_msg <- if (identical(assay_kind, "log2_intensity")) "Diagnostic not applicable (microarray)" else if (identical(assay_kind, "log2_cpm")) "Diagnostic not applicable (limma-voom logCPM backend)" else "Diagnostic needs the count model (unavailable for a DESeq2-results upload)"
+  de_engine <- tryCatch(obj$de_engine, error = function(e) NULL)
+  cpm_backend <- if (is.character(de_engine) && length(de_engine) == 1L && nzchar(de_engine)) de_engine else "limma-voom"
+  na_msg <- if (identical(assay_kind, "log2_intensity")) "Diagnostic not applicable (microarray)" else if (identical(assay_kind, "log2_cpm")) sprintf("Diagnostic not applicable (%s logCPM backend)", cpm_backend) else "Diagnostic needs the count model (unavailable for a DESeq2-results upload)"
   save_placeholder(na_msg, out[["disp_png"]], out[["disp_svg"]])
   save_placeholder(na_msg, out[["cooks_png"]], out[["cooks_svg"]])
   save_placeholder(na_msg, out[["libsize_png"]], out[["libsize_svg"]])

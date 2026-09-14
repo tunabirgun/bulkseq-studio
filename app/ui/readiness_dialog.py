@@ -369,10 +369,11 @@ class ReadinessCheckThread(QThread):
     show a moving progress bar instead of freezing while WSL/conda are queried."""
 
     done = Signal(list)
+    phase = Signal(str)
 
     def run(self) -> None:
         try:
-            items = check_readiness()
+            items = check_readiness(on_phase=self.phase.emit)
         except Exception:
             items = []
         self.done.emit(items)
@@ -639,17 +640,24 @@ class ReadinessDialog(QDialog):
         # busy bar moves while WSL/conda are queried, instead of freezing.
         if self._check_thread is not None and self._check_thread.isRunning():
             return
-        # Drop a stale connection so a thread finishing in the gap can't double-fire.
-        try:
-            self._check_thread.done.disconnect(self._on_check_done)
-        except (RuntimeError, TypeError, AttributeError):
-            pass
+        # Drop stale connections so a thread finishing in the gap can't double-fire, or write
+        # its phase into the label of the check that replaced it.
+        for signal_name, slot in (("done", self._on_check_done), ("phase", self._on_phase)):
+            try:
+                getattr(self._check_thread, signal_name).disconnect(slot)
+            except (RuntimeError, TypeError, AttributeError):
+                pass
         self.check_progress.setVisible(True)
         self.summary_label.setText("Checking requirements…")
         self.refresh_button.setEnabled(False)
         self._check_thread = ReadinessCheckThread()
         self._check_thread.done.connect(self._on_check_done)
+        self._check_thread.phase.connect(self._on_phase)
         self._check_thread.start()
+
+    def _on_phase(self, text: str) -> None:
+        # Named phase instead of one frozen line: the R load test alone can run for two minutes.
+        self.summary_label.setText(text)
 
     def _on_check_done(self, items: list[ReadinessItem]) -> None:
         self.check_progress.setVisible(False)

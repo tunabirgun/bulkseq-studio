@@ -307,3 +307,86 @@ def test_validate_reference_empty_field_fails_cleanly() -> None:
     for g, a in [(Path(""), Path("")), (Path("."), Path("."))]:
         msgs = validate_reference(g, a)
         assert msgs and all(m["status"] == "FAIL" for m in msgs)
+
+
+# ---- the R load-test timeout and the reported phases ---------------------------------------
+
+def test_r_probe_timeout_scales_with_the_package_list() -> None:
+    # The probe loads every package in the list, so the allowance has to track the list. A fixed
+    # number stops tracking the moment a package is added and false-fails a healthy cold env.
+    from app.core.readiness import R_ANALYSIS_PACKAGES, r_probe_timeout
+
+    full = r_probe_timeout(R_ANALYSIS_PACKAGES)
+    half = r_probe_timeout(R_ANALYSIS_PACKAGES[: len(R_ANALYSIS_PACKAGES) // 2])
+    assert half < full, "shrinking the probed list must lower the allowance; this is a constant"
+    assert full - half >= len(R_ANALYSIS_PACKAGES) // 2, (full, half)
+    # A cold full-stack load measured ~100 s for this list; the allowance must clear it.
+    assert full > 100, (f"{full}s must clear the ~100 s cold load measured for "
+                        f"{len(R_ANALYSIS_PACKAGES)} packages")
+
+
+def test_r_probe_timeout_is_what_the_probes_actually_pass(monkeypatch) -> None:
+    # The derivation is worthless if a caller still hands the probe a hardcoded number.
+    import app.core.readiness as R
+
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["timeout"] = kwargs.get("timeout")
+        return _P(0, "OK")
+
+    monkeypatch.setattr(R, "_which_in_env", lambda name: "/env/bin/Rscript")
+    monkeypatch.setattr(R.subprocess, "run", fake_run)
+    R._native_r_packages_item("full")
+    assert seen["timeout"] == R.r_probe_timeout(R.R_ANALYSIS_PACKAGES)
+
+
+def test_check_readiness_names_the_phase_it_is_waiting_on(monkeypatch) -> None:
+    # A two-minute R load test behind one frozen "Checking requirements…" line reads as a hang.
+    import app.core.readiness as R
+
+    phases: list[str] = []
+    monkeypatch.setattr(R.sys, "platform", "linux")
+    monkeypatch.setattr(R, "_native_r_packages_item",
+                        lambda profile="full": ReadinessItem("R packages", "PASS", "", ""))
+    check_readiness(on_phase=phases.append)
+    assert R.PHASE_R_STACK in phases
+    assert len(set(phases)) > 1, f"the phase text never changed: {phases}"
+    assert phases.index(R.PHASE_TOOLS) < phases.index(R.PHASE_R_STACK)
+
+
+def test_readiness_dialog_shows_each_phase(monkeypatch) -> None:
+    # The wiring matters as much as the signal: a phase emitted into an unconnected signal, or a
+    # slot that does not touch the label, leaves the same frozen line the phases exist to replace.
+    import time
+
+    pytest.importorskip("PySide6")
+    from PySide6.QtWidgets import QApplication
+
+    import app.core.readiness as R
+    import app.ui.readiness_dialog as D
+
+    def fake_check(on_phase=None):
+        on_phase(R.PHASE_TOOLS)
+        on_phase(R.PHASE_R_STACK)
+        return []
+
+    monkeypatch.setattr(D, "check_readiness", fake_check)
+    app = QApplication.instance() or QApplication([])
+
+    seen: list[str] = []
+    real_slot = D.ReadinessDialog._on_phase
+    monkeypatch.setattr(D.ReadinessDialog, "_on_phase",
+                        lambda self, text: (seen.append(text), real_slot(self, text)))
+    dialog = D.ReadinessDialog()          # __init__ runs the check through refresh()
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and len(seen) < 2:
+        app.processEvents()
+        time.sleep(0.01)
+    dialog._check_thread.wait(10000)
+    app.processEvents()
+    assert seen == [R.PHASE_TOOLS, R.PHASE_R_STACK], seen
+
+    real_slot(dialog, R.PHASE_WSL)
+    assert dialog.summary_label.text() == R.PHASE_WSL
+    dialog.deleteLater()

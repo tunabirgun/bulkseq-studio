@@ -15,8 +15,41 @@ def dataframe_from_rows(rows: list[dict[str, str]]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def drop_blank_library_name(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop library_name when no row carries one.
+
+    The column is optional and descriptive, and the interface offers it to every project — so a
+    sheet that never had it would otherwise gain an all-blank column, change bytes, and defeat the
+    unchanged-bytes guard in save_metadata below. Preserved as soon as any row has a value. Same
+    pattern as metadata_to_samples dropping a single-valued 'dataset' column.
+    """
+    if "library_name" not in df.columns:
+        return df
+    values = df["library_name"].fillna("").astype(str).str.strip()
+    return df.drop(columns=["library_name"]) if not values.ne("").any() else df
+
+
+def existing_line_terminator(path: Path) -> str:
+    """The newline the sheet on disk already uses; "\\n" when there is no sheet yet.
+
+    pandas serializes with os.linesep, so the same sample sheet saved on Windows and on Linux
+    differs in every byte. That defeats the unchanged-bytes guard below just as thoroughly as a
+    content change does: the mtime moves and a resumed run rebuilds from alignment. Writing back
+    whatever the file already uses keeps an existing sheet stable on either platform, and costs no
+    one a one-off rewrite; a sheet created here is written with "\\n".
+    """
+    if not path.exists():
+        return "\n"
+    head = path.read_bytes()[:8192]
+    index = head.find(b"\n")
+    if index == -1:
+        return "\n"
+    return "\r\n" if index and head[index - 1] == 0x0D else "\n"
+
+
 def save_metadata(df: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    df = drop_blank_library_name(df)
     # Serialize first, then write ONLY if the bytes changed. Re-saving an unchanged sample sheet — as
     # happens when Resuming a stopped run — must NOT touch samples.tsv's mtime, or Snakemake reruns
     # every rule that reads it (rebuilding the whole pipeline instead of continuing). Explicit UTF-8 so
@@ -24,7 +57,7 @@ def save_metadata(df: pd.DataFrame, path: Path) -> None:
     # bytes (newline='' semantics) so it stays byte-identical to the previous df.to_csv(path, ...) output.
     import io
     buf = io.StringIO()
-    df.to_csv(buf, sep="\t", index=False)
+    df.to_csv(buf, sep="\t", index=False, lineterminator=existing_line_terminator(path))
     data = buf.getvalue().encode("utf-8")
     if path.exists() and path.read_bytes() == data:
         return

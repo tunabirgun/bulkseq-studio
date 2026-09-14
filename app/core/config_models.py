@@ -398,6 +398,9 @@ class EnrichmentConfig(BaseModel):
     keytype: str | None = None
     # KEGG gene-identifier form (kegg | ncbi-geneid | uniprot); null derives it from keytype.
     kegg_keytype: str | None = None
+    # Measured KEGG gene-key form (geneid | locus_tag); null lets the workflow's per-code
+    # table or a live probe decide.
+    kegg_key_form: str | None = None
     kegg_organism: str | None = None
     # Independent species-level NCBI taxon used to verify the KEGG organism code.
     # This is deliberately separate from an OrgDb's TAXID, which may name a strain.

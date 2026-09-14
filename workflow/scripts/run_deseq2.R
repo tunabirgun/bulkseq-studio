@@ -1,17 +1,10 @@
-# Muffle only the benign "package X was built under R version 4.5.3" load warning: the r45 ABI
-# is stable, so the 4.5.3-built conda packages run correctly under the pinned r-base 4.5.2;
-# real warnings still surface. Shadow library()/require() so it works under Snakemake's
-# script runner at any call-stack depth (a top-level globalCallingHandlers does not).
-# Aligning r-base to 4.5.3 would force salmon off 1.10.3 onto the 2.x Rust rewrite, so we
-# muffle the harmless warning instead of changing the benchmarked environment.
-local({
-  .m <- function(f) function(...) withCallingHandlers(f(...), warning = function(w) if (grepl("built under R version", conditionMessage(w), fixed = TRUE)) invokeRestart("muffleWarning"))
-  assign("library", .m(base::library), envir = globalenv())
-  assign("require", .m(base::require), envir = globalenv())
-})
-
 # DESeq2 differential expression (protocol sections 7.1-7.4).
 # Driven by the Snakemake `script:` directive via the `snakemake` S4 object.
+
+# Shared engine helpers: load-warning muffling, write_check, GTF annotation, the
+# featureCounts reader, contrast guards and the design-term detectors. Sourced before any
+# library() call so the muffling is installed first.
+source(file.path(snakemake@scriptdir, "de_common.R"))
 
 suppressMessages({
   library(DESeq2)
@@ -42,63 +35,8 @@ if (is.na(lfc_thr) || lfc_thr < 0) {
   stop("deseq2.lfc_threshold must be a number >= 0 (0 disables the fold-change filter).")
 }
 
-write_check <- function(path, name, status, messages) {
-  esc <- function(s) gsub('"', '\\\\"', s)
-  msg_json <- paste0(
-    sprintf('    {"status": "%s", "message": "%s"}', vapply(messages, `[[`, "", "status"),
-            vapply(lapply(messages, `[[`, "message"), esc, "")),
-    collapse = ",\n")
-  json <- sprintf('{\n  "check": "%s",\n  "status": "%s",\n  "messages": [\n%s\n  ]\n}',
-                  name, status, msg_json)
-  writeLines(json, path)
-}
-
-# Parse gene_id -> (gene_name, gene_biotype, NCBI GeneID) from a GTF attribute column
-# and align to `gene_ids` (NA where unknown). Dependency-free regex parse; returns
-# all-NA when the GTF is absent (e.g. count-matrix mode has no reference). The GeneID
-# comes from db_xref "GeneID:<n>", which NCBI RefSeq GTFs carry on the gene record; it
-# bridges a locus-tag gene id (e.g. S. pombe SPOM_SPAC212.11) to the numeric key KEGG
-# expects, for organisms whose KEGG code maps genes by NCBI GeneID rather than by the
-# locus tag itself (run_enrichment.R does the mapping; this only records the fact).
-annotate_from_gtf <- function(gtf_path, gene_ids) {
-  na_vec <- setNames(rep(NA_character_, length(gene_ids)), gene_ids)
-  if (is.null(gtf_path) || length(gtf_path) < 1 || !nzchar(gtf_path[[1]]) ||
-      !file.exists(gtf_path[[1]])) {
-    return(list(symbol = na_vec, biotype = na_vec, geneid = na_vec))
-  }
-  gtf <- tryCatch(
-    read.delim(gtf_path[[1]], header = FALSE, sep = "\t", quote = "", comment.char = "#",
-               colClasses = c("NULL", "NULL", "character", "NULL", "NULL",
-                              "NULL", "NULL", "NULL", "character")),
-    error = function(e) NULL)
-  if (is.null(gtf) || ncol(gtf) < 2) return(list(symbol = na_vec, biotype = na_vec, geneid = na_vec))
-  names(gtf) <- c("feature", "attr")
-  g <- gtf[gtf$feature == "gene", , drop = FALSE]
-  if (nrow(g) == 0) g <- gtf  # some GTFs (e.g. minimal RefSeq) lack a gene feature
-  a <- g$attr
-  pull <- function(key) ifelse(grepl(paste0(key, ' "'), a),
-                               sub(paste0('.*', key, ' "([^"]+)".*'), "\\1", a), NA_character_)
-  gid <- pull("gene_id")
-  sym <- pull("gene_name")
-  bt <- pull("gene_biotype")
-  gt <- pull("gene_type")           # GENCODE uses gene_type; Ensembl gene_biotype
-  bt[is.na(bt)] <- gt[is.na(bt)]
-  ncbi <- ifelse(grepl('db_xref "GeneID:[0-9]+"', a),
-                sub('.*db_xref "GeneID:([0-9]+)".*', "\\1", a), NA_character_)
-  keep <- !is.na(gid) & !duplicated(gid)
-  gid <- gid[keep]; sym <- sym[keep]; bt <- bt[keep]; ncbi <- ncbi[keep]
-  idx <- match(gene_ids, gid)
-  list(symbol = setNames(sym[idx], gene_ids), biotype = setNames(bt[idx], gene_ids),
-       geneid = setNames(ncbi[idx], gene_ids))
-}
-
 # ---- Import featureCounts matrix --------------------------------------------
-fc <- read.delim(counts_file, comment.char = "#", check.names = FALSE)
-rownames(fc) <- fc$Geneid
-cts <- as.matrix(fc[, -(1:6)])
-mode(cts) <- "integer"
-# featureCounts names columns by BAM path; reduce to sample_id.
-colnames(cts) <- sub("_Aligned.sortedByCoord.out.bam$", "", basename(colnames(cts)))
+cts <- read_featurecounts(counts_file)
 
 # ---- Sample metadata --------------------------------------------------------
 samples <- read.delim(samples_file, stringsAsFactors = FALSE)
@@ -115,6 +53,7 @@ form_vars <- tryCatch(all.vars(as.formula(design_formula)), error = function(e) 
 covariates <- setdiff(form_vars, con_factor)
 covariates <- covariates[covariates %in% colnames(coldata)]
 
+coef_name <- paste0(con_factor, "_", numerator, "_vs_", denominator)
 design_checks <- list()
 full_rank <- TRUE
 tryCatch({
@@ -129,17 +68,19 @@ if (min(n_per_group) < 2) {
   design_checks[[length(design_checks) + 1]] <- list(status = "WARNING",
     message = "At least one condition has fewer than two replicates.")
 }
-# A numeric column with few distinct values (batch coded 1/2/3) is fitted as a linear trend,
-# not as a factor; flag it so the user relabels the levels if they meant groups.
-for (v in covariates) {
-  x <- coldata[[v]]
-  n_lv <- length(unique(x[!is.na(x)]))
-  if (is.numeric(x) && n_lv <= 10) design_checks[[length(design_checks) + 1]] <- list(
+design_checks <- c(design_checks, numeric_covariate_checks(coldata, covariates))
+# The contrast below tests one coefficient. Under an interaction or nesting design that
+# coefficient is the simple effect at the reference level of the other factor(s), not the
+# interaction itself, so say which coefficient was reported rather than affirm the design.
+if (has_interaction(design_formula)) {
+  design_checks[[length(design_checks) + 1]] <- list(
     status = "REVIEW_REQUIRED",
     message = sprintf(paste0(
-      "Design term '%s' is numeric with %d distinct values and is fitted as a continuous covariate ",
-      "(a linear trend), not as a factor. If these are group labels (batch, run, donor), use ",
-      "non-numeric labels such as 'b1', 'b2' so they are modelled as levels."), v, n_lv))
+      "Design %s contains an interaction or nesting operator. The reported result is the ",
+      "coefficient '%s', i.e. the %s vs %s difference at the reference level of the other ",
+      "design factor(s), not the interaction effect. To test the interaction term itself, ",
+      "request it as an explicit contrast or coefficient."),
+      design_formula, coef_name, numerator, denominator))
 }
 design_status <- if (!full_rank) "FAIL" else if (any(vapply(design_checks, function(m)
   identical(m$status, "REVIEW_REQUIRED"), logical(1)))) "REVIEW_REQUIRED" else "PASS"
@@ -159,19 +100,8 @@ if (nzchar(ref_level) && ref_factor %in% colnames(coldata)) {
 dds <- DESeq(dds)
 
 # Guard: contrast levels must be set, distinct, and present in the factor.
-.lv <- levels(coldata[[con_factor]])
-if (!nzchar(numerator) || !nzchar(denominator)) {
-  stop("Contrast numerator and denominator must both be set.")
-}
-if (identical(numerator, denominator)) {
-  stop("Contrast numerator and denominator must differ.")
-}
-if (!(numerator %in% .lv) || !(denominator %in% .lv)) {
-  stop(sprintf("Contrast levels '%s'/'%s' not found in factor '%s' (levels: %s).",
-               numerator, denominator, con_factor, paste(.lv, collapse = ", ")))
-}
+check_contrast(numerator, denominator, levels(coldata[[con_factor]]), con_factor)
 res <- results(dds, contrast = c(con_factor, numerator, denominator), alpha = alpha)
-coef_name <- paste0(con_factor, "_", numerator, "_vs_", denominator)
 # lfcShrink(type=apeglm) can fail (e.g. apeglm needs a single model coefficient, which a
 # multi-level contrast does not give it) and fall back to ashr inside this tryCatch. Track
 # the REALISED method (and why), not just the requested shrink_type, so the run summary
@@ -191,11 +121,11 @@ resLFC <- tryCatch(
 vsd <- tryCatch(vst(dds, blind = FALSE), error = function(e) rlog(dds, blind = FALSE))
 
 # PC1/PC2 coordinates for the covariate-structure screen (check 23): same ntop default
-# make_figures.R uses for the PCA plot. Path is derived from the results output directory,
-# not a new snakemake@output entry, so the rule wiring is unchanged.
+# make_figures.R uses for the PCA plot. The alternative engines write the same three columns
+# from their own log matrix via de_common.R's write_pca_coordinates().
 pca_coords <- plotPCA(vsd, intgroup = con_factor, ntop = 500, returnData = TRUE)
 pca_out <- data.frame(sample_id = rownames(pca_coords), PC1 = pca_coords$PC1, PC2 = pca_coords$PC2)
-write.csv(pca_out, file.path(dirname(snakemake@output[["results"]]), "pca_coordinates.csv"), row.names = FALSE)
+write.csv(pca_out, snakemake@output[["pca_coordinates"]], row.names = FALSE)
 
 # ---- Gene annotation (symbol + biotype from the GTF) ------------------------
 # Adds human-readable columns to the results CSV and a gene_id->symbol map the
@@ -209,7 +139,7 @@ annot <- annotate_from_gtf(gtf_path, rownames(res))
 # not feed the up/down classification below; lfc_thr may be 0, so fall back to
 # 1.0 (a positive threshold is required by greaterAbs, same as the lessAbs
 # equivalence test further down).
-L_eq <- if (lfc_thr > 0) lfc_thr else 1.0
+L_eq <- require_lfc_threshold(if (lfc_thr > 0) lfc_thr else 1.0)
 res_greater <- results(dds, contrast = c(con_factor, numerator, denominator),
                        lfcThreshold = L_eq, altHypothesis = "greaterAbs", alpha = alpha)
 
@@ -224,7 +154,7 @@ res_out <- res_out[order(res_out$padj), ]
 write.csv(res_out, snakemake@output[["results"]], row.names = FALSE)
 write.csv(as.data.frame(counts(dds, normalized = TRUE)), snakemake@output[["normalized"]])
 saveRDS(list(dds = dds, res = res, resLFC = resLFC, vsd = vsd,
-             symbol_map = annot$symbol),
+             lfc_threshold_test = "greaterAbs", symbol_map = annot$symbol),
         snakemake@output[["rds"]])
 
 # Up- and down-regulated sets: padj < alpha AND a raw-LFC effect-size cut
@@ -271,6 +201,8 @@ shrink_line <- if (identical(shrink_method_used, shrink_type)) {
   sprintf("Shrinkage method used: %s (requested '%s' failed and fell back: %s)",
           shrink_method_used, shrink_type, shrink_fallback_reason)
 }
-writeLines(c(shrink_line, "", capture.output(sessionInfo())), snakemake@output[["session"]])
+lfc_test_line <- sprintf("Fold-change threshold test: greaterAbs (H0 |log2FC| <= %g)", L_eq)
+writeLines(c(shrink_line, lfc_test_line, "", capture.output(sessionInfo())),
+           snakemake@output[["session"]])
 sink(type = "message")
 close(log_con)

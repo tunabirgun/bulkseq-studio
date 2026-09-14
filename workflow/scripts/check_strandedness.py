@@ -68,9 +68,11 @@ def _within_study_messages(strand: dict[str, tuple[int, float | None]], df: pd.D
             for sid in known
         )
         messages.append({"status": "REVIEW_REQUIRED", "message": (
-            f"Study '{study}' has samples with disagreeing inferred strandedness codes "
-            f"({detail}); featureCounts already applies each sample's own -s, but a mixed "
-            "call within one study usually means a mislabeled or misassigned library.")})
+            "Samples within one study disagree on inferred strandedness: check those "
+            "libraries for a mislabeled or misassigned sample before interpreting their "
+            "counts. featureCounts already applied each sample's own -s, so the counts "
+            f"themselves are not wrong on that account. Study '{study}', inferred codes: "
+            f"{detail}.")})
     return messages
 
 
@@ -146,11 +148,12 @@ def main() -> int:
             detail = ", ".join(f"{s}={m:.2f}" for s, m in sorted(medians.items()))
             if low or divergent:
                 messages.append({"status": "REVIEW_REQUIRED", "message": (
-                    f"Per-study median Assigned fraction diverges ({detail}) even though "
-                    "featureCounts already ran with each sample's own inferred -s. The "
-                    "low-assignment study/studies likely have a library problem other than "
-                    "strandedness (check GTF match, contamination, or the per-sample "
-                    "strandedness_per_sample.tsv inference for those samples).")})
+                    "One or more studies assign far fewer reads to features than the others: "
+                    "check their GTF/genome match, contamination and the per-sample "
+                    "inference in results/aligned/strandedness_per_sample.tsv before "
+                    "interpreting their counts. featureCounts already ran with each sample's "
+                    "own inferred -s, so strandedness alone does not explain the gap. "
+                    f"Per-study median Assigned fraction: {detail}.")})
             else:
                 messages.append({"status": "PASS", "message": (
                     f"Per-study median Assigned fractions are consistent ({detail}); "

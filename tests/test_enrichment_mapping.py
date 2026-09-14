@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import ast
-import os
 import re
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Callable
@@ -11,7 +9,7 @@ from typing import Callable
 import pytest
 import yaml
 
-from app.core.paths import windows_to_wsl_path
+from _runtime import rscript_runtime
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,37 +28,15 @@ def _load_enrich_map() -> dict[str, tuple[str, str, str]]:
 
 
 def _r_runtime(script: Path) -> tuple[list[str], str, Callable[[Path], str]]:
-    rscript = shutil.which("Rscript")
-    if rscript:
-        probe = subprocess.run(
-            [rscript, "--vanilla", "-e",
-             'quit(status=if (requireNamespace("clusterProfiler", quietly=TRUE) && '
-             'requireNamespace("org.Sc.sgd.db", quietly=TRUE)) 0 else 1)'],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-        if probe.returncode == 0:
-            return [rscript, "--vanilla"], script.as_posix(), lambda path: str(path)
-    wsl = shutil.which("wsl.exe")
-    if os.name == "nt" and wsl:
-        prefix = subprocess.run(
-            [wsl, "--", "bash", "-lc", (
-                'if [ -x "$HOME/micromamba/envs/bulkseq/bin/Rscript" ]; then '
-                'echo "$HOME/micromamba/envs/bulkseq/bin/Rscript"; '
-                'elif [ -x "/root/micromamba/envs/bulkseq/bin/Rscript" ]; then '
-                'echo "/root/micromamba/envs/bulkseq/bin/Rscript"; '
-                'elif [ -x "$HOME/.local/share/mamba/envs/bulkseq/bin/Rscript" ]; then '
-                'echo "$HOME/.local/share/mamba/envs/bulkseq/bin/Rscript"; '
-                'else exit 1; fi'
-            )],
-            capture_output=True, text=True, timeout=15, check=False,
-        )
-        if prefix.returncode == 0 and prefix.stdout.strip():
-            return ([wsl, "--", prefix.stdout.strip(), "--vanilla"],
-                    windows_to_wsl_path(script), windows_to_wsl_path)
-    pytest.skip("Rscript is not available for the pure enrichment-mapping regression")
+    # A bare Rscript on PATH is usually the distribution's R without Bioconductor, so the
+    # runtime is accepted only once it proves it can load the packages these regressions
+    # need. Under WSL the pipeline's own R lives in the micromamba prefix and is never on
+    # PATH; the shared probe searches those prefixes natively too.
+    runtime = rscript_runtime("clusterProfiler", "org.Sc.sgd.db")
+    if runtime is None:
+        pytest.skip("Rscript is not available for the pure enrichment-mapping regression")
+    command, convert = runtime
+    return command, convert(script), convert
 
 
 def test_mixed_id_routing_excludes_ambiguity_and_direction_conflicts(tmp_path: Path) -> None:
@@ -714,3 +690,100 @@ def test_enrich_map_fallback_covers_every_catalog_organism_with_an_orgdb() -> No
         if enrich_map[name][2] != kegg
     )
     assert not mismatched_kegg, f"_ENRICH_MAP kegg_organism disagrees with the catalog for: {mismatched_kegg}"
+
+
+BRIDGE_R = ROOT / "tests" / "test_kegg_geneid_bridge.R"
+KEGG_KEY_FORM_VALUES = {"geneid", "locus_tag"}
+
+
+def _load_smk_key_forms() -> dict[str, str]:
+    source = ENRICHMENT_SMK.read_text(encoding="utf-8")
+    match = re.search(r"_KEGG_KEY_FORM\s*=\s*(\{.*?\n\})", source, re.DOTALL)
+    assert match, "_KEGG_KEY_FORM dict literal not found in enrichment.smk"
+    return ast.literal_eval(match.group(1))
+
+
+def _catalog_key_forms() -> dict[str, str]:
+    entries = yaml.safe_load(CATALOG.read_text(encoding="utf-8"))["references"]
+    return {str(entry["kegg_organism"]): str(entry.get("kegg_key_form") or "")
+            for entry in entries if entry.get("kegg_organism")}
+
+
+def _key_form_disagreements(smk: dict[str, str], catalog: dict[str, str]) -> dict[str, str]:
+    codes = sorted(set(smk) | set(catalog))
+    return {code: f"enrichment.smk={smk.get(code)} catalog={catalog.get(code)}"
+            for code in codes if smk.get(code) != catalog.get(code)}
+
+
+def test_every_catalog_kegg_organism_declares_a_measured_key_form() -> None:
+    # The key form decides whether the locus-tag-to-GeneID bridge runs at all, so a
+    # missing or invented value silently empties the organism's KEGG tables. Each value
+    # here was measured from KEGG's own link/<org>/pathway table; tests/test_kegg_live.py
+    # re-measures them against the live service.
+    entries = yaml.safe_load(CATALOG.read_text(encoding="utf-8"))["references"]
+    forms = _catalog_key_forms()
+    assert forms, "no catalog entry declares a kegg_organism"
+    undeclared = sorted(code for code, form in forms.items() if not form)
+    assert not undeclared, f"catalog kegg_organism entries without a kegg_key_form: {undeclared}"
+    invalid = sorted(f"{code}={form}" for code, form in forms.items()
+                     if form not in KEGG_KEY_FORM_VALUES)
+    assert not invalid, f"kegg_key_form must be geneid or locus_tag: {invalid}"
+    # An entry with no KEGG code has nothing to declare a key form for.
+    stray = sorted(str(entry["organism_name"]) for entry in entries
+                   if not entry.get("kegg_organism") and entry.get("kegg_key_form"))
+    assert not stray, f"kegg_key_form declared without a kegg_organism: {stray}"
+
+
+def test_enrichment_smk_key_form_table_matches_the_catalog() -> None:
+    # enrichment.smk carries the code -> key-form table because the workflow tree is
+    # copied into a project without app/data. The catalog stays the source of truth:
+    # any divergence between the two is a failure here, not a silent wrong bridge.
+    smk = _load_smk_key_forms()
+    catalog = _catalog_key_forms()
+    assert not _key_form_disagreements(smk, catalog)
+    assert set(smk.values()) <= KEGG_KEY_FORM_VALUES
+    # Negative control: a single flipped value in an in-memory copy must be reported.
+    flipped = dict(smk)
+    victim = sorted(flipped)[0]
+    flipped[victim] = "locus_tag" if flipped[victim] == "geneid" else "geneid"
+    assert victim in _key_form_disagreements(flipped, catalog)
+    dropped = {code: form for code, form in smk.items() if code != victim}
+    assert victim in _key_form_disagreements(dropped, catalog)
+
+
+def test_enrichment_rule_forwards_the_key_form_and_the_de_route() -> None:
+    source = ENRICHMENT_SMK.read_text(encoding="utf-8")
+    assert "kegg_key_form=_ENR.get(\"kegg_key_form\") or _KEGG_KEY_FORM.get(_KEGG_CODE, \"\")" in source
+    assert "de_route=_DE_ROUTE," in source
+    r_source = SCRIPT.read_text(encoding="utf-8")
+    assert 'snakemake@params[["kegg_key_form"]]' in r_source
+    assert 'snakemake@params[["de_route"]]' in r_source
+    # The probe must never be the first source of truth for a catalog organism: the
+    # unconditional probe-only entry point it replaced must be gone.
+    assert "KEGG_KEY_FORM <- resolve_kegg_key_form(" in r_source
+    assert "\nkegg_key_form <- function" not in r_source
+
+
+def test_kegg_geneid_bridge_r_regression_passes() -> None:
+    command, _, runtime_path = _r_runtime(BRIDGE_R)
+    completed = subprocess.run(
+        [*command, runtime_path(BRIDGE_R)], capture_output=True, text=True,
+        cwd=ROOT, timeout=300, check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "ALL TESTS PASSED" in completed.stdout
+    assert "FAIL:" not in completed.stdout
+
+
+def test_both_non_orgdb_routes_wire_the_route_gap_into_check_10() -> None:
+    # kegg_route_gap is unit-tested directly; this fixes it to the two routes that can
+    # actually hit the gap (the OrgDb route queries KEGG by Entrez id), so a future edit
+    # cannot leave one of them reporting an ordinary empty KEGG table instead.
+    r_source = SCRIPT.read_text(encoding="utf-8")
+    assert r_source.count("route_gap <- if (has_kegg) kegg_route_gap(") == 2
+    assert r_source.count('if (is.null(route_gap)) "PASS" else "REVIEW_REQUIRED"') == 2
+    assert r_source.count('if (is.null(route_gap)) "" else paste0(" ", route_gap)') == 2
+    # The gap is reported through check 10, never as a new enrichment_summary prefix:
+    # workflow/scripts/_enrichment_evidence.py is the contract both reports quote.
+    assert "summary_lines <<- c(summary_lines," in r_source
+    assert "route_gap)" not in r_source.split("summary_lines <<- c(summary_lines,")[1].split("list(status")[0]

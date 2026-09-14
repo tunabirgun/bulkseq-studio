@@ -22,6 +22,70 @@ _ORG = str(config.get("reference", {}).get("organism_name", "")).lower()
 _MAPPED = next((v for k, v in _ENRICH_MAP.items() if k in _ORG), ("", "", ""))
 _ENR = config.get("enrichment", {})
 
+# KEGG gene-key form per organism code: "geneid" where the organism's KEGG entries key on
+# the bare NCBI GeneID, "locus_tag" where they key on the native locus tag. It decides
+# whether run_enrichment.R bridges the gene ids before querying KEGG, and bridging the
+# wrong way returns empty tables rather than an error. Measured 2026-09-13 from
+# link/<org>/pathway as a majority over the organism's full key list, with list/<org> as a
+# second source. app/data/reference_catalog.yaml is the source of truth; the table is
+# duplicated here because a project receives the workflow tree without app/data, and
+# tests/test_enrichment_mapping.py fails when the two disagree.
+_KEGG_KEY_FORM = {
+    "afm": "locus_tag",
+    "ang": "locus_tag",
+    "ani": "locus_tag",
+    "ath": "locus_tag",
+    "bfu": "locus_tag",
+    "bsu": "locus_tag",
+    "bta": "geneid",
+    "cal": "locus_tag",
+    "cel": "locus_tag",
+    "cng": "locus_tag",
+    "dme": "locus_tag",
+    "dre": "geneid",
+    "eco": "locus_tag",
+    "fgr": "locus_tag",
+    "fox": "locus_tag",
+    "fpu": "locus_tag",
+    "fvr": "locus_tag",
+    "gga": "geneid",
+    "ghi": "geneid",
+    "gmx": "geneid",
+    "hsa": "geneid",
+    "hvg": "geneid",
+    "mgr": "locus_tag",
+    "mmu": "geneid",
+    "mtr": "geneid",
+    "mtu": "locus_tag",
+    "ncr": "locus_tag",
+    "nta": "geneid",
+    "osa": "geneid",
+    "pae": "locus_tag",
+    "pfa": "locus_tag",
+    "rno": "geneid",
+    "sao": "locus_tag",
+    "sbi": "geneid",
+    "sce": "locus_tag",
+    "sly": "geneid",
+    "sot": "geneid",
+    "spo": "geneid",
+    "ssc": "geneid",
+    "ssl": "locus_tag",
+    "taes": "geneid",
+    "uma": "locus_tag",
+    "vvi": "geneid",
+    "zma": "geneid",
+    "ztr": "locus_tag",
+}
+_KEGG_CODE = _ENR.get("kegg_organism") or _MAPPED[2]
+# Named in check 10 when the route cannot supply the ids the organism's KEGG entries key on.
+_DE_ROUTE = (
+    "imported DE results input route" if DE_RESULTS_MODE
+    else "microarray input route" if MICROARRAY_MODE
+    else "count matrix input route" if COUNT_MATRIX_MODE
+    else f"{DE_ENGINE} engine"
+)
+
 
 rule enrichment:
     input:
@@ -52,7 +116,11 @@ rule enrichment:
         # nothing. The GUI also sets this, but a scripted/hand-edited config might not.
         keytype=_ENR.get("keytype") or ("SYMBOL" if MICROARRAY_MODE else _MAPPED[1]),
         kegg_keytype=_ENR.get("kegg_keytype") or "",
-        kegg=_ENR.get("kegg_organism") or _MAPPED[2],
+        kegg=_KEGG_CODE,
+        # The measured key form, so the script does not spend a KEGG round trip on an
+        # organism whose form is already known; an unlisted organism is probed live.
+        kegg_key_form=_ENR.get("kegg_key_form") or _KEGG_KEY_FORM.get(_KEGG_CODE, ""),
+        de_route=_DE_ROUTE,
         # backend selects the GO route: 'clusterprofiler' = auto OrgDb->gprofiler->none;
         # 'gprofiler' forces the g:Profiler GO route. gprofiler_organism is the
         # g:Profiler organism id (e.g. hsapiens, anidulans), distinct from the KEGG code.

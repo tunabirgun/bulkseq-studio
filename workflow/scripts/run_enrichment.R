@@ -84,17 +84,108 @@ bridge_kegg_geneid <- function(ids, lookup) {
 # GeneID (measured: S. pombe 'spo'); for organisms whose KEGG entries key on the
 # native locus tag (measured: Fusarium 'fgr', C. albicans 'cal', Z. tritici 'ztr',
 # P. falciparum 'pfa', S. aureus 'sao'), bridging maps every id to a key KEGG does
-# not use, silently zeroing the result. Determine the key form empirically per
-# organism rather than hardcoding a species list, since KEGGREST's own catalogue is
-# the source of truth and coverage changes over time.
-kegg_key_form <- function(kegg_org) {
-  tryCatch({
-    keys <- suppressMessages(KEGGREST::keggList(kegg_org))
-    ids <- sub("^[^:]+:", "", names(keys))
-    sampled <- utils::head(ids, 50)
-    if (!length(sampled)) return("unknown")
-    if (all(grepl("^[0-9]+$", sampled))) "geneid" else "locus_tag"
-  }, error = function(e) "unknown")
+# not use, silently zeroing the result. The catalogue records the form measured for
+# every preset organism; an organism outside the catalogue is measured live, since
+# KEGG's own tables are the source of truth and coverage changes over time.
+KEGG_KEY_FORMS_OBSERVABLE <- c("geneid", "locus_tag")
+
+# Probe sources, in the order that makes them trustworthy for this question.
+# link/<org>/pathway is the gene-to-pathway table enrichKEGG is built from, so its
+# keys are exactly the keys a query must use; list/<org> is the organism's gene
+# catalogue; conv/<org>/ncbi-geneid carries the same KEGG-side keys as its names;
+# info/<org> carries no gene keys at all and can only establish that the organism
+# is reachable. Injectable so the fallback chain is exercisable without a network.
+kegg_probe_sources <- function() {
+  list(
+    link = function(org) names(KEGGREST::keggLink("pathway", org)),
+    list = function(org) names(KEGGREST::keggList(org)),
+    conv = function(org) names(KEGGREST::keggConv("ncbi-geneid", org)),
+    info = function(org) { KEGGREST::keggInfo(org); character(0) })
+}
+
+# Majority over the full key list, not all() over a 50-key head: osa carries 2
+# non-numeric keys among 32,578 and ssc 24 among 21,008 (measured 2026-09-13), so a
+# single one of those in the head would have flipped the organism to locus_tag and
+# suppressed the bridge for every gene.
+classify_kegg_keys <- function(keys) {
+  ids <- sub("^[^:]+:", "", as.character(keys))
+  ids <- ids[!is.na(ids) & nzchar(ids)]
+  numeric_n <- sum(grepl("^[0-9]+$", ids))
+  list(form = if (!length(ids)) "unknown" else
+              if (numeric_n * 2 > length(ids)) "geneid" else "locus_tag",
+       numeric_n = numeric_n, total_n = length(ids))
+}
+
+probe_kegg_key_form <- function(kegg_org, sources = kegg_probe_sources()) {
+  reached <- "none"
+  for (name in names(sources)) {
+    keys <- tryCatch(as.character(suppressMessages(sources[[name]](kegg_org))),
+                     error = function(e) NULL)
+    if (is.null(keys)) next
+    reached <- name
+    # Each source pairs the organism's keys with something else (pathways for link,
+    # NCBI GeneIDs for conv). Measured 2026-09-13 on fgr, KEGGREST returns the KEGG
+    # side as the names; keeping only the organism-prefixed keys means a source that
+    # ever returned the other side falls through to the next one instead of
+    # classifying every organism as geneid off the NCBI GeneIDs it was paired with.
+    measured <- classify_kegg_keys(keys[startsWith(keys, paste0(kegg_org, ":"))])
+    if (!identical(measured$form, "unknown")) return(c(measured, list(probe = name)))
+  }
+  list(form = "unknown", numeric_n = NA_integer_, total_n = NA_integer_, probe = reached)
+}
+
+# The catalogue value wins where it exists, so a preset organism costs no KEGG round
+# trip and a network outage cannot change which ids are queried. allow_probe is the
+# caller's statement that the key form can still affect this run.
+resolve_kegg_key_form <- function(catalogue, allow_probe,
+                                  probe = function() probe_kegg_key_form(kegg_org)) {
+  declared <- tolower(trimws(as.character(if (is.null(catalogue)) "" else catalogue)))
+  unmeasured <- list(form = "unknown", probe = "not attempted",
+                     numeric_n = NA_integer_, total_n = NA_integer_)
+  if (length(declared) == 1L && !is.na(declared) &&
+      declared %in% KEGG_KEY_FORMS_OBSERVABLE)
+    return(c(list(form = declared, source = "catalogue"), unmeasured[-1]))
+  if (!isTRUE(allow_probe)) return(c(unmeasured, list(source = "not measured")))
+  measured <- probe()
+  c(measured, list(source = if (identical(measured$form, "unknown"))
+                             "live probe failed" else "live"))
+}
+
+format_kegg_key_form <- function(resolved) {
+  if (is.null(resolved)) return("not recorded")
+  total <- resolved$total_n
+  detail <- if (is.null(total) || is.na(total) || total == 0L)
+    sprintf("probe=%s", resolved$probe)
+  else sprintf("probe=%s; numeric keys %d/%d (%.4f)", resolved$probe,
+               resolved$numeric_n, total, resolved$numeric_n / total)
+  sprintf("%s; source=%s; %s", resolved$form, resolved$source, detail)
+}
+
+# Two states make a KEGG query structurally incapable of returning tables, and both
+# would otherwise surface as an ordinary empty result: an unmeasurable key form, and
+# a GeneID-keyed organism reached from a route that carries no GeneID column to
+# bridge with. Neither applies once the ids are already bare numbers.
+geneid_column_usable <- function(values) {
+  !is.null(values) && any(!is.na(values) & nzchar(as.character(values)))
+}
+
+kegg_route_gap <- function(key_form, ids, geneid_available, route, keytype_used,
+                           organism = kegg_org) {
+  if (!identical(keytype_used, "kegg") || !length(ids)) return(NULL)
+  numeric_n <- sum(grepl("^[0-9]+$", ids))
+  if (numeric_n * 2 > length(ids)) return(NULL)
+  unbridgeable <- length(ids) - numeric_n
+  if (identical(key_form, "unknown"))
+    return(sprintf(paste0("the KEGG key form for organism %s could not be measured and ",
+                          "%d/%d gene ids are not bare NCBI GeneIDs, so the KEGG tables ",
+                          "may be empty for that reason"),
+                   organism, unbridgeable, length(ids)))
+  if (identical(key_form, "geneid") && !isTRUE(geneid_available))
+    return(sprintf(paste0("organism %s keys KEGG on bare NCBI GeneIDs but the %s carries ",
+                          "no usable ncbi_geneid values, so %d/%d gene ids cannot be ",
+                          "bridged and the KEGG tables will be empty for that reason"),
+                   organism, route, unbridgeable, length(ids)))
+  NULL
 }
 
 # The bridge is built only when the measured key form is "geneid"; a "locus_tag" or
@@ -159,9 +250,18 @@ has_orgdb     <- !is.null(orgdb_name)    && nzchar(orgdb_name)
 has_kegg      <- !is.null(kegg_org)      && nzchar(kegg_org)
 has_gprofiler <- !is.null(gprofiler_org) && nzchar(gprofiler_org)
 
-# Computed once, only where the locus-tag bridge can apply (the OrgDb route queries
-# KEGG by ENTREZ id and never consults it).
-KEGG_KEY_FORM_OBSERVED <- if (has_kegg && !has_orgdb) kegg_key_form(kegg_org) else "unknown"
+# Resolved once. The catalogue answer applies on every route (an OrgDb that fails to
+# load drops this run onto the KEGG-only route, which needs it); the live probe costs
+# a KEGG round trip and so runs only where the bridge can still apply -- the OrgDb
+# route queries KEGG by ENTREZ id and never consults the key form.
+KEGG_KEY_FORM <- resolve_kegg_key_form(
+  tryCatch(snakemake@params[["kegg_key_form"]], error = function(e) NULL),
+  has_kegg && !has_orgdb)
+KEGG_KEY_FORM_OBSERVED <- KEGG_KEY_FORM$form
+KEGG_KEY_FORM_EVIDENCE <- format_kegg_key_form(KEGG_KEY_FORM)
+DE_ROUTE <- tryCatch(as.character(snakemake@params[["de_route"]]), error = function(e) "")
+if (!length(DE_ROUTE) || is.na(DE_ROUTE[1]) || !nzchar(DE_ROUTE[1]))
+  DE_ROUTE <- "differential expression route"
 
 # No usable enrichment route (no OrgDb, no KEGG code, no g:Profiler organism):
 # skip cleanly rather than risk running against the wrong species' database.
@@ -1065,7 +1165,8 @@ run_kegg <- function(genes_all, ranked, kegg_keytype, background = NULL,
                      expected_name = configured_organism_name,
                      expected_taxon = configured_taxon_id,
                      rank_info = build_deterministic_rank(ranked, names(ranked)),
-                     key_form_observed = if (exists("KEGG_KEY_FORM_OBSERVED")) KEGG_KEY_FORM_OBSERVED else "unknown") {
+                     key_form_observed = if (exists("KEGG_KEY_FORM_EVIDENCE"))
+                       KEGG_KEY_FORM_EVIDENCE else "not recorded") {
   genes_all <- mapped_unique(genes_all)
   background <- mapped_unique(background)
   identity <- validate_kegg_identity(kegg_org, expected_name, expected_taxon)
@@ -1577,6 +1678,9 @@ if (orgdb_ok) {
 
     # KEGG ORA + GSEA via clusterProfiler on the raw locus-tag ids (always-on tail).
     # Same tested-gene background g:Profiler receives as custom_bg, in locus-tag space.
+    route_gap <- if (has_kegg) kegg_route_gap(
+      KEGG_KEY_FORM_OBSERVED, all_ids, geneid_column_usable(res$ncbi_geneid),
+      DE_ROUTE, kegg_keytype) else NULL
     kegg_rank_info <- rank_info
     names(kegg_rank_info$values) <- bridge_kegg_geneid(names(rank_info$values), kegg_geneid_lookup)
     kegg <- if (has_kegg) run_kegg(
@@ -1585,7 +1689,7 @@ if (orgdb_ok) {
       foregrounds = list(up = bridge_kegg_geneid(up_ids, kegg_geneid_lookup),
                         down = bridge_kegg_geneid(down_ids, kegg_geneid_lookup),
                         combined = bridge_kegg_geneid(all_ids, kegg_geneid_lookup)),
-      expected_name = configured_organism_name, key_form_observed = KEGG_KEY_FORM_OBSERVED)
+      expected_name = configured_organism_name, key_form_observed = KEGG_KEY_FORM_EVIDENCE)
     else list(ekegg_all = NULL, kegg_gse = NULL, n_ora = 0L, n_gsea = 0L,
               audit = list(status = "NOT_RUN", ora_status = "NOT_RUN",
                            gsea_status = "NOT_RUN"))
@@ -1613,12 +1717,14 @@ if (orgdb_ok) {
     kegg_check_status <- if (has_kegg) resource_status_to_check(kegg$audit$status) else "PASS"
     result_status <- status_max(
       if (length(all_ids) >= MIN_ORA_FOREGROUND_GENES) "PASS" else "REVIEW_REQUIRED",
-      gp_check_status, kegg_check_status)
+      gp_check_status, kegg_check_status,
+      if (is.null(route_gap)) "PASS" else "REVIEW_REQUIRED")
     list(status = result_status,
          message = sprintf(paste0("g:Profiler GO=%d adjusted terms; KEGG ORA=%d, GSEA=%d adjusted pathways; ",
-                                  "KEGG resource=%s; GeneID-bridged=%d/%d."),
+                                  "KEGG resource=%s; GeneID-bridged=%d/%d.%s"),
                            n_go, kegg$n_ora, kegg$n_gsea, kegg$audit$status,
-                           kegg_bridged_n, length(all_ids)))
+                           kegg_bridged_n, length(all_ids),
+                           if (is.null(route_gap)) "" else paste0(" ", route_gap)))
   }, error = function(e) {
     summary_lines <<- c(summary_lines, paste("g:Profiler enrichment failed:", conditionMessage(e)))
     list(status = "REVIEW_REQUIRED",
@@ -1649,6 +1755,9 @@ if (orgdb_ok) {
     kegg_bridged_n <- if (is.null(kegg_geneid_lookup)) 0L else
       sum(!grepl("^[0-9]+$", all_ids) &
           !is.na(kegg_geneid_lookup[all_ids]) & nzchar(kegg_geneid_lookup[all_ids]))
+    route_gap <- if (has_kegg) kegg_route_gap(
+      KEGG_KEY_FORM_OBSERVED, all_ids, geneid_column_usable(res$ncbi_geneid),
+      DE_ROUTE, kegg_keytype) else NULL
     kegg_rank_info <- rank_info
     names(kegg_rank_info$values) <- bridge_kegg_geneid(names(rank_info$values), kegg_geneid_lookup)
 
@@ -1658,7 +1767,7 @@ if (orgdb_ok) {
       foregrounds = list(up = bridge_kegg_geneid(up_ids, kegg_geneid_lookup),
                         down = bridge_kegg_geneid(down_ids, kegg_geneid_lookup),
                         combined = bridge_kegg_geneid(all_ids, kegg_geneid_lookup)),
-      expected_name = configured_organism_name, key_form_observed = KEGG_KEY_FORM_OBSERVED)
+      expected_name = configured_organism_name, key_form_observed = KEGG_KEY_FORM_EVIDENCE)
 
     saveRDS(list(ego_all = NULL, ego_up = NULL, ego_down = NULL,
                  gse = NULL, ego_do = NULL,
@@ -1680,11 +1789,13 @@ if (orgdb_ok) {
               kegg$n_ora, kegg$n_gsea))
     list(status = status_max(
            if (length(all_ids) >= MIN_ORA_FOREGROUND_GENES) "PASS" else "REVIEW_REQUIRED",
-           resource_status_to_check(kegg$audit$status)),
+           resource_status_to_check(kegg$audit$status),
+           if (is.null(route_gap)) "PASS" else "REVIEW_REQUIRED"),
          message = sprintf(paste0("KEGG-only enrichment: ORA=%d, GSEA=%d adjusted pathways; ",
-                                  "resource=%s; %s; GeneID-bridged=%d/%d"),
+                                  "resource=%s; %s; GeneID-bridged=%d/%d%s"),
                            kegg$n_ora, kegg$n_gsea, kegg$audit$status,
-                           kegg$audit$reason, kegg_bridged_n, length(all_ids)))
+                           kegg$audit$reason, kegg_bridged_n, length(all_ids),
+                           if (is.null(route_gap)) "" else paste0(" ", route_gap)))
   }, error = function(e) {
     summary_lines <<- c(summary_lines, paste("KEGG enrichment failed:", conditionMessage(e)))
     list(status = "REVIEW_REQUIRED",

@@ -13,6 +13,16 @@ from pathlib import Path
 
 import yaml
 
+# Snakemake runs this as `python workflow/scripts/make_run_summary.py`, which already puts the
+# script directory on sys.path; the tests import it by file path, which does not.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _contrast_disclosure import (  # noqa: E402
+    ANALYSED_LABEL, IGNORED_LABEL, split_contrasts)
+from _enrichment_evidence import evidence_lines  # noqa: E402
+from _sample_labels import sample_label_rows  # noqa: E402
+from _strandedness_text import (  # noqa: E402
+    STRANDEDNESS_LABELS as _STRANDEDNESS_LABELS, realized_strandedness_text)
+
 
 def env_lock_md5() -> str | None:
     # md5 of the pinned conda lock that defines the analysis environment.
@@ -216,7 +226,6 @@ def route_active_workflow(payload: dict) -> dict:
     return payload.get("workflow") or {}
 
 
-_STRANDEDNESS_LABELS = {0: "unstranded", 1: "forward", 2: "reverse"}
 _STRANDEDNESS_PATH = "results/aligned/strandedness.txt"
 _STRANDEDNESS_PER_SAMPLE_PATH = "results/aligned/strandedness_per_sample.tsv"
 _COUNTS_PATH = "results/counts/counts.txt"
@@ -359,26 +368,6 @@ def load_realized_strandedness(root: Path, config: dict) -> dict | None:
     return provenance
 
 
-def realized_strandedness_text(payload: dict) -> str | None:
-    """Render only a complete realized record; never substitute the configured value."""
-    provenance = payload.get("strandedness")
-    realized = provenance.get("realized") if isinstance(provenance, dict) else None
-    if not isinstance(realized, dict):
-        return None
-    code = realized.get("code")
-    label = realized.get("label")
-    path = realized.get("path")
-    if (isinstance(code, bool) or code not in _STRANDEDNESS_LABELS
-            or label != _STRANDEDNESS_LABELS[code] or not isinstance(path, str)
-            or not path.strip()):
-        return None
-    per_sample = realized.get("per_sample")
-    if isinstance(per_sample, dict) and per_sample and not realized.get("uniform", True):
-        detail = ", ".join(f"{sid}={_STRANDEDNESS_LABELS.get(c, c)}" for sid, c in sorted(per_sample.items()))
-        return f"mixed (realized per-sample from {path}: {detail})"
-    return f"{label} ({code}; realized from {path})"
-
-
 def deseq2_effect_size_semantics(payload: dict) -> dict | None:
     """Describe the raw-MLE cutoff separately from realized LFC shrinkage."""
     input_type = str((payload.get("input") or {}).get("type") or "fastq").lower()
@@ -504,6 +493,19 @@ def _format_contrasts(value) -> str:
     return "; ".join(rendered) or "none configured"
 
 
+def contrast_lines(de: dict) -> list[str]:
+    """Name the one contrast the run analyses, and the configured ones it does not.
+
+    deseq2.smk takes contrasts[0]; a flat "Contrasts: a; b" list reads as though both were
+    analysed. A single-contrast project keeps the original line unchanged.
+    """
+    contrasts = de.get("contrasts", [])
+    analysed, ignored = split_contrasts(contrasts)
+    if not ignored:
+        return [f"Contrasts: {_format_contrasts(contrasts)}"]
+    return [f"{ANALYSED_LABEL}: {analysed}", f"{IGNORED_LABEL}: {'; '.join(ignored)}"]
+
+
 def report_software_versions(payload: dict) -> dict:
     versions = payload.get("software_versions") or {}
     if (payload.get("input") or {}).get("type") != "deseq2_results":
@@ -559,6 +561,7 @@ def normalize_external_report_payload(payload: dict) -> dict:
     ]
     session = dict(payload.get("session_info") or {})
     session.pop("shrinkage_used", None)
+    session.pop("lfc_threshold_test", None)
     normalized["session_info"] = session
     for inactive in (
             "fastp", "sortmerna", "star", "featurecounts", "strandedness",
@@ -748,12 +751,15 @@ def collect_warnings(sanity_text: str) -> list[str]:
 def parse_session_info(text: str) -> dict:
     # run_deseq2.R / run_edger.R / run_limma.R / run_voom.R / ingest_deseq2_results.R all write
     # results/reports/sessionInfo.txt via capture.output(sessionInfo()); run_deseq2.R additionally
-    # prefixes a "Shrinkage method used: ..." provenance line (see run_deseq2.R, near sessionInfo()).
+    # prefixes a "Shrinkage method used: ..." provenance line (see run_deseq2.R, near sessionInfo()),
+    # and every engine prefixes a "Fold-change threshold test: ..." line naming the companion test.
     # Absent entirely on the microarray/limma backends (no shrinkage) or when the R step never ran.
     info: dict = {}
     for line in text.splitlines():
         if line.startswith("Shrinkage method used:"):
             info["shrinkage_used"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Fold-change threshold test:"):
+            info["lfc_threshold_test"] = line.split(":", 1)[1].strip()
         elif line.startswith("Platform:"):
             info["r_platform"] = line.split(":", 1)[1].strip()
         elif line.startswith("BLAS:"):
@@ -896,61 +902,12 @@ def existing_outputs(root: Path) -> list[str]:
     return [c for c in candidates if (root / c).exists()]
 
 
-_ENRICHMENT_MAPPING_PREFIXES = (
-    "Eligible ID mapping keytypes:",
-    "Identifier routing policy:",
-    "Accepted ID mapping routes:",
-    "Tested input IDs retained after mapping/exclusion:",
-    "Significant input IDs retained after mapping/exclusion:",
-    "Up-regulated input IDs retained after mapping/exclusion:",
-    "Down-regulated input IDs retained after mapping/exclusion:",
-    "Mapped tested-gene universe",
-    "GO effective annotated ORA universes:",
-    "DO effective annotated ORA universe:",
-    "OrgDb annotation identity:",
-    "KEGG identity verification:",
-    "KEGG retrieval:",
-    "KEGG effective resource universe:",
-    "KEGG supported foreground:",
-    "KEGG eligible hypotheses/gene sets:",
-    "KEGG ranked-list annotation:",
-    "KEGG adjusted results:",
-    "KEGG ORA status:",
-    "KEGG GSEA status:",
-    "KEGG resource status:",
-    "Unmapped input IDs excluded:",
-    "Ambiguous input IDs excluded:",
-    "One-to-many mappings observed:",
-    "Cross-keytype discordance observed:",
-    "Many-to-one Entrez groups collapsed",
-    "Direction-conflict Entrez IDs excluded:",
-    "Source IDs present in both up/down inputs:",
-    "Foreground intersection (up/down Entrez)",
-    "Mapping interpretation gate:",
-    "Direction-conflict gate:",
-    "GO/DO annotation-resource status:",
-    "Universe policy:",
-    "ORA parameters:",
-    "ORA multiple-testing families:",
-    "GSEA parameters:",
-    # Determinism evidence for the ranked list: the HTML report already keeps these three
-    # (make_html_report.py), and the provenance record must carry the same set or a run whose
-    # GSEA ranking is reproducible cannot be shown to be.
-    "GSEA ranking order:",
-    "GSEA exact-score ties:",
-    "GSEA duplicate canonical-ID collapse:",
-    "Mapping limitation:",
-)
-
-
 def enrichment_mapping_evidence(root: Path) -> dict:
     """Load the exact identifier-mapping evidence emitted by enrichment."""
     path = root / "results" / "enrichment" / "enrichment_summary.txt"
     if not path.exists():
         return {}
-    lines = [line.strip() for line in path.read_text(
-        encoding="utf-8", errors="replace").splitlines()]
-    evidence = [line for line in lines if line.startswith(_ENRICHMENT_MAPPING_PREFIXES)]
+    evidence = evidence_lines(path.read_text(encoding="utf-8", errors="replace"))
     if not evidence:
         return {}
     return {"summary_path": "results/enrichment/enrichment_summary.txt", "evidence": evidence}
@@ -1299,7 +1256,7 @@ def render_text(p: dict) -> str:
         lines += ["Design", "------",
                   f"Design formula: {de.get('design_formula')}",
                   f"Reference level: {_format_reference_level(de.get('reference_level'))}",
-                  f"Contrasts: {_format_contrasts(de.get('contrasts', []))}"]
+                  *contrast_lines(de)]
         effect_lines = effect_size_semantics_lines(p)
         if effect_lines:
             lines += [f"Alpha (FDR): {de.get('alpha')}    Method: {de_method}", *effect_lines]
@@ -1308,6 +1265,9 @@ def render_text(p: dict) -> str:
                 f"Alpha (FDR): {de.get('alpha')}  |log2FC| threshold: "
                 f"{de.get('lfc_threshold')}  Method: {de_method}"
             )
+        lfc_test = p.get("session_info", {}).get("lfc_threshold_test")
+        if lfc_test:
+            lines.append(f"Fold-change threshold test (companion column padj_lfc_ge_threshold): {lfc_test}")
         strandedness_text = realized_strandedness_text(p)
         if strandedness_text:
             lines.append(f"Realized strandedness: {strandedness_text}")
@@ -1465,7 +1425,7 @@ def render_study_design(p: dict, samples_tsv: str, samples_label: str | None = N
     lines += ["Design", "------",
               f"Design formula: {de.get('design_formula')}",
               f"Reference level: {_format_reference_level(de.get('reference_level'))}",
-              f"Contrasts: {_format_contrasts(de.get('contrasts', []))}"]
+              *contrast_lines(de)]
     effect_lines = effect_size_semantics_lines(p)
     if effect_lines:
         lines += [f"Alpha (FDR): {de.get('alpha')}", *effect_lines]
@@ -1483,7 +1443,25 @@ def render_study_design(p: dict, samples_tsv: str, samples_label: str | None = N
         lines += samples_tsv.rstrip("\n").splitlines()
     else:
         lines.append("samples.tsv not found.")
+    lines += figure_label_lines(samples_tsv)
     return "\n".join(lines) + "\n"
+
+
+def figure_label_lines(samples_tsv: str) -> list[str]:
+    """Map each sample id to the label the figures draw, or nothing when no library name is set.
+
+    The id is kept alongside the label rather than replaced: library_name is descriptive, may
+    repeat, and is never the key anything is stored under.
+    """
+    rows = sample_label_rows(samples_tsv)
+    if not rows:
+        return []
+    width = max(len(sid) for sid, _name, _label in rows)
+    return ["", "Figure sample labels", "--------------------",
+            "Figures label samples by library_name, with the sample id appended where a name "
+            "repeats. Every file, count-matrix column and results-table column stays keyed on "
+            "the sample id.",
+            *(f"{sid.ljust(width)}  {label}" for sid, _name, label in rows)]
 
 
 if __name__ == "__main__":

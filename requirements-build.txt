@@ -1,4 +1,3 @@
 # Build-time dependencies for packaging the Windows executable.
 # Inno Setup (for the installer) is a separate tool: winget install JRSoftware.InnoSetup
-PyInstaller==6.21.0
-Pillow==12.2.0
+PyInstaller==6.22.2

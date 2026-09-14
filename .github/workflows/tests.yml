@@ -1,11 +1,12 @@
 name: Tests
 
-# The suite runs on both supported platforms on every push and pull request.
+# The suite runs on every supported platform on every push and pull request.
 #
-# Both matter, and neither substitutes for the other: several tests are skipped on one
-# platform and only execute on the other. The POSIX process-group termination test
+# Each matters, and none substitutes for another: several tests are skipped on one platform
+# and only execute on the others. The POSIX process-group termination test
 # (tests/test_cross_platform.py) skips on Windows entirely, and the WSL probes skip on
 # Linux — so a single-platform run reports green while leaving real code unexercised.
+# Which tests a platform did not execute is on the run summary, not only in the log.
 #
 # QT_QPA_PLATFORM=offscreen lets the GUI tests construct real widgets on a runner with no
 # display. It renders glyphs as empty boxes, which is fine for behavioural assertions and
@@ -35,7 +36,10 @@ jobs:
       # result makes it harder to tell which.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # macos-latest covers the GUI, configuration and validation layer on darwin only.
+        # The pipeline itself cannot run there: it needs the WSL/native-Linux bioinformatics
+        # environment, so every test that shells out to it skips and says so in the summary.
+        os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -63,11 +67,61 @@ jobs:
             libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
             libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-cursor0
 
+      # docs/ is build output: a hand-edited page survives until the next build, and a
+      # rebuild that was never committed publishes the previous release's text. Rebuilding
+      # here and requiring git to see nothing is a tree-level cross-check of the in-process
+      # comparison in tests/test_docs_site.py, not a duplicate of it: that gate globs the
+      # working tree, so a built page that was never added to git passes there and fails
+      # here. It is not a superset either -- porcelain omits ignored paths, which only the
+      # in-process comparison would catch. Linux only: node is present on that runner, and
+      # one platform is enough for a check whose subject is the tree, not the OS.
+      - name: Require docs/ to equal a fresh build
+        if: runner.os == 'Linux'
+        run: |
+          node docs_src/build.mjs
+          if [ -n "$(git status --porcelain -- docs/)" ]; then
+            echo "docs/ differs from a fresh build of docs_src/." >&2
+            echo "Run 'node docs_src/build.mjs' and commit the result." >&2
+            git status --porcelain -- docs/ >&2
+            # --stat only: the built pages are single-line, so a full diff dumps whole
+            # pages into the log and buries which files moved.
+            git --no-pager diff --stat -- docs/ >&2
+            exit 1
+          fi
+
       - name: Run the test suite
+        shell: bash
         env:
           QT_QPA_PLATFORM: offscreen
           BULKSEQ_SKIP_READINESS_DIALOG: "1"
-        run: python -m pytest -q --tb=short
+        run: python -m pytest -q -rs --tb=short | tee "$RUNNER_TEMP/pytest-suite.txt"
+
+      # A skip is how a platform-gated test reports "not exercised here", and buried in the
+      # log it reads as a pass. This lifts every skip and its reason onto the run summary, so
+      # what one platform did not execute is visible next to what the others did.
+      - name: Summarise skipped tests
+        if: always()
+        shell: bash
+        run: |
+          # RUNNER_TEMP is a backslash path on the Windows runner; cd into it rather
+          # than gluing it in front of a glob pattern.
+          cd "$RUNNER_TEMP"
+          shopt -s nullglob
+          for log in pytest-*.txt; do
+            rows=$(sed -n 's/^SKIPPED \[[0-9]*\] \([^ ]*\): \(.*\)$/| `\1` | \2 |/p' "$log")
+            {
+              echo "### Skipped tests: $(basename "$log" .txt) on $RUNNER_OS"
+              echo
+              if [ -n "$rows" ]; then
+                echo "| Test | Reason |"
+                echo "| --- | --- |"
+                echo "$rows"
+              else
+                echo "None."
+              fi
+              echo
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
 
   # The figure contracts that actually execute R (label-layout angles, the volcano ranked
   # key, the sample-distance gradient legend) skip themselves when Rscript is missing, and
@@ -104,9 +158,12 @@ jobs:
           python -m pip install "pytest>=8.2"
 
       - name: Run the figure contracts with R mandatory
+        shell: bash
         env:
           BULKSEQ_REQUIRE_R: "1"
-        run: python -m pytest -q --tb=short tests/test_figure_rendering_contracts.py
+        run: |
+          python -m pytest -q -rs --tb=short tests/test_figure_rendering_contracts.py \
+            | tee "$RUNNER_TEMP/pytest-figure-contracts-cran.txt"
 
       # The three full-figure render tests need the Bioconductor stack (DESeq2), which the
       # CRAN-only R above does not have. A separate micromamba layer supplies it, pinned to
@@ -148,7 +205,36 @@ jobs:
         env:
           BULKSEQ_REQUIRE_R: "1"
           BULKSEQ_REQUIRE_R_FULL: "1"
-        run: python -m pytest -q --tb=short tests/test_figure_rendering_contracts.py
+        run: |
+          set -o pipefail
+          python -m pytest -q -rs --tb=short tests/test_figure_rendering_contracts.py \
+            | tee "$RUNNER_TEMP/pytest-figure-contracts-bioconductor.txt"
+
+      # Same summary as the matrix job: the CRAN-only pass skips the Bioconductor renders,
+      # and those skips are the reason the second pass exists.
+      - name: Summarise skipped tests
+        if: always()
+        shell: bash
+        run: |
+          # RUNNER_TEMP is a backslash path on the Windows runner; cd into it rather
+          # than gluing it in front of a glob pattern.
+          cd "$RUNNER_TEMP"
+          shopt -s nullglob
+          for log in pytest-*.txt; do
+            rows=$(sed -n 's/^SKIPPED \[[0-9]*\] \([^ ]*\): \(.*\)$/| `\1` | \2 |/p' "$log")
+            {
+              echo "### Skipped tests: $(basename "$log" .txt) on $RUNNER_OS"
+              echo
+              if [ -n "$rows" ]; then
+                echo "| Test | Reason |"
+                echo "| --- | --- |"
+                echo "$rows"
+              else
+                echo "None."
+              fi
+              echo
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
 
   # Static checks on the WSL/native-Linux bootstrap script. This is NOT clean-machine
   # verification -- it never runs the script, so it cannot catch a broken micromamba URL,

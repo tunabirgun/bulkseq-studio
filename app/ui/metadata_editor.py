@@ -9,6 +9,27 @@ from PySide6.QtWidgets import QAbstractItemView, QApplication, QTableWidget, QTa
 
 from app.constants import OPTIONAL_METADATA_COLUMNS, REQUIRED_METADATA_COLUMNS
 
+# Descriptive columns that belong beside the column they describe rather than at the end of a
+# growing sheet. Applied to the new-project header and to the manual "Add column" path only —
+# a frame read from disk keeps the column order it was written with, because re-ordering it
+# would change samples.tsv's bytes on the next save and force Snakemake to rebuild every rule
+# that reads the sample sheet.
+COLUMN_FOLLOWS = {"library_name": "sample_id"}
+
+
+def column_position(columns: list[str], name: str) -> int:
+    """Index at which `name` belongs in `columns`, which must not already contain it."""
+    anchor = COLUMN_FOLLOWS.get(name)
+    return columns.index(anchor) + 1 if anchor in columns else len(columns)
+
+
+def ordered_columns(columns: list[str]) -> list[str]:
+    placed = [c for c in columns if c not in COLUMN_FOLLOWS]
+    for name in columns:
+        if name in COLUMN_FOLLOWS:
+            placed.insert(column_position(placed, name), name)
+    return placed
+
 
 class MetadataTable(QTableWidget):
     def __init__(self) -> None:
@@ -20,7 +41,7 @@ class MetadataTable(QTableWidget):
 
     @staticmethod
     def default_columns() -> list[str]:
-        return REQUIRED_METADATA_COLUMNS + OPTIONAL_METADATA_COLUMNS
+        return ordered_columns(REQUIRED_METADATA_COLUMNS + OPTIONAL_METADATA_COLUMNS)
 
     def load_dataframe(self, df: pd.DataFrame) -> None:
         columns = list(df.columns) or self.default_columns()
@@ -62,7 +83,7 @@ class MetadataTable(QTableWidget):
                 self.setItem(target, col, QTableWidgetItem(text))
 
     def add_column(self, name: str) -> None:
-        col = self.columnCount()
+        col = column_position(self.column_names(), name)
         self.insertColumn(col)
         self.setHorizontalHeaderItem(col, QTableWidgetItem(name))
 

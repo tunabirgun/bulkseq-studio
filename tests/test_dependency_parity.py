@@ -351,3 +351,111 @@ def test_hard_direct_r_namespaces_are_in_fallback_lock_readiness_and_setup_probe
         assert normalised in lock, f"bulkseq.lock.yaml is missing direct R package {conda_package}"
         assert namespace in readiness, f"readiness R probe is missing direct namespace {namespace}"
         assert f'"{namespace}"' in setup, f"setup R load probe is missing direct namespace {namespace}"
+
+
+# --- Reverse direction: declared R packages that nothing in the workflow ever loads ----------
+# Conda spells an R package as "r-<namespace>" / "bioconductor-<namespace>" with the namespace
+# lowercased (bioconductor-go.db -> GO.db, r-matrixstats -> matrixStats), so declaration and
+# reference are compared on that lowercased key. HARD_R_NAMESPACE_TO_CONDA is the authority
+# wherever it has an entry, and the test below proves it uses the same rule.
+
+_R_BASE_NAMESPACES = {"base", "compiler", "datasets", "grDevices", "graphics", "grid",
+                      "methods", "parallel", "splines", "stats", "stats4", "tcltk", "tools",
+                      "utils"}
+
+# Matches the call TEXT, not a resolved function: build_string_network.R rebinds library() and
+# require() in globalenv() to muffle a load warning, so a value-level scan would miss its loads.
+_R_LOAD_CALL = re.compile(
+    r"(?:library|require|requireNamespace|loadNamespace)\s*\(\s*[\"']?([A-Za-z][A-Za-z0-9._]*)"
+    r"[\"']?\s*[),]|\b([A-Za-z][A-Za-z0-9._]*):::?")
+
+
+def _r_namespaces_referenced(paths: list[Path], *, injected_source: str | None = None) -> set[str]:
+    sources = [path.read_text(encoding="utf-8") for path in paths]
+    if injected_source is not None:
+        sources.append(injected_source)
+    found = {match.group(1) or match.group(2) for source in sources
+             for match in _R_LOAD_CALL.finditer(source)}
+    return {name.lower() for name in found
+            if name not in _R_BASE_NAMESPACES and not name.endswith(".R")}
+
+
+def _declared_conda_specs(path: Path) -> list[str]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return [re.split(r"[=<>!]", dep, 1)[0].strip()
+            for dep in data.get("dependencies", []) if isinstance(dep, str)]
+
+
+def _r_namespace_key(conda_name: str) -> str:
+    return conda_name.split("-", 1)[1]
+
+
+def _declared_r_conda_names(path: Path) -> list[str]:
+    return [name for name in _declared_conda_specs(path)
+            if name.startswith(("r-", "bioconductor-"))]
+
+
+def _catalog_orgdb_allowance() -> dict[str, str]:
+    catalog = (REPO_ROOT / "app" / "data" / "reference_catalog.yaml").read_text(encoding="utf-8")
+    namespaces = sorted(set(re.findall(r"org\.[A-Za-z]+\.[a-z]+\.db", catalog)))
+    assert namespaces, "no OrgDb declared in the reference catalog; the parser is out of date"
+    return {"bioconductor-" + namespace.lower():
+            "OrgDb chosen at run time from app/data/reference_catalog.yaml, so no script names it"
+            for namespace in namespaces}
+
+
+# Declared on purpose although no script loads the namespace. Each entry states why; anything
+# else declared and unreferenced is dead weight in every install and must be removed.
+ALLOWED_UNREFERENCED_R_CONDA = {
+    "r-base": "the R interpreter itself, not a namespace a script loads",
+    "bioconductor-apeglm": "reached only as the string DESeq2 dispatches on in "
+                           "lfcShrink(type='apeglm')",
+    "r-ashr": "the lfcShrink(type='ashr') contrast fallback in run_deseq2.R, same string dispatch",
+    "bioconductor-fgsea": "clusterProfiler's GSEA backend; run_enrichment.R handles its tie "
+                          "notice but never loads the namespace",
+    "bioconductor-go.db": "the GO term database, transitive to clusterProfiler/DOSE/enrichplot; "
+                          "pinned explicitly after a solve once dropped it mid-run",
+}
+
+
+def _assert_declared_r_packages_are_referenced(declared: list[str], referenced: set[str],
+                                               allowed: dict[str, str]) -> None:
+    unused = sorted(name for name in declared
+                    if name not in allowed and _r_namespace_key(name) not in referenced)
+    assert not unused, (
+        "bulkseq_full.yaml declares R packages no workflow script loads, and they are not in "
+        f"ALLOWED_UNREFERENCED_R_CONDA with a reason: {unused}")
+
+
+def test_declared_r_packages_are_loaded_by_a_workflow_script() -> None:
+    referenced = _r_namespaces_referenced(sorted((REPO_ROOT / "workflow" / "scripts").glob("*.R")))
+    allowed = dict(ALLOWED_UNREFERENCED_R_CONDA, **_catalog_orgdb_allowance())
+    _assert_declared_r_packages_are_referenced(
+        _declared_r_conda_names(REPO_ROOT / "workflow" / "envs" / "bulkseq_full.yaml"),
+        referenced, allowed)
+
+
+def test_hard_r_namespace_map_follows_the_conda_naming_rule() -> None:
+    # The map is hand-written; this proves it encodes the same prefix rule the reverse gate
+    # derives, so the two cannot disagree about what a conda name means.
+    for namespace, conda_package in HARD_R_NAMESPACE_TO_CONDA.items():
+        assert _r_namespace_key(conda_package) == namespace.lower(), (
+            f"{conda_package} does not spell namespace {namespace} by the conda naming rule")
+
+
+def test_reverse_r_gate_rejects_a_declared_but_unused_package_negative_control() -> None:
+    declared = _declared_r_conda_names(REPO_ROOT / "workflow" / "envs" / "bulkseq_full.yaml")
+    allowed = dict(ALLOWED_UNREFERENCED_R_CONDA, **_catalog_orgdb_allowance())
+    referenced = _r_namespaces_referenced(sorted((REPO_ROOT / "workflow" / "scripts").glob("*.R")))
+    with pytest.raises(AssertionError, match="r-neverloadedpackage"):
+        _assert_declared_r_packages_are_referenced(
+            declared + ["r-neverloadedpackage"], referenced, allowed)
+
+
+def test_r_reference_discovery_sees_a_load_call_and_a_shadowed_library_call() -> None:
+    assert "newpkg" in _r_namespaces_referenced([], injected_source="library(newpkg)\n")
+    shadowed = REPO_ROOT / "workflow" / "scripts" / "build_string_network.R"
+    assert 'assign("library"' in shadowed.read_text(encoding="utf-8"), (
+        "build_string_network.R no longer rebinds library(); this control has stopped testing "
+        "the case it exists for")
+    assert "stringdb" in _r_namespaces_referenced([shadowed])

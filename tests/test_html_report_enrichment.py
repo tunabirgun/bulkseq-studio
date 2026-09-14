@@ -85,13 +85,12 @@ def _assert_dense_panel_contract(
 
 def _assert_compact_tooltip_contract(source: str) -> None:
     assert "display:none;pointer-events:none" in source
-    assert ".term:hover .tip,.term:focus-visible .tip{display:block}" in source
-    assert "@media(max-width:800px){" in source
-    assert ".legend{position:relative}" in source
-    assert ".legend .term{position:static}" in source
-    assert ".legend .li .term .tip{left:50%;right:auto;top:calc(100% + 9px);" in source
-    assert "width:min(320px,calc(100% - 24px));max-width:none;transform:translateX(-50%)" in source
-    assert ".legend .li .term .tip{top:auto;bottom:calc(100% + 9px)}" in source
+    assert '#term-tooltip{position:fixed' in source
+    assert 'tip.textContent=btn.querySelector' in source
+    assert "Math.min(r.left,innerWidth-t.width-12)" in source
+    assert "Math.min(r.bottom+8,innerHeight-t.height-12)" in source
+    assert "btn.addEventListener('focus'" in source
+    assert "btn.addEventListener('click'" in source
 
 
 def _assert_compact_report_and_modal_contract(source: str) -> None:
@@ -109,9 +108,11 @@ def _assert_compact_report_and_modal_contract(source: str) -> None:
     assert "lb.addEventListener('close'" in source
     assert "e.key!=='Tab'" in source
     assert "trigger&&trigger.isConnected" in source
-    assert ".lb[open]{display:block}" in source
-    assert ".lb.is-zoomed .lb-stage{display:block;min-height:0;place-items:start}" in source
-    assert ".lb img.zoomed{max-width:none;max-height:none;width:170%;margin:0" in source
+    assert ".lb[open]{display:grid;grid-template-rows:auto minmax(0,1fr) auto}" in source
+    assert ".lb-stage{overflow:auto;min-width:0;min-height:0" in source
+    assert "li.naturalWidth*bsqScale" in source
+    for control in ("fit", "actual", "in", "out", "percent"):
+        assert f'id="bsq-lb-{control}"' in source
     assert "bsqResetZoom()" in source
     assert "li.removeAttribute('src')" in source
     assert '<div id="bsq-lb" class="lb" role="dialog"' not in source
@@ -257,8 +258,8 @@ def test_hidden_tooltips_do_not_widen_compact_reports() -> None:
 def test_compact_tooltips_reject_the_old_term_specific_edge_anchor() -> None:
     source = _GEN.read_text(encoding="utf-8")
     old_failure = source.replace(
-        ".legend .li .term .tip{left:50%;right:auto;top:calc(100% + 9px);",
-        ".legend .li .term .tip{left:auto;right:0;top:calc(100% + 9px);",
+        "Math.min(r.left,innerWidth-t.width-12)",
+        "r.left",
         1,
     )
     assert old_failure != source
@@ -297,7 +298,8 @@ def test_compact_report_uses_wrapping_sanity_scroller_and_native_dialog(mhr) -> 
          "@media(max-width:560px){.brand .rmeta{display:none}}"),
         ('<dialog id="bsq-lb"', '<div id="bsq-lb"'),
         ("lb.showModal()", "lb.setAttribute('open','')"),
-        (".lb[open]{display:block}", ".lb[open]{display:flex;place-content:center}"),
+        (".lb[open]{display:grid;grid-template-rows:auto minmax(0,1fr) auto}",
+         ".lb[open]{display:flex;place-content:center}"),
         ("trigger&&trigger.isConnected", "false"),
     ],
 )
@@ -419,10 +421,10 @@ def test_real_browser_compact_geometry_focus_and_zoom(mhr, tmp_path) -> None:
                 const dialog = document.getElementById('bsq-lb');
                 const image = document.getElementById('bsq-lb-img');
                 const stage = dialog.querySelector('.lb-stage');
-                const dr = dialog.getBoundingClientRect();
+                const dr = stage.getBoundingClientRect();
                 const ir = image.getBoundingClientRect();
-                const maxX = dialog.scrollWidth - dialog.clientWidth;
-                const maxY = dialog.scrollHeight - dialog.clientHeight;
+                const maxX = stage.scrollWidth - stage.clientWidth;
+                const maxY = stage.scrollHeight - stage.clientHeight;
                 return {
                     open: dialog.open,
                     zoomed: image.classList.contains('zoomed'),
@@ -433,30 +435,32 @@ def test_real_browser_compact_geometry_focus_and_zoom(mhr, tmp_path) -> None:
                     imageLeft: ir.left,
                     stageLeft: stage.getBoundingClientRect().left,
                     imageMarginLeft: getComputedStyle(image).marginLeft,
-                    scrollLeft: dialog.scrollLeft,
-                    scrollTop: dialog.scrollTop,
+                    scrollLeft: stage.scrollLeft,
+                    scrollTop: stage.scrollTop,
                     maxX, maxY,
                 };
             })()""")
             js("""(() => {
                 const dialog = document.getElementById('bsq-lb');
-                dialog.scrollLeft = dialog.scrollWidth - dialog.clientWidth;
-                dialog.scrollTop = dialog.scrollHeight - dialog.clientHeight;
+                const stage = dialog.querySelector('.lb-stage');
+                stage.scrollLeft = stage.scrollWidth - stage.clientWidth;
+                stage.scrollTop = stage.scrollHeight - stage.clientHeight;
                 return true;
             })()""")
             QTest.qWait(60)
             end = js("""(() => {
                 const dialog = document.getElementById('bsq-lb');
                 const image = document.getElementById('bsq-lb-img');
-                const dr = dialog.getBoundingClientRect();
+                const stage = dialog.querySelector('.lb-stage');
+                const dr = stage.getBoundingClientRect();
                 const ir = image.getBoundingClientRect();
-                const maxX = dialog.scrollWidth - dialog.clientWidth;
-                const maxY = dialog.scrollHeight - dialog.clientHeight;
+                const maxX = stage.scrollWidth - stage.clientWidth;
+                const maxY = stage.scrollHeight - stage.clientHeight;
                 return {
-                    atMaxX: Math.abs(dialog.scrollLeft - maxX) <= 1,
-                    atMaxY: Math.abs(dialog.scrollTop - maxY) <= 1,
-                    rightReachable: ir.right <= dr.left + dialog.clientWidth + 1,
-                    bottomReachable: ir.bottom <= dr.top + dialog.clientHeight + 1,
+                    atMaxX: Math.abs(stage.scrollLeft - maxX) <= 1,
+                    atMaxY: Math.abs(stage.scrollTop - maxY) <= 1,
+                    rightReachable: ir.right <= dr.left + stage.clientWidth + 1,
+                    bottomReachable: ir.bottom <= dr.top + stage.clientHeight + 1,
                 };
             })()""")
             js("(() => { bsqClose(); return true; })()")
@@ -547,10 +551,10 @@ def test_real_browser_compact_geometry_focus_and_zoom(mhr, tmp_path) -> None:
         }
     assert result["focus"] == {
         "initial": "bsq-lb-close",
-        "tabOne": "bsq-lb-img",
-        "tabTwo": "bsq-lb-close",
-        "shiftTab": "bsq-lb-img",
-        "background": {"active": "bsq-lb-img", "contained": True},
+        "tabOne": "bsq-lb-fit",
+        "tabTwo": "bsq-lb-actual",
+        "shiftTab": "bsq-lb-fit",
+        "background": {"active": "bsq-lb-fit", "contained": True},
         "escape": {"closed": True, "restoredIndex": 1},
     }
 

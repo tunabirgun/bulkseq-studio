@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import copy
+import csv
+import hashlib
+import re
 from pathlib import Path
 from uuid import uuid4
+
+import pytest
+import yaml
 
 from app.core.benchmark_datasets import create_benchmark_project, load_benchmark_catalog
 from app.core.metadata import load_metadata, validate_metadata
@@ -167,3 +174,215 @@ def test_rice_drr805007_download_bytes_matches_verified_mate_sizes() -> None:
     )
     verified_mate_sizes = 2_418_281_877 + 2_493_220_995
     assert sample["download_bytes"] == verified_mate_sizes
+
+
+FUSARIUM_BENCHMARKS = ("fg_spores_mycelium_paired", "fg_heat_shock_paired")
+
+
+def _benchmark(benchmark_id: str) -> dict:
+    return next(item for item in load_benchmark_catalog() if item["id"] == benchmark_id)
+
+
+def _assert_declared_download_metadata(benchmark: dict) -> None:
+    """Every declared ENA value a download needs must be present and well-formed.
+
+    Shared by the catalogue assertion and by its negative control, so the control
+    exercises the same code that guards the shipped entries.
+    """
+    for sample in benchmark["samples"]:
+        accession = str(sample["original_accession"])
+        assert str(sample["layout"]) == "paired"
+        for mate in (1, 2):
+            digest = str(sample[f"fastq_{mate}_md5"])
+            assert re.fullmatch(r"[0-9a-f]{32}", digest), f"{accession} mate {mate}: {digest}"
+            url = str(sample[f"fastq_{mate}_url"])
+            assert url.endswith(f"/{accession}_{mate}.fastq.gz"), url
+        assert int(sample["download_bytes"]) > 0
+        read_count = int(sample["read_count"])
+        base_count = int(sample["base_count"])
+        assert read_count > 0 and base_count > 0
+        # ENA counts spots, not mates: base_count must divide into two equal-length mates.
+        assert base_count % (read_count * 2) == 0, accession
+
+
+def test_fusarium_benchmarks_declare_complete_ena_download_metadata() -> None:
+    catalog_ids = [item["id"] for item in load_benchmark_catalog()]
+    assert catalog_ids[0] == "pasilla_paired_subset"
+    for benchmark_id in FUSARIUM_BENCHMARKS:
+        assert benchmark_id in catalog_ids
+        benchmark = _benchmark(benchmark_id)
+        assert len(benchmark["samples"]) == 6
+        _assert_declared_download_metadata(benchmark)
+        reference = benchmark["reference"]
+        assert re.fullmatch(r"[0-9a-f]{32}", str(reference["genome_md5"]))
+        assert re.fullmatch(r"[0-9a-f]{32}", str(reference["annotation_md5"]))
+        # Mate length is uniform within a study, so it is derived here rather than declared.
+        lengths = {
+            int(sample["base_count"]) // (int(sample["read_count"]) * 2)
+            for sample in benchmark["samples"]
+        }
+        assert len(lengths) == 1
+        assert str(lengths.pop()) in benchmark["description"]
+
+
+def test_corrupt_declared_md5_is_rejected_by_the_catalogue_check() -> None:
+    benchmark = copy.deepcopy(_benchmark("fg_spores_mycelium_paired"))
+    benchmark["samples"][0]["fastq_1_md5"] = "not-a-checksum"
+
+    with pytest.raises(AssertionError):
+        _assert_declared_download_metadata(benchmark)
+
+
+def test_fusarium_benchmarks_scaffold_onto_the_ph1_enrichment_route(tmp_path: Path) -> None:
+    expected_conditions = {
+        "fg_spores_mycelium_paired": ("spores", "mycelium"),
+        "fg_heat_shock_paired": ("temp_37", "temp_25"),
+    }
+    for benchmark_id, (numerator, denominator) in expected_conditions.items():
+        root = create_benchmark_project(benchmark_id, tmp_path, f"scaffold-{benchmark_id}")
+        cfg = ProjectManager().load_config(root)
+        samples = load_metadata(root / "config" / "samples.tsv")
+
+        assert cfg.input.type == "sra"
+        assert cfg.input.layout == "paired"
+        assert cfg.reference.organism_name == "Fusarium graminearum PH-1"
+        # No Bioconductor OrgDb exists for this organism: enrichment must resolve to the
+        # KEGG/STRING route, and a stray OrgDb would send GO down a dead end.
+        assert cfg.enrichment.orgdb is None
+        assert cfg.enrichment.kegg_organism == "fgr"
+        assert cfg.enrichment.kegg_key_form == "locus_tag"
+        assert cfg.enrichment.gprofiler_organism == "fgraminearum"
+        assert cfg.ppi.taxon == 229533
+        assert cfg.reference.genome_size_category == "fungal"
+        assert cfg.reference.annotation_format == "gtf"
+
+        c0 = cfg.deseq2.contrasts[0]
+        assert (c0.numerator, c0.denominator) == (numerator, denominator)
+        assert cfg.deseq2.reference_level == {"condition": denominator}
+        assert cfg.deseq2.design_formula == "~ condition"
+
+        assert samples.shape[0] == 6
+        assert dict(samples["condition"].value_counts()) == {numerator: 3, denominator: 3}
+        assert {c0.numerator, c0.denominator} == set(samples["condition"])
+        assert (root / "config" / "sra_accessions.txt").read_text(
+            encoding="utf-8").split() == list(samples["original_accession"])
+        messages = validate_metadata(samples, allow_pending_sra=True)
+        assert not any(m["status"] == "FAIL" for m in messages)
+
+
+# What the 2026-09-13 reproduction measured: each study re-run from FASTQ under the 0.31.0
+# workflow and again under a v0.29.1 copy, counts and DESeq2 table identical on both sides.
+# Recorded measurements, so the values here are the specification, not something derivable.
+FUSARIUM_REPRODUCTION = {
+    "fg_spores_mycelium_paired": {"de_genes": 5734, "strandedness": 0},
+    "fg_heat_shock_paired": {"de_genes": 5836, "strandedness": 2},
+}
+REPRODUCTION_WORKFLOW_VERSION = "0.31.0"
+REPRODUCTION_DATE = "2026-09-13"
+
+
+def _assert_reports_the_reproduction(expected: dict, measured: dict, where: str) -> None:
+    assert expected["de_genes"] == measured["de_genes"], where
+    assert expected["strandedness"] == measured["strandedness"], where
+    # The reproduction settled the threshold for both entries; neither may go back to omitting it.
+    assert "padj < 0.05" in str(expected["de_criterion"]), where
+    status = str(expected["status"])
+    assert REPRODUCTION_WORKFLOW_VERSION in status, f"{where}: {status}"
+    assert REPRODUCTION_DATE in status, f"{where}: {status}"
+    assert "0.2x-era" in status, f"{where}: {status}"  # the earlier provenance must survive
+    for field in ("status", "de_criterion", "strandedness_basis"):
+        text = str(expected[field])
+        for disclaimer in ("not reproduced", "not recorded"):
+            assert disclaimer not in text, f"{where}.{field}: {text}"
+
+
+def test_fusarium_benchmarks_report_the_0_31_0_reproduction() -> None:
+    """Catalogue and committed manifest must both state the reproduction and agree on it."""
+    assert set(FUSARIUM_REPRODUCTION) == set(FUSARIUM_BENCHMARKS)
+    examples = Path(__file__).resolve().parents[1] / "examples" / "benchmarks"
+    for benchmark_id, measured in FUSARIUM_REPRODUCTION.items():
+        catalogue = _benchmark(benchmark_id)["expected"]
+        _assert_reports_the_reproduction(catalogue, measured, f"catalogue/{benchmark_id}")
+        manifest = yaml.safe_load(
+            (examples / benchmark_id / "benchmark_manifest.yaml").read_text(encoding="utf-8"))
+        _assert_reports_the_reproduction(manifest["expected"], measured, f"manifest/{benchmark_id}")
+        assert manifest["expected"] == catalogue, benchmark_id
+
+
+def _stage_verified_fastq_cache(tmp_path: Path, name: str) -> tuple[Path, Path]:
+    """Scaffold the guardrail benchmark and back its sample sheet with a synthetic cache.
+
+    The declared ENA checksums address multi-gigabyte files, so the sheet's MD5 columns
+    are re-declared against the synthetic payloads. Everything else — column names, row
+    order, path layout — is what the scaffolder wrote.
+    """
+    root = create_benchmark_project("fg_spores_mycelium_paired", tmp_path / name, name)
+    cache = tmp_path / f"{name}-cache"
+    cache.mkdir()
+    sheet = root / "config" / "samples.tsv"
+    with sheet.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+    for row in rows:
+        for mate in (1, 2):
+            relative = str(row[f"fastq_{mate}"])
+            payload = f"@{row['sample_id']}/{mate}\nACGT\n+\nIIII\n".encode("utf-8")
+            (cache / Path(relative).name).write_bytes(payload)
+            row[f"fastq_{mate}_md5"] = hashlib.md5(payload).hexdigest()
+    with sheet.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerows(rows)
+    return root, cache
+
+
+def test_scaffolded_fusarium_sheet_seeds_from_a_checksum_verified_cache(tmp_path: Path) -> None:
+    from tests.gui_benchmark import run_gui_full as harness
+
+    root, cache = _stage_verified_fastq_cache(tmp_path, "verified")
+
+    evidence = harness.seed_fastq_inputs(root, cache)
+
+    assert len(evidence["files"]) == 12
+    for entry in evidence["files"]:
+        assert (root / str(entry["target"])).is_file()
+
+
+def test_corrupt_fastq_md5_stops_the_download_integrity_check(tmp_path: Path) -> None:
+    from tests.gui_benchmark import run_gui_full as harness
+
+    root, cache = _stage_verified_fastq_cache(tmp_path, "corrupt")
+    sheet = root / "config" / "samples.tsv"
+    lines = sheet.read_text(encoding="utf-8").splitlines()
+    header = lines[0].split("\t")
+    first = lines[1].split("\t")
+    first[header.index("fastq_1_md5")] = "0" * 32
+    lines[1] = "\t".join(first)
+    sheet.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+    with pytest.raises(harness.HarnessFailure, match="MD5 mismatch"):
+        harness.seed_fastq_inputs(root, cache)
+
+    assert not (root / first[header.index("fastq_1")]).exists()
+
+
+def test_fusarium_example_scaffolds_match_what_the_scaffolder_writes(tmp_path: Path) -> None:
+    """The committed examples/ copies must not drift from the catalogue entries."""
+    examples = Path(__file__).resolve().parents[1] / "examples" / "benchmarks"
+    for benchmark_id in FUSARIUM_BENCHMARKS:
+        root = create_benchmark_project(benchmark_id, tmp_path / benchmark_id, benchmark_id)
+        for name in ("samples.tsv", "sra_accessions.txt"):
+            written = (root / "config" / name).read_text(encoding="utf-8").splitlines()
+            committed = (examples / benchmark_id / name).read_text(encoding="utf-8").splitlines()
+            assert written == committed, f"{benchmark_id}/{name}"
+        manifest = yaml.safe_load(
+            (examples / benchmark_id / "benchmark_manifest.yaml").read_text(encoding="utf-8"))
+        benchmark = _benchmark(benchmark_id)
+        assert manifest["expected"] == benchmark["expected"]
+        assert [run["run_accession"] for run in manifest["selected_runs"]] == [
+            sample["original_accession"] for sample in benchmark["samples"]]
+        assert manifest["source_publication"] == benchmark["source_publication"]
+        readme = (examples / benchmark_id / "README.md").read_text(encoding="utf-8")
+        assert benchmark["geo_series"] in readme
+        assert str(benchmark["expected"]["de_genes"]) in readme.replace(",", "")

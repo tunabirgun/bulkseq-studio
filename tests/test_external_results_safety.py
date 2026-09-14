@@ -13,6 +13,8 @@ from typing import Callable
 
 import pytest
 
+from _runtime import bash_runtime, rscript_runtime
+
 
 ROOT = Path(__file__).resolve().parents[1]
 INGEST = ROOT / "workflow" / "scripts" / "ingest_deseq2_results.R"
@@ -130,46 +132,11 @@ def test_external_ingest_has_a_validation_dependency_chain() -> None:
 
 
 def _r_runtime(harness: Path) -> tuple[list[str], Callable[[Path], str]]:
-    native = shutil.which("Rscript")
-    if native:
-        probe = subprocess.run(
-            [native, "--vanilla", "-e",
-             'quit(status=if (requireNamespace("jsonlite", quietly=TRUE)) 0 else 1)'],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-        if probe.returncode == 0:
-            return [native, "--vanilla", str(harness)], lambda path: str(path)
-
-    wsl = shutil.which("wsl.exe")
-    if not wsl:
-        pytest.skip("Rscript is not available")
-    probe = subprocess.run(
-        [wsl, "bash", "-lc", (
-            "Rscript --vanilla -e 'quit(status=if "
-            "(requireNamespace(\"jsonlite\",quietly=TRUE)) 0 else 1)'"
-        )],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if probe.returncode != 0:
+    runtime = rscript_runtime("jsonlite")
+    if runtime is None:
         pytest.skip("Rscript with jsonlite is not available")
-
-    def wsl_path(path: Path) -> str:
-        converted = subprocess.run(
-            [wsl, "bash", "-lc", f"wslpath -a {shlex.quote(str(path))}"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=True,
-        )
-        return converted.stdout.strip()
-
-    linux_harness = wsl_path(harness)
-    return [wsl, "bash", "-lc", f"Rscript --vanilla {shlex.quote(linux_harness)}"], wsl_path
+    command, convert = runtime
+    return [*command, convert(harness)], convert
 
 
 def _r_quote(value: str) -> str:
@@ -394,11 +361,12 @@ def _wsl_bulkseq_snakemake(project: Path, *arguments: str) -> subprocess.Complet
             timeout=180,
         )
 
-    wsl = shutil.which("wsl.exe")
-    if not wsl:
+    runtime = bash_runtime()
+    if runtime is None:
         pytest.skip("WSL is not available for the bundled Snakemake integration gate")
+    prefix, convert = runtime
     probe = subprocess.run(
-        [wsl, "bash", "-lc", (
+        [*prefix, "-lc", (
             "command -v micromamba >/dev/null && "
             "micromamba run -n bulkseq snakemake --version >/dev/null"
         )],
@@ -408,20 +376,13 @@ def _wsl_bulkseq_snakemake(project: Path, *arguments: str) -> subprocess.Complet
     )
     if probe.returncode != 0:
         pytest.skip("The WSL bulkseq environment does not provide Snakemake")
-    linux_project = subprocess.run(
-        [wsl, "bash", "-lc", f"wslpath -a {shlex.quote(str(project))}"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=True,
-    ).stdout.strip()
     args = " ".join(shlex.quote(argument) for argument in arguments)
     shell_command = (
-        f"cd {shlex.quote(linux_project)} && "
+        f"cd {shlex.quote(convert(project))} && "
         f"micromamba run -n bulkseq snakemake {args}"
     )
     return subprocess.run(
-        [wsl, "bash", "-lc", shell_command],
+        [*prefix, "-lc", shell_command],
         capture_output=True,
         text=True,
         timeout=180,

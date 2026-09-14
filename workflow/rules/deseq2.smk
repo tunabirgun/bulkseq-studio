@@ -1,8 +1,14 @@
 # Differential expression with DESeq2 (protocol sections 7.1-7.4).
 # The R script reads the snakemake object for inputs, params, and outputs.
 
+from _contrast_disclosure import single_contrast_notice
+
 _DE = config.get("deseq2", {})
 _CONTRAST = (_DE.get("contrasts") or [{}])[0]
+# Every additional configured contrast is silently dropped here; say so before the run starts.
+_CONTRAST_NOTICE = single_contrast_notice(_DE.get("contrasts"))
+if _CONTRAST_NOTICE:
+    sys.stderr.write(f"WARNING: {_CONTRAST_NOTICE}\n")
 _REF = _DE.get("reference_level", {}) or {}
 _REF_FACTOR = next(iter(_REF), "condition")
 
@@ -86,6 +92,7 @@ if MICROARRAY_MODE:
             session="results/reports/sessionInfo.txt",
             design_check="checks/08_metadata_design_qc.json",
             deseq_check="checks/09_deseq2_qc.json",
+            pca_coordinates="results/deseq2/pca_coordinates.csv",
         params:
             design=_DESIGN,
             contrast_factor=_CONTRAST.get("factor", "condition"),
@@ -166,6 +173,7 @@ elif VOOM_MODE:
             session="results/reports/sessionInfo.txt",
             design_check="checks/08_metadata_design_qc.json",
             deseq_check="checks/09_deseq2_qc.json",
+            pca_coordinates="results/deseq2/pca_coordinates.csv",
         params:
             design=_DESIGN,
             contrast_factor=_CONTRAST.get("factor", "condition"),
@@ -204,6 +212,7 @@ elif EDGER_MODE:
             session="results/reports/sessionInfo.txt",
             design_check="checks/08_metadata_design_qc.json",
             deseq_check="checks/09_deseq2_qc.json",
+            pca_coordinates="results/deseq2/pca_coordinates.csv",
         params:
             design=_DESIGN,
             contrast_factor=_CONTRAST.get("factor", "condition"),
@@ -238,9 +247,9 @@ else:
             session="results/reports/sessionInfo.txt",
             design_check="checks/08_metadata_design_qc.json",
             deseq_check="checks/09_deseq2_qc.json",
+            pca_coordinates="results/deseq2/pca_coordinates.csv",
             unchanged="results/deseq2/unchanged_genes.csv",
             equivalence_check="checks/13_equivalence_qc.json",
-            pca_coordinates="results/deseq2/pca_coordinates.csv",
         params:
             design=_DESIGN,
             ref_factor=_REF_FACTOR,

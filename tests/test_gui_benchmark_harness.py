@@ -2,29 +2,20 @@ from __future__ import annotations
 
 import csv
 import hashlib
-import importlib.util
 from pathlib import Path
-import sys
+import subprocess
 
 import pytest
 
 
 REPO = Path(__file__).resolve().parents[1]
-HARNESS_DIR = REPO / "installer_output" / "gui-benchmark-runs"
+HARNESS_DIR = Path(__file__).resolve().parent / "gui_benchmark"
 
 
 def _load_full_harness():
-    sys.path.insert(0, str(HARNESS_DIR))
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "bulkseq_run_gui_full_test", HARNESS_DIR / "run_gui_full.py"
-        )
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-    finally:
-        sys.path.remove(str(HARNESS_DIR))
+    from tests.gui_benchmark import run_gui_full
+
+    return run_gui_full
 
 
 def _write_project(project: Path, payload: bytes, declared_md5: str) -> Path:
@@ -109,19 +100,28 @@ def test_full_harness_rejects_nonpositive_validation_timeout() -> None:
         ])
 
 
-def test_release_artifact_excludes_gui_benchmark_harness() -> None:
-    """The two harness scripts live under installer_output/ (a fixed path the
-    harness needs) but must never ship inside a release artifact: they are
-    tracked in git despite the rest of installer_output/ being gitignored, so
-    a fresh CI checkout repopulates gui-benchmark-runs/ before the upload step
-    globs installer_output/*."""
+def test_release_artifact_carries_only_build_output() -> None:
+    """installer_output/ is build output only, so the upload glob needs no exclusion.
+
+    The harness scripts used to be tracked there for a fixed on-disk path, which made a
+    fresh CI checkout repopulate them inside the release artifact. They now live in
+    tests/gui_benchmark/, so nothing tracked is left for installer_output/* to sweep up
+    and an exclusion line would only hide a future regression of that kind.
+    """
     workflow = (REPO / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
     upload_blocks = workflow.split("uses: actions/upload-artifact@v4")[1:]
     assert len(upload_blocks) == 2, "expected one upload-artifact step per build job"
     for block in upload_blocks:
         step = block.split("if-no-files-found")[0]
         assert "installer_output/*" in step
-        assert "!installer_output/gui-benchmark-runs/**" in step
+        assert "!installer_output" not in step
+
+    tracked = subprocess.run(
+        ["git", "ls-files", "installer_output"],
+        cwd=REPO, capture_output=True, text=True,
+    )
+    assert tracked.returncode == 0, tracked.stderr
+    assert tracked.stdout.strip() == "", tracked.stdout
 
 
 def test_large_input_timeout_is_used_for_validation_dry_run_and_launch() -> None:

@@ -1,15 +1,3 @@
-# Muffle only the benign "package X was built under R version 4.5.3" load warning: the r45 ABI
-# is stable, so the 4.5.3-built conda packages run correctly under the pinned r-base 4.5.2;
-# real warnings still surface. Shadow library()/require() so it works under Snakemake's
-# script runner at any call-stack depth (a top-level globalCallingHandlers does not).
-# Aligning r-base to 4.5.3 would force salmon off 1.10.3 onto the 2.x Rust rewrite, so we
-# muffle the harmless warning instead of changing the benchmarked environment.
-local({
-  .m <- function(f) function(...) withCallingHandlers(f(...), warning = function(w) if (grepl("built under R version", conditionMessage(w), fixed = TRUE)) invokeRestart("muffleWarning"))
-  assign("library", .m(base::library), envir = globalenv())
-  assign("require", .m(base::require), envir = globalenv())
-})
-
 # edgeR quasi-likelihood (QLF) differential expression (optional engine, count-based routes).
 # Standard recipe: DGEList -> filterByExpr -> TMM -> estimateDisp -> glmQLFit -> glmQLFTest.
 # Consumes RAW counts and emits the SAME artifacts as run_deseq2.R (results CSV, up/down,
@@ -18,6 +6,11 @@ local({
 # DESeq2-specific equivalence (TOST) output is not produced (check 13 / unchanged_genes are
 # gated off for this engine). The RDS carries assay_kind = "log2_cpm" so the figure scripts
 # treat the logCPM matrix as a log-scale expression matrix and skip the count-model diagnostics.
+
+# Shared engine helpers: load-warning muffling, write_check, GTF annotation, the
+# featureCounts reader, contrast guards and the design-term detectors. Sourced before any
+# library() call so the muffling is installed first.
+source(file.path(snakemake@scriptdir, "de_common.R"))
 
 suppressMessages({
   library(edgeR)
@@ -42,50 +35,8 @@ if (is.na(lfc_thr) || lfc_thr < 0) {
   stop("deseq2.lfc_threshold must be a number >= 0 (0 disables the fold-change filter).")
 }
 
-write_check <- function(path, name, status, messages) {
-  esc <- function(s) gsub('"', '\\\\"', s)
-  msg_json <- paste0(
-    sprintf('    {"status": "%s", "message": "%s"}', vapply(messages, `[[`, "", "status"),
-            vapply(lapply(messages, `[[`, "message"), esc, "")),
-    collapse = ",\n")
-  json <- sprintf('{\n  "check": "%s",\n  "status": "%s",\n  "messages": [\n%s\n  ]\n}',
-                  name, status, msg_json)
-  writeLines(json, path)
-}
-
-annotate_from_gtf <- function(gtf_path, gene_ids) {
-  na_vec <- setNames(rep(NA_character_, length(gene_ids)), gene_ids)
-  if (is.null(gtf_path) || length(gtf_path) < 1 || !nzchar(gtf_path[[1]]) ||
-      !file.exists(gtf_path[[1]])) {
-    return(list(symbol = na_vec, biotype = na_vec))
-  }
-  gtf <- tryCatch(
-    read.delim(gtf_path[[1]], header = FALSE, sep = "\t", quote = "", comment.char = "#",
-               colClasses = c("NULL", "NULL", "character", "NULL", "NULL",
-                              "NULL", "NULL", "NULL", "character")),
-    error = function(e) NULL)
-  if (is.null(gtf) || ncol(gtf) < 2) return(list(symbol = na_vec, biotype = na_vec))
-  names(gtf) <- c("feature", "attr")
-  g <- gtf[gtf$feature == "gene", , drop = FALSE]
-  if (nrow(g) == 0) g <- gtf
-  a <- g$attr
-  pull <- function(key) ifelse(grepl(paste0(key, ' "'), a),
-                               sub(paste0('.*', key, ' "([^"]+)".*'), "\\1", a), NA_character_)
-  gid <- pull("gene_id"); sym <- pull("gene_name")
-  bt <- pull("gene_biotype"); gt <- pull("gene_type")
-  bt[is.na(bt)] <- gt[is.na(bt)]
-  keep <- !is.na(gid) & !duplicated(gid)
-  gid <- gid[keep]; sym <- sym[keep]; bt <- bt[keep]
-  idx <- match(gene_ids, gid)
-  list(symbol = setNames(sym[idx], gene_ids), biotype = setNames(bt[idx], gene_ids))
-}
-
 # ---- Import featureCounts matrix (RAW counts) -------------------------------
-fc <- read.delim(counts_file, comment.char = "#", check.names = FALSE)
-rownames(fc) <- fc$Geneid
-cts <- as.matrix(fc[, -(1:6)])
-mode(cts) <- "integer"
-colnames(cts) <- sub("_Aligned.sortedByCoord.out.bam$", "", basename(colnames(cts)))
+cts <- read_featurecounts(counts_file)
 
 # ---- Sample metadata --------------------------------------------------------
 samples <- read.delim(samples_file, stringsAsFactors = FALSE)
@@ -100,18 +51,13 @@ coldata[[con_factor]] <- factor(coldata[[con_factor]])
 grp <- coldata[[con_factor]]
 lv <- levels(grp)
 
-if (!nzchar(numerator) || !nzchar(denominator)) stop("Contrast numerator and denominator must both be set.")
-if (identical(numerator, denominator)) stop("Contrast numerator and denominator must differ.")
-if (!(numerator %in% lv) || !(denominator %in% lv)) {
-  stop(sprintf("Contrast levels '%s'/'%s' not found in factor '%s' (levels: %s).",
-               numerator, denominator, con_factor, paste(lv, collapse = ", ")))
-}
+check_contrast(numerator, denominator, lv, con_factor)
 
 # ---- Design: group-means + optional additive covariates from the formula ----
 # edgeR here is fit as ~ 0 + grp + covariates; an interaction/nesting operator would be
 # silently stripped by all.vars() below and refit as a plain additive term, so refuse it
 # instead of reassuring the user about a model that was never fitted.
-if (isTRUE(grepl("[:*^/]", design_formula))) {
+if (has_interaction(design_formula)) {
   stop(sprintf(paste0(
     "Design formula '%s' contains an interaction or nesting operator (':', '*', '^', or '/'). ",
     "The edgeR engine fits an additive group-means design (~ 0 + grp + covariates) and does not ",
@@ -150,18 +96,7 @@ if (min(table(grp)) < 2) {
   design_checks[[length(design_checks) + 1]] <- list(status = "WARNING",
     message = "At least one condition has fewer than two replicates.")
 }
-# A numeric column with few distinct values (batch coded 1/2/3) is fitted as a linear trend,
-# not as a factor; flag it so the user relabels the levels if they meant groups.
-for (v in covariates) {
-  x <- coldata[[v]]
-  n_lv <- length(unique(x[!is.na(x)]))
-  if (is.numeric(x) && n_lv <= 10) design_checks[[length(design_checks) + 1]] <- list(
-    status = "REVIEW_REQUIRED",
-    message = sprintf(paste0(
-      "Design term '%s' is numeric with %d distinct values and is fitted as a continuous covariate ",
-      "(a linear trend), not as a factor. If these are group labels (batch, run, donor), use ",
-      "non-numeric labels such as 'b1', 'b2' so they are modelled as levels."), v, n_lv))
-}
+design_checks <- c(design_checks, numeric_covariate_checks(coldata, covariates))
 design_status <- if (!full_rank) "FAIL" else if (any(vapply(design_checks, function(m)
   identical(m$status, "REVIEW_REQUIRED"), logical(1)))) "REVIEW_REQUIRED" else "PASS"
 write_check(snakemake@output[["design_check"]], "08_metadata_design_qc", design_status, design_checks)
@@ -183,7 +118,7 @@ tt <- topTags(qlf, n = Inf, sort.by = "none")$table
 res <- data.frame(
   baseMean = tt$logCPM,
   log2FoldChange = tt$logFC,
-  lfcSE = NA_real_,
+  lfcSE = NA_real_,      # edgeR-QLF reports no per-gene logFC standard error
   # Signed statistic (the QLF F is unsigned; for a 1-df contrast F = t^2). Downstream the
   # `stat` column must carry direction for the preranked GSEA (.rnk) export to be meaningful.
   stat = sign(tt$logFC) * sqrt(pmax(tt$F, 0)),
@@ -204,20 +139,34 @@ vsd <- DESeqTransform(se)
 dds <- vsd
 stopifnot(identical(rownames(SummarizedExperiment::assay(vsd)), rownames(res)))
 
+# PC1/PC2 for the covariate-structure screen (check 23), from the logCPM matrix this engine
+# already fitted (run_deseq2.R uses plotPCA on its VST instead).
+write_pca_coordinates(logcpm, snakemake@output[["pca_coordinates"]])
+
 gtf_path <- tryCatch(snakemake@params[["gtf"]], error = function(e) NULL)
 annot <- annotate_from_gtf(gtf_path, rownames(res))
+
+# Informational companion to the primary padj/|log2FC| call: H0 |log2FC| <= L, so padj < alpha is
+# positive evidence the effect EXCEEDS the threshold. glmTreat is edgeR's native form of DESeq2's
+# altHypothesis="greaterAbs"; null="interval" states that same interval hypothesis explicitly so an
+# upstream default change cannot redefine the column. Does not feed the up/down split below.
+L_eq <- require_lfc_threshold(if (lfc_thr > 0) lfc_thr else 1.0)
+treat_tab <- topTags(glmTreat(fit, contrast = cmat, lfc = L_eq, null = "interval"),
+                     n = Inf, sort.by = "none")$table
 
 # ---- Outputs (match run_deseq2.R) -------------------------------------------
 res_out <- res
 res_out$gene_id <- rownames(res_out)
 res_out$symbol <- unname(annot$symbol[rownames(res_out)])
 res_out$biotype <- unname(annot$biotype[rownames(res_out)])
+res_out$ncbi_geneid <- unname(annot$geneid[rownames(res_out)])
+res_out$padj_lfc_ge_threshold <- treat_tab$FDR[match(res_out$gene_id, rownames(treat_tab))]
 res_out <- res_out[order(res_out$padj), ]
 write.csv(res_out, snakemake@output[["results"]], row.names = FALSE)
 write.csv(as.data.frame(logcpm), snakemake@output[["normalized"]])
 saveRDS(list(dds = dds, res = res, resLFC = resLFC, vsd = vsd,
-             assay_kind = "log2_cpm",
-             symbol_map = annot$symbol),
+             assay_kind = "log2_cpm", de_engine = "edgeR-QLF",
+             lfc_threshold_test = "glmTreat", symbol_map = annot$symbol),
         snakemake@output[["rds"]])
 
 sig <- !is.na(res_out$padj) & res_out$padj < alpha
@@ -235,6 +184,7 @@ deseq_checks <- list(list(status = if (n_sig > 0) "PASS" else "REVIEW_REQUIRED",
 write_check(snakemake@output[["deseq_check"]], "09_deseq2_qc",
             if (n_sig > 0) "PASS" else "REVIEW_REQUIRED", deseq_checks)
 
-writeLines(capture.output(sessionInfo()), snakemake@output[["session"]])
+writeLines(c(sprintf("Fold-change threshold test: glmTreat (H0 |log2FC| <= %g)", L_eq), "",
+             capture.output(sessionInfo())), snakemake@output[["session"]])
 sink(type = "message")
 close(log_con)

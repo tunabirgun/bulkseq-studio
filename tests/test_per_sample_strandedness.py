@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from _runtime import bash_runtime
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "workflow" / "scripts"
 
@@ -205,39 +207,19 @@ def _extract_rule_shell(rule_name: str, smk_path: Path) -> str:
     return m.group(1)
 
 
-def _bash_available() -> bool:
-    """True when this host can run a bash script — WSL2 on Windows (the only place bash
-    reaches, per the project's tri-platform verification matrix), bash directly elsewhere."""
-    import shutil
-
-    if sys.platform.startswith("win"):
-        # wsl.exe ships with Windows even when no distribution is installed (the GitHub
-        # runner): only a distribution that runs a command counts.
-        if shutil.which("wsl") is None:
-            return False
-        try:
-            probe = subprocess.run(["wsl", "--", "true"], capture_output=True, timeout=60)
-        except (OSError, subprocess.TimeoutExpired):
-            return False
-        return probe.returncode == 0
-    return shutil.which("bash") is not None
-
-
 def _run_read_length_shell(fastq_paths, tmp_path) -> int:
     import shlex
 
-    from app.core.paths import windows_to_wsl_path
-
-    if not _bash_available():
+    runtime = bash_runtime()
+    if runtime is None:
         pytest.skip("bash is not available on this host (install WSL2 on Windows)")
+    bash, to_shell_path = runtime
     shell = _extract_rule_shell("read_length", ROOT / "workflow" / "rules" / "reference.smk")
     output = tmp_path / "read_length.txt"
-    on_windows = sys.platform.startswith("win")
     # Passing a multi-line script as a `wsl bash -c "..."` argument goes through Windows'
     # own command-line requoting on the way to wsl.exe and corrupts embedded quotes/newlines
     # (observed: `$f` expanded to empty inside the for-loop). Writing the script to a file
     # and running `bash <file>` sidesteps that relay entirely.
-    to_shell_path = (lambda p: windows_to_wsl_path(p)) if on_windows else (lambda p: str(p))
     quoted_inputs = " ".join(shlex.quote(to_shell_path(p)) for p in fastq_paths)
     script = (
         shell.replace("{{", "{").replace("}}", "}")
@@ -246,9 +228,9 @@ def _run_read_length_shell(fastq_paths, tmp_path) -> int:
     )
     script_file = tmp_path / "read_length.sh"
     script_file.write_text(script, encoding="utf-8", newline="\n")
-    bash_cmd = (["wsl", "bash", windows_to_wsl_path(script_file)] if on_windows
-                else ["bash", str(script_file)])
-    result = subprocess.run(bash_cmd, capture_output=True, text=True)
+    result = subprocess.run(
+        [*bash, to_shell_path(script_file)], capture_output=True, text=True
+    )
     assert result.returncode == 0, result.stderr
     assert output.exists(), f"shell did not write {output}: {result.stdout} {result.stderr}"
     return int(output.read_text(encoding="utf-8").strip())

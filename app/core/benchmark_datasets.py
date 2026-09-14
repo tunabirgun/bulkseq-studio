@@ -72,6 +72,7 @@ def create_benchmark_project(benchmark_id: str, working_directory: Path, project
         if entry is not None:
             cfg.enrichment.keytype = entry.get("enrichment_keytype") or None
             cfg.enrichment.kegg_keytype = entry.get("kegg_keytype") or None
+            cfg.enrichment.kegg_key_form = entry.get("kegg_key_form") or None
         ref = benchmark.get("reference", {})
         if ref:
             cfg.reference.source = ref.get("source")

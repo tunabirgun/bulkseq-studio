@@ -16,7 +16,14 @@ dependencies:
   - font-ttf-dejavu
   - fastqc=0.12.1
   - multiqc=1.30
+  # fastp is the default trimmer on the fastq route, so every count downstream of it was
+  # produced by this version. A bump is a scientific-output change: it needs the paired-run
+  # protocol (re-run the benchmarks, diff against the published DE numbers) before it ships.
   - fastp=1.0.1
+  # SortMeRNA is opt-in (workflow.rrna_filtering defaults to false), so a bump only re-validates
+  # the rRNA benchmark arm — but 4.3.7 has no arm64 conda build at any version, and osx-arm64
+  # gets the upstream 4.4.0 binary pinned by SHA256 in scripts/setup_wsl_bioenv.sh instead. Any
+  # move here is therefore a platform decision as well as a re-validation.
   - sortmerna=4.3.7
   - star=2.7.11b
   - hisat2=2.2.2
@@ -69,9 +76,6 @@ dependencies:
   - bioconductor-fgsea
   # GSVA sample-level gene-set activity (optional, organism-safe on user gene sets).
   - bioconductor-gsva
-  - bioconductor-biomart
-  - bioconductor-complexheatmap
-  - bioconductor-enhancedvolcano
   - bioconductor-org.dm.eg.db
   # Microarray / GEO support (0.4.0): GEOquery ingest + limma DE + Affy RMA;
   # human/mouse OrgDbs for symbol-based enrichment.
@@ -116,7 +120,6 @@ dependencies:
   - r-ggrepel
   - r-ggnewscale
   - r-ggridges
-  - r-ggtext
   - r-gtable
   - r-matrixstats
   - r-pheatmap
@@ -131,10 +134,9 @@ dependencies:
   # g:Profiler GO/KEGG/Reactome ORA + ID conversion for organisms without a
   # Bioconductor OrgDb (fungi, bacteria, yeast/worm/zebrafish/Arabidopsis) (0.7.0).
   - r-gprofiler2
-  # PPI networks + graph handling (0.6.0): STRING interactions, igraph/ggraph,
-  # cytoscape.js JSON export.
+  # PPI networks + graph handling (0.6.0): STRING interactions, igraph for the graph and its
+  # layouts, cytoscape.js JSON export. build_string_network.R draws the network with ggplot2
+  # over igraph-computed coordinates, so no graph-grammar package is involved.
   - bioconductor-stringdb
   - r-igraph
-  - r-ggraph
-  - r-tidygraph
   - r-jsonlite

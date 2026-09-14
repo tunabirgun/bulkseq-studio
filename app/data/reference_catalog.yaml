@@ -18,6 +18,7 @@ references:
     orgdb: org.Hs.eg.db
     enrichment_keytype: ENSEMBL
     kegg_organism: hsa
+    kegg_key_form: geneid
     string_taxon: 9606
     gprofiler_organism: hsapiens
     assembly_name: GRCh38
@@ -41,6 +42,7 @@ references:
     orgdb: org.Mm.eg.db
     enrichment_keytype: ENSEMBL
     kegg_organism: mmu
+    kegg_key_form: geneid
     string_taxon: 10090
     gprofiler_organism: mmusculus
     assembly_name: GRCm39
@@ -64,6 +66,7 @@ references:
     orgdb: org.Sc.sgd.db
     enrichment_keytype: ENSEMBL
     kegg_organism: sce
+    kegg_key_form: locus_tag
     string_taxon: 4932
     gprofiler_organism: scerevisiae
     assembly_name: R64-1-1
@@ -90,6 +93,7 @@ references:
     enrichment_keytype: kegg
     kegg_keytype: kegg
     kegg_organism: spo
+    kegg_key_form: geneid
     string_taxon: 284812
     gprofiler_organism: spombe
     assembly_name: ASM294v2
@@ -113,6 +117,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: fgr
+    kegg_key_form: locus_tag
     string_taxon: 229533
     gprofiler_organism: fgraminearum
     assembly_name: ASM24013v3
@@ -159,6 +164,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: fox
+    kegg_key_form: locus_tag
     string_taxon: 426428
     gprofiler_organism: foxysporum
     assembly_name: ASM14995v2
@@ -182,6 +188,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: fpu
+    kegg_key_form: locus_tag
     string_taxon: null
     gprofiler_organism: fpseudograminearum
     assembly_name: FP7
@@ -205,6 +212,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: fvr
+    kegg_key_form: locus_tag
     string_taxon: 334819
     gprofiler_organism: fverticillioides
     assembly_name: ASM14955v1
@@ -228,6 +236,7 @@ references:
     orgdb: org.At.tair.db
     enrichment_keytype: TAIR
     kegg_organism: ath
+    kegg_key_form: locus_tag
     string_taxon: 3702
     gprofiler_organism: athaliana
     assembly_name: TAIR10.1
@@ -251,6 +260,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: osa
+    kegg_key_form: geneid
     string_taxon: 39947
     gprofiler_organism: osativa
     assembly_name: IRGSP-1.0
@@ -282,6 +292,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: zma
+    kegg_key_form: geneid
     string_taxon: 4577
     gprofiler_organism: zmays
     assembly_name: Zm-B73-REFERENCE-NAM-5.0
@@ -311,6 +322,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: taes
+    kegg_key_form: geneid
     string_taxon: 4565
     gprofiler_organism: taestivum
     assembly_name: IWGSC_CS_RefSeq_v2.1
@@ -340,6 +352,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: gmx
+    kegg_key_form: geneid
     string_taxon: 3847
     gprofiler_organism: gmax
     assembly_name: Glycine_max_v4.0
@@ -366,6 +379,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: hvg
+    kegg_key_form: geneid
     string_taxon: 112509
     gprofiler_organism: hvulgare
     assembly_name: MorexV3_pseudomolecules_assembly
@@ -394,6 +408,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: sbi
+    kegg_key_form: geneid
     string_taxon: 4558
     gprofiler_organism: sbicolor
     assembly_name: Sorghum_bicolor_NCBIv3
@@ -420,6 +435,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: sly
+    kegg_key_form: geneid
     string_taxon: 4081
     gprofiler_organism: slycopersicum
     assembly_name: SLM_r2.1
@@ -446,6 +462,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: sot
+    kegg_key_form: geneid
     string_taxon: 4113
     gprofiler_organism: stuberosum
     assembly_name: SolTub_3.0
@@ -472,6 +489,7 @@ references:
     orgdb: org.Dm.eg.db
     enrichment_keytype: FLYBASE
     kegg_organism: dme
+    kegg_key_form: locus_tag
     string_taxon: 7227
     gprofiler_organism: dmelanogaster
     assembly_name: BDGP6.46
@@ -497,6 +515,7 @@ references:
     orgdb: org.Ce.eg.db
     enrichment_keytype: ENSEMBL
     kegg_organism: cel
+    kegg_key_form: locus_tag
     string_taxon: 6239
     gprofiler_organism: celegans
     assembly_name: WBcel235
@@ -520,6 +539,7 @@ references:
     orgdb: org.Dr.eg.db
     enrichment_keytype: ENSEMBL
     kegg_organism: dre
+    kegg_key_form: geneid
     string_taxon: 7955
     gprofiler_organism: drerio
     assembly_name: GRCz11
@@ -544,6 +564,7 @@ references:
     enrichment_keytype: kegg
     kegg_keytype: kegg
     kegg_organism: cal
+    kegg_key_form: locus_tag
     string_taxon: 237561
     gprofiler_organism: calbicans
     assembly_name: ASM18296v3
@@ -567,6 +588,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: ncr
+    kegg_key_form: locus_tag
     string_taxon: 367110
     gprofiler_organism: ncrassa
     assembly_name: NC12
@@ -590,6 +612,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: ani
+    kegg_key_form: locus_tag
     string_taxon: 227321
     gprofiler_organism: anidulans
     assembly_name: ASM1142v1
@@ -613,6 +636,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: afm
+    kegg_key_form: locus_tag
     string_taxon: 330879
     gprofiler_organism: afumigatus
     assembly_name: ASM265v1
@@ -636,6 +660,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: cng
+    kegg_key_form: locus_tag
     string_taxon: null
     gprofiler_organism: cneoformans
     assembly_name: CNA3
@@ -659,6 +684,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: bfu
+    kegg_key_form: locus_tag
     string_taxon: null
     gprofiler_organism: bcinerea
     assembly_name: ASM14353v4
@@ -682,6 +708,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: mgr
+    kegg_key_form: locus_tag
     string_taxon: 242507
     gprofiler_organism: moryzae
     assembly_name: MG8
@@ -705,6 +732,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: eco
+    kegg_key_form: locus_tag
     string_taxon: 511145
     gprofiler_organism: null
     assembly_name: ASM584v2
@@ -728,6 +756,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: bsu
+    kegg_key_form: locus_tag
     string_taxon: 224308
     gprofiler_organism: null
     assembly_name: ASM904v1
@@ -751,6 +780,7 @@ references:
     orgdb: org.Rn.eg.db
     enrichment_keytype: ENSEMBL
     kegg_organism: rno
+    kegg_key_form: geneid
     string_taxon: 10116
     gprofiler_organism: rnorvegicus
     assembly_name: mRatBN7.2
@@ -774,6 +804,7 @@ references:
     orgdb: org.Gg.eg.db
     enrichment_keytype: ENSEMBL
     kegg_organism: gga
+    kegg_key_form: geneid
     string_taxon: 9031
     gprofiler_organism: ggallus
     assembly_name: bGalGal1.mat.broiler.GRCg7b
@@ -797,6 +828,7 @@ references:
     orgdb: org.Ss.eg.db
     enrichment_keytype: ENSEMBL
     kegg_organism: ssc
+    kegg_key_form: geneid
     string_taxon: 9823
     gprofiler_organism: sscrofa
     assembly_name: Sscrofa11.1
@@ -820,6 +852,7 @@ references:
     orgdb: org.Bt.eg.db
     enrichment_keytype: ENSEMBL
     kegg_organism: bta
+    kegg_key_form: geneid
     string_taxon: 9913
     gprofiler_organism: btaurus
     assembly_name: ARS-UCD1.3
@@ -844,6 +877,7 @@ references:
     enrichment_keytype: kegg
     kegg_keytype: kegg
     kegg_organism: vvi
+    kegg_key_form: geneid
     string_taxon: 29760
     gprofiler_organism: vvinifera
     assembly_name: ASM3070453v1
@@ -875,6 +909,7 @@ references:
     enrichment_keytype: kegg
     kegg_keytype: kegg
     kegg_organism: ghi
+    kegg_key_form: geneid
     string_taxon: 3635
     gprofiler_organism: null
     assembly_name: Gossypium_hirsutum_v2.1
@@ -906,6 +941,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: mtr
+    kegg_key_form: geneid
     string_taxon: 3880
     gprofiler_organism: mtruncatula
     assembly_name: MtrunA17r5.0-ANR
@@ -934,6 +970,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: nta
+    kegg_key_form: geneid
     string_taxon: 4097
     gprofiler_organism: null
     assembly_name: Ntab-TN90
@@ -966,6 +1003,7 @@ references:
     enrichment_keytype: kegg
     kegg_keytype: kegg
     kegg_organism: ztr
+    kegg_key_form: locus_tag
     string_taxon: 336722
     gprofiler_organism: ztritici
     assembly_name: MYCGR v2.0
@@ -989,6 +1027,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: uma
+    kegg_key_form: locus_tag
     string_taxon: 237631
     gprofiler_organism: umaydis
     assembly_name: Umaydis521_2.0
@@ -1012,6 +1051,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: ssl
+    kegg_key_form: locus_tag
     string_taxon: 665079
     gprofiler_organism: null
     assembly_name: ASM14694v2
@@ -1035,6 +1075,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: ang
+    kegg_key_form: locus_tag
     string_taxon: 380704
     gprofiler_organism: aniger
     assembly_name: ASM285v2
@@ -1058,6 +1099,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: pae
+    kegg_key_form: locus_tag
     string_taxon: 208964
     gprofiler_organism: null
     assembly_name: ASM676v1
@@ -1081,6 +1123,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: mtu
+    kegg_key_form: locus_tag
     string_taxon: 83332
     gprofiler_organism: null
     assembly_name: ASM19595v2
@@ -1104,6 +1147,7 @@ references:
     orgdb: null
     enrichment_keytype: kegg
     kegg_organism: sao
+    kegg_key_form: locus_tag
     string_taxon: 93061
     gprofiler_organism: null
     assembly_name: ASM1342v1
@@ -1128,6 +1172,7 @@ references:
     enrichment_keytype: kegg
     kegg_keytype: kegg
     kegg_organism: pfa
+    kegg_key_form: locus_tag
     string_taxon: 36329
     gprofiler_organism: pfalciparum
     assembly_name: GCA_000002765

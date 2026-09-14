@@ -14,6 +14,12 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+# The Snakefile puts this directory on sys.path before importing this module; a direct
+# `python workflow/scripts/validate_project.py` run and a test that imports it by file path
+# need it set here.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _contrast_disclosure import single_contrast_notice  # noqa: E402
+
 
 # Path-valued config settings that are used as a rule INPUT, with the feature each enables.
 #
@@ -186,6 +192,19 @@ def check_design(config: dict, samples_path: Path) -> list[dict[str, str]]:
                     f"reference level / contrast on Workflow Settings to match your sample "
                     f"conditions, then re-run.")})
     return msgs
+
+
+def check_single_contrast(config: dict) -> list[dict[str, str]]:
+    """Warn when contrasts are configured that the run will not analyse.
+
+    WARNING, not REVIEW_REQUIRED: the run is valid and its one contrast is correct, so this must
+    not block the launch gate. It exists because the outputs name only that contrast and would
+    otherwise be read as covering every comparison in the configuration.
+    """
+    if (config.get("input") or {}).get("type") == "deseq2_results":
+        return []
+    notice = single_contrast_notice((config.get("deseq2") or {}).get("contrasts"))
+    return [{"status": "WARNING", "message": notice}] if notice else []
 
 
 def check_deseq2_results_direction(config: dict) -> list[dict[str, str]]:
@@ -496,6 +515,7 @@ def main() -> int:
         messages.append({"status": "FAIL", "message": f"Missing samples table: {samples_path}"})
     messages.extend(check_samples(payload, samples_path))
     messages.extend(check_design(payload, samples_path))
+    messages.extend(check_single_contrast(payload))
     messages.extend(check_deseq2_results_direction(payload))
     project_root = config_path.resolve().parent.parent if config_path.exists() else Path.cwd()
     messages.extend(check_deseq2_results_provenance(payload, base=project_root))

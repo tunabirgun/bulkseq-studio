@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
+import subprocess
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "workflow" / "scripts"))
 
 _MRS = Path(__file__).resolve().parents[1] / "workflow" / "scripts" / "make_run_summary.py"
 _MTS = Path(__file__).resolve().parents[1] / "workflow" / "scripts" / "make_timing_summary.py"
@@ -51,7 +57,9 @@ def test_timing_scope_excludes_stale_report_assembly_benchmarks(mts, tmp_path) -
 def test_microarray_export_records_moderated_lfc_standard_error() -> None:
     script = _LIMMA.read_text(encoding="utf-8")
     assert 'adjust.method = "BH"' in script
-    assert "fit2$stdev.unscaled[, 1] * sqrt(fit2$s2.post)" in script
+    de_common = _LIMMA.with_name("de_common.R").read_text(encoding="utf-8")
+    assert "fit$stdev.unscaled[, 1] * sqrt(fit$s2.post)" in de_common
+    assert "lfc_se <- moderated_lfc_se(fit2, rownames(tt))" in script
     assert "lfcSE = lfc_se" in script
     assert "lfcSE = NA_real_" not in script
 
@@ -1140,3 +1148,293 @@ def test_render_text_and_tools_references_use_executed_workflow_version(mrs) -> 
     assert "Workflow version: 0.29.0" not in text
     assert "Workflow version: 0.30.1 (digest dddddddddddd" in refs
     assert "Workflow version: 0.29.0" not in refs
+
+
+# --- Reports: shared renderers, provenance parity, enrichment-evidence drift, single contrast ---
+
+_MHR = Path(__file__).resolve().parents[1] / "workflow" / "scripts" / "make_html_report.py"
+_VALIDATE = Path(__file__).resolve().parents[1] / "workflow" / "scripts" / "validate_project.py"
+_ENRICHMENT_R = Path(__file__).resolve().parents[1] / "workflow" / "scripts" / "run_enrichment.R"
+_DESEQ2_SMK = Path(__file__).resolve().parents[1] / "workflow" / "rules" / "deseq2.smk"
+
+
+def _load(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(scope="module")
+def mhr():
+    return _load("make_html_report", _MHR)
+
+
+@pytest.fixture(scope="module")
+def validate_project():
+    return _load("validate_project", _VALIDATE)
+
+
+def _strandedness_payload(**realized) -> dict:
+    return {"strandedness": {"configured": {"code": 0}, "realized": realized}}
+
+
+_STRANDEDNESS_FIXTURES = {
+    "uniform": _strandedness_payload(
+        code=2, label="reverse", path="results/aligned/strandedness.txt",
+        per_sample={"a": 2, "b": 2}, uniform=True),
+    "mixed": _strandedness_payload(
+        code=2, label="reverse", path="results/aligned/strandedness.txt",
+        per_sample={"a": 1, "b": 2}, uniform=False),
+    "no_per_sample": _strandedness_payload(
+        code=0, label="unstranded", path="results/aligned/strandedness.txt"),
+    "label_disagrees_with_code": _strandedness_payload(
+        code=1, label="reverse", path="results/aligned/strandedness.txt"),
+    "code_is_boolean": _strandedness_payload(
+        code=True, label="forward", path="results/aligned/strandedness.txt"),
+    "path_missing": _strandedness_payload(code=2, label="reverse", path="   "),
+    "realized_absent": {"strandedness": {"configured": {"code": 2}}},
+    "no_record": {},
+}
+
+
+@pytest.mark.parametrize("name", sorted(_STRANDEDNESS_FIXTURES))
+def test_both_reports_render_the_same_realized_strandedness(mrs, mhr, name) -> None:
+    payload = _STRANDEDNESS_FIXTURES[name]
+    assert mrs.realized_strandedness_text(payload) == mhr._realized_strandedness_text(payload)
+
+
+def test_realized_strandedness_renders_mixed_runs_per_sample(mrs) -> None:
+    text = mrs.realized_strandedness_text(_STRANDEDNESS_FIXTURES["mixed"])
+    assert text == ("mixed (realized per-sample from results/aligned/strandedness.txt: "
+                    "a=forward, b=reverse)")
+
+
+@pytest.mark.parametrize("name", ["label_disagrees_with_code", "code_is_boolean", "path_missing",
+                                  "realized_absent", "no_record"])
+def test_realized_strandedness_renders_nothing_for_a_malformed_record(mrs, name) -> None:
+    assert mrs.realized_strandedness_text(_STRANDEDNESS_FIXTURES[name]) is None
+
+
+def test_pre_fix_html_renderer_misreports_a_mixed_run(mrs, tmp_path) -> None:
+    # Negative control for the shared renderer: the 0.30.1 report renderer described a
+    # per-sample (mixed) run with the single first-sample code, which is what RPT-1 fixes.
+    source = subprocess.run(["git", "show", "42caf51:workflow/scripts/make_html_report.py"],
+                            cwd=str(Path(__file__).resolve().parents[1]),
+                            capture_output=True, text=True, check=True).stdout
+    previous_path = tmp_path / "previous_make_html_report.py"
+    previous_path.write_text(source, encoding="utf-8")
+    previous = _load("previous_make_html_report", previous_path)
+
+    mixed = _STRANDEDNESS_FIXTURES["mixed"]
+    assert previous._realized_strandedness_text(mixed) == (
+        "reverse (2; realized from results/aligned/strandedness.txt)")
+    assert "mixed" not in previous._realized_strandedness_text(mixed)
+    # The parity assertion above holds only because of the shared renderer.
+    assert previous._realized_strandedness_text(mixed) != mrs.realized_strandedness_text(mixed)
+
+
+def _provenance_payload(**overrides) -> dict:
+    payload = _base_payload(
+        app_version="0.31.0", workflow_version="0.31.0", workflow_digest="e" * 64,
+        workflow_copied_at="2026-09-12T08:00:00",
+        project_created_app_version="0.29.0", project_created_workflow_version="0.29.0",
+        workflow_git_commit="f" * 40, environment_lock_md5="9" * 32,
+        environment_spec={"file": "bulkseq.lock.yaml", "source": "lock", "sha256": "a" * 64},
+        r_packages={"DESeq2": "1.48.0"}, software_versions={"snakemake": "9.23.1"},
+    )
+    payload.update(overrides)
+    return payload
+
+
+def test_report_carries_every_provenance_field_the_run_summary_records(mrs, mhr) -> None:
+    payload = _provenance_payload()
+    summary = mrs.render_text(payload)
+    report = mhr._versions_table(payload)
+    spec = payload["environment_spec"]
+    expected = [
+        payload["app_version"], payload["workflow_version"], payload["workflow_digest"][:12],
+        payload["workflow_copied_at"], payload["project_created_app_version"],
+        payload["project_created_workflow_version"], spec["file"], spec["source"],
+        spec["sha256"], payload["environment_lock_md5"], payload["workflow_git_commit"][:12],
+    ]
+    for value in expected:
+        assert value in summary, value
+        assert value in report, value
+
+
+def test_report_never_substitutes_the_lock_md5_for_unrecorded_provenance(mrs, mhr) -> None:
+    payload = _provenance_payload(
+        app_version=None, environment_spec={"file": None, "source": "unknown", "sha256": None})
+    rows = dict(mhr._provenance_rows(payload))
+    lock = payload["environment_lock_md5"]
+
+    assert rows["App version"] == "not recorded (workflow copied before 0.30.1)"
+    assert rows["Installed environment spec"] == (
+        "unknown (no marker; environment predates this record)")
+    assert lock not in rows["App version"]
+    assert lock not in rows["Installed environment spec"]
+    # Both fallbacks are the run summary's own wording, not a second spelling of it.
+    assert rows["App version"] in mrs.render_text(payload)
+    assert rows["Installed environment spec"] in mrs.environment_spec_line(payload)
+
+
+# Literals in run_enrichment.R that look like a summary-line prefix but are written somewhere
+# else: a check message, an stderr message(), or a detail fragment embedded inside another line.
+_NON_SUMMARY_PREFIXES = frozenset({
+    "Enrichment:", "Enrichment skipped:", "Enrichment could not run:",
+    "Entrez collapse requires columns:", "GSEA deterministic tie handling:",
+    "KEGG ORA retrieval failed:", "KEGG GSEA retrieval failed:", "KEGG registry unavailable:",
+    "KEGG enrichment could not run:",
+})
+# Summary lines that report results or route selection rather than identifier-mapping,
+# universe, gate or resource evidence. The reports render these from the result tables.
+_NON_EVIDENCE_SUMMARY_PREFIXES = frozenset({
+    "Skipped:", "Enrichment failed:", "KEGG enrichment failed:", "GO route:",
+    "GO/disease enrichment:", "GO BP terms (gost ORA):", "KEGG-only enrichment:",
+    "KEGG locus-tag-to-GeneID bridge:", "Significant genes (ORA input):",
+    "Ranked genes (GSEA input):", "Up-regulated:", "Down-regulated:", "Combined significant:",
+    "GSEA GO BP gene sets meeting the adjusted criterion (directional, full ranked list):",
+    "KEGG adjusted results meeting the criterion:",
+})
+
+_R_LITERAL = re.compile(r'"((?:[^"\\]|\\.)*)"')
+_R_PREFIX = re.compile(r"^([A-Z][^%:]*?:)(\s|$)")
+
+
+def _emitted_prefixes(r_source: str) -> set[str]:
+    """Prefix-shaped literals in run_enrichment.R, the shape its summary lines are written in."""
+    found = set()
+    for match in _R_LITERAL.finditer(r_source):
+        prefix = _R_PREFIX.match(match.group(1))
+        if prefix:
+            found.add(prefix.group(1))
+    return found
+
+
+def _assert_prefixes_classified(r_source: str) -> None:
+    from _enrichment_evidence import ENRICHMENT_EVIDENCE_PREFIXES
+    classified = (set(ENRICHMENT_EVIDENCE_PREFIXES) | _NON_SUMMARY_PREFIXES
+                  | _NON_EVIDENCE_SUMMARY_PREFIXES)
+    unclassified = sorted(p for p in _emitted_prefixes(r_source)
+                          if not any(p.startswith(c) for c in classified))
+    assert not unclassified, (
+        "run_enrichment.R writes prefixes neither quoted as evidence nor classified as "
+        f"non-evidence: {unclassified}")
+
+
+def test_every_enrichment_summary_prefix_is_classified() -> None:
+    _assert_prefixes_classified(_ENRICHMENT_R.read_text(encoding="utf-8"))
+
+
+def test_a_new_enrichment_summary_prefix_fails_the_drift_check() -> None:
+    source = _ENRICHMENT_R.read_text(encoding="utf-8")
+    injected = source.replace(
+        'sprintf("Unmapped input IDs excluded: %d", mapping$unmapped_inputs),',
+        'sprintf("Unmapped input IDs excluded: %d", mapping$unmapped_inputs),\n'
+        '      sprintf("Orthology bridge coverage: %d", 0),', 1)
+    assert injected != source
+    with pytest.raises(AssertionError, match="Orthology bridge coverage:"):
+        _assert_prefixes_classified(injected)
+
+
+def test_both_reports_quote_the_same_enrichment_evidence(mrs, mhr, tmp_path) -> None:
+    from _enrichment_evidence import ENRICHMENT_EVIDENCE_PREFIXES
+    summary = "\n".join([f"{prefix} value" for prefix in ENRICHMENT_EVIDENCE_PREFIXES]
+                        + ["Up-regulated: 10 genes, 3 GO BP terms (ORA)"])
+    path = tmp_path / "results" / "enrichment" / "enrichment_summary.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(summary, encoding="utf-8")
+
+    evidence = mrs.enrichment_mapping_evidence(tmp_path)["evidence"]
+    assert evidence == mhr.evidence_lines(summary)
+    assert len(evidence) == len(ENRICHMENT_EVIDENCE_PREFIXES)
+    assert "KEGG retrieval date (UTC): value" in evidence
+    assert "KEGG key form observed: value" in evidence
+
+
+def _contrast(numerator: str, denominator: str) -> dict:
+    return {"name": f"{numerator}_vs_{denominator}", "factor": "condition",
+            "numerator": numerator, "denominator": denominator}
+
+
+_ONE_CONTRAST = [_contrast("treated", "control")]
+_TWO_CONTRASTS = [_contrast("treated", "control"), _contrast("recovered", "control")]
+_IGNORED_TEXT = "recovered vs control (factor: condition) [recovered_vs_control]"
+
+
+def _smk_contrast_notice(contrasts) -> list[str]:
+    """Execute deseq2.smk's own parse-time disclosure block against a configured contrast list."""
+    source = _DESEQ2_SMK.read_text(encoding="utf-8")
+    block = re.search(r"(?m)^_CONTRAST_NOTICE = .*\n^if _CONTRAST_NOTICE:\n(?:    .*\n)+", source)
+    assert block is not None, "deseq2.smk must disclose the contrasts it does not analyse"
+    written: list[str] = []
+    from _contrast_disclosure import single_contrast_notice
+    namespace = {"single_contrast_notice": single_contrast_notice,
+                 "_DE": {"contrasts": contrasts},
+                 "sys": SimpleNamespace(stderr=SimpleNamespace(write=written.append))}
+    exec(block.group(0), namespace)
+    return written
+
+
+def _de_payload(contrasts) -> dict:
+    return _base_payload(deseq2={"design_formula": "~ condition", "reference_level": "control",
+                                 "contrasts": contrasts, "alpha": 0.05, "lfc_threshold": 1,
+                                 "shrinkage_method": "apeglm"})
+
+
+def test_a_second_contrast_is_disclosed_on_every_non_gui_surface(mrs, mhr, validate_project,
+                                                                 tmp_path) -> None:
+    from _contrast_disclosure import IGNORED_LABEL, single_contrast_notice
+    payload = _de_payload(_TWO_CONTRASTS)
+
+    written = _smk_contrast_notice(_TWO_CONTRASTS)
+    assert written == [f"WARNING: {single_contrast_notice(_TWO_CONTRASTS)}\n"]
+    assert _IGNORED_TEXT in written[0]
+
+    for text in (mrs.render_text(payload), mrs.render_study_design(payload, "", None)):
+        assert "Contrast analysed: treated vs control (factor: condition)" in text
+        assert f"{IGNORED_LABEL}: {_IGNORED_TEXT}" in text
+        assert "Contrasts: " not in text
+
+    cards = mhr._meta_cards(payload, tmp_path)
+    assert f"<div class='card-k'>{IGNORED_LABEL}</div>" in cards
+    assert _IGNORED_TEXT in cards
+    assert f"{IGNORED_LABEL}: {_IGNORED_TEXT}" in mhr._study_design_section(payload)
+
+    messages = validate_project.check_single_contrast({"deseq2": {"contrasts": _TWO_CONTRASTS}})
+    assert [m["status"] for m in messages] == ["WARNING"]
+    assert _IGNORED_TEXT in messages[0]["message"]
+
+
+def test_a_single_contrast_project_is_not_qualified_anywhere(mrs, mhr, validate_project,
+                                                             tmp_path) -> None:
+    from _contrast_disclosure import IGNORED_LABEL, SINGLE_CONTRAST_SENTENCE
+    payload = _de_payload(_ONE_CONTRAST)
+
+    assert _smk_contrast_notice(_ONE_CONTRAST) == []
+    assert validate_project.check_single_contrast({"deseq2": {"contrasts": _ONE_CONTRAST}}) == []
+    surfaces = [mrs.render_text(payload), mrs.render_study_design(payload, "", None),
+                mhr._meta_cards(payload, tmp_path), mhr._study_design_section(payload)]
+    for text in surfaces:
+        assert IGNORED_LABEL not in text
+        assert SINGLE_CONTRAST_SENTENCE not in text
+    assert ("Contrasts: treated vs control (factor: condition) [treated_vs_control]"
+            in surfaces[0])
+
+
+def test_the_single_contrast_warning_does_not_block_the_launch_gate(validate_project,
+                                                                    tmp_path) -> None:
+    out = tmp_path / "00_project_setup.json"
+    validate_project.write_payload(
+        out, "00_project_setup",
+        validate_project.check_single_contrast({"deseq2": {"contrasts": _TWO_CONTRASTS}}))
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["status"] == "WARNING"
+
+
+def test_provenance_survives_a_report_with_no_recorded_tool_versions(mhr) -> None:
+    payload = _provenance_payload(software_versions={}, r_packages={})
+    section = mhr._versions_table(payload)
+    assert payload["workflow_digest"][:12] in section
+    assert payload["environment_spec"]["sha256"] in section

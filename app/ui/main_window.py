@@ -68,7 +68,12 @@ from PySide6.QtGui import (
 )
 from PySide6.QtCore import Qt, QUrl
 
-from app.constants import APP_NAME, APP_VERSION, MIN_UNIQUE_MAPPED_WARN_PCT
+from app.constants import (
+    APP_NAME,
+    APP_VERSION,
+    DESCRIPTIVE_METADATA_COLUMNS,
+    MIN_UNIQUE_MAPPED_WARN_PCT,
+)
 from app.core.benchmark_datasets import create_benchmark_project, load_benchmark_catalog
 from app.core.config_models import (
     AppConfig,
@@ -133,6 +138,34 @@ from app.ui.metadata_editor import MetadataTable
 from app.ui.readiness_dialog import ReadinessDialog
 from app.ui.task_navigator import TaskNavigator
 from app.ui.theme import IMAGEVIEWER_BG, PALETTES, STATUS_PILL_BG, apply_theme, status_color
+
+# Count-based DE engines other than DESeq2, mirroring the Snakefile's ALT_DE_MODE
+# (VOOM_MODE or EDGER_MODE): they skip the DESeq2-specific TOST equivalence test, so
+# unchanged_genes.csv and check 13 are not produced. Every other DE output is shared.
+ALT_DE_ENGINES = ("limma-voom", "edgeR")
+
+# Input routes that align raw reads, mirroring the Snakefile's
+# `not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)` guard on the
+# alignment-only targets (MultiQC, the reference gate). Pinned by
+# tests/test_gui_checks_page.py so the literal cannot drift from the workflow.
+ALIGNMENT_ROUTES = ("fastq", "sra", "mixed")
+
+# The effect-size companion column (padj_lfc_ge_threshold) tests the same hypothesis in
+# every engine, but through that engine's own threshold test.
+DE_ENGINE_EFFECT_SIZE_TESTS = {
+    "DESeq2": "a Wald test against the threshold",
+    "limma-voom": "a moderated t-test against the threshold (TREAT)",
+    "edgeR": "a quasi-likelihood test against the threshold (glmTreat)",
+}
+
+# Display labels for phase checks whose identifier is not route-neutral. Mirrors
+# workflow/scripts/make_html_report.py::_pretty_check_name so the app and the HTML
+# report name the same check the same way (asserted by tests/test_gui_checks_page.py).
+CHECK_DISPLAY_NAMES = {"09_deseq2_qc": "09 differential-expression QC"}
+
+
+def pretty_check_name(name: str) -> str:
+    return CHECK_DISPLAY_NAMES.get(name, name.replace("_", " "))
 
 
 class RunnerThread(QThread):
@@ -254,6 +287,21 @@ class _InsetStatusBar(QStatusBar):
     def currentMessage(self) -> str:  # noqa: N802 - Qt API
         return self._message
 
+    def messageRect(self):  # noqa: N802 - Qt-style accessor
+        """Area the transient message may paint in.
+
+        Qt lays permanent widgets (and the resize grip) out on the right while the
+        message is painted by hand, so the rect stops short of the leftmost laid-out
+        child instead of assuming a fixed reserve.
+        """
+        rect = self.contentsRect()
+        rect.adjust(0, 0, -24, 0)  # native resize grip when no child reserves the edge
+        gap = self.fontMetrics().horizontalAdvance("  ")
+        for child in self.children():
+            if isinstance(child, QWidget) and child.isVisible() and child.x() > 0:
+                rect.setRight(min(rect.right(), child.x() - gap))
+        return rect
+
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt virtual name
         super().paintEvent(event)
         if not self._message:
@@ -263,9 +311,7 @@ class _InsetStatusBar(QStatusBar):
         # PlaceholderText role can be intentionally faint and made completed-run
         # guidance fail normal-text contrast; use the ordinary text role.
         painter.setPen(self.palette().color(QPalette.ColorRole.Text))
-        text_rect = self.contentsRect()
-        # Leave the native resize grip clear without moving the left edge.
-        text_rect.adjust(0, 0, -24, 0)
+        text_rect = self.messageRect()
         text = self.fontMetrics().elidedText(
             self._message, Qt.TextElideMode.ElideRight, max(1, text_rect.width()))
         painter.drawText(
@@ -377,6 +423,12 @@ class MainWindow(QMainWindow):
         # The environment check is on-demand (the 'Check Environment' button) so the
         # window opens instantly instead of blocking on WSL/conda probes at startup.
         self.statusBar().setContentsMargins(10, 2, 10, 3)
+        # The running version stays readable whatever transient message is showing, so a
+        # bug report can name it without opening About.
+        self.version_label = QLabel(f"v{APP_VERSION}")
+        self.version_label.setObjectName("statusVersionLabel")
+        self.version_label.setAccessibleName(f"Application version {APP_VERSION}")
+        self.statusBar().addPermanentWidget(self.version_label)
         if not sys.platform.startswith("win"):
             self.statusBar().showMessage(
                 "Ready — create or open a project. Before the first run, use Check Environment "
@@ -1197,7 +1249,7 @@ class MainWindow(QMainWindow):
         # from the Snakemake DAG for the mode (aligner/trim/rRNA/contam/quantifier/rseqc/
         # organellar in microarray/count-matrix/deseq2-results; de_engine in microarray and
         # deseq2-results; gsva needs a per-sample matrix, absent in deseq2-results).
-        alignment_active = mode in ("fastq", "sra", "mixed")
+        alignment_active = mode in ALIGNMENT_ROUTES
         if getattr(self, "align_group", None) is not None:
             self.align_group.setEnabled(alignment_active)
             if alignment_active:
@@ -2229,6 +2281,7 @@ class MainWindow(QMainWindow):
             if self.config.input.type != "microarray":
                 enr.keytype = entry.get("enrichment_keytype") or None
                 enr.kegg_keytype = entry.get("kegg_keytype") or None
+                enr.kegg_key_form = entry.get("kegg_key_form") or None
         # Store WSL-resolvable paths: reference staging and validate_reference.py
         # run inside WSL, where a Windows path (C:\...) would not exist. The md5s
         # above were computed on the native paths (readable on the Windows side).
@@ -2492,7 +2545,8 @@ class MainWindow(QMainWindow):
         self.lfc_threshold.setDecimals(2)
         self.lfc_threshold.setValue(1.0)
         # Differential-expression engine (count-based routes). DESeq2 is the default;
-        # limma-voom is an opt-in cross-check emitting the same tables/figures.
+        # limma-voom and edgeR are opt-in cross-checks emitting the same tables/figures
+        # apart from the DESeq2-specific equivalence output (ALT_DE_ENGINES).
         self.de_engine = QComboBox()
         self.de_engine.addItem("DESeq2 (default)", "DESeq2")
         self.de_engine.addItem("limma-voom", "limma-voom")
@@ -2501,8 +2555,16 @@ class MainWindow(QMainWindow):
             "Statistical engine for the differential test on count data. DESeq2 (default) suits "
             "most designs, including small ones. limma-voom and edgeR quasi-likelihood are optional "
             "cross-checks best suited to larger designs (about 6+ samples per group); at small n "
-            "keep DESeq2. All three produce the same result tables and figures. Not used in "
-            "microarray mode (which uses limma-trend) or when an external results table is uploaded."
+            "keep DESeq2. What differs between them: the equivalence (no-change) test is specific "
+            "to DESeq2, so results/deseq2/unchanged_genes.csv and check 13 are produced only by "
+            "DESeq2. Everything else is produced by all three — gene symbols with NCBI gene IDs, "
+            "PCA coordinates with the covariate screen (check 23), the standard error of the "
+            "log2 fold change (empty for edgeR quasi-likelihood, which reports no per-gene "
+            "value), and the effect-size companion column, which each engine computes "
+            "with its own threshold test (" + "; ".join(
+                f"{engine}: {test}" for engine, test in DE_ENGINE_EFFECT_SIZE_TESTS.items()) + "). "
+            "Not used in microarray mode (which uses limma-trend) or when an external results "
+            "table is uploaded."
         )
         save = QPushButton("Save Workflow Settings")
         save.setProperty("primary", True)
@@ -2946,20 +3008,28 @@ class MainWindow(QMainWindow):
         self._update_workflow_summary()
         self._schedule_workflow_section_height_update()
 
+    def _design_covariate_candidates(self) -> list[str]:
+        """Metadata columns the design helper may offer as additive covariates.
+
+        Descriptive/provenance names come from the one canonical set the pipeline's covariate
+        screen also reads, so the two cannot drift apart; the extras here are design columns
+        (the response and its structure) that only the GUI knows about. Accession/checksum/
+        url/byte/count columns need no entry — the technical suffix pattern removes them.
+        """
+        cols = list(self.metadata_table.column_names()) if hasattr(self.metadata_table, "column_names") else []
+        factor = self.contrast_factor.text().strip() or "condition"
+        exclude = set(DESCRIPTIVE_METADATA_COLUMNS) | {"condition", "layout", "platform", factor}
+        technical = re.compile(r"(_md5|_url|_bytes|_count|_accession)$")
+        return [c for c in cols if c and c not in exclude and not technical.search(c)]
+
     def _open_design_helper(self) -> None:
         # Compose an additive design formula (~ covariates + condition) from the metadata
         # columns, so a non-expert can adjust for batch/covariates without typing R. Only
         # additive terms; interactions stay in the raw formula field.
         from PySide6.QtWidgets import QDialog, QDialogButtonBox
 
-        cols = list(self.metadata_table.column_names()) if hasattr(self.metadata_table, "column_names") else []
         factor = self.contrast_factor.text().strip() or "condition"
-        exclude = {"sample_id", "fastq_1", "fastq_2", "fastq_1_url", "fastq_2_url", "layout",
-                   "original_accession", "experiment_accession", "gsm_accession", "platform",
-                   "original_filename", "detected_pair_id", "condition", "sample_title",
-                   "read_count", "base_count", "download_bytes", "fastq_1_md5", "fastq_2_md5", factor}
-        technical = re.compile(r"(_md5|_url|_bytes|_count|_accession)$")
-        candidates = [c for c in cols if c and c not in exclude and not technical.search(c)]
+        candidates = self._design_covariate_candidates()
         df_cols = self.metadata_table.to_dataframe()
 
         def numeric_levels(col: str) -> int | None:
@@ -3936,9 +4006,20 @@ class MainWindow(QMainWindow):
             if was_mode in ("run", "resume", "recover") and hasattr(self, "term_pick"):
                 self._populate_term_picker()
             if was_mode in ("run", "resume", "recover"):
-                self.statusBar().showMessage(
-                    "Run complete. Open Explore results > Figures and tables, or "
-                    "Explore results > Protein network.", 20000)
+                # The run just wrote its phase checks; re-read them so Pre-run checks shows
+                # what this run reported instead of the state from before it started.
+                flagged = 0
+                if self.project_root is not None:
+                    self._refresh_phase_checks()
+                    flagged = sum(status in ("WARNING", "REVIEW_REQUIRED")
+                                  for status in self._phase_check_statuses().values())
+                completion = ("Run complete. Open Explore results > Figures and tables, or "
+                              "Explore results > Protein network.")
+                if flagged:
+                    noun = "phase check" if flagged == 1 else "phase checks"
+                    completion += (f" {flagged} {noun} reported warnings or review-required "
+                                   "findings — see Pre-run checks.")
+                self.statusBar().showMessage(completion, 20000)
             # A "Rebuild from STRING" produces a new network; reload it into the
             # interactive viewer so it reflects the rebuild instead of the old graph.
             if was_mode == "ppi" and self.project_root is not None:
@@ -6722,6 +6803,7 @@ class MainWindow(QMainWindow):
         if self.config.input.type != "microarray":
             enr.keytype = entry.get("enrichment_keytype") or None
             enr.kegg_keytype = entry.get("kegg_keytype") or None
+            enr.kegg_key_form = entry.get("kegg_key_form") or None
         ref.strain = str(entry.get("strain") or "")
         ref.genome_size_category = str(entry.get("genome_size_category") or "custom")
         ref.source = str(entry.get("source") or "")
@@ -7120,9 +7202,7 @@ class MainWindow(QMainWindow):
 
             worker = BackgroundWorker(fingerprint_and_validate)
             worker.done.connect(
-                lambda outcome: self._on_sanity_fingerprint_done(
-                    root, payload, messages, outcome,
-                ),
+                lambda outcome: self._on_sanity_fingerprint_done(root, payload, outcome),
             )
             worker.failed.connect(
                 lambda exc: self._on_sanity_fingerprint_failed(root, exc),
@@ -7138,14 +7218,12 @@ class MainWindow(QMainWindow):
         self,
         project_root: Path,
         payload: dict,
-        messages: list[dict[str, str]],
         outcome,
     ) -> None:
         self.sanity_busy.setVisible(False)
         self._sanity_worker = None
         if self.project_root != project_root or getattr(self, "_closing", False):
             return
-        text = self._format_messages(messages)
         if not outcome.valid:
             self._update_sanity_state(
                 {"01_input_validation": "STALE"},
@@ -7157,14 +7235,11 @@ class MainWindow(QMainWindow):
             return
         # Only the current, fingerprinted preflight authorizes launch. Saved
         # downstream phase checks remain inspectable through the reload button.
+        # The findings themselves are rendered under the check by _update_sanity_state.
         self._update_sanity_state(
             {"01_input_validation": payload.get("status", "PASS")},
             reset_approval=True,
         )
-        if text:
-            self.sanity_text.append("")
-            self.sanity_text.append("Latest validation detail:")
-            self.sanity_text.append(text)
 
     def _on_sanity_fingerprint_failed(self, project_root: Path, exc: object) -> None:
         self.sanity_busy.setVisible(False)
@@ -7275,7 +7350,7 @@ class MainWindow(QMainWindow):
                 "message": f"The {mode.replace('_', ' ')} route has no configured input table.",
             })
 
-        if mode in ("fastq", "sra", "mixed"):
+        if mode in ALIGNMENT_ROUTES:
             ref = self.config.reference
             has_url = bool(ref.genome_fasta_url and ref.annotation_gtf_url)
             has_local = bool(ref.genome_fasta and ref.annotation_file)
@@ -7317,6 +7392,27 @@ class MainWindow(QMainWindow):
             # status as stale until the background refresh proves it current.
             statuses["01_input_validation"] = "STALE"
         return statuses
+
+    def _check_messages(self, name: str) -> list[str]:
+        """Findings recorded in one phase check's JSON payload, as display lines."""
+        if self.project_root is None:
+            return []
+        path = self.project_root / "checks" / f"{name}.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        entries = payload.get("messages") if isinstance(payload, dict) else None
+        lines = []
+        for entry in entries or []:
+            if isinstance(entry, dict):
+                text = str(entry.get("message", "")).strip()
+                status = str(entry.get("status", "")).strip()
+                if text:
+                    lines.append(f"{status}: {text}" if status else text)
+            elif str(entry).strip():
+                lines.append(str(entry).strip())
+        return lines
 
     def _refresh_phase_checks(self) -> None:
         if not self._require_project():
@@ -7468,7 +7564,9 @@ class MainWindow(QMainWindow):
         self.sanity_state_label.setText(labels.get(worst, f"Validation status: {worst}"))
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         lines = [f"Overall: {worst}", f"Last refreshed: {timestamp}", ""]
-        lines.extend(f"{name}: {status}" for name, status in statuses.items())
+        for name, status in statuses.items():
+            lines.append(f"{pretty_check_name(name)}: {status}")
+            lines.extend(f"    - {message}" for message in self._check_messages(name))
         self.sanity_text.setPlainText("\n".join(lines))
         self.sanity_text.setVisible(True)
         self.sanity_refresh_button.setEnabled(True)
@@ -8024,13 +8122,14 @@ class MainWindow(QMainWindow):
         self.report_text.setPlainText("\n\n".join(sections) if sections else "No reports generated yet.")
 
     def _refresh_output_table_pick(self) -> None:
-        # Mode-aware table list: alignment-only counts.txt is meaningless for
-        # count-matrix/microarray runs, so only offer it for the fastq/sra route.
+        # Mode-aware table list: each route offers only the tables its run produces.
         if not hasattr(self, "output_table_pick"):
             return
         itype = self.config.input.type if self.config is not None else "sra"
-        # limma-voom does not produce the DESeq2-specific equivalence (unchanged) table.
-        voom = self.config is not None and getattr(self.config.workflow, "de_engine", "DESeq2") == "limma-voom"
+        # The alternative count engines do not produce the DESeq2-specific equivalence
+        # (unchanged) table; the Snakefile gates that target on the same engine set.
+        alt_engine = (self.config is not None
+                      and getattr(self.config.workflow, "de_engine", "DESeq2") in ALT_DE_ENGINES)
         if itype == "deseq2_results":
             # No counts/normalized/unchanged/wilcoxon outputs in this mode.
             items = ["results/deseq2/deseq2_results.csv",
@@ -8044,9 +8143,17 @@ class MainWindow(QMainWindow):
         else:
             items = ["results/deseq2/deseq2_results.csv",
                      "results/deseq2/normalized_counts.csv"]
-            if not voom:
+            # Input routes with no equivalence table, mirroring the Snakefile guard
+            # `if not (MICROARRAY_MODE or DE_RESULTS_MODE)` that wraps the
+            # unchanged_genes.csv target: every counts-based route produces it.
+            no_unchanged_routes = ("microarray", "deseq2_results")
+            if not alt_engine and itype not in no_unchanged_routes:
                 items.append("results/deseq2/unchanged_genes.csv")
-            if itype in ("sra", "fastq"):
+            # The Snakefile guard `if not (MICROARRAY_MODE or DE_RESULTS_MODE)` writes
+            # counts.txt for count_matrix too, but there it is the user's own uploaded
+            # matrix copied to the canonical path, so offering it back adds nothing:
+            # count_matrix is excluded deliberately, not by oversight.
+            if itype in ALIGNMENT_ROUTES:
                 items.insert(0, "results/counts/counts.txt")
             items += ["results/enrichment/kegg_ora.csv", "results/enrichment/kegg_gsea.csv",
                       "results/stats/wilcoxon_results.csv", "results/stats/set_overlap.csv",

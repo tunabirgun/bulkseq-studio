@@ -13,12 +13,28 @@ import csv
 import html
 import json
 import re
+import sys
 from pathlib import Path
+
+# Snakemake runs this as `python workflow/scripts/make_html_report.py`, which already puts the
+# script directory on sys.path; the tests import it by file path, which does not. Every sibling
+# imported here is stdlib-only, so the report keeps running in every environment.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _contrast_disclosure import (  # noqa: E402
+    IGNORED_LABEL, SINGLE_CONTRAST_SENTENCE, ignored_text)
+from _enrichment_evidence import evidence_lines  # noqa: E402
+from _sample_labels import sample_label_rows  # noqa: E402
+from _strandedness_text import realized_strandedness_text  # noqa: E402
 
 REPO_URL = "https://github.com/tunabirgun/bulkseq-studio"
 RELEASES_URL = "https://github.com/tunabirgun/bulkseq-studio/releases/latest"
 AUTHOR_URL = "https://github.com/tunabirgun"
 DOCS_URL = "https://tunabirgun.github.io/bulkseq-studio/"
+
+# The name every DE engine writes for the interval-test companion column. It is the specification
+# of the results CSV, so it is stated here and pinned against the four engines by
+# tests/test_report_presentation.py::test_companion_column_name_matches_every_engine.
+LFC_COMPANION_COLUMN = "padj_lfc_ge_threshold"
 
 # Inline logo (viewBox only; CSS sizes it). Keeps the report offline-safe.
 LOGO_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" fill="none" class="logo" role="img" aria-label="BulkSeq Studio logo">
@@ -60,21 +76,21 @@ def _sym_or_blank(val: str | None) -> str:
 
 # One source of truth for every metric definition — feeds inline .term tooltips AND the §10 glossary.
 GLOSS = {
- "padj":     "Adjusted p-value (FDR, Benjamini–Hochberg). The chance a gene looks changed just by luck after testing thousands at once. Smaller is stronger; below the run's cutoff is significant.",
+ "padj":     "Benjamini–Hochberg is designed to control the false-discovery rate for its multiple-testing rejection set under its assumptions. An adjusted p-value is not an individual false-discovery probability; the additional effect-size filter also determines this report's selected list.",
  "pvalue":   "Raw p-value, before correcting for testing thousands of genes. Use padj — not this — to decide significance.",
  "log2fc":   "Log2 fold change: how much and which way a gene shifted. +1 = doubled, −1 = halved, +2 = four-fold. The sign is the direction; positive = higher in the numerator group.",
  "basemean": "Average normalised read count across all samples — how strongly the gene is expressed overall. Very low values make fold changes noisy.",
  "biotype":  "Gene category from the annotation (protein_coding, lncRNA, transposable_element, …) — context, not a result.",
- "alpha":    "The FDR cutoff for calling a gene significant (here the run's α).",
- "pca":      "Principal-component plot. Each dot is a sample; dots close together are alike. A clean run separates the conditions and keeps replicates together.",
- "distance": "Sample-to-sample similarity as a colour grid — darker = more alike. Replicates of one group form blocks along the diagonal.",
- "pvalhist": "Spread of raw p-values across all genes. A tall spike near zero on an otherwise flat background = real signal; a hump in the middle warns of a modelling problem.",
- "volcano":  "Each dot is a gene: left–right = fold change (how much it moved), up = confidence. Coloured dots in the top corners are the large, trustworthy hits.",
- "ma":       "Fold change (y) against overall expression (x). Confirms changes aren't driven only by low-count genes.",
- "heatmap":  "Rows are genes, columns are samples; colour is relative expression (warm high, cool low). Samples of one group should look alike.",
- "nes":      "Normalised enrichment score (GSEA). Sign = whether the whole set trends up (+) or down (−); magnitude = strength. Uses every gene, not just the significant list.",
- "foldenr":  "Fold enrichment (ORA). How many more of your changed genes fall in this category than chance predicts.",
- "padjust":  "Adjusted p-value for the term — the expected false-alarm share if you trust it. Corrected by Benjamini–Hochberg on the clusterProfiler route (shown as 'p.adjust (BH)') and by g:SCS, g:Profiler's own graph-aware method, on the g:Profiler route (shown as 'p (g:SCS)'). Both are already corrected for multiple testing; they are not comparable to each other term-for-term.",
+ "alpha":    "The adjusted-p cutoff for the recorded analysis. The effect-size cutoff also determines this report's gene selection.",
+ "pca":      "Principal-component plot. Each dot is a sample. Nearby dots have similar profiles in the displayed components. Separation may reflect biology, batch, or other variation; it does not establish run quality.",
+ "distance": "Sample-to-sample distances shown as a colour grid. Read the legend for the scale and inspect grouping alongside the study design.",
+ "pvalhist": "Distribution of raw p-values. Shape can motivate checks of filtering, sample size, model assumptions, and signal, but does not by itself prove biological signal or model validity.",
+ "volcano":  "Each dot is a gene. The horizontal axis shows log2 fold change; height is minus log10 adjusted p-value. Greater height means a smaller adjusted p-value, not greater effect size or a probability of truth.",
+ "ma":       "Fold change (y) against overall expression (x). Use this diagnostic to inspect low-count genes and expression-dependent patterns; it does not establish that changes or the model are valid.",
+ "heatmap":  "Rows are genes and columns are samples. Colour represents expression relative to each gene's mean; read the colour legend. Patterns need not separate groups perfectly.",
+ "nes":      "Normalised enrichment score (GSEA). Positive or negative values indicate enrichment toward the corresponding end of the eligible ranked list; they do not mean every member changes in that direction.",
+ "foldenr":  "Fold enrichment (ORA): the frequency of category membership in the selected list divided by its frequency in the declared background.",
+ "padjust":  "Term-level p-value corrected for multiple testing: Benjamini–Hochberg on the clusterProfiler route ('p.adjust (BH)') or g:SCS on the g:Profiler route ('p (g:SCS)'). These methods have different error-rate interpretations; neither value is the probability that a term is true, and they are not interchangeable term-for-term.",
  "setsize":  "How many measured genes belong to that set or category.",
  "ppi":      "STRING-supported functional and physical protein associations among your changed genes. The combined score integrates multiple evidence channels; an edge does not necessarily mean direct physical binding.",
  "wilcoxon": "A rank-based cross-check, not used to call genes. With few replicates it is underpowered — read it only as a rank-concordance check.",
@@ -93,21 +109,21 @@ GLOSS_ORDER = [
 
 # basename -> (group, letter-title, cap-lead plain, cap-tech, howto text).
 FIG = {
- "pca":                       ("quality", "Principal-component analysis", "Do the samples group the way the design expects?", "Principal components of variance-stabilised counts; axis labels give the % variance each explains.", "PCA compresses all genes into two axes so whole samples compare at a glance. Replicates of one group should cluster; the two conditions should sit apart. A replicate among the wrong group flags a swap or outlier."),
- "sample_distance":           ("quality", "Sample-to-sample distance", "Which samples resemble each other?", "Euclidean distance on variance-stabilised counts, hierarchically clustered.", "Darker cells are more alike. Replicates of one group form blocks along the diagonal; an off-diagonal dark cell points to a mislabelled or outlier sample."),
- "pvalue_histogram":          ("quality", "p-value histogram (diagnostic)", "Is there real signal, and is the model well-behaved?", "Distribution of raw p-values across all tested genes.", "A tall spike near zero on an otherwise flat background means real differences are present. A hump in the middle, or a spike at one, warns that the statistical model may not fit."),
- "volcano":                   ("de", "Volcano plot", "Which genes changed, and how confidently?", "x: log2 fold change; y: −log10 adjusted p-value. Dashed guides mark the significance and fold-change cut-offs.", "Every dot is a gene. Left–right is how much it changed; up is statistical confidence. The top corners hold large, reliable changes — the headline hits. Height is confidence, not effect size."),
- "ma_plot":                   ("de", "MA plot", "Are the changes independent of expression level?", "x: mean normalised counts (log); y: shrunken log2 fold change. Coloured points are significant.", "Fold change is plotted against overall expression. A healthy result shows significant genes across the whole expression range, not only among the lowest-count genes on the left."),
- "top_deg_heatmap":           ("de", "Top differentially-expressed genes", "The most statistically supported genes, sample by sample.", "Z-scored variance-stabilised counts for the top genes by significance.", "Rows are genes, columns are samples; warm = high, cool = low relative to the row mean. Samples of one condition should share a colour pattern, and the two conditions should look different."),
- "top_upregulated_heatmap":   ("de", "Top up-regulated genes", "The most statistically supported increases across samples.", "Z-scored variance-stabilised counts, top up-regulated by significance.", "The most confidently increased genes. Warm cells should concentrate in the numerator group; a gene warm in both groups is worth a second look."),
- "top_downregulated_heatmap": ("de", "Top down-regulated genes", "The most statistically supported decreases across samples.", "Z-scored variance-stabilised counts, top down-regulated by significance.", "The most confidently decreased genes. Cool cells should concentrate in the numerator group; a gene cool in both groups is worth a second look."),
- "enrichment_dotplot":        ("function", "GO enrichment", "Which biological themes are over-represented?", "Dot size: gene count; colour: adjusted p-value; position: fold enrichment.", "Each dot is a biological category enriched among the changed genes. Bigger, further-right, darker dots are the stronger, more reliable themes."),
- "enrichment_kegg_dotplot":   ("function", "KEGG pathway enrichment", "Which pathways are over-represented?", "Dot size: gene count; colour: adjusted p-value.", "Each dot is a KEGG pathway over-represented among the changed genes. Bigger and darker dots are the stronger, more reliable pathways."),
- "ppi_network":               ("function", "STRING protein-association network", "Which changed proteins have STRING-supported functional or physical associations?", "STRING combined-score associations above the confidence cut-off; nodes are seed genes, clusters are modules.", "Nodes are your changed genes; edges are STRING-supported functional or physical associations, not necessarily direct binding. Tight clusters suggest related proteins, and highly connected hubs are candidates worth prioritising."),
+ "pca":                       ("quality", "Principal-component analysis", "Do the samples group the way the design expects?", "Principal components of variance-stabilised counts; axis labels give the % variance each explains.", "PCA summarizes variation in the selected expression features in two displayed components. Inspect grouping against the recorded design and possible batch effects. Unexpected positions warrant investigation; separation alone does not establish quality or causation."),
+ "sample_distance":           ("quality", "Sample-to-sample distance", "Which samples resemble each other?", "Euclidean distance on variance-stabilised counts, hierarchically clustered.", "Read the colour legend for the distance scale. Grouping can reflect shared biology, batch, or a metadata issue; inspect the design and labels before drawing a conclusion."),
+ "pvalue_histogram":          ("quality", "p-value histogram (diagnostic)", "How are the raw p-values distributed?", "Distribution of raw p-values across all tested genes.", "A concentration near zero can be consistent with differential expression. Filtering, discreteness, dependence, and model fit can also affect shape; inspect this alongside the design and other diagnostics."),
+ "volcano":                   ("de", "Volcano plot", "Which genes meet the recorded thresholds?", "x: log2 fold change; y: −log10 adjusted p-value. Dashed guides mark the significance and fold-change cut-offs.", "Every dot is a gene. Left–right shows log2 fold change; height is minus log10 adjusted p-value. Read effect size and adjusted p-value separately. Threshold crossings define a selection rule, not proof of biological importance."),
+ "ma_plot":                   ("de", "MA plot", "How do fold changes vary with expression?", "x: mean normalised counts (log); y: shrunken log2 fold change. Coloured points are significant.", "Fold change is plotted against overall expression. Inspect variability among the lowest-count genes and systematic trends alongside the model and recorded preprocessing. This plot alone cannot establish validity."),
+ "top_deg_heatmap":           ("de", "Top differentially-expressed genes", "The most statistically supported genes, sample by sample.", "Z-scored variance-stabilised counts for the top genes by significance.", "Rows are genes and columns are samples. Colour shows row-standardized expression relative to each gene's mean; read the colour legend. Patterns need not separate groups perfectly."),
+ "top_upregulated_heatmap":   ("de", "Top up-regulated genes", "The most statistically supported increases across samples.", "Z-scored variance-stabilised counts, top up-regulated by significance.", "Selected positive-effect genes, ranked by adjusted p-value. Colour shows row-standardized expression relative to each gene's mean. Inspect patterns in the numerator group using the colour legend; separation need not be perfect."),
+ "top_downregulated_heatmap": ("de", "Top down-regulated genes", "The most statistically supported decreases across samples.", "Z-scored variance-stabilised counts, top down-regulated by significance.", "Selected negative-effect genes, ranked by adjusted p-value. Colour shows row-standardized expression relative to each gene's mean. Inspect patterns in the numerator group using the colour legend; separation need not be perfect."),
+ "enrichment_dotplot":        ("function", "GO enrichment", "Which biological themes are over-represented?", "Dot size: gene count; colour: adjusted p-value; position: fold enrichment.", "Each dot is a biological category enriched among the changed genes. Size represents gene count, position represents fold enrichment, and colour represents adjusted p-value. Size alone does not measure reliability."),
+ "enrichment_kegg_dotplot":   ("function", "KEGG pathway enrichment", "Which pathways are over-represented?", "Dot size: gene count; colour: adjusted p-value.", "Each dot is a KEGG pathway over-represented among the changed genes. Size represents gene count and colour represents adjusted p-value. Neither gene count nor visual prominence alone establishes reliability."),
+ "ppi_network":               ("function", "STRING protein-association network", "Which changed proteins have STRING-supported functional or physical associations?", "STRING combined-score associations above the confidence cut-off; nodes are seed genes, clusters are modules.", "Nodes are your changed genes; edges are STRING-supported functional or physical associations, not necessarily direct binding. Network patterns do not establish sample-specific binding, function, or causality."),
 }
 FIG_GROUPS = [
- ("quality",  "Quality &amp; sample structure", "Do replicates group together, and do the conditions separate? These panels answer that before any gene is called."),
- ("de",       "Differential expression",   "Which genes changed, by how much, and how confidently."),
+ ("quality",  "Quality &amp; sample structure", "Inspect sample structure and diagnostic patterns alongside the recorded study design."),
+ ("de",       "Differential expression",   "Inspect effect sizes and statistical evidence for the recorded comparison."),
  ("function", "Function &amp; interactions",   "What biology the changed genes point to, and how they connect."),
 ]
 
@@ -360,8 +376,8 @@ def _route_gloss(run: dict) -> dict[str, str]:
             "measured expression, not negative molecule counts."
         )
         definitions["ma"] = (
-            "Fold change (y) against overall normalized log2 expression intensity (x). Confirms "
-            "changes are not confined to genes with low measured expression."
+            "Fold change (y) against overall normalized log2 expression intensity (x). Helps inspect "
+            "whether changes are concentrated at low measured expression; it does not establish validity."
         )
         return definitions
     if _assay_kind(run) == "log2_cpm":
@@ -373,8 +389,8 @@ def _route_gloss(run: dict) -> dict[str, str]:
             "very low values make fold changes noisy."
         )
         definitions["ma"] = (
-            "Fold change (y) against average log2 counts per million (x). Confirms changes "
-            "aren't driven only by weakly expressed genes."
+            "Fold change (y) against average log2 counts per million (x). Helps inspect "
+            "expression-dependent patterns; it does not establish validity."
         )
         return definitions
     if not _is_external_results(run):
@@ -552,10 +568,10 @@ def _key_finding(run: dict, project: Path, sanity_text: str) -> str:
     if not res_has_de(project):
         return f"{lead}, differential-expression results are not available for this run."
     if total == 0:
-        return (f"{lead}, <b>no</b> {unit} changed at the chosen thresholds ({thr}). "
-                f"See the volcano and p-value histogram for why.")
+        return (f"{lead}, <b>no</b> {unit} met the chosen thresholds ({thr}). "
+                "Review the complete results, design, and diagnostics; this does not establish absence of change.")
     of_m = f" of {tested:,} tested" if tested else ""
-    s = (f"{lead}, <b>{total:,}</b>{of_m} {unit} changed significantly ({thr}): "
+    s = (f"{lead}, <b>{total:,}</b>{of_m} {unit} met the chosen thresholds ({thr}): "
          f"<b class='up'>{up:,}</b> were higher and <b class='down'>{down:,}</b> lower.")
     if top_up:
         s += f" The most statistically supported increases were {_fmt_genes(top_up)}."
@@ -825,36 +841,10 @@ def _enrichment_section(project: Path) -> str:
         s in summary_txt for s in ("orgdb", "annotation database", "no bioconductor", "no orgdb"))
     go_msg = ("GO enrichment was not run for this organism — no annotation database is available."
               if go_skipped else "No terms passed the significance threshold.")
-    evidence_prefixes = (
-        "Eligible ID mapping keytypes:", "Identifier routing policy:",
-        "Accepted ID mapping routes:",
-        "Tested input IDs retained after mapping/exclusion:",
-        "Significant input IDs retained after mapping/exclusion:",
-        "Up-regulated input IDs retained after mapping/exclusion:",
-        "Down-regulated input IDs retained after mapping/exclusion:",
-        "Mapped tested-gene universe", "GO effective annotated ORA universes:",
-        "DO effective annotated ORA universe:", "OrgDb annotation identity:",
-        "KEGG identity verification:", "KEGG retrieval:", "KEGG retrieval date (UTC):",
-        "KEGG effective resource universe:", "KEGG supported foreground:",
-        "KEGG eligible hypotheses/gene sets:", "KEGG ranked-list annotation:",
-        "KEGG adjusted results:", "KEGG ORA status:", "KEGG GSEA status:",
-        "KEGG resource status:", "Unmapped input IDs excluded:",
-        "Ambiguous input IDs excluded:", "One-to-many mappings observed:",
-        "Cross-keytype discordance observed:", "Many-to-one Entrez groups collapsed",
-        "Direction-conflict Entrez IDs excluded:",
-        "Source IDs present in both up/down inputs:",
-        "Foreground intersection (up/down Entrez)", "Mapping interpretation gate:",
-        "Direction-conflict gate:", "GO/DO annotation-resource status:",
-        "Universe policy:", "ORA parameters:", "ORA multiple-testing families:",
-        "GSEA parameters:", "GSEA ranking order:", "GSEA exact-score ties:",
-        "GSEA duplicate canonical-ID collapse:",
-        "Mapping limitation:",
-    )
-    evidence_lines = [line.strip() for line in summary_raw.splitlines()
-                      if line.strip().startswith(evidence_prefixes)]
+    mapping_evidence = evidence_lines(summary_raw)
     coverage = ""
-    if evidence_lines:
-        items = "".join(f"<li>{html.escape(line)}</li>" for line in evidence_lines)
+    if mapping_evidence:
+        items = "".join(f"<li>{html.escape(line)}</li>" for line in mapping_evidence)
         coverage = ("<details class='howto enrichment-coverage' open>"
                     "<summary>Identifier mapping coverage and limitations</summary>"
                     f"<ul>{items}</ul></details>")
@@ -1087,6 +1077,47 @@ def _timing_section(t: dict) -> str:
             f"{scope_html}<h3>Time by phase</h3>{bars_html}{steps_html}</section>")
 
 
+def _provenance_rows(run: dict) -> list[tuple[str, str]]:
+    """Mirror run_summary.txt's provenance block, wording included.
+
+    An absent field keeps the run summary's own wording for absence; nothing is substituted for
+    it, and the environment lock md5 (which is the hash of the bundled lock file, not of what
+    was installed) never stands in for the app version or the installed-environment spec.
+    """
+    executed = run.get("workflow_version")
+    rows = [("App version",
+             str(run.get("app_version") or "not recorded (workflow copied before 0.30.1)"))]
+    digest = run.get("workflow_digest")
+    if digest:
+        rows += [("Workflow version", str(executed)),
+                 ("Workflow digest", str(digest)[:12]),
+                 ("Workflow copied", str(run.get("workflow_copied_at") or "unknown"))]
+    else:
+        rows.append(("Workflow version",
+                     f"{executed} (project creation stamp; no workflow_metadata.yaml)"))
+    created_app = run.get("project_created_app_version")
+    created_workflow = run.get("project_created_workflow_version")
+    if (str(created_app) != str(run.get("app_version"))
+            or str(created_workflow) != str(executed)):
+        rows.append(("Project created with",
+                     f"app {created_app} / workflow {created_workflow}"))
+    spec = run.get("environment_spec") or {}
+    if (spec.get("source") or "unknown") == "unknown":
+        rows.append(("Installed environment spec",
+                     "unknown (no marker; environment predates this record)"))
+    else:
+        rows.append(("Installed environment spec",
+                     f"{spec.get('file')} (source: {spec.get('source')}, "
+                     f"sha256: {spec.get('sha256')})"))
+    lock = run.get("environment_lock_md5")
+    if lock:
+        rows.append(("Environment lock md5", str(lock)))
+    commit = run.get("workflow_git_commit")
+    if commit:
+        rows.append(("Workflow commit", str(commit)[:12]))
+    return rows
+
+
 def _versions_table(run: dict) -> str:
     sw = run.get("software_versions", {}) or {}
     rp = run.get("r_packages", {}) or {}
@@ -1095,8 +1126,6 @@ def _versions_table(run: dict) -> str:
               if key in {"snakemake", "python", "Rscript"}}
         local_model_packages = {"DESeq2", "limma", "apeglm", "ashr", "edgeR", "tximport"}
         rp = {key: value for key, value in rp.items() if key not in local_model_packages}
-    if not sw and not rp:
-        return ""
 
     def rows(d: dict) -> str:
         return "".join(
@@ -1111,16 +1140,15 @@ def _versions_table(run: dict) -> str:
     if rp:
         blocks += ("<div class='vcol'><h3>R / Bioconductor</h3><div class='tablewrap'>"
                    f"<table class='data'>{vhead}<tbody>{rows(rp)}</tbody></table></div></div>")
-    lock = run.get("environment_lock_md5")
-    commit = run.get("workflow_git_commit")
-    prov = []
-    if lock:
-        prov.append(f"Environment lock md5 <code>{html.escape(str(lock))}</code>")
-    if commit:
-        prov.append(f"Workflow commit <code>{html.escape(str(commit)[:12])}</code>")
-    prov_html = f"<p class='muted small'>{' · '.join(prov)}</p>" if prov else ""
+    prov_rows = "".join(
+        f"<tr><td>{html.escape(k)}</td><td class='mono'>{html.escape(v)}</td></tr>"
+        for k, v in _provenance_rows(run))
+    prov_head = "<thead><tr><th scope='col'>Record</th><th scope='col'>Value</th></tr></thead>"
+    prov_html = ("<div class='vcol'><h3>Run provenance</h3><div class='tablewrap'>"
+                 f"<table class='data'>{prov_head}"
+                 f"<tbody>{prov_rows}</tbody></table></div></div>")
     return (f"<section id='versions'><h2>Software &amp; provenance</h2>"
-            f"<div class='vgrid'>{blocks}</div>{prov_html}</section>")
+            f"<div class='vgrid'>{blocks}{prov_html}</div></section>")
 
 
 def _sample_composition(project: Path, num, den, run: dict | None = None) -> str | None:
@@ -1184,6 +1212,10 @@ def _meta_cards(run: dict, project: Path) -> str:
         contrasts = de.get("contrasts") or []
         if contrasts and isinstance(contrasts, list):
             cards.append(("Contrast", str(contrasts[0].get("name", "—"))))
+    if not is_external:
+        not_analysed = ignored_text(de.get("contrasts"))
+        if not_analysed:
+            cards.append((IGNORED_LABEL, not_analysed))
     if not is_external and de.get("design_formula"):
         cards.append(("Design", str(de.get("design_formula"))))
     comp = _sample_composition(project, num, den, run)
@@ -1214,6 +1246,10 @@ def _meta_cards(run: dict, project: Path) -> str:
         if lfc is not None and not effect_semantics:
             thresholds += f" · |log2FC|≥{lfc}"
         cards.append(("DE method", f"{de_engine}{thresholds}"))
+        lfc_test = (run.get("session_info") or {}).get("lfc_threshold_test")
+        if lfc_test:
+            cards.append(("Fold-change threshold test",
+                          f"{lfc_test} · companion column {LFC_COMPANION_COLUMN}"))
         if effect_semantics:
             cutoff = effect_semantics.get("configured_absolute_log2fc_cutoff")
             estimate = effect_semantics.get("threshold_estimate")
@@ -1237,7 +1273,10 @@ def _meta_cards(run: dict, project: Path) -> str:
         aligner = wf.get("aligner")
         quant = wf.get("quantifier")
         if aligner or quant:
-            cards.append(("Aligner · quantifier", " · ".join(x for x in (aligner, quant) if x)))
+            configured = " · ".join(x for x in (aligner, quant) if x)
+            if (run.get("input", {}) or {}).get("type") == "count_matrix":
+                configured += " (not used for count-matrix input)"
+            cards.append(("Configured aligner · quantifier", configured))
 
     up = _count_csv_rows(project / "results" / "deseq2" / "upregulated_genes.csv")
     down = _count_csv_rows(project / "results" / "deseq2" / "downregulated_genes.csv")
@@ -1289,40 +1328,22 @@ def _meta_analysis_link(project: Path) -> str:
 
 CSS = """
 :root{
-  /* Brand — from the logo spectrum bar */
-  --brand-blue:#0B65B1; --brand-blue-deep:#08327B;
-  --brand-teal:#12A5B0;        /* AA teal: safe for plain-language TEXT/eyebrows */
-  --brand-teal-bright:#22D1C5; /* decorative fills/bars/logo ONLY — fails text contrast */
-  --spectrum:linear-gradient(90deg,#0B65B1 0%,#22D1C5 50%,#0B65B1 100%);
-  /* Aliases so existing rules rebrand without edits */
-  --accent:#0B65B1; --accent-2:#08327B; --accent-tint:#eaf3fb;
-  /* Paper & ink */
-  --bg:#f6f8fa; --surface:#ffffff; --text:#14151b; --muted:#585b6b;
-  --border:#e6e9ef; --border-strong:#d6d9e3;
-  /* Plain-language track (teal) */
-  --plain-bg:#e7f6f5; --plain-border:#12A5B0; --plain-ink:#0a6e73;
-  /* Direction — matches the volcano/heatmap palette (ColorBrewer RdBu, CVD-safe). */
-  --up:#C0392B; --up-ink:#8e2a20; --up-bg:#fbeae7;
-  --down:#2C7BB6; --down-ink:#1f5a87; --down-bg:#e7f0f8;
-  /* Status (unchanged — keeps the parser + badges) */
-  --ok:#0f7a53; --ok-bg:#e6f5ee; --warn:#8a5a00; --warn-bg:#fbf1de;
-  --fail:#b42318; --fail-bg:#fdecea; --review:#1d4ed8; --review-bg:#e7edfd;
-  /* Code + tooltip */
-  --code-bg:#0f2233; --code-text:#e8f1f4; --tip-bg:#0f2233; --tip-text:#eaf6f6;
-  /* Type — offline-safe fallbacks; named webfonts optional, never fetched */
-  --serif:"EB Garamond",Georgia,"Times New Roman",serif;
-  --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  /* Radius / shadow */
-  --r1:6px; --r2:10px; --r3:14px; --pill:999px;
-  --sh:0 1px 2px rgba(17,24,39,.05); --sh2:0 8px 28px rgba(17,24,39,.12);
-  --measure:46rem;
+  --brand-blue:#2C6FB6;--brand-blue-deep:#000;--brand-teal:#2C6FB6;--brand-teal-bright:#2C6FB6;
+  --spectrum:#2C6FB6;--accent:#000;--accent-2:#000;--accent-tint:#F5F7FA;
+  --bg:#F5F7FA;--surface:#fff;--text:#000;--muted:#000;--border:#D7DEE6;--border-strong:#D7DEE6;
+  --plain-bg:#F5F7FA;--plain-border:#2C6FB6;--plain-ink:#000;
+  --up:#C0392B;--down:#2C7BB6;--up-ink:#000;--down-ink:#000;--up-bg:#F5F7FA;--down-bg:#F5F7FA;
+  --ok:#000;--warn:#000;--fail:#000;--review:#000;
+  --ok-bg:#F5F7FA;--warn-bg:#F5F7FA;--fail-bg:#F5F7FA;--review-bg:#F5F7FA;
+  --code-bg:#F5F7FA;--code-text:#000;--tip-bg:#fff;--tip-text:#000;
+  --serif:"Times New Roman",Times,serif;--sans:"Times New Roman",Times,serif;--mono:"Times New Roman",Times,serif;
+  --r1:4px;--r2:4px;--r3:4px;--pill:4px;--sh:none;--sh2:0 6px 25px #0002;--measure:52rem;
 }
 *{box-sizing:border-box}
 body{margin:0;font-family:var(--sans);color:var(--text);background:var(--bg);line-height:1.6;
   -webkit-font-smoothing:antialiased}
 a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline;text-underline-offset:2px}
-.xlink{display:inline-block;margin-top:.4rem;font-family:var(--sans);font-weight:600;color:var(--brand-blue)}
+.xlink{display:inline-block;margin-top:.4rem;font-family:var(--sans);font-weight:600;color:#000}
 .xlink:hover{color:var(--brand-blue-deep);text-decoration:underline;text-underline-offset:2px}
 h1,h2,h3{font-family:var(--serif);font-weight:600;letter-spacing:-.01em}
 header.top{position:sticky;top:0;z-index:50;background:var(--surface);border-bottom:1px solid var(--border)}
@@ -1345,7 +1366,7 @@ main{max-width:1080px;margin:0 auto;padding:8px clamp(16px,5vw,40px) 8px}
 main,section,.cards,.panels,.vgrid,.de-split,.tablewrap{min-width:0}
 .hero{padding:26px 0 4px}
 .hero .kicker{font-family:var(--sans);text-transform:uppercase;letter-spacing:.12em;font-size:.7rem;
-  font-weight:700;color:var(--brand-blue)}
+  font-weight:700;color:#000}
 .hero h1{font-family:var(--serif);font-size:clamp(1.9rem,4vw,2.5rem);line-height:1.1;margin:.35rem 0 .15rem;
   overflow-wrap:anywhere}
 .hero .sub{margin:0;color:var(--muted);font-family:var(--sans)}
@@ -1363,12 +1384,7 @@ main,section,.cards,.panels,.vgrid,.de-split,.tablewrap{min-width:0}
 .term{position:relative;display:inline;border:0;background:none;padding:0;margin:0;font:inherit;
   color:var(--plain-ink);font-weight:600;cursor:help;border-bottom:1px dotted var(--brand-teal)}
 .term:focus-visible{outline:2px solid var(--brand-blue);outline-offset:2px;border-radius:3px}
-.term .tip{position:absolute;left:0;top:calc(100% + 9px);z-index:60;width:max-content;max-width:min(320px,82vw);
-  background:var(--tip-bg);color:var(--tip-text);font-family:var(--sans);font-weight:400;font-size:.8rem;
-  line-height:1.5;text-align:left;padding:10px 12px;border-radius:10px;box-shadow:var(--sh2);
-  display:none;pointer-events:none}
-.term:hover .tip,.term:focus-visible .tip{display:block}
-.legend .li:nth-last-child(-n+2) .tip{left:auto;right:0}
+.term .tip{display:none;pointer-events:none}
 /* "How to read this" — elaboration only, never the primary result */
 .howto{margin-top:.6rem}
 .howto>summary{cursor:pointer;list-style:none;font-family:var(--sans);font-weight:600;font-size:.82rem;
@@ -1435,39 +1451,28 @@ figure.panel figcaption{padding:12px 14px}
 .legend .li{display:flex;align-items:center;gap:7px;font-family:var(--sans);font-size:.82rem;color:var(--text)}
 .legend .sw{width:12px;height:12px;border-radius:3px;flex:0 0 12px}
 .legend .sw.up{background:var(--up)} .legend .sw.down{background:var(--down)}
-/* Compact legends can wrap any term to the left edge. Anchor every tooltip to the
-   current legend box instead of guessing from term order, then centre a width that
-   is derived from the available container space. */
-@media(max-width:800px){
-  .legend{position:relative}
-  .legend .term{position:static}
-  .legend .li .term .tip{left:50%;right:auto;top:calc(100% + 9px);
-    width:min(320px,calc(100% - 24px));max-width:none;transform:translateX(-50%)}
-}
-@media(max-width:560px){
-  .legend .li .term .tip{top:auto;bottom:calc(100% + 9px)}
-}
 /* glossary */
 .glossary dl{margin:0;display:grid;gap:12px 18px;grid-template-columns:1fr}
 .gterm{font-family:var(--sans);font-weight:700;font-size:.9rem;color:var(--brand-blue-deep)}
 .gdef{font-family:var(--sans);font-size:.86rem;color:var(--text);line-height:1.5;margin:.15rem 0 0}
 @media(min-width:720px){.glossary dl{grid-template-columns:180px 1fr;align-items:baseline}
   .gterm{grid-column:1} .gdef{grid-column:2;margin:0}}
-.lb{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;border:0;
-  padding:52px 28px 28px;background:transparent;overflow:auto;color:#e8e8f5;cursor:zoom-out}
-.lb::backdrop{background:rgba(12,13,26,.86)}
-.lb[open]{display:block}
-.lb-stage{min-width:100%;min-height:calc(100dvh - 80px);display:grid;place-items:center}
-.lb.is-zoomed .lb-stage{display:block;min-height:0;place-items:start}
-.lb img{display:block;max-width:100%;max-height:calc(100dvh - 80px);margin:auto;background:#fff;
-  border-radius:10px;box-shadow:0 12px 48px rgba(0,0,0,.5);cursor:zoom-in}
-.lb img:focus-visible{outline:3px solid #fff;outline-offset:3px}
-.lb img.zoomed{max-width:none;max-height:none;width:170%;margin:0;cursor:zoom-out}
-.lb .hint{position:fixed;top:14px;left:52px;right:52px;text-align:center;color:#e8e8f5;
-  font-family:var(--sans);font-size:.78rem;opacity:.85;pointer-events:none}
-.lb-close{position:fixed;top:9px;right:12px;z-index:1;width:36px;height:36px;border:1px solid rgba(255,255,255,.55);
-  border-radius:999px;background:#fff;color:#14151b;font:700 1.2rem/1 var(--sans);cursor:pointer}
-.lb-close:focus-visible{outline:3px solid #fff;outline-offset:3px}
+.lb{position:fixed;inset:18px;width:calc(100% - 36px);height:calc(100dvh - 36px);max-width:none;max-height:none;margin:auto;border:1px solid var(--border);padding:0;background:#fff;color:#000;overflow:hidden}
+.lb::backdrop{background:#0008}
+.lb[open]{display:grid;grid-template-rows:auto minmax(0,1fr) auto}
+.lb-head{padding:12px 18px;border-bottom:1px solid var(--border)}
+.lb-head h2{font-size:20px;line-height:1.3;margin:0 0 8px;overflow-wrap:anywhere}
+.lb-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.lb-toolbar button{padding:5px 12px;border:1px solid var(--border);background:#fff;border-radius:4px;font:inherit;color:#000;cursor:pointer}
+.lb-toolbar button:hover{background:var(--bg)}
+.lb-toolbar output{min-width:4ch;text-align:center}
+.lb-close{margin-left:auto}
+.lb-stage{overflow:auto;min-width:0;min-height:0;padding:0;background:var(--bg);overscroll-behavior:contain;touch-action:pan-x pan-y}
+.lb img{display:block;margin:auto;max-width:none;max-height:none;background:#fff;cursor:zoom-in}
+.lb img.zoomed{margin:0;cursor:zoom-out}
+.lb-caption{margin:0;padding:10px 18px;max-height:20dvh;overflow:auto;border-top:1px solid var(--border);font-size:16px;line-height:1.4}
+#term-tooltip{position:fixed;z-index:100;max-width:calc(100vw - 24px);width:330px;max-height:calc(100dvh - 24px);overflow:auto;padding:14px 16px;background:#fff;color:#000;border:1px solid var(--border);box-shadow:var(--sh2);font:16px/1.5 var(--serif)}
+#term-tooltip[hidden]{display:none}
 .enr-block{margin:0 0 1.3rem}
 .enr-block h3{margin:.2rem 0 .5rem}
 table.enr th.desc,table.enr td.desc{white-space:normal;min-width:190px;max-width:460px;text-align:left;font-family:var(--sans)}
@@ -1486,7 +1491,8 @@ table.sortable thead th[data-sort=asc]::after{content:" \\2191"}
 table.sortable thead th[data-sort=desc]::after{content:" \\2193"}
 table.data tbody tr:last-child td{border-bottom:none}
 table.data td.num,table.data th.num{text-align:right;font-variant-numeric:tabular-nums}
-td.mono,.mono{font-family:var(--mono);font-size:.8rem;white-space:normal;overflow-wrap:anywhere}
+table.data td.mono,table.data th.mono,.mono{font-family:var(--mono);font-size:.8rem;
+  white-space:normal;overflow-wrap:anywhere}
 pre{background:var(--code-bg);color:var(--code-text);border-radius:10px;padding:14px 16px;overflow:auto;
   font-family:var(--mono);font-size:.78rem;line-height:1.55}
 code{font-family:var(--mono);font-size:.85em;background:#eef1fb;color:var(--accent-2);
@@ -1509,23 +1515,63 @@ table.checks td.chk-status{width:96px} .chk-name{font-family:var(--sans);font-we
 .bars{display:flex;flex-direction:column;gap:8px;margin-top:.5rem}
 .barrow{display:grid;grid-template-columns:150px 1fr 78px;align-items:center;gap:10px}
 .barrow>*{min-width:0}
-.barlab{font-family:var(--sans);font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.barlab{font-family:var(--sans);font-size:.82rem}
 .bartrack{background:#eef0f5;border-radius:6px;height:16px;overflow:hidden}
 .barfill{background:var(--spectrum);height:100%;border-radius:6px}
 .barval{font-family:var(--mono);font-size:.76rem;color:var(--muted);text-align:right}
 details.steps{margin-top:1rem} details.steps summary{cursor:pointer;font-family:var(--sans);
   font-weight:600;font-size:.88rem;color:var(--accent-2);padding:.3rem 0}
 .vgrid{display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.vgrid table.data th,.vgrid table.data td{white-space:normal}
 footer{max-width:1080px;margin:8px auto 0;padding:22px clamp(16px,5vw,40px) 40px;
   font-family:var(--sans);color:var(--muted);font-size:.82rem;border-top:1px solid var(--border)}
 footer .flinks{display:flex;flex-wrap:wrap;gap:16px;margin-bottom:8px}
 @media(max-width:560px){.barrow{grid-template-columns:100px 1fr 64px}}
+html{scroll-padding-top:100px}
+body{background:#fff;font-size:18px}
+button,input,summary,output{font-family:var(--serif);color:#000}
+a{text-decoration:underline;text-underline-offset:4px}
+:focus-visible{outline:3px solid var(--brand-blue);outline-offset:3px}
+header.top::before{display:none}
+.brand{max-width:1540px;padding:18px 32px;min-height:80px}
+.brand .logo{width:30px;height:30px;flex-basis:30px;filter:none}
+.brand .wordmark{font-size:25px}
+.report-layout{max-width:1540px;margin:auto;display:grid;grid-template-columns:210px minmax(0,1fr);gap:44px;padding:0 32px}
+.report-nav{position:sticky;top:86px;align-self:start;max-height:calc(100dvh - 100px);overflow:auto;padding:32px 18px 24px 0;border-right:1px solid var(--border);font-size:16px}
+.report-nav ul,.mobile-contents ul{list-style:none;padding:0;margin:12px 0}
+.report-nav li,.mobile-contents li{margin:4px 0}
+.report-nav a,.mobile-contents a{display:block;padding:5px 8px;text-decoration:none;border-left:2px solid transparent}
+.report-nav a:hover,.report-nav a[aria-current]{background:var(--bg);border-left-color:var(--brand-blue)}
+.report-nav p{font-size:14px;border-top:1px solid var(--border);padding-top:16px}
+.mobile-contents{display:none}
+main{width:100%;max-width:1040px;padding:26px 0;margin:0 auto}
+.hero{padding:6px 0 24px;border-bottom:1px solid var(--border)}
+.hero h1{font-size:clamp(30px,3vw,44px);line-height:1.15}
+.hero .kicker{font-size:13px}
+section{padding:26px 0;margin:0;border:0;border-bottom:1px solid var(--border);border-radius:0;box-shadow:none}
+section h2{font-size:29px;border:0;line-height:1.2}
+section h3{font-size:22px}
+.plain{border-color:var(--border);border-left-color:var(--brand-blue);border-radius:0;max-width:none}
+.plain .tag{font-size:13px}
+.plain .finding{font-size:20px}
+.howto>summary,.howto p,.cap-tech,.figgroup-sub,.gdef,.small{font-size:16px}
+.howto>summary::before{background:var(--bg);color:#000;border:1px solid var(--border)}
+.panels{grid-template-columns:minmax(0,1fr)}
+.cap-lead{font-size:20px}.figgroup{font-size:23px}.gterm{font-size:17px}
+table.data{font-size:16px}.pill,.badge{font-size:13px;border:1px solid var(--border)}
+pre{font-size:16px;border:1px solid var(--border)}
+.card,.hstat,.stat{box-shadow:none;border-radius:4px}
+footer{max-width:1540px;font-size:16px}
+@media(max-width:1000px){.report-layout{grid-template-columns:minmax(0,1fr);padding:0 22px;gap:0}.report-nav{display:none}.mobile-contents{display:block;margin:0 0 24px;padding:14px 18px;background:var(--bg);border:1px solid var(--border)}.mobile-contents summary{cursor:pointer}.brand{padding:16px 22px}}
+@media(max-width:560px){.report-layout{padding:0 14px}.brand{padding:14px}.brand .wordmark{font-size:22px}.lb{inset:6px;width:calc(100% - 12px);height:calc(100dvh - 12px)}.lb-head{padding:10px}.lb-caption{padding:10px}.lb-toolbar{gap:6px}.lb-toolbar button{padding:5px 9px}.lb-close{margin-left:0}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 /* Print / Save-as-PDF: scientists attach the report to lab notebooks and manuscripts. Open every
    disclosure, let table cells wrap instead of clipping in the overflow box, keep figures with their
    captions, preserve the direction/status colours, and drop the on-screen chrome. */
 @media print{
   header.top{position:static}
-  .chipnav,.skip,.lb,.howto>summary::before{display:none!important}
+  .report-nav,.mobile-contents,.skip,.lb,.howto>summary::before{display:none!important}
+  .report-layout{display:block;padding:0}main{max-width:none;padding:0}
   details{display:block!important} details>summary{display:none!important}
   .tablewrap{overflow:visible!important}
   table.data th,table.data td{white-space:normal!important}
@@ -1586,7 +1632,7 @@ def _hero_findings(run: dict, project: Path, sanity_text: str, name: str) -> str
         chips = (
             '<div class="headline-stats">'
             f'<div class="hstat"><div class="v">{total:,}</div>'
-            f'<div class="k">{unit.capitalize()} changed</div>'
+            f'<div class="k">{unit.capitalize()} meeting thresholds</div>'
             '<div class="dirbar" aria-hidden="true">'
             f'<span class="up" style="width:{up_pct:.1f}%"></span>'
             f'<span class="down" style="width:{down_pct:.1f}%"></span></div></div>'
@@ -1606,10 +1652,10 @@ def _hero_findings(run: dict, project: Path, sanity_text: str, name: str) -> str
                          if num and den else "for the recorded comparison")
     howto = (
         '<details class="howto"><summary>How to read this report</summary>'
-        '<p>Each section opens with a <b>teal box</b> explaining the finding in plain language; the '
-        'tables and figures below carry the full numbers — nothing is simplified away. '
+        '<p>Read the section summaries alongside their evidence. The '
+        'tables show selected rows; consult the saved CSV files for complete results. Sorting changes only row order in this view. Figure zoom changes only display size. '
         '<span style="border-bottom:1px dotted var(--brand-teal);color:var(--plain-ink);font-weight:600">'
-        'Dotted-underlined</span> terms show a definition on hover or keyboard focus, and every one is '
+        'Dotted-underlined</span> terms show a definition on hover, focus, or tap, and every one is '
         'collected in the Glossary at the end. Direction is colour-coded throughout: '
         f'<b style="color:var(--up-ink)">&#9650; red = higher</b>, '
         f'<b style="color:var(--down-ink)">&#9660; blue = lower</b> {direction_context}.</p></details>')
@@ -1617,7 +1663,7 @@ def _hero_findings(run: dict, project: Path, sanity_text: str, name: str) -> str
     return (
         '<div class="hero"><div class="kicker">Guided results report</div>'
         f'<h1>{html.escape(name)}</h1>{sub_html}'
-        '<p class="lede">Read the teal box for the plain-language story; the tables and figures '
+        '<p class="lede">Read the summary, then inspect the recorded settings and evidence. The tables and figures '
         'below carry the full numbers.</p></div>'
         '<section id="findings" aria-label="Key findings">'
         '<div class="plain" style="margin-top:0"><span class="tag">In plain terms</span>'
@@ -1627,23 +1673,7 @@ def _hero_findings(run: dict, project: Path, sanity_text: str, name: str) -> str
         f'{chips}{status_line}{howto}</section>')
 
 
-_STRANDEDNESS_LABELS = {0: "unstranded", 1: "forward", 2: "reverse"}
-
-
-def _realized_strandedness_text(run: dict) -> str | None:
-    """Render only the validated realized record; never fall back to configuration."""
-    provenance = run.get("strandedness")
-    realized = provenance.get("realized") if isinstance(provenance, dict) else None
-    if not isinstance(realized, dict):
-        return None
-    code = realized.get("code")
-    label = realized.get("label")
-    path = realized.get("path")
-    if (isinstance(code, bool) or code not in _STRANDEDNESS_LABELS
-            or label != _STRANDEDNESS_LABELS[code] or not isinstance(path, str)
-            or not path.strip()):
-        return None
-    return f"{label} ({code}; realized from {path})"
+_realized_strandedness_text = realized_strandedness_text
 
 
 def _effect_size_semantics(run: dict) -> dict | None:
@@ -1658,7 +1688,40 @@ def _effect_size_semantics(run: dict) -> dict | None:
     return semantics
 
 
-def _study_design_section(run: dict) -> str:
+def _sample_label_table(project: Path, run: dict) -> str:
+    """Sample ids beside their library names and the label the figures draw.
+
+    Emitted only when the sheet records at least one library name, so a project that does not use
+    the column gets exactly the report it gets today. The id column is never dropped: library_name
+    is descriptive, may repeat, and keys nothing.
+    """
+    if _is_external_results(run):
+        return ""
+    configured = str((run.get("input", {}) or {}).get("samples") or "config/samples.tsv").strip()
+    tsv = Path(configured)
+    if not tsv.is_absolute():
+        tsv = project / tsv
+    try:
+        text = tsv.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return ""
+    rows = sample_label_rows(text)
+    if not rows:
+        return ""
+    body = "".join(
+        f"<tr><td class='mono'>{html.escape(sid)}</td><td>{html.escape(name)}</td>"
+        f"<td>{html.escape(label)}</td></tr>"
+        for sid, name, label in rows)
+    return ("<details class='howto'><summary>Samples and figure labels</summary>"
+            "<p>Figures label samples by library name, with the sample id appended where a name "
+            "repeats. Every file, count-matrix column and results-table column stays keyed on the "
+            "sample id.</p>"
+            "<div class='tablewrap' style='margin-top:.5rem'><table class='data'>"
+            "<thead><tr><th>Sample ID</th><th>Library name</th><th>Figure label</th></tr></thead>"
+            f"<tbody>{body}</tbody></table></div></details>")
+
+
+def _study_design_section(run: dict, project: Path | None = None) -> str:
     de = run.get("deseq2", {}) or {}
     ref = run.get("reference", {}) or {}
     inp = run.get("input", {}) or {}
@@ -1726,6 +1789,10 @@ def _study_design_section(run: dict) -> str:
     if design:
         sentence += f" on a <code>{html.escape(str(design))}</code> design"
     sentence += f", analysed with {html.escape(engine)}."
+    not_analysed = ignored_text(de.get("contrasts")) if not is_uploaded_results else None
+    if not_analysed:
+        sentence += (f" {html.escape(SINGLE_CONTRAST_SENTENCE)} "
+                     f"{html.escape(IGNORED_LABEL)}: {html.escape(not_analysed)}.")
 
     rows: list[tuple[str, str]] = []
 
@@ -1775,7 +1842,9 @@ def _study_design_section(run: dict) -> str:
         details = ("<details class='howto'><summary>Full configuration</summary>"
                    "<div class='tablewrap' style='margin-top:.5rem'><table class='data'>"
                    f"<tbody>{body}</tbody></table></div></details>")
-    return (f"<section id='design'><h2>Study design</h2><p>{sentence}</p>{details}</section>")
+    samples = _sample_label_table(project, run) if project is not None else ""
+    return (f"<section id='design'><h2>Study design</h2><p>{sentence}</p>"
+            f"{details}{samples}</section>")
 
 
 # The shared figure tech captions are written for the DESeq2 count route (VST matrix, shrunken
@@ -2035,7 +2104,7 @@ def _de_section(
         plain_finding = (
             f"Of the {unit} tested, <b>{up:,}</b> were clearly <b class='up'>higher</b> and "
             f"<b>{down:,}</b> clearly <b class='down'>lower</b> in {num_lbl} than in {den_lbl}. "
-            "The biggest movers in each direction are listed below — useful as leads to follow up."
+            "The selected genes in each direction are listed below — useful as leads to follow up."
         )
         direction_legend = (
             f'<span class="li"><span class="sw up"></span>&#9650; higher in {num_lbl}</span>'
@@ -2053,18 +2122,20 @@ def _de_section(
         f'<span class="li">{_term("basemean", "baseMean", gloss["basemean"])}</span></div>')
     adjusted_explanation = (
         "<b>padj</b> is the source-supplied adjusted p-value"
-        if is_external else "<b>padj</b> is confidence"
+        if is_external else "<b>padj</b> is the multiple-testing-adjusted p-value"
     )
     if is_external:
         mean_explanation = "<b>baseMean</b> is a source-supplied mean-expression measure"
     elif input_type == "microarray":
         mean_explanation = "<b>baseMean</b> is mean normalized log2 expression intensity"
+    elif _assay_kind(run) == "log2_cpm":
+        mean_explanation = "<b>baseMean</b> is average log2 counts per million"
     else:
         mean_explanation = "<b>baseMean</b> is the mean normalized read count"
     howto = (
         '<details class="howto"><summary>How to read this table</summary>'
         f'<p>Each row is one {one}. <b>log2FC</b> is the size and direction of the change '
-        f'(red + = higher, blue &minus; = lower); {adjusted_explanation} (smaller = stronger, '
+        f'(red + = higher, blue &minus; = lower); {adjusted_explanation} (smaller values meet more stringent adjusted-p cutoffs, '
         f'and every {one} here is below &alpha;); {mean_explanation} — a big fold '
         'change on a very low baseMean is worth checking before trusting it. Click or press Enter on a header to sort. '
         'Full lists: <code>results/deseq2/upregulated_genes.csv</code> and '
@@ -2151,7 +2222,7 @@ def build(project: Path) -> str:
     hero_findings = _hero_findings(run, project, sanity, name)
     meta_cards = _meta_cards(run, project)
     meta_link = "" if _is_external_results(run) else _meta_analysis_link(project)
-    study = _study_design_section(run)
+    study = _study_design_section(run, project)
     figures = _figure_groups(figs, up, down, unit, is_micro=is_micro, run=run, project=project)
     de_html = _de_section(project, up, down, num, den, unit, run=run)
     goi_html = section("Genes of interest", _goi_section(project, run), sid="goi")
@@ -2161,6 +2232,23 @@ def build(project: Path) -> str:
     versions = _versions_table(run)
     glossary = _glossary_section(run)
 
+    settings = section("Reading recorded settings", (
+        "<p>The study-design and provenance sections record the settings available for this run. "
+        "An absent setting remains unrecorded; the report cannot reconstruct upstream choices. "
+        "Changing the comparison, statistical threshold, model, or preprocessing requires an "
+        "appropriate new analysis or report generation from the intended results.</p>"
+        "<p>Sorting tables and enlarging figures affect this view only. They do not modify "
+        "saved results, reclassify genes, or rerun the analysis.</p>"), sid="reading")
+    body = "\n".join((hero_findings, meta_cards, meta_link, settings, study, figures,
+                      de_html, goi_html, enrichment, sanity_html, runtime, versions, glossary))
+    links = []
+    for match in re.finditer(r"<section\b[^>]*\bid=['\"]([^'\"]+)['\"][^>]*>(.*?)(?=</section>)", body, re.S):
+        sid, content = match.groups()
+        heading = re.search(r"<h2[^>]*>(.*?)</h2>", content, re.S)
+        label = re.sub(r"<[^>]+>", "", heading.group(1)) if heading else "Key findings"
+        links.append(f'<li><a href="#{html.escape(sid, quote=True)}">{label}</a></li>')
+    contents = "<ul>" + "".join(links) + "</ul>"
+
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>BulkSeq Studio report — {html.escape(name)}</title><style>{CSS}</style></head>
@@ -2168,24 +2256,13 @@ def build(project: Path) -> str:
 <a class="skip" href="#findings">Skip to key findings</a>
 <header class="top"><div class="brand">{LOGO_SVG}
 <span class="wordmark">BulkSeq Studio</span>{ver_chip}<span class="spacer"></span>{rmeta}</div>
-<nav class="chipnav" aria-label="Jump to section">
-<a href="#findings">Key findings</a><a href="#figures">Figures</a><a href="#de">Genes</a>
-<a href="#enrichment">Pathways</a><a href="#sanity">Quality</a><a href="#runtime">Runtime</a>
-<a href="#versions">Software</a><a href="#glossary">Glossary</a></nav></header>
+</header>
+<div class="report-layout">
+<nav class="report-nav" aria-label="Report sections"><b>In this report</b>{contents}<p>Only sections present in this report are listed. Figures and tables remain available offline.</p></nav>
 <main>
-{hero_findings}
-{meta_cards}
-{meta_link}
-{study}
-{figures}
-{de_html}
-{goi_html}
-{enrichment}
-{sanity_html}
-{runtime}
-{versions}
-{glossary}
-</main>
+<details class="mobile-contents"><summary>In this report</summary>{contents}</details>
+{body}
+</main></div>
 <footer>
 <div class="flinks">
 <a href="{REPO_URL}" target="_blank" rel="noopener">GitHub repository ↗</a>
@@ -2197,22 +2274,25 @@ def build(project: Path) -> str:
 free and open-source under the MIT License. This report is fully self-contained —
 figures, tables and the logo are embedded, so no internet or external files are needed to view it.</p>
 </footer>
+<div id="term-tooltip" role="tooltip" hidden></div>
 <dialog id="bsq-lb" class="lb" aria-label="Figure viewer">
-<button id="bsq-lb-close" class="lb-close" type="button" autofocus aria-label="Close figure viewer">&times;</button>
-<span class="hint">Click image to zoom · click background or press Esc to close</span>
-<div class="lb-stage"><img id="bsq-lb-img" alt="" tabindex="0"></div></dialog>
+<div class="lb-head"><h2 id="bsq-lb-title">Figure</h2><div class="lb-toolbar" aria-label="Figure tools">
+<button id="bsq-lb-close" class="lb-close" type="button" autofocus aria-label="Close figure viewer">Close</button>
+<button id="bsq-lb-fit" type="button">Fit</button><button id="bsq-lb-actual" type="button">Actual size</button>
+<button id="bsq-lb-out" type="button" aria-label="Zoom out">−</button><output id="bsq-lb-percent" aria-live="polite">100%</output>
+<button id="bsq-lb-in" type="button" aria-label="Zoom in">+</button></div></div>
+<div class="lb-stage" tabindex="0" aria-label="Scrollable figure"><img id="bsq-lb-img" alt="" tabindex="0"></div>
+<p id="bsq-lb-caption" class="lb-caption"></p></dialog>
 <script>
-function bsqResetZoom(){{var lb=document.getElementById('bsq-lb');var li=document.getElementById('bsq-lb-img');li.classList.remove('zoomed');lb.classList.remove('is-zoomed');lb.scrollLeft=0;lb.scrollTop=0;}}
+var bsqScale=1,bsqFit=true;
+function bsqSetScale(value){{var lb=document.getElementById('bsq-lb'),li=document.getElementById('bsq-lb-img'),stage=lb.querySelector('.lb-stage');bsqScale=Math.min(8,Math.max(.05,value));if(!li.naturalWidth)return;li.style.width=(li.naturalWidth*bsqScale)+'px';li.style.height=(li.naturalHeight*bsqScale)+'px';li.classList.toggle('zoomed',!bsqFit);lb.classList.toggle('is-zoomed',!bsqFit);document.getElementById('bsq-lb-percent').textContent=Math.round(bsqScale*100)+'%';stage.scrollLeft=0;stage.scrollTop=0;}}
+function bsqFitImage(){{var li=document.getElementById('bsq-lb-img'),stage=document.querySelector('#bsq-lb .lb-stage');bsqFit=true;bsqSetScale(Math.min(1,stage.clientWidth/li.naturalWidth,stage.clientHeight/li.naturalHeight));}}
+function bsqResetZoom(){{var lb=document.getElementById('bsq-lb'),li=document.getElementById('bsq-lb-img'),stage=lb.querySelector('.lb-stage');bsqFit=true;bsqScale=1;li.classList.remove('zoomed');lb.classList.remove('is-zoomed');li.style.width='';li.style.height='';stage.scrollLeft=0;stage.scrollTop=0;}}
 function bsqFinishClose(){{var lb=document.getElementById('bsq-lb');if(lb.open)return;var li=document.getElementById('bsq-lb-img');var trigger=window._bsqTrig;window._bsqTrig=null;bsqResetZoom();li.removeAttribute('src');if(trigger&&trigger.isConnected)trigger.focus();}}
-function bsqZoom(btn){{var img=btn.querySelector('img');var lb=document.getElementById('bsq-lb');var li=document.getElementById('bsq-lb-img');if(!img||!lb||typeof lb.showModal!=='function')return;bsqResetZoom();li.src=img.src;li.alt=img.alt||'';li.setAttribute('aria-label',img.alt||'Figure');window._bsqTrig=btn;lb.showModal();document.getElementById('bsq-lb-close').focus();}}
+function bsqZoom(btn){{var img=btn.querySelector('img'),lb=document.getElementById('bsq-lb'),li=document.getElementById('bsq-lb-img');if(!img||typeof lb.showModal!=='function')return;bsqResetZoom();window._bsqTrig=btn;li.alt=img.alt||'Figure';document.getElementById('bsq-lb-title').textContent=li.alt;var caption=btn.closest('figure').querySelector('figcaption');var parts=caption?Array.prototype.map.call(caption.querySelectorAll('.cap-lead,.cap-tech,.howto p'),function(n){{return (n.textContent||'').trim();}}).filter(Boolean):[];if(caption&&!parts.length)parts=[caption.textContent.trim()];parts.push('Use the scroll area to pan when enlarged.');document.getElementById('bsq-lb-caption').textContent=parts.join(' ');li.onload=function(){{if(bsqFit)bsqFitImage();else bsqSetScale(bsqScale);}};li.src=img.src;lb.showModal();if(li.complete)bsqFitImage();document.getElementById('bsq-lb-close').focus();}}
 function bsqClose(){{var lb=document.getElementById('bsq-lb');if(lb.open)lb.close();bsqFinishClose();}}
-(function(){{var lb=document.getElementById('bsq-lb');var li=document.getElementById('bsq-lb-img');var close=document.getElementById('bsq-lb-close');
-close.addEventListener('click',bsqClose);
-lb.addEventListener('click',function(e){{if(e.target===lb)bsqClose();}});
-li.addEventListener('click',function(e){{var zoomed=this.classList.toggle('zoomed');lb.classList.toggle('is-zoomed',zoomed);lb.scrollLeft=0;lb.scrollTop=0;e.stopPropagation();}});
-lb.addEventListener('keydown',function(e){{if(e.key!=='Tab')return;var items=[close,li];var first=items[0],last=items[items.length-1];if(e.shiftKey&&(document.activeElement===first||!lb.contains(document.activeElement))){{e.preventDefault();last.focus();}}else if(!e.shiftKey&&(document.activeElement===last||!lb.contains(document.activeElement))){{e.preventDefault();first.focus();}}}});
-lb.addEventListener('close',bsqFinishClose);
-}})();
+(function(){{var lb=document.getElementById('bsq-lb'),li=document.getElementById('bsq-lb-img');document.getElementById('bsq-lb-close').addEventListener('click',bsqClose);document.getElementById('bsq-lb-fit').addEventListener('click',bsqFitImage);document.getElementById('bsq-lb-actual').addEventListener('click',function(){{bsqFit=false;bsqSetScale(1);}});document.getElementById('bsq-lb-out').addEventListener('click',function(){{bsqFit=false;bsqSetScale(bsqScale/1.25);}});document.getElementById('bsq-lb-in').addEventListener('click',function(){{bsqFit=false;bsqSetScale(bsqScale*1.25);}});li.addEventListener('click',function(){{if(bsqFit){{bsqFit=false;bsqSetScale(1);}}else bsqFitImage();}});li.addEventListener('keydown',function(e){{if(e.key==='Enter'||e.key===' '){{e.preventDefault();li.click();}}}});lb.addEventListener('close',bsqFinishClose);lb.addEventListener('keydown',function(e){{if(e.key!=='Tab')return;var items=Array.from(lb.querySelectorAll('button,[tabindex="0"]'));var first=items[0],last=items[items.length-1];if(e.shiftKey&&document.activeElement===first){{e.preventDefault();last.focus();}}else if(!e.shiftKey&&document.activeElement===last){{e.preventDefault();first.focus();}}}});window.addEventListener('resize',function(){{if(lb.open&&bsqFit)bsqFitImage();}});}})();
+(function(){{var tip=document.getElementById('term-tooltip'),active=null,timer;function hide(){{clearTimeout(timer);if(active)active.removeAttribute('aria-describedby');tip.hidden=true;active=null;}}function later(){{clearTimeout(timer);timer=setTimeout(hide,180);}}function show(btn){{clearTimeout(timer);if(active&&active!==btn)active.removeAttribute('aria-describedby');active=btn;tip.textContent=btn.querySelector('.tip').textContent;tip.hidden=false;btn.setAttribute('aria-describedby',tip.id);place();}}function place(){{if(!active)return;var r=active.getBoundingClientRect(),t=tip.getBoundingClientRect();tip.style.left=Math.max(12,Math.min(r.left,innerWidth-t.width-12))+'px';tip.style.top=Math.max(12,Math.min(r.bottom+8,innerHeight-t.height-12))+'px';}}document.querySelectorAll('.term').forEach(function(btn){{btn.addEventListener('mouseenter',function(){{show(btn);}});btn.addEventListener('mouseleave',later);btn.addEventListener('focus',function(){{show(btn);}});btn.addEventListener('blur',later);btn.addEventListener('click',function(){{show(btn);}});}});tip.addEventListener('mouseenter',function(){{clearTimeout(timer);}});tip.addEventListener('mouseleave',later);document.addEventListener('keydown',function(e){{if(e.key==='Escape')hide();}});document.addEventListener('click',function(e){{if(!e.target.closest('.term')&&!tip.contains(e.target))hide();}});window.addEventListener('scroll',function(e){{if(!tip.contains(e.target))place();}},true);window.addEventListener('resize',place);}})();
 // Sortable tables: click a header to sort; numeric columns sort numerically. Third
 // click restores the original order. Purely client-side, no dependencies.
 (function(){{
