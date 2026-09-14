@@ -1219,9 +1219,18 @@ def test_realized_strandedness_renders_nothing_for_a_malformed_record(mrs, name)
 def test_pre_fix_html_renderer_misreports_a_mixed_run(mrs, tmp_path) -> None:
     # Negative control for the shared renderer: the 0.30.1 report renderer described a
     # per-sample (mixed) run with the single first-sample code, which is what RPT-1 fixes.
-    source = subprocess.run(["git", "show", "42caf51:workflow/scripts/make_html_report.py"],
-                            cwd=str(Path(__file__).resolve().parents[1]),
-                            capture_output=True, text=True, check=True).stdout
+    # The control reads the PREVIOUS release's renderer out of git history. A continuous
+    # integration checkout is shallow, so that commit is usually absent there; skip visibly
+    # rather than fail, and say why, so the suite's skip summary shows the control did not run.
+    repo = str(Path(__file__).resolve().parents[1])
+    commit = "42caf51"
+    present = subprocess.run(["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+                             cwd=repo, capture_output=True)
+    if present.returncode != 0:
+        pytest.skip(f"commit {commit} is not in this clone (shallow checkout): "
+                    "fetch history to run the pre-fix renderer control")
+    source = subprocess.run(["git", "show", f"{commit}:workflow/scripts/make_html_report.py"],
+                            cwd=repo, capture_output=True, text=True, check=True).stdout
     previous_path = tmp_path / "previous_make_html_report.py"
     previous_path.write_text(source, encoding="utf-8")
     previous = _load("previous_make_html_report", previous_path)

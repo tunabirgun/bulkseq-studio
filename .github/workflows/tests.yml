@@ -43,6 +43,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: one negative control reads the previous release's renderer out
+          # of git history, and a shallow clone makes it skip. A control that silently
+          # stops running in CI is the failure mode this suite exists to prevent.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:

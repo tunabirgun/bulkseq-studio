@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+from _runtime import bash_runtime
+
 ROOT = Path(__file__).resolve().parents[1]
 DE_COMMON = ROOT / "workflow" / "scripts" / "de_common.R"
 
@@ -114,21 +116,26 @@ if (requireNamespace("DESeq2", quietly = TRUE)) {
 '''
 
 
-def _r_available_note() -> str | None:
-    if shutil.which("Rscript"):
-        return None
-    if sys.platform.startswith("win"):
-        if shutil.which("wsl") is None:
-            return "no Rscript on PATH and wsl.exe is absent"
-        return None
-    return "no Rscript on PATH"
+def _bash_or_skip():
+    """The shared probe's bash runtime, or a skip.
+
+    Module-level so tests/test_runtime_probe.py can reach it: that file pins the list of
+    modules built on the probe and asserts each one skips rather than errors when no runtime
+    is live, which a helper buried inside a fixture could not be checked for.
+    """
+    runtime = bash_runtime()
+    if runtime is None:
+        pytest.skip("no bash runtime: install WSL2 with a distribution on Windows")
+    return runtime
 
 
 @pytest.fixture(scope="module")
 def harness(tmp_path_factory) -> dict[str, Path]:
-    note = _r_available_note()
-    if note:
-        pytest.skip(f"R runtime unavailable: {note}")
+    # bash_runtime() is the shared probe: on Windows it returns a prefix only after a WSL
+    # DISTRIBUTION has run a command, because wsl.exe itself ships with Windows even when none
+    # is installed -- which is exactly the GitHub Windows runner, where a which("wsl") check
+    # reports a runtime that then fails with "has no installed distributions".
+    bash, as_path = _bash_or_skip()
     work = tmp_path_factory.mktemp("de_common")
     out = work / "out"
     out.mkdir()
@@ -137,16 +144,7 @@ def harness(tmp_path_factory) -> dict[str, Path]:
     runner = work / "run_r.sh"
     runner.write_text(_RUNNER, encoding="utf-8", newline="\n")
 
-    on_windows = sys.platform.startswith("win")
-    if on_windows:
-        from app.core.paths import windows_to_wsl_path
-
-        as_path = windows_to_wsl_path
-        cmd = ["wsl", "bash", as_path(runner)]
-    else:
-        as_path = str
-        cmd = ["bash", str(runner)]
-    cmd += [as_path(script), as_path(DE_COMMON), as_path(out)]
+    cmd = [*bash, as_path(runner), as_path(script), as_path(DE_COMMON), as_path(out)]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode == _NO_R:

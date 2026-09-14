@@ -62,6 +62,7 @@ def _callers(tmp_path: Path):
         name: importlib.import_module(name)
         for name in (
             "test_custom_enrichment",
+            "test_de_common",
             "test_enrichment_mapping",
             "test_external_results_safety",
             "test_per_sample_strandedness",
@@ -78,6 +79,7 @@ def _callers(tmp_path: Path):
          lambda: modules["test_external_results_safety"]._wsl_bulkseq_snakemake(tmp_path)),
         ("test_per_sample_strandedness",
          lambda: modules["test_per_sample_strandedness"]._run_read_length_shell([], tmp_path)),
+        ("test_de_common", lambda: modules["test_de_common"]._bash_or_skip()),
     ]
 
 
@@ -144,7 +146,10 @@ def test_every_r_caller_skips_when_the_packages_are_missing(monkeypatch, tmp_pat
 
     assert rscript_runtime("jsonlite") is None
     for name, call in _callers(tmp_path):
-        if name.endswith("_wsl_bulkseq_snakemake") or name == "test_per_sample_strandedness":
+        # Both of these resolve bash, not an R package set, so a package-less R is not their
+        # skip condition; the no-runtime gate above is what covers them.
+        if name.endswith("_wsl_bulkseq_snakemake") or name in {
+                "test_per_sample_strandedness", "test_de_common"}:
             continue
         try:
             call()

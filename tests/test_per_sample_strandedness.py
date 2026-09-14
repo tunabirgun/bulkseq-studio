@@ -1,8 +1,12 @@
+import gzip
 import importlib.util
 import subprocess
 import sys
 from pathlib import Path
 
+import shlex
+import tempfile
+from functools import lru_cache
 import pytest
 
 from _runtime import bash_runtime
@@ -207,12 +211,38 @@ def _extract_rule_shell(rule_name: str, smk_path: Path) -> str:
     return m.group(1)
 
 
-def _run_read_length_shell(fastq_paths, tmp_path) -> int:
-    import shlex
+@lru_cache(maxsize=None)
+def _zcat_reads_gzip() -> bool:
+    """Whether this host's zcat decompresses a .gz file, which the rule below depends on.
 
+    The pipeline runs on Linux, where zcat is gzip's decompressor. On macOS -- a platform the
+    test matrix covers for the interface and configuration layer, and where the pipeline never
+    runs -- zcat is the historical .Z utility and returns nothing for a .gz input, which turns
+    this rule's derived read length into 0 rather than an error. Probing the capability keeps
+    the test honest wherever the tools behave, and skips visibly where they do not, instead of
+    failing on a platform the rule was never meant to execute on.
+    """
+    runtime = bash_runtime()
+    if runtime is None:
+        return False
+    bash, to_shell_path = runtime
+    with tempfile.TemporaryDirectory() as temporary:
+        sample = Path(temporary) / "probe.txt.gz"
+        with gzip.open(sample, "wt", encoding="utf-8") as handle:
+            handle.write("bulkseq\n")
+        probe = subprocess.run(
+            [*bash, "-c", f'zcat {shlex.quote(to_shell_path(sample))}'],
+            capture_output=True, text=True)
+    return probe.returncode == 0 and probe.stdout.strip() == "bulkseq"
+
+
+def _run_read_length_shell(fastq_paths, tmp_path) -> int:
     runtime = bash_runtime()
     if runtime is None:
         pytest.skip("bash is not available on this host (install WSL2 on Windows)")
+    if not _zcat_reads_gzip():
+        pytest.skip("zcat on this host does not decompress gzip, so the pipeline's read-length "
+                    "rule cannot run here (the pipeline itself runs on Linux)")
     bash, to_shell_path = runtime
     shell = _extract_rule_shell("read_length", ROOT / "workflow" / "rules" / "reference.smk")
     output = tmp_path / "read_length.txt"
