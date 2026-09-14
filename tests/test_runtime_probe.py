@@ -8,6 +8,7 @@ that when the capability is gone every caller skips rather than errors.
 
 from __future__ import annotations
 
+import ast
 import importlib
 import shutil
 import subprocess
@@ -66,6 +67,7 @@ def _callers(tmp_path: Path):
             "test_enrichment_mapping",
             "test_external_results_safety",
             "test_per_sample_strandedness",
+            "test_sample_labels",
             "test_ppi_mapping_case",
         )
     }
@@ -80,6 +82,7 @@ def _callers(tmp_path: Path):
         ("test_per_sample_strandedness",
          lambda: modules["test_per_sample_strandedness"]._run_read_length_shell([], tmp_path)),
         ("test_de_common", lambda: modules["test_de_common"]._bash_or_skip()),
+        ("test_sample_labels", lambda: modules["test_sample_labels"]._bash_or_skip()),
     ]
 
 
@@ -149,7 +152,7 @@ def test_every_r_caller_skips_when_the_packages_are_missing(monkeypatch, tmp_pat
         # Both of these resolve bash, not an R package set, so a package-less R is not their
         # skip condition; the no-runtime gate above is what covers them.
         if name.endswith("_wsl_bulkseq_snakemake") or name in {
-                "test_per_sample_strandedness", "test_de_common"}:
+                "test_per_sample_strandedness", "test_de_common", "test_sample_labels"}:
             continue
         try:
             call()
@@ -167,3 +170,45 @@ def test_the_caller_list_covers_every_module_built_on_the_probe(tmp_path) -> Non
         if path != here and "from _runtime import" in path.read_text(encoding="utf-8")
     }
     assert users == {name.split(".")[0] for name, _ in _callers(tmp_path)}
+
+
+def _ad_hoc_wsl_probes() -> list[str]:
+    """Test modules that decide a Linux runtime exists without going through the probe.
+
+    Two separate modules shipped with `shutil.which("wsl")` as their availability check and
+    `["wsl", "bash", ...]` as their command. Windows installs wsl.exe whether or not a
+    distribution is present -- the hosted runner is exactly that host -- so both ran the
+    harness and failed instead of skipping, and neither local suite could reproduce it.
+    _runtime.bash_runtime() exists to answer this question by running something.
+    """
+    here = Path(__file__)
+    offenders: list[str] = []
+    for path in sorted(here.parent.glob("test_*.py")):
+        if path == here:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            # shutil.which("wsl") as an availability test
+            if (isinstance(func, ast.Attribute) and func.attr == "which"
+                    and node.args and isinstance(node.args[0], ast.Constant)
+                    and node.args[0].value == "wsl"):
+                offenders.append(f"{path.name}: shutil.which(\"wsl\")")
+            # subprocess.run/Popen(["wsl", ...]) as the command itself
+            if (isinstance(func, ast.Attribute) and func.attr in {"run", "Popen"}
+                    and node.args and isinstance(node.args[0], (ast.List, ast.Tuple))
+                    and node.args[0].elts
+                    and isinstance(node.args[0].elts[0], ast.Constant)
+                    and node.args[0].elts[0].value == "wsl"):
+                offenders.append(f"{path.name}: subprocess call starting with \"wsl\"")
+    return sorted(set(offenders))
+
+
+def test_no_test_module_probes_for_wsl_on_its_own() -> None:
+    offenders = _ad_hoc_wsl_probes()
+    assert not offenders, (
+        "resolve the runtime through _runtime.bash_runtime() instead; wsl.exe exists on a "
+        f"Windows host with no distribution installed: {offenders}"
+    )

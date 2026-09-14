@@ -24,6 +24,8 @@ from pathlib import Path
 
 import pytest
 
+from _runtime import bash_runtime
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "workflow" / "scripts"
 DE_COMMON = SCRIPTS / "de_common.R"
@@ -122,13 +124,22 @@ def test_python_labels_match_the_stated_display_rule(labels, name) -> None:
     assert _python_labels(labels, name) == EXPECTED[name]
 
 
+def _bash_or_skip():
+    """The shared probe's bash runtime, or a skip.
+
+    Module-level so tests/test_runtime_probe.py can reach it. Checking shutil.which("wsl")
+    instead would report a runtime on a Windows host that ships wsl.exe with no distribution
+    installed -- the hosted runner -- and the harness would then fail rather than skip.
+    """
+    runtime = bash_runtime()
+    if runtime is None:
+        pytest.skip("no bash runtime: install WSL2 with a distribution on Windows")
+    return runtime
+
+
 @pytest.fixture(scope="module")
 def r_labels(tmp_path_factory) -> dict[str, list[str]]:
-    if not shutil.which("Rscript"):
-        if not sys.platform.startswith("win"):
-            pytest.skip("R runtime unavailable: no Rscript on PATH")
-        if shutil.which("wsl") is None:
-            pytest.skip("R runtime unavailable: no Rscript on PATH and wsl.exe is absent")
+    bash, as_path = _bash_or_skip()
     work = tmp_path_factory.mktemp("sample_labels")
     sheets = work / "sheets"
     sheets.mkdir()
@@ -140,13 +151,8 @@ def r_labels(tmp_path_factory) -> dict[str, list[str]]:
     runner.write_text(_RUNNER, encoding="utf-8", newline="\n")
     out = work / "labels.tsv"
 
-    if sys.platform.startswith("win"):
-        from app.core.paths import windows_to_wsl_path as as_path
-        cmd = ["wsl", "bash", as_path(runner)]
-    else:
-        as_path = str
-        cmd = ["bash", str(runner)]
-    cmd += [as_path(script), as_path(DE_COMMON), as_path(sheets), as_path(out)]
+    cmd = [*bash, as_path(runner), as_path(script), as_path(DE_COMMON),
+           as_path(sheets), as_path(out)]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode == _NO_R:
