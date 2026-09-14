@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import tempfile
 import subprocess
 import sys
 from pathlib import Path
@@ -103,8 +104,24 @@ def _git(*args: str, cwd: Path) -> str:
     return done.stdout.strip()
 
 
+FIXTURE_CHANGELOG = """# Changelog
+
+## 0.28.0 - 2026-01-01
+
+> **Scientific output changes.** Illustrative notice for the fixture.
+
+### Changed
+
+- A described change.
+
+## 0.27.0 - 2025-12-01
+
+- An older entry that must not reach the release body.
+"""
+
+
 def _release_fixture(tmp_path: Path, *, dirty: bool = False, unpushed: bool = False,
-                     stale: bool = False):
+                     stale: bool = False, changelog: str | None = FIXTURE_CHANGELOG):
     root = tmp_path / "release-root"
     (root / "scripts").mkdir(parents=True)
     (root / "app").mkdir()
@@ -113,6 +130,8 @@ def _release_fixture(tmp_path: Path, *, dirty: bool = False, unpushed: bool = Fa
     shutil.copy2(REPO_ROOT / "scripts" / "release.ps1", root / "scripts" / "release.ps1")
     (root / "app" / "constants.py").write_text('APP_VERSION = "0.28.0"\n', encoding="utf-8")
     (root / ".gitignore").write_text("installer_output/\n", encoding="utf-8")
+    if changelog is not None:
+        (root / "CHANGELOG.md").write_text(changelog, encoding="utf-8")
 
     artifacts = tmp_path / "ci-artifacts"
     for artifact, names in CI_ARTIFACTS.items():
@@ -288,3 +307,41 @@ def test_release_reports_the_environment_workflow_without_gating_on_it(
     assert "Environment workflow last run" in warnings
     assert message in warnings
     assert "release create v0.28.0" in calls
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
+def test_release_refuses_to_publish_without_a_changelog_entry(tmp_path: Path) -> None:
+    """A release page with no description is worse than a failed publish: it looks finished."""
+    root, output = _release_fixture(tmp_path, changelog=None)
+    completed, calls = _run_release(tmp_path, root, output)
+    assert completed.returncode != 0
+    assert "CHANGELOG.md" in completed.stdout + completed.stderr
+    assert "release create" not in calls
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
+def test_release_refuses_a_changelog_with_no_entry_for_this_version(tmp_path: Path) -> None:
+    root, output = _release_fixture(
+        tmp_path, changelog="# Changelog\n\n## 0.27.0 - 2025-12-01\n\n- Only an older entry.\n")
+    completed, calls = _run_release(tmp_path, root, output)
+    assert completed.returncode != 0
+    assert "0.28.0" in completed.stdout + completed.stderr
+    assert "release create" not in calls
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
+def test_the_release_body_is_this_versions_changelog_entry(tmp_path: Path) -> None:
+    """The notes file must carry this entry and stop at the next version's heading."""
+    root, output = _release_fixture(tmp_path)
+    completed, calls = _run_release(tmp_path, root, output)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "--notes-file" in calls, "the release body must come from a file, not an inline string"
+
+    notes = Path(tempfile.gettempdir()) / "bulkseq-release-notes-0.28.0.md"
+    assert notes.exists(), f"{notes} was not written"
+    body = notes.read_text(encoding="utf-8")
+    assert "Scientific output changes" in body, "the scientific notice must reach the release page"
+    assert "A described change." in body
+    assert "0.27.0" not in body, "the body ran past this version's entry into an older one"
+    assert "## 0.28.0" not in body, "the heading is the release title; it should not repeat in the body"
+    assert "SHA256SUMS.txt" in body, "the body must tell a reader how to verify a download"

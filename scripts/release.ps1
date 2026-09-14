@@ -153,15 +153,39 @@ try {
 } finally {
     $ErrorActionPreference = $previousErrorActionPreference
 }
+# The release page is where people download from, so it carries this version's own changelog
+# entry rather than a line pointing at a file they would have to go and find. A release that
+# changes scientific output has to say so at the point of download. The entry is read from
+# CHANGELOG.md between this version's heading and the next, so the notes cannot drift from the
+# changelog; an absent entry is a hard failure, not a quiet fallback to boilerplate.
+$changelogLines = Get-Content -Path "CHANGELOG.md" -Encoding UTF8
+$startIndex = -1
+for ($i = 0; $i -lt $changelogLines.Count; $i++) {
+    if ($changelogLines[$i] -match "^##\s+$([regex]::Escape($version))(\s|$)") { $startIndex = $i; break }
+}
+if ($startIndex -lt 0) { throw "CHANGELOG.md has no '## $version' entry; write it before releasing." }
+$endIndex = $changelogLines.Count
+for ($i = $startIndex + 1; $i -lt $changelogLines.Count; $i++) {
+    if ($changelogLines[$i] -match "^##\s+\d+\.\d+\.\d+") { $endIndex = $i; break }
+}
+$entry = ($changelogLines[($startIndex + 1)..($endIndex - 1)] -join "`n").Trim()
+if (-not $entry) { throw "CHANGELOG.md's '## $version' entry is empty; write it before releasing." }
+$notesPath = Join-Path ([System.IO.Path]::GetTempPath()) "bulkseq-release-notes-$version.md"
+$notesBody = "$entry`n`nEvery asset below is listed in SHA256SUMS.txt; verify a download against it before use."
+[System.IO.File]::WriteAllText($notesPath, $notesBody, (New-Object System.Text.UTF8Encoding($false)))
+
 if ($releaseViewExit -ne 0) {
     # New release: tag the verified commit (not the remote default-branch head) and attach
     # every supported package.
     & $gh release create $tag @assets `
         --target $head `
         --title "BulkSeq Studio $tag" `
-        --notes "Verified Windows and Linux packages for $tag. See the changelog and SHA256SUMS.txt for details."
+        --notes-file $notesPath
 } else {
-    # Release exists: replace the attached assets with the fresh build.
+    # Release exists: replace the attached assets with the fresh build, and refresh the notes
+    # so a re-publish cannot leave the page describing an earlier attempt.
+    & $gh release edit $tag --notes-file $notesPath
+    if ($LASTEXITCODE -ne 0) { throw "gh release edit failed" }
     & $gh release upload $tag @assets --clobber
 }
 if ($LASTEXITCODE -ne 0) { throw "gh release failed" }
