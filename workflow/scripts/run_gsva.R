@@ -146,6 +146,7 @@ if (length(v) < 1) {
                               show_colnames = sample_labels,  # honor the declutter toggle
                               cluster_rows = nrow(mat) >= 2,
                               annotation_col = ann, angle_col = 45,
+                              annotation_names_col = FALSE,
                               color = pal_spec$div(255),  # project diverging ramp (was hardcoded)
                               fontsize = base_size, fontsize_row = fs_row, silent = TRUE)
   png(png_path, width = fig_w, height = h, units = "in", res = fig_dpi)

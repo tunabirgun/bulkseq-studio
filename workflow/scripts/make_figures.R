@@ -360,8 +360,8 @@ volcano_add_ranked_key <- function(plot, labels, xm, ytop, canvas_w, canvas_h,
                          labels$label, method = "radix"), , drop = FALSE]
 
   gap_in <- 3 / 72
-  panel_width_fraction <- 0.90
-  minimum_data_fraction <- 0.34
+  panel_width_fraction <- 0.84
+  minimum_data_fraction <- 0.30
   panel_w_in <- max(1, canvas_w * panel_width_fraction)
   panel_h_in <- max(1, canvas_h * 0.75)
   font_points <- label_size * 72.27 / 25.4
@@ -427,13 +427,13 @@ volcano_add_ranked_key <- function(plot, labels, xm, ytop, canvas_w, canvas_h,
     indices <- which(labels$key_side == side)
     if (!length(indices)) next
     labels$key_y[indices] <- ytop -
-      (seq_along(indices) + 1) * row_step_in * y_per_in
+      (seq_along(indices) + 2) * row_step_in * y_per_in
     header_rows[[side]] <- data.frame(
       key_side = side,
       direction = if (side == "left") "Down" else "Up",
       header = if (side == "left") "Down key" else "Up key",
       x = labels$key_x[indices[1]],
-      y = ytop - row_step_in * y_per_in
+      y = ytop - 2 * row_step_in * y_per_in
     )
   }
   if (any(!is.finite(labels$key_y)) || any(labels$key_y <= 0)) {
@@ -491,7 +491,7 @@ volcano_add_ranked_key <- function(plot, labels, xm, ytop, canvas_w, canvas_h,
       xlim = x_limits, ylim = c(0, ytop), clip = "on", expand = FALSE
     ) +
     ggplot2::labs(caption = paste0(
-      "Highlighted triangles: listed genes.\n",
+      "Open circles mark listed genes; triangles mark capped values.\n",
       "Ranked by adjusted p-value; signed log2FC gives x position."
     )) +
     ggplot2::theme(axis.title.x = ggplot2::element_text(hjust = zero_fraction))
