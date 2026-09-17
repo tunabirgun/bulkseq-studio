@@ -12,6 +12,7 @@ def test_workflow_copy_and_digest_ignore_volatile_python_caches(
     cache = source / "scripts" / "__pycache__" / "analysis.cpython-312.pyc"
     script.parent.mkdir(parents=True)
     cache.parent.mkdir(parents=True)
+    (source / "Snakefile").write_text("rule all:\n", encoding="utf-8")
     script.write_text("print('stable')\n", encoding="utf-8")
     cache.write_bytes(b"first volatile cache")
     monkeypatch.setattr(project_module, "workflow_root", lambda: source)

@@ -10,6 +10,9 @@ local({
   assign("require", .m(base::require), envir = globalenv())
 })
 
+source(file.path(snakemake@scriptdir, "enrichment_mapping.R"))
+source(file.path(snakemake@scriptdir, "enrichment_eligibility.R"))
+
 # Functional enrichment (protocol section 8): GO + KEGG ORA and GSEA via
 # clusterProfiler. GO / disease-ontology need a Bioconductor OrgDb (human, mouse,
 # fly, worm, zebrafish, yeast, Arabidopsis). KEGG runs for any organism with a
@@ -302,6 +305,30 @@ select_rank_statistic <- function(res) {
        name = "log2FoldChange")
 }
 
+prepare_main_enrichment_populations <- function(
+    results, ora_mask, additional_qc_mask = rep(TRUE, nrow(results))) {
+  ora <- results[!is.na(ora_mask) & as.logical(ora_mask), , drop = FALSE]
+  candidates <- results[
+    additional_gsea_candidate_mask(results, additional_qc_mask), , drop = FALSE]
+  metric_source <- if (nrow(ora)) ora else candidates
+  rank_stat <- select_rank_statistic(metric_source)
+  rank_values <- suppressWarnings(as.numeric(results[[rank_stat$name]]))
+  list(
+    populations = prepare_enrichment_populations(
+      results, rank_values, ora_mask, additional_qc_mask = additional_qc_mask),
+    rank_statistic = rank_stat$name)
+}
+
+prepare_mapped_enrichment_populations <- function(
+    results, ora_mask, mapped_ora, mapped_rank_candidates = mapped_ora) {
+  metric_source <- if (nrow(mapped_ora)) mapped_ora else mapped_rank_candidates
+  rank_stat <- select_rank_statistic(metric_source)
+  rank_values <- suppressWarnings(as.numeric(results[[rank_stat$name]]))
+  list(
+    populations = prepare_enrichment_populations(results, rank_values, ora_mask),
+    rank_statistic = rank_stat$name)
+}
+
 # Build every GSEA input under one explicit ordering contract. Statistics must be
 # finite and are ordered decreasingly. Exact-score ties use the canonical gene id:
 # all-digit ids (Entrez) compare by exact numeric value, while all other id spaces
@@ -379,7 +406,28 @@ build_deterministic_rank <- function(statistic, canonical_id,
   )
 }
 
+build_population_rank <- function(population, canonical_id, statistic_name) {
+  build_deterministic_rank(
+    population$rank_values[population$rank_mask], canonical_id[population$rank_mask],
+    statistic_name)
+}
+
+build_bridged_population_rank <- function(
+    population, source_id, lookup, statistic_name) {
+  build_population_rank(
+    population, bridge_kegg_geneid(source_id, lookup), statistic_name)
+}
+
 rank_evidence_lines <- function(rank_info) {
+  mapped_collapse <- if (!is.null(rank_info$mapped_source_row_n)) c(
+    sprintf(paste0("Mapped GSEA source collapse: %d finite source row(s); %d duplicate ",
+                   "Entrez group(s); %d finite row(s) collapsed by median; %d non-finite ",
+                   "source score(s) excluded; %d direction-conflict Entrez group(s) excluded."),
+            rank_info$mapped_finite_source_row_n,
+            rank_info$mapped_duplicate_id_group_n,
+            rank_info$mapped_duplicate_rows_collapsed,
+            rank_info$mapped_nonfinite_source_n,
+            rank_info$mapped_conflict_n)) else character(0)
   c(
     sprintf("GSEA ranking order: %s.", rank_info$policy),
     sprintf(paste0("GSEA exact-score ties: %.0f pair(s) across %d tie group(s), ",
@@ -391,7 +439,8 @@ rank_evidence_lines <- function(rank_info) {
                    "and %d non-finite-score row(s) removed before collapse."),
             rank_info$duplicate_id_group_n, rank_info$duplicate_source_row_n,
             rank_info$duplicate_rows_collapsed, rank_info$invalid_id_removed,
-            rank_info$nonfinite_removed)
+            rank_info$nonfinite_removed),
+    mapped_collapse
   )
 }
 
@@ -415,163 +464,6 @@ with_deterministic_gsea_ties <- function(expr, rank_info) {
       invokeRestart("muffleWarning")
     }
   })
-}
-
-# Resolve mappings without choosing an arbitrary member of a one-to-many result.
-# Exact identifier formats route to their matching namespace (currently AGI/TAIR
-# and Ensembl gene ids); all other ids use the configured namespace declared by
-# the project. If that route has no hit, a fallback is accepted only when every
-# eligible keytype that maps the id agrees on one Entrez id. Unresolved one-to-many
-# and cross-keytype-discordant ids are excluded from both foreground and universe.
-merge_mapping_candidates <- function(ids, candidates, eligible_keytypes,
-                                     configured_keytype) {
-  ids <- unique(as.character(ids[!is.na(ids) & nzchar(as.character(ids))]))
-  normalize <- function(mapped) {
-    if (is.null(mapped) || !is.data.frame(mapped) ||
-        !all(c("input_id", "ENTREZID") %in% names(mapped))) {
-      return(data.frame(input_id = character(0), ENTREZID = character(0)))
-    }
-    mapped$input_id <- as.character(mapped$input_id)
-    mapped$ENTREZID <- as.character(mapped$ENTREZID)
-    unique(mapped[
-      mapped$input_id %in% ids & !is.na(mapped$input_id) & nzchar(mapped$input_id) &
-      !is.na(mapped$ENTREZID) & nzchar(mapped$ENTREZID),
-      c("input_id", "ENTREZID"), drop = FALSE])
-  }
-  candidates <- lapply(candidates, normalize)
-  route_for <- function(id) {
-    upper <- toupper(id)
-    if ("TAIR" %in% eligible_keytypes && grepl("^AT[1-5CM]G[0-9]{5}(\\.[0-9]+)?$", upper)) {
-      return("TAIR")
-    }
-    if ("ENSEMBL" %in% eligible_keytypes && grepl("^ENS[A-Z]*G[0-9]+(\\.[0-9]+)?$", upper)) {
-      return("ENSEMBL")
-    }
-    if (configured_keytype %in% eligible_keytypes) configured_keytype else NA_character_
-  }
-
-  accepted <- list()
-  excluded <- list()
-  one_to_many_observed <- 0L
-  cross_discordance_observed <- 0L
-  cross_discordance_resolved <- 0L
-  for (id in ids) {
-    by_key <- lapply(eligible_keytypes, function(key) {
-      table <- candidates[[key]]
-      unique(table$ENTREZID[table$input_id == id])
-    })
-    names(by_key) <- eligible_keytypes
-    nonempty <- by_key[lengths(by_key) > 0L]
-    all_hits <- unique(unlist(nonempty, use.names = FALSE))
-    has_one_to_many <- any(lengths(nonempty) > 1L)
-    has_cross_discordance <- length(nonempty) > 1L && length(all_hits) > 1L
-    one_to_many_observed <- one_to_many_observed + as.integer(has_one_to_many)
-    cross_discordance_observed <- cross_discordance_observed + as.integer(has_cross_discordance)
-    route <- route_for(id)
-    routed_hits <- if (!is.na(route) && route %in% names(by_key)) by_key[[route]] else character(0)
-
-    resolution <- NULL
-    if (length(routed_hits) == 1L) {
-      resolution <- list(entrez = routed_hits[[1]], keytype = route,
-                         method = paste0("routed:", route))
-      if (has_cross_discordance) cross_discordance_resolved <- cross_discordance_resolved + 1L
-    } else if (length(routed_hits) > 1L) {
-      excluded[[length(excluded) + 1L]] <- data.frame(
-        input_id = id, reason = "routed_one_to_many", routed_keytype = route,
-        candidate_entrez = paste(sort(routed_hits), collapse = ";"))
-      next
-    } else if (length(all_hits) == 1L) {
-      supporting <- names(nonempty)[vapply(nonempty, function(values) all_hits[[1]] %in% values,
-                                           logical(1))]
-      resolution <- list(entrez = all_hits[[1]], keytype = paste(supporting, collapse = "+"),
-                         method = "eligible_keytypes_agree")
-    } else if (length(all_hits) > 1L) {
-      excluded[[length(excluded) + 1L]] <- data.frame(
-        input_id = id, reason = "unresolved_cross_keytype", routed_keytype = route,
-        candidate_entrez = paste(sort(all_hits), collapse = ";"))
-      next
-    } else {
-      excluded[[length(excluded) + 1L]] <- data.frame(
-        input_id = id, reason = "unmapped", routed_keytype = route,
-        candidate_entrez = "")
-      next
-    }
-    accepted[[length(accepted) + 1L]] <- data.frame(
-      input_id = id, ENTREZID = as.character(resolution$entrez),
-      keytype = resolution$keytype, resolution = resolution$method)
-  }
-
-  mapping <- if (length(accepted)) do.call(rbind, accepted) else
-    data.frame(input_id = character(0), ENTREZID = character(0),
-               keytype = character(0), resolution = character(0))
-  exclusions <- if (length(excluded)) do.call(rbind, excluded) else
-    data.frame(input_id = character(0), reason = character(0),
-               routed_keytype = character(0), candidate_entrez = character(0))
-  ambiguous_reasons <- c("routed_one_to_many", "unresolved_cross_keytype")
-  list(
-    map = mapping,
-    exclusions = exclusions,
-    eligible_keytypes = eligible_keytypes,
-    configured_keytype = configured_keytype,
-    total_inputs = length(ids),
-    mapped_inputs = nrow(mapping),
-    unmapped_inputs = sum(exclusions$reason == "unmapped"),
-    ambiguous_excluded = sum(exclusions$reason %in% ambiguous_reasons),
-    one_to_many_observed = one_to_many_observed,
-    cross_discordance_observed = cross_discordance_observed,
-    cross_discordance_resolved = cross_discordance_resolved,
-    duplicate_entrez = sum(duplicated(mapping$ENTREZID))
-  )
-}
-
-resolve_configured_keytype <- function(configured_keytype, supported, orgdb_package = "") {
-  configured_keytype <- as.character(configured_keytype)
-  if (configured_keytype %in% supported) return(configured_keytype)
-  # org.Sc.sgd.db exposes the official yeast gene-name namespace as GENENAME
-  # (and older releases may expose only COMMON), not SYMBOL. This translation is
-  # semantic, not a permissive alias fallback: exact-name hits remain the routed
-  # authority and unresolved one-to-many mappings are still excluded below.
-  if (identical(configured_keytype, "SYMBOL") &&
-      identical(as.character(orgdb_package), "org.Sc.sgd.db")) {
-    equivalents <- c("GENENAME", "COMMON")
-    available <- equivalents[equivalents %in% supported]
-    if (length(available)) return(available[[1]])
-  }
-  configured_keytype
-}
-
-
-map_ids_with_routing <- function(ids, orgdb, configured_keytype, orgdb_package = "") {
-  ids <- unique(as.character(ids[!is.na(ids) & nzchar(as.character(ids))]))
-  supported <- AnnotationDbi::keytypes(orgdb)
-  effective_keytype <- resolve_configured_keytype(
-    configured_keytype, supported, orgdb_package)
-  eligible <- unique(c(effective_keytype, configured_keytype, "TAIR", "ENSEMBL",
-                       "ENTREZID", "SYMBOL", "ALIAS"))
-  eligible <- eligible[!is.na(eligible) & nzchar(eligible) & eligible %in% supported]
-  candidates <- list()
-  for (candidate in eligible) {
-    mapped <- if (identical(candidate, "ENTREZID")) {
-      # bitr rejects fromType == toType. Confirm that numeric-looking inputs are
-      # real keys in this OrgDb before accepting the identity mapping.
-      valid <- tryCatch(AnnotationDbi::keys(orgdb, keytype = "ENTREZID"),
-                        error = function(e) character(0))
-      hits <- intersect(ids, as.character(valid))
-      data.frame(input_id = hits, ENTREZID = hits, stringsAsFactors = FALSE)
-    } else tryCatch(
-      suppressWarnings(clusterProfiler::bitr(
-        ids, fromType = candidate, toType = "ENTREZID", OrgDb = orgdb,
-        drop = TRUE)),
-      error = function(e) NULL)
-    if (!is.null(mapped) && nrow(mapped) > 0 && "ENTREZID" %in% names(mapped)) {
-      if (candidate %in% names(mapped)) names(mapped)[names(mapped) == candidate] <- "input_id"
-      candidates[[candidate]] <- mapped[, c("input_id", "ENTREZID"), drop = FALSE]
-    }
-  }
-  resolved <- merge_mapping_candidates(ids, candidates, eligible, effective_keytype)
-  resolved$requested_keytype <- configured_keytype
-  resolved$effective_keytype <- effective_keytype
-  resolved
 }
 
 # Collapse the accepted source rows once, in Entrez space, before deriving any
@@ -672,6 +564,31 @@ collapse_entrez_results <- function(res, up_ids, down_ids,
     source_overlap = source_overlap,
     many_to_one_groups = sum(lengths(groups) > 1L),
     duplicate_rows_collapsed = sum(pmax(lengths(groups) - 1L, 0L)))
+}
+
+build_mapped_gsea_rank <- function(rank_res, statistic_column,
+                                   up_ids = character(0), down_ids = character(0),
+                                   excluded_entrez = character(0)) {
+  eligible <- rank_res[!rank_res$ENTREZID %in% excluded_entrez, , drop = FALSE]
+  source_statistic <- suppressWarnings(as.numeric(eligible[[statistic_column]]))
+  valid_source_id <- !is.na(eligible$ENTREZID) & nzchar(as.character(eligible$ENTREZID))
+  finite_source <- valid_source_id & is.finite(source_statistic)
+  finite_groups <- table(as.character(eligible$ENTREZID[finite_source]))
+  duplicate_groups <- finite_groups[finite_groups > 1L]
+  collapsed_result <- collapse_entrez_results(
+    eligible, up_ids, down_ids, statistic_column)
+  collapsed <- collapsed_result$table
+  rank_info <- build_deterministic_rank(
+    collapsed$rank_statistic, collapsed$ENTREZID, statistic_column)
+  rank_info$mapped_source_row_n <- nrow(eligible)
+  rank_info$mapped_finite_source_row_n <- sum(finite_source)
+  rank_info$mapped_duplicate_id_group_n <- length(duplicate_groups)
+  rank_info$mapped_duplicate_rows_collapsed <- sum(duplicate_groups - 1L)
+  rank_info$mapped_nonfinite_source_n <- sum(valid_source_id & !is.finite(source_statistic))
+  rank_info$mapped_canonical_gene_n <- nrow(collapsed)
+  rank_info$mapped_conflict_n <- nrow(collapsed_result$conflicts)
+  rank_info$mapped_table <- collapsed
+  rank_info
 }
 
 direction_gate <- function(source_overlap_count, conflict_entrez_count,
@@ -1284,12 +1201,38 @@ if (has_orgdb && !identical(backend, "gprofiler")) {
       library(orgdb_name, character.only = TRUE)
     })
     orgdb <- get(orgdb_name)
-    res <- read.csv(results_file, stringsAsFactors = FALSE)
-    res <- res[!is.na(res$padj), ]
+    full_res <- read.csv(results_file, stringsAsFactors = FALSE)
+    ora_mask <- !is.na(full_res$padj)
+    res <- full_res[ora_mask, , drop = FALSE]
     ids <- strip_version(res$gene_id)
     mapping <- map_ids_with_routing(ids, orgdb, keytype, orgdb_name)
+    map <- mapping$map
+    res$base_id <- ids
+    res$ENTREZID <- map$ENTREZID[match(ids, map$input_id)]
+    res$mapping_keytype <- map$keytype[match(ids, map$input_id)]
+    res <- res[!is.na(res$ENTREZID) & nzchar(res$ENTREZID), , drop = FALSE]
+    candidate_res <- full_res[additional_gsea_candidate_mask(full_res), , drop = FALSE]
+    candidate_ids <- strip_version(candidate_res$gene_id)
+    candidate_mapping <- map_ids_with_routing(
+      candidate_ids, orgdb, keytype, orgdb_name)
+    candidate_map <- candidate_mapping$map
+    candidate_res$base_id <- candidate_ids
+    candidate_res$ENTREZID <- candidate_map$ENTREZID[
+      match(candidate_ids, candidate_map$input_id)]
+    candidate_res <- candidate_res[
+      !is.na(candidate_res$ENTREZID) & nzchar(candidate_res$ENTREZID), , drop = FALSE]
+    prepared <- prepare_mapped_enrichment_populations(
+      full_res, ora_mask, res, candidate_res)
+    rank_column <- prepared$rank_statistic
+    populations <- prepared$populations
+    rank_res <- populations$rank
+    rank_ids <- strip_version(rank_res$gene_id)
+    rank_mapping <- map_ids_with_routing(rank_ids, orgdb, keytype, orgdb_name)
     list(orgdb = orgdb, res = res, ids = ids, mapping = mapping,
-         n_in = mapping$total_inputs, n_mapped = mapping$mapped_inputs)
+         rank_res = rank_res, rank_ids = rank_ids, rank_mapping = rank_mapping,
+         rank_column = rank_column,
+         populations = populations, n_in = mapping$total_inputs,
+         n_mapped = mapping$mapped_inputs + rank_mapping$mapped_inputs)
   }, error = function(e) {
     message("OrgDb route unavailable (", orgdb_name, "): ", conditionMessage(e))
     NULL
@@ -1311,10 +1254,12 @@ if (orgdb_ok) {
     ids <- orgdb_probe$ids
     mapping <- orgdb_probe$mapping
     map <- mapping$map
-    res$base_id <- ids
-    res$ENTREZID <- map$ENTREZID[match(ids, map$input_id)]
-    res$mapping_keytype <- map$keytype[match(ids, map$input_id)]
-    res <- res[!is.na(res$ENTREZID) & nzchar(res$ENTREZID), , drop = FALSE]
+    rank_res <- orgdb_probe$rank_res
+    rank_map <- orgdb_probe$rank_mapping$map
+    rank_res$base_id <- orgdb_probe$rank_ids
+    rank_res$ENTREZID <- rank_map$ENTREZID[match(rank_res$base_id, rank_map$input_id)]
+    rank_res <- rank_res[
+      !is.na(rank_res$ENTREZID) & nzchar(rank_res$ENTREZID), , drop = FALSE]
 
     # The up/down CSVs declare which source rows passed the DE cutoffs. Annotate
     # those source rows, collapse the complete accepted DE table exactly once in
@@ -1322,7 +1267,7 @@ if (orgdb_ok) {
     up_input <- read_ids_csv(up_file)
     down_input <- read_ids_csv(down_file)
     sig_input <- unique(c(up_input, down_input))
-    rank_column <- select_rank_statistic(res)$name
+    rank_column <- orgdb_probe$rank_column
     collapsed <- collapse_entrez_results(res, up_input, down_input, rank_column)
     res <- collapsed$table
     conflict_entrez <- mapped_unique(collapsed$conflicts$ENTREZID)
@@ -1379,7 +1324,6 @@ if (orgdb_ok) {
       }
       res$symbol
     }, error = function(e) res$symbol)
-    write_id_map(res)  # entrez<->symbol/gene_id bridge for term-gene extraction
     go_readable <- go_readable_for_orgdb(orgdb)
     run_ora <- function(genes, path, ont = "BP") {
       genes <- mapped_unique(genes)
@@ -1418,10 +1362,16 @@ if (orgdb_ok) {
     write_ont_csv(ego_mf, out[["go_mf"]])
     write_ont_csv(ego_cc, out[["go_cc"]])
 
-    # res$rank_statistic is the per-Entrez median of the same column the collapse
-    # gated direction on, so the collapse and the ranking cannot diverge.
-    rank_info <- build_deterministic_rank(res$rank_statistic, res$ENTREZID, rank_column)
+    # ORA and GSEA use separate eligible populations. Both apply the selected
+    # statistic and the same direction-conflict rules, with GSEA independently
+    # collapsing its complete mapped ranked population in Entrez space.
+    rank_info <- build_mapped_gsea_rank(
+      rank_res, rank_column, up_input, down_input,
+      unique(c(conflict_entrez, foreground_overlap)))
     gene_list <- rank_info$values
+    rank_only_map <- rank_info$mapped_table[
+      !rank_info$mapped_table$ENTREZID %in% res$ENTREZID, , drop = FALSE]
+    write_id_map(rbind(res, rank_only_map))
     set.seed(42)
     # Gene-set size limits and BH correction are gseGO's defaults, stated explicitly.
     gse <- tryCatch(
@@ -1490,7 +1440,7 @@ if (orgdb_ok) {
                  ego_mf = ego_mf, ego_cc = ego_cc,
                  gse = gse, ego_do = ego_do,
                  ekegg_all = kegg$ekegg_all, kegg_gse = kegg$kegg_gse,
-                 geneList = gene_list, orgdb = orgdb_name,
+                 geneList = gene_list, rank_info = rank_info, orgdb = orgdb_name,
                  kegg = if (has_kegg) kegg_org else "",
                  backend = "clusterprofiler", gprofiler_table = NULL),
             out[["objects"]])
@@ -1565,6 +1515,7 @@ if (orgdb_ok) {
       sprintf(paste0("GSEA parameters: complete mapped, direction-conflict-free ranked Entrez list ",
                      "ranked on %s; Benjamini-Hochberg (BH); pvalueCutoff=%s; gene-set size 10-500; seed=42."),
               rank_info$statistic_name, format(alpha, scientific = FALSE, trim = TRUE)),
+      enrichment_eligibility_lines(orgdb_probe$populations, "GSEA"),
       rank_evidence_lines(rank_info),
       "Mapping limitation: enrichment tests only the retained mapped subset; incomplete, ambiguous, or non-random identifier mapping can bias terms and pathways, so coverage and exclusions must accompany interpretation.",
       sprintf("Up-regulated: %d genes, %d GO BP terms (ORA)", length(up_e), n_up),
@@ -1601,12 +1552,17 @@ if (orgdb_ok) {
   # keys (gse) stay NULL. Figures labelled by term Description, never raw ids.
   result <- tryCatch({
     suppressMessages({ library(clusterProfiler) })
-    res <- read.csv(results_file, stringsAsFactors = FALSE)
-    res <- res[!is.na(res$padj) & !is.na(res$log2FoldChange), ]
+    full_res <- read.csv(results_file, stringsAsFactors = FALSE)
+    ora_mask <- !is.na(full_res$padj) & !is.na(full_res$log2FoldChange)
+    prepared <- prepare_main_enrichment_populations(
+      full_res, ora_mask, !is.na(full_res$log2FoldChange))
+    populations <- prepared$populations
+    rank_stat <- list(name = prepared$rank_statistic)
+    res <- populations$ora
+    full_res$base_id <- strip_version(full_res$gene_id)
     res$base_id <- strip_version(res$gene_id)
     write_id_map(res)  # no entrez on this route; symbol/gene_id still bridge term extraction
-    rank_stat <- select_rank_statistic(res)
-    rank_info <- build_deterministic_rank(rank_stat$values, res$base_id, rank_stat$name)
+    rank_info <- build_population_rank(populations, full_res$base_id, rank_stat$name)
     gene_list <- rank_info$values
     tested_genes <- unique(res$base_id)  # tested-gene background for gost custom_bg
 
@@ -1614,11 +1570,20 @@ if (orgdb_ok) {
     down_ids <- read_ids_csv(down_file)
     all_ids <- unique(c(up_ids, down_ids))
 
-    kegg_geneid_lookup <- kegg_geneid_lookup_for(
+    additional_rank_res <- full_res[populations$additional_rank_mask, , drop = FALSE]
+    ora_kegg_geneid_lookup <- kegg_geneid_lookup_for(
       kegg_keytype, KEGG_KEY_FORM_OBSERVED, res$base_id, res$ncbi_geneid)
-    kegg_bridged_n <- if (is.null(kegg_geneid_lookup)) 0L else
+    additional_kegg_geneid_lookup <- kegg_geneid_lookup_for(
+      kegg_keytype, KEGG_KEY_FORM_OBSERVED, additional_rank_res$base_id,
+      additional_rank_res$ncbi_geneid)
+    kegg_geneid_lookup <- c(
+      ora_kegg_geneid_lookup,
+      additional_kegg_geneid_lookup[
+        !names(additional_kegg_geneid_lookup) %in% names(ora_kegg_geneid_lookup)])
+    kegg_bridged_n <- if (is.null(ora_kegg_geneid_lookup)) 0L else
       sum(!grepl("^[0-9]+$", all_ids) &
-          !is.na(kegg_geneid_lookup[all_ids]) & nzchar(kegg_geneid_lookup[all_ids]))
+          !is.na(ora_kegg_geneid_lookup[all_ids]) &
+          nzchar(ora_kegg_geneid_lookup[all_ids]))
 
     # gprofiler2 is a Stage-2 env addition and may be absent: wrap the load + gost
     # so a missing package or a network failure degrades to KEGG-only, never crashes.
@@ -1681,14 +1646,16 @@ if (orgdb_ok) {
     route_gap <- if (has_kegg) kegg_route_gap(
       KEGG_KEY_FORM_OBSERVED, all_ids, geneid_column_usable(res$ncbi_geneid),
       DE_ROUTE, kegg_keytype) else NULL
-    kegg_rank_info <- rank_info
-    names(kegg_rank_info$values) <- bridge_kegg_geneid(names(rank_info$values), kegg_geneid_lookup)
+    kegg_rank_info <- build_bridged_population_rank(
+      populations, full_res$base_id, kegg_geneid_lookup, rank_stat$name)
     kegg <- if (has_kegg) run_kegg(
-      bridge_kegg_geneid(all_ids, kegg_geneid_lookup), gene_list, kegg_keytype,
-      background = bridge_kegg_geneid(tested_genes, kegg_geneid_lookup), rank_info = kegg_rank_info,
-      foregrounds = list(up = bridge_kegg_geneid(up_ids, kegg_geneid_lookup),
-                        down = bridge_kegg_geneid(down_ids, kegg_geneid_lookup),
-                        combined = bridge_kegg_geneid(all_ids, kegg_geneid_lookup)),
+      bridge_kegg_geneid(all_ids, ora_kegg_geneid_lookup), kegg_rank_info$values,
+      kegg_keytype,
+      background = bridge_kegg_geneid(tested_genes, ora_kegg_geneid_lookup),
+      rank_info = kegg_rank_info,
+      foregrounds = list(up = bridge_kegg_geneid(up_ids, ora_kegg_geneid_lookup),
+                         down = bridge_kegg_geneid(down_ids, ora_kegg_geneid_lookup),
+                         combined = bridge_kegg_geneid(all_ids, ora_kegg_geneid_lookup)),
       expected_name = configured_organism_name, key_form_observed = KEGG_KEY_FORM_EVIDENCE)
     else list(ekegg_all = NULL, kegg_gse = NULL, n_ora = 0L, n_gsea = 0L,
               audit = list(status = "NOT_RUN", ora_status = "NOT_RUN",
@@ -1697,7 +1664,7 @@ if (orgdb_ok) {
     saveRDS(list(ego_all = NULL, ego_up = NULL, ego_down = NULL,
                  gse = NULL, ego_do = NULL,
                  ekegg_all = kegg$ekegg_all, kegg_gse = kegg$kegg_gse,
-                 geneList = gene_list, orgdb = "",
+                 geneList = kegg_rank_info$values, rank_info = kegg_rank_info, orgdb = "",
                  kegg = if (has_kegg) kegg_org else "",
                  backend = "gprofiler", gprofiler_table = gprofiler_table),
             out[["objects"]])
@@ -1706,7 +1673,9 @@ if (orgdb_ok) {
       sprintf("GO route: g:Profiler (organism %s).", gprofiler_org),
       sprintf("GO BP terms (gost ORA): %d", n_go),
       sprintf("Significant genes (ORA input): %d", length(all_ids)),
-      rank_evidence_lines(rank_info),
+      sprintf("Ranked genes (GSEA input): %d", length(kegg_rank_info$values)),
+      enrichment_eligibility_lines(populations, "GSEA"),
+      rank_evidence_lines(kegg_rank_info),
       if (has_kegg) kegg_evidence_lines(kegg) else
         "KEGG resource status: NOT_RUN; no KEGG organism code was configured.",
       sprintf("KEGG locus-tag-to-GeneID bridge: %d/%d significant ids resolved via GTF db_xref.",
@@ -1736,12 +1705,17 @@ if (orgdb_ok) {
   # deseq2 gene ids are passed straight through with keyType = "kegg".
   result <- tryCatch({
     suppressMessages({ library(clusterProfiler) })
-    res <- read.csv(results_file, stringsAsFactors = FALSE)
-    res <- res[!is.na(res$padj) & !is.na(res$log2FoldChange), ]
+    full_res <- read.csv(results_file, stringsAsFactors = FALSE)
+    ora_mask <- !is.na(full_res$padj) & !is.na(full_res$log2FoldChange)
+    prepared <- prepare_main_enrichment_populations(
+      full_res, ora_mask, !is.na(full_res$log2FoldChange))
+    populations <- prepared$populations
+    rank_stat <- list(name = prepared$rank_statistic)
+    res <- populations$ora
+    full_res$base_id <- strip_version(full_res$gene_id)
     res$base_id <- strip_version(res$gene_id)
     write_id_map(res)  # no entrez on this route; symbol/gene_id still bridge term extraction
-    rank_stat <- select_rank_statistic(res)
-    rank_info <- build_deterministic_rank(rank_stat$values, res$base_id, rank_stat$name)
+    rank_info <- build_population_rank(populations, full_res$base_id, rank_stat$name)
     gene_list <- rank_info$values
 
     tested_genes <- unique(res$base_id)  # tested-gene background for the KEGG ORA universe
@@ -1750,37 +1724,49 @@ if (orgdb_ok) {
     down_ids <- read_ids_csv(down_file)
     all_ids <- unique(c(up_ids, down_ids))
 
-    kegg_geneid_lookup <- kegg_geneid_lookup_for(
+    additional_rank_res <- full_res[populations$additional_rank_mask, , drop = FALSE]
+    ora_kegg_geneid_lookup <- kegg_geneid_lookup_for(
       kegg_keytype, KEGG_KEY_FORM_OBSERVED, res$base_id, res$ncbi_geneid)
-    kegg_bridged_n <- if (is.null(kegg_geneid_lookup)) 0L else
+    additional_kegg_geneid_lookup <- kegg_geneid_lookup_for(
+      kegg_keytype, KEGG_KEY_FORM_OBSERVED, additional_rank_res$base_id,
+      additional_rank_res$ncbi_geneid)
+    kegg_geneid_lookup <- c(
+      ora_kegg_geneid_lookup,
+      additional_kegg_geneid_lookup[
+        !names(additional_kegg_geneid_lookup) %in% names(ora_kegg_geneid_lookup)])
+    kegg_bridged_n <- if (is.null(ora_kegg_geneid_lookup)) 0L else
       sum(!grepl("^[0-9]+$", all_ids) &
-          !is.na(kegg_geneid_lookup[all_ids]) & nzchar(kegg_geneid_lookup[all_ids]))
+          !is.na(ora_kegg_geneid_lookup[all_ids]) &
+          nzchar(ora_kegg_geneid_lookup[all_ids]))
     route_gap <- if (has_kegg) kegg_route_gap(
       KEGG_KEY_FORM_OBSERVED, all_ids, geneid_column_usable(res$ncbi_geneid),
       DE_ROUTE, kegg_keytype) else NULL
-    kegg_rank_info <- rank_info
-    names(kegg_rank_info$values) <- bridge_kegg_geneid(names(rank_info$values), kegg_geneid_lookup)
+    kegg_rank_info <- build_bridged_population_rank(
+      populations, full_res$base_id, kegg_geneid_lookup, rank_stat$name)
 
     kegg <- run_kegg(
-      bridge_kegg_geneid(all_ids, kegg_geneid_lookup), gene_list, kegg_keytype,
-      background = bridge_kegg_geneid(tested_genes, kegg_geneid_lookup), rank_info = kegg_rank_info,
-      foregrounds = list(up = bridge_kegg_geneid(up_ids, kegg_geneid_lookup),
-                        down = bridge_kegg_geneid(down_ids, kegg_geneid_lookup),
-                        combined = bridge_kegg_geneid(all_ids, kegg_geneid_lookup)),
+      bridge_kegg_geneid(all_ids, ora_kegg_geneid_lookup), kegg_rank_info$values,
+      kegg_keytype,
+      background = bridge_kegg_geneid(tested_genes, ora_kegg_geneid_lookup),
+      rank_info = kegg_rank_info,
+      foregrounds = list(up = bridge_kegg_geneid(up_ids, ora_kegg_geneid_lookup),
+                        down = bridge_kegg_geneid(down_ids, ora_kegg_geneid_lookup),
+                        combined = bridge_kegg_geneid(all_ids, ora_kegg_geneid_lookup)),
       expected_name = configured_organism_name, key_form_observed = KEGG_KEY_FORM_EVIDENCE)
 
     saveRDS(list(ego_all = NULL, ego_up = NULL, ego_down = NULL,
                  gse = NULL, ego_do = NULL,
                  ekegg_all = kegg$ekegg_all, kegg_gse = kegg$kegg_gse,
-                 geneList = gene_list, orgdb = "",
+                 geneList = kegg_rank_info$values, rank_info = kegg_rank_info, orgdb = "",
                  kegg = if (has_kegg) kegg_org else "",
                  backend = "clusterprofiler", gprofiler_table = NULL),
             out[["objects"]])
 
     summary_lines <<- c(summary_lines,
       "GO/disease enrichment: skipped (no Bioconductor OrgDb for this organism).",
-      sprintf("Ranked genes (GSEA input): %d", length(gene_list)),
-      rank_evidence_lines(rank_info),
+      sprintf("Ranked genes (GSEA input): %d", length(kegg_rank_info$values)),
+      enrichment_eligibility_lines(populations, "GSEA"),
+      rank_evidence_lines(kegg_rank_info),
       sprintf("Significant genes (ORA input): %d", length(all_ids)),
       kegg_evidence_lines(kegg),
       sprintf("KEGG locus-tag-to-GeneID bridge: %d/%d significant ids resolved via GTF db_xref.",

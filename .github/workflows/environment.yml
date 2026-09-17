@@ -146,19 +146,22 @@ jobs:
           PY
 
       - name: The filtered tool and R specs must solve for osx-arm64
-        shell: bash -el {0}
+        shell: bash
         run: |
           for spec in tools r; do
-            micromamba create --dry-run --yes --platform osx-arm64 --name probe \
+            "$MAMBA_EXE" create --dry-run --yes --platform osx-arm64 --name probe \
               --file "$RUNNER_TEMP/osx/$spec.yaml"
           done
 
       - name: Every filtered-out package must still be unavailable on osx-arm64
-        shell: bash -el {0}
+        shell: bash
         run: |
           solve() {
-            micromamba create --dry-run --yes --platform osx-arm64 --name probe \
-              --file "$RUNNER_TEMP/osx/$1.yaml" > "$RUNNER_TEMP/osx/$1.log" 2>&1
+            local status=0
+            "$MAMBA_EXE" create --dry-run --yes --platform osx-arm64 --name probe \
+              --file "$RUNNER_TEMP/osx/$1.yaml" > "$RUNNER_TEMP/osx/$1.log" 2>&1 || status=$?
+            echo "$1: solver exit $status"
+            return "$status"
           }
           failed=0
           # The unfiltered specs are what the filter exists for: if they solve, the
@@ -187,3 +190,10 @@ jobs:
             done
           done
           exit "$failed"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-solver-evidence
+          path: ${{ runner.temp }}/osx/
+          if-no-files-found: warn

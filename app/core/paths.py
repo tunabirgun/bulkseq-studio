@@ -58,6 +58,16 @@ def user_data_dir() -> Path:
     return base / APP_NAME
 
 
+def bioenv_setup_log_dir() -> Path:
+    """Per-user directory for the backend environment-install log."""
+    return user_data_dir() / "logs"
+
+
+def bioenv_setup_log_path() -> Path:
+    """Stable location shared by the backend installer and readiness viewer."""
+    return bioenv_setup_log_dir() / "wsl_bioenv_install.log"
+
+
 def normalize_path(path: str | Path) -> Path:
     return Path(path).expanduser().resolve()
 

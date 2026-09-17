@@ -68,6 +68,17 @@ def _project_metadata() -> dict:
         return tomllib.load(handle)
 
 
+def _packaged_local_roots(metadata: dict) -> set[str]:
+    includes = metadata["tool"]["setuptools"]["packages"]["find"]["include"]
+    package_roots = {spec.split(".", 1)[0] for spec in includes}
+    py_modules = set(metadata["tool"]["setuptools"].get("py-modules", []))
+    missing = sorted(
+        root for root in package_roots if not (REPO_ROOT / root).is_dir()
+    )
+    assert not missing, f"pyproject.toml package declarations select missing roots: {missing}"
+    return package_roots | py_modules
+
+
 def _runtime_requirement_names() -> set[str]:
     names: set[str] = set()
     for line in (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines():
@@ -92,10 +103,10 @@ def _assert_declared(discovered: set[str], declared: set[str], site: str) -> Non
 
 
 def test_python_runtime_imports_are_declared_at_every_install_and_readiness_site() -> None:
-    app_paths = sorted((REPO_ROOT / "app").rglob("*.py"))
-    discovered = _mapped_external_distributions(_import_roots(app_paths), local_roots={"app"})
-
     metadata = _project_metadata()["project"]
+    app_paths = sorted((REPO_ROOT / "app").rglob("*.py"))
+    discovered = _mapped_external_distributions(
+        _import_roots(app_paths), local_roots=_packaged_local_roots(_project_metadata()))
     pyproject_runtime = {_requirement_name(dep) for dep in metadata["dependencies"]}
     readiness = {_normalise_distribution(package) for package in PYTHON_PACKAGES.values()}
     _assert_declared(discovered, pyproject_runtime, "pyproject.toml [project].dependencies")
@@ -105,7 +116,10 @@ def test_python_runtime_imports_are_declared_at_every_install_and_readiness_site
 
 def test_workflow_python_imports_are_declared_in_core_and_full_profiles() -> None:
     script_paths = sorted((REPO_ROOT / "workflow" / "scripts").glob("*.py"))
-    local_roots = {path.stem for path in script_paths} | {"app"}
+    package_roots = _packaged_local_roots(_project_metadata())
+    # Snakemake invokes these modules as scripts, so their sibling modules are importable by
+    # bare filename. This exception must not leak into package-wide runtime import checks.
+    local_roots = package_roots | {path.stem for path in script_paths}
     discovered = _mapped_external_distributions(_import_roots(script_paths), local_roots=local_roots)
     assert OPTIONAL_WORKFLOW_DISTRIBUTIONS <= discovered
     required = discovered - OPTIONAL_WORKFLOW_DISTRIBUTIONS
@@ -127,6 +141,16 @@ def test_ast_dependency_gate_rejects_an_unknown_import_negative_control() -> Non
     mutated = _import_roots([], injected_source="import undeclared_runtime_dependency\n")
     with pytest.raises(AssertionError, match="undeclared_runtime_dependency"):
         _mapped_external_distributions(mutated, local_roots=set())
+
+
+@pytest.mark.parametrize("shadowed_name", ["metadata", "main_window"])
+def test_packaged_import_gate_rejects_a_sibling_module_shadow_name(shadowed_name: str) -> None:
+    # A package file called metadata.py or main_window.py is not a top-level installed module.
+    # Use the actual package allowlist so this catches an accidental broadening of that set.
+    local_roots = _packaged_local_roots(_project_metadata())
+    mutated = _import_roots([], injected_source=f"import {shadowed_name}\n")
+    with pytest.raises(AssertionError, match=shadowed_name):
+        _mapped_external_distributions(mutated, local_roots=local_roots)
 
 
 # Hard namespaces loaded directly by mandatory or selectable R workflow scripts. Base/recommended

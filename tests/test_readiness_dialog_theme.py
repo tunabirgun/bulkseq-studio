@@ -6,6 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from app.core.paths import bioenv_setup_log_path  # noqa: E402
 from app.ui import readiness_dialog as readiness  # noqa: E402
 from app.ui import theme  # noqa: E402
 
@@ -27,6 +28,24 @@ def _style_snapshot(dialog: readiness.ReadinessDialog) -> dict[str, str]:
         "repair": dialog.repair_button.styleSheet(),
         "close": dialog.close_button.styleSheet(),
     }
+
+
+def test_setup_log_viewer_reads_the_shared_per_user_path(monkeypatch, tmp_path) -> None:
+    target = tmp_path / "Tuna O'Brien" / "logs" / "wsl_bioenv_install.log"
+    target.parent.mkdir(parents=True)
+    target.write_text("setup evidence\n", encoding="utf-8")
+    monkeypatch.setattr(readiness, "bioenv_setup_log_path", lambda: target)
+    monkeypatch.setattr(readiness.ReadinessDialog, "refresh", lambda self: None)
+    app = QApplication.instance() or QApplication([])
+    dialog = readiness.ReadinessDialog()
+    try:
+        dialog.show_setup_log()
+        assert dialog.text.toPlainText() == "setup evidence\n"
+        assert bioenv_setup_log_path().name == target.name
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        app.processEvents()
 
 
 def test_open_dialog_rethemes_light_dark_light_without_losing_state_or_handlers(monkeypatch) -> None:

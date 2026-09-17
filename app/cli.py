@@ -24,6 +24,7 @@ from app.cli_banner import print_banner
 from app.constants import APP_VERSION
 from app.core.config_models import AppConfig
 from app.core.metadata import load_metadata, validate_metadata
+from app.core.paths import project_configured_path
 from app.core.project import ProjectExistsError, ProjectManager, is_project_root
 from app.core.snakemake_runner import (
     EXEC_PROFILES,
@@ -83,6 +84,17 @@ def _load(root: Path) -> AppConfig:
     return ProjectManager().load_config(root)
 
 
+def _metadata_for_project_validation(root: Path, frame):
+    """Resolve relative FASTQ cells for validation without changing the saved sample sheet."""
+    resolved = frame.copy()
+    for column in ("fastq_1", "fastq_2"):
+        if column in resolved.columns:
+            resolved[column] = resolved[column].map(
+                lambda value: str(project_configured_path(root, value)) if str(value).strip() else ""
+            )
+    return resolved
+
+
 # ---------------------------------------------------------------- config get/set helpers
 
 def _walk_config(config: AppConfig, dotted: str):
@@ -136,9 +148,16 @@ def cmd_project_create(args) -> int:
     try:
         root = manager.create_project(args.name, workdir, overwrite=args.overwrite)
     except ProjectExistsError as exc:
-        _err(f"A project already exists at {exc.root}\n"
-             f"Creating it again would reset its sample sheet, contrasts and settings to "
-             f"empty defaults.\nPass --overwrite if that is what you intend.")
+        if exc.is_file:
+            _err(f"Project destination is an existing file: {exc.root}\n"
+                 "Choose a new project name or working directory.")
+        elif exc.is_project:
+            _err(f"A project already exists at {exc.root}\n"
+                 f"Creating it again would reset its sample sheet, contrasts and settings to "
+                 f"empty defaults.\nPass --overwrite if that is what you intend.")
+        else:
+            _err(f"Project destination is occupied: {exc.root}\n{exc}\n"
+                 "Pass --overwrite only if you intend to scaffold into this directory.")
         return EXIT_INVALID
     except (OSError, ValueError) as exc:
         _err(f"Project creation failed: {exc}")
@@ -152,7 +171,7 @@ def cmd_project_info(args) -> int:
     if root is None:
         return EXIT_INVALID
     config = _load(root)
-    samples_file = root / "config" / "samples.tsv"
+    samples_file = project_configured_path(root, config.input.samples)
     n_samples = 0
     if samples_file.is_file():
         try:
@@ -240,11 +259,16 @@ def cmd_samples_show(args) -> int:
     root = _resolve_project(args)
     if root is None:
         return EXIT_INVALID
-    path = root / "config" / "samples.tsv"
+    config = _load(root)
+    path = project_configured_path(root, config.input.samples)
     if not path.is_file():
         _err(f"No sample sheet yet: {path}")
         return EXIT_INVALID
-    frame = load_metadata(path)
+    try:
+        frame = load_metadata(path)
+    except Exception as exc:  # noqa: BLE001 - report malformed user tables without a traceback
+        _err(f"Could not read sample sheet {path}: {exc}")
+        return EXIT_INVALID
     if args.json:
         print(json.dumps(frame.to_dict(orient="records"), indent=2, default=str))
     else:
@@ -257,14 +281,18 @@ def cmd_check(args) -> int:
     if root is None:
         return EXIT_INVALID
     config = _load(root)
-    path = root / "config" / "samples.tsv"
+    path = project_configured_path(root, config.input.samples)
     if not path.is_file():
         _err(f"No sample sheet: {path}")
         return EXIT_GATE
-    frame = load_metadata(path)
-    allow_pending = config.input.type == "fastq" and bool(
-        getattr(config.input, "sra_accessions", None))
-    messages = validate_metadata(frame, allow_pending_sra=allow_pending)
+    try:
+        frame = load_metadata(path)
+    except Exception as exc:  # noqa: BLE001 - report malformed user tables without a traceback
+        _err(f"Could not read sample sheet {path}: {exc}")
+        return EXIT_GATE
+    allow_pending = config.input.type in ("sra", "count_matrix", "microarray", "deseq2_results")
+    messages = validate_metadata(
+        _metadata_for_project_validation(root, frame), allow_pending_sra=allow_pending)
     worst = "PASS"
     for message in messages:
         if message["status"] == "FAIL":
@@ -321,13 +349,15 @@ def cmd_run(args) -> int:
     config = _load(root)
     # Mirrors the GUI's pre-run re-sync (main_window.py's launch flow): an existing project
     # keeps its own copy of workflow/, so an app update's workflow fix would not reach a CLI
-    # run unless re-synced here too. Best-effort: never block the run if the copy fails.
+    # run unless re-synced here too. A failed sync must block execution because its provenance
+    # cannot identify a verified workflow tree.
     try:
         synced = ProjectManager().sync_workflow_if_outdated(root)
         if synced:
             print(f"Updated project workflow scripts to match this app version ({synced}).", file=sys.stderr)
     except Exception as exc:
         print(f"Could not refresh project workflow scripts: {exc}", file=sys.stderr)
+        return EXIT_INVALID
     if args.mode == "resume" and snakemake_run_state(root).get("locked"):
         use_wsl = sys.platform.startswith("win") and args.exec_profile == "local"
         unlock_cmd = build_snakemake_command(root, config, "unlock", use_wsl=use_wsl,

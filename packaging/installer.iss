@@ -1,18 +1,18 @@
 ﻿; Inno Setup script for BulkSeq Studio.
 ; Build the exe first (pyinstaller packaging/BulkSeqStudio.spec), then compile:
 ;   iscc packaging\installer.iss
-; Per-user install (no admin): installs to %LOCALAPPDATA%\Programs\BulkSeq Studio,
-; which keeps the bundled scripts/logs path writable when the app drives the WSL
-; setup at runtime. Enabling WSL itself still prompts for elevation separately.
+; Per-user install (no admin): installs to %LOCALAPPDATA%\Programs\BulkSeq Studio.
+; The backend setup log is written under the user's application-data directory, so the
+; bundled scripts remain read-only. Enabling WSL itself still prompts for elevation separately.
 
 #define MyAppName "BulkSeq Studio"
 ; Version is normally passed by build_release.ps1 (/DMyAppVersion=...) from
 ; app/constants.py so the installer name never drifts from APP_VERSION; the
 ; fallback below is only used when compiling installer.iss by hand.
 #ifndef MyAppVersion
-  #define MyAppVersion "0.28.0"
+  #define MyAppVersion "0.32.0"
 #endif
-#define MyAppPublisher "Tuna Birgün"
+#define MyAppPublisher "Tuna Birgun"
 #define MyAppExeName "BulkSeqStudio.exe"
 
 [Setup]

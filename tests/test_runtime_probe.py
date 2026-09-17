@@ -64,25 +64,43 @@ def _callers(tmp_path: Path):
         for name in (
             "test_custom_enrichment",
             "test_de_common",
+            "test_de_contrasts",
+            "test_enrichment_eligibility",
             "test_enrichment_mapping",
             "test_external_results_safety",
+            "test_figure_rendering_contracts",
+            "test_microarray_probe_mapping",
+            "test_meta_enrichment_threshold",
             "test_per_sample_strandedness",
             "test_sample_labels",
             "test_ppi_mapping_case",
+            "test_setup_bootstrap",
+            "test_setup_installer",
         )
     }
     return [
         ("test_custom_enrichment", lambda: modules["test_custom_enrichment"]._r_runtime(harness)),
+        ("test_de_contrasts", lambda: modules["test_de_contrasts"]._r_runtime(harness)),
+        ("test_enrichment_eligibility",
+         lambda: modules["test_enrichment_eligibility"]._r_runtime(harness)),
         ("test_enrichment_mapping", lambda: modules["test_enrichment_mapping"]._r_runtime(harness)),
         ("test_ppi_mapping_case", lambda: modules["test_ppi_mapping_case"]._r_runtime(harness)),
         ("test_external_results_safety",
          lambda: modules["test_external_results_safety"]._r_runtime(harness)),
+        ("test_figure_rendering_contracts",
+         lambda: modules["test_figure_rendering_contracts"]._r_runtime()),
+        ("test_microarray_probe_mapping",
+         lambda: modules["test_microarray_probe_mapping"]._r_runtime(harness)),
+        ("test_meta_enrichment_threshold",
+         lambda: modules["test_meta_enrichment_threshold"]._r_runtime(harness)),
         ("test_external_results_safety._wsl_bulkseq_snakemake",
          lambda: modules["test_external_results_safety"]._wsl_bulkseq_snakemake(tmp_path)),
         ("test_per_sample_strandedness",
          lambda: modules["test_per_sample_strandedness"]._run_read_length_shell([], tmp_path)),
         ("test_de_common", lambda: modules["test_de_common"]._bash_or_skip()),
         ("test_sample_labels", lambda: modules["test_sample_labels"]._bash_or_skip()),
+        ("test_setup_bootstrap", lambda: modules["test_setup_bootstrap"]._bash_or_skip()),
+        ("test_setup_installer", lambda: modules["test_setup_installer"]._bash_or_skip()),
     ]
 
 
@@ -117,6 +135,9 @@ def test_probe_resolves_the_runtime_this_host_advertises(tmp_path) -> None:
 
 def test_every_caller_skips_when_no_runtime_is_live(monkeypatch, tmp_path) -> None:
     """A Windows host with wsl.exe but no distribution, and no native tool either."""
+    monkeypatch.delenv("BULKSEQ_REQUIRE_R", raising=False)
+    monkeypatch.delenv("BULKSEQ_REQUIRE_R_FULL", raising=False)
+
     def refuse(command, *args, **kwargs):
         return subprocess.CompletedProcess(command, 1, "", "")
 
@@ -144,6 +165,8 @@ def test_every_caller_skips_when_no_runtime_is_live(monkeypatch, tmp_path) -> No
 
 def test_every_r_caller_skips_when_the_packages_are_missing(monkeypatch, tmp_path) -> None:
     """R starts but loads none of the packages asked for: still a skip, never an error."""
+    monkeypatch.delenv("BULKSEQ_REQUIRE_R", raising=False)
+    monkeypatch.delenv("BULKSEQ_REQUIRE_R_FULL", raising=False)
     monkeypatch.setattr(_runtime, "_runs_with", lambda command, packages: False)
     reset_probe_cache()
 
@@ -152,7 +175,8 @@ def test_every_r_caller_skips_when_the_packages_are_missing(monkeypatch, tmp_pat
         # Both of these resolve bash, not an R package set, so a package-less R is not their
         # skip condition; the no-runtime gate above is what covers them.
         if name.endswith("_wsl_bulkseq_snakemake") or name in {
-                "test_per_sample_strandedness", "test_de_common", "test_sample_labels"}:
+                "test_per_sample_strandedness", "test_de_common", "test_sample_labels",
+                "test_setup_bootstrap", "test_setup_installer"}:
             continue
         try:
             call()

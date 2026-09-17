@@ -3,11 +3,9 @@
 tests/test_docs_site.py holds the generated site to its own source: it re-runs
 docs_src/build.mjs, compares the result with the committed docs/, resolves every internal
 link and image, and checks each page header against the living ``APP_VERSION``. This file
-holds the same tree to the *release it claims to document*. ``PUBLIC_VERSION`` below is
-that claim, written by hand when a release is cut, so the two gates fail on different
-mistakes: a site rebuilt from an un-bumped source fails there, a site whose published
-version claim was never advanced fails here, and the README -- which the build never
-touches -- is only covered here.
+holds the same tree to independent public-release and archive version boundaries. Those
+values are written by hand when their states change, so the checks cannot simply follow a
+bumped application declaration.
 
 Checks that belong to the generated site alone (build parity, internal links and anchors,
 images and their alt text, the per-page label against APP_VERSION) live in
@@ -26,16 +24,9 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS_ROOT = ROOT / "docs"
 DOCS_SRC = ROOT / "docs_src"
 README_PATH = ROOT / "README.md"
-# The public software version is a release-time constant, not a derivation: the site is
-# rebuilt in the same change as the version bump, and this constant is the specification of
-# which release the published site documents. Writing it by hand is what makes a forgotten
-# site rebuild fail here instead of shipping -- a derived value would simply follow the bump
-# and agree with itself. The tree is otherwise held to one version: the assertions below
-# require the site source and APP_VERSION to match this constant, so documenting a release
-# older than the tree during a candidate cycle means editing this constant deliberately, not
-# deleting that check. The deposited benchmark archive has its own version and must not be
-# relabelled when the application advances.
-PUBLIC_VERSION = "0.31.0"
+# These independent states are deliberately not derived from application values. The
+# application and public handbook must advance together, while the archive remains fixed.
+PUBLIC_VERSION = "0.32.0"
 ARCHIVE_VERSION = "0.26.6"
 CANONICAL_RELEASE_LINK = "https://github.com/tunabirgun/bulkseq-studio/releases/latest"
 RELEASE_TAG_LINK = "https://github.com/tunabirgun/bulkseq-studio/releases/tag/v"
@@ -74,16 +65,18 @@ def _header_label(version: str) -> str:
     return rendered
 
 
+def _released_sections(changelog: str) -> list[tuple[str, str]]:
+    """Return dated release sections only."""
+    headings = list(re.finditer(r"^## (\d+\.\d+\.\d+) — \d{4}-\d{2}-\d{2}(?:\s|$)", changelog, re.MULTILINE))
+    return [
+        (match.group(1), changelog[match.start(): headings[index + 1].start() if index + 1 < len(headings) else len(changelog)])
+        for index, match in enumerate(headings)
+    ]
+
+
 def _versions_with_scientific_notice(changelog: str) -> list[str]:
-    """Returns released versions whose changelog section contains '(*scientific*)'."""
-    released_versions = re.findall(r"^## (\d+\.\d+\.\d+)", changelog, re.MULTILINE)
-    changelog_sections = re.split(r"^## (?=\d+\.\d+\.\d+)", changelog, flags=re.MULTILINE)
-    versions_with_scientific = []
-    for i, version in enumerate(released_versions):
-        section = changelog_sections[i + 1] if i + 1 < len(changelog_sections) else ""
-        if "(*scientific*)" in section:
-            versions_with_scientific.append(version)
-    return versions_with_scientific
+    """Returns dated released versions whose section contains '(*scientific*)'."""
+    return [version for version, section in _released_sections(changelog) if "(*scientific*)" in section]
 
 
 def _latest_scientific_version(public_version: str, changelog: str) -> str | None:
@@ -92,7 +85,7 @@ def _latest_scientific_version(public_version: str, changelog: str) -> str | Non
     None when the public version is not released yet, or when no released version up to
     it changed scientific output -- in both cases the site owes no notice.
     """
-    released_versions = re.findall(r"^## (\d+\.\d+\.\d+)", changelog, re.MULTILINE)
+    released_versions = [version for version, _ in _released_sections(changelog)]
     if public_version not in released_versions:
         return None
     versions_with_scientific = _versions_with_scientific_notice(changelog)
@@ -208,8 +201,8 @@ def _readme_errors(readme: str, pages: dict[str, str]) -> list[str]:
         errors.append(f"README.md: public-download boundary does not name {PUBLIC_VERSION}")
     if CANONICAL_RELEASE_LINK not in readme:
         errors.append("README.md: missing canonical public-release link")
-    if "source candidate" in lowered or "source-candidate" in lowered:
-        errors.append("README.md: unpublished source-candidate claim remains")
+    if "unreleased" in lowered or "development source" in lowered:
+        errors.append("README.md: published release is still presented as unpublished development source")
 
     # The deposited archive is versioned separately; advancing the application must not
     # relabel it. Its citation block is the place that would silently inherit a bump.
@@ -256,7 +249,39 @@ def _validation_errors(
 ) -> list[str]:
     pages = _page_sources(page_overrides)
     readme = readme_override if readme_override is not None else _read(README_PATH)
-    return _page_errors(pages) + _notice_errors(pages) + _readme_errors(readme, pages)
+    return (
+        _page_errors(pages)
+        + _notice_errors(pages)
+        + _readme_errors(readme, pages)
+        + _release_artifact_errors(readme, pages)
+    )
+
+
+def _release_errors(changelog: str) -> list[str]:
+    errors = []
+    released = dict(_released_sections(changelog))
+    entry = released.get(PUBLIC_VERSION, "")
+    expected_heading = f"## {PUBLIC_VERSION} — 2026-09-18"
+    if expected_heading not in changelog:
+        errors.append("CHANGELOG.md: no dated public-release heading")
+    if f"## {PUBLIC_VERSION} — Unreleased" in changelog:
+        errors.append("CHANGELOG.md: public version is marked unreleased")
+    if not entry:
+        errors.append("CHANGELOG.md: public version is not presented as released")
+    if "**Scientific output changes.**" not in entry:
+        errors.append("CHANGELOG.md: no scientific-output change notice")
+    if "Synthetic regressions establish these corrected contracts" not in entry:
+        errors.append("CHANGELOG.md: no revalidation notice")
+    if "have not been rerun under 0.32.0" not in entry:
+        errors.append("CHANGELOG.md: no historical revalidation caveat")
+    return errors
+
+
+def _release_artifact_errors(readme: str, pages: dict[str, str]) -> list[str]:
+    errors = []
+    if "Unreleased development version 0.32.0" in "\n".join(pages.values()):
+        errors.append("docs/: published handbook is still presented as unpublished development source")
+    return errors
 
 
 def test_scientific_notice_derivation_stops_at_the_public_release() -> None:
@@ -268,13 +293,13 @@ def test_scientific_notice_derivation_stops_at_the_public_release() -> None:
     newer, public, older, unreleased = "99.3.0", "99.2.0", "99.1.0", "99.4.0"
     changelog = f"""# Changelog
 
-## {newer} - 2026-09-20
+## {newer} — 2026-09-20
 - **Later change (*scientific*).** Released after the documented version.
 
-## {public} - 2026-09-11
+## {public} — 2026-09-11
 - An interface correction.
 
-## {older} - 2026-09-10
+## {older} — 2026-09-10
 - **Shipped change (*scientific*).** In the documented release.
 """
     assert _versions_with_scientific_notice(changelog) == [newer, older]
@@ -288,7 +313,7 @@ def test_the_public_release_owes_a_notice_this_tree_must_carry() -> None:
     _latest_scientific_version returns None for an unreleased PUBLIC_VERSION, and the notice
     gate then passes unconditionally. This pins the current tree to the other case.
     """
-    released = re.findall(r"^## (\d+\.\d+\.\d+)", CHANGELOG_TEXT, re.MULTILINE)
+    released = [version for version, _ in _released_sections(CHANGELOG_TEXT)]
     assert PUBLIC_VERSION in released, (
         f"PUBLIC_VERSION {PUBLIC_VERSION} has no released CHANGELOG.md section"
     )
@@ -298,14 +323,38 @@ def test_the_public_release_owes_a_notice_this_tree_must_carry() -> None:
     )
 
 
-def test_the_site_the_application_and_the_release_claim_one_version() -> None:
+def test_public_release_and_archive_versions_remain_independent() -> None:
     documented = _documented_version()
-    assert documented == PUBLIC_VERSION, (
-        f"docs_src/site-config.mjs documents {documented}, the public release is {PUBLIC_VERSION}"
+    assert documented == PUBLIC_VERSION
+    assert _app_version() == PUBLIC_VERSION
+    project_version = re.search(r'^version = "([^"]+)"', _read(ROOT / "pyproject.toml"), re.MULTILINE)
+    assert project_version and project_version.group(1) == PUBLIC_VERSION
+    assert len({PUBLIC_VERSION, ARCHIVE_VERSION}) == 2
+    assert _release_errors(CHANGELOG_TEXT) == []
+
+
+def test_release_version_gate_rejects_an_unreleased_public_heading() -> None:
+    forged = CHANGELOG_TEXT.replace(
+        f"## {PUBLIC_VERSION} — 2026-09-18",
+        f"## {PUBLIC_VERSION} — Unreleased (2026-09-18)",
+        1,
     )
-    assert documented == _app_version(), (
-        f"docs_src/site-config.mjs documents {documented}, APP_VERSION is {_app_version()}"
-    )
+    assert any("public version is marked unreleased" in error for error in _release_errors(forged))
+
+
+def test_release_version_gate_rejects_a_missing_revalidation_notice() -> None:
+    missing = CHANGELOG_TEXT.replace("Synthetic regressions establish these corrected contracts", "", 1)
+    assert any("no revalidation notice" in error for error in _release_errors(missing))
+
+
+def test_release_version_gate_rejects_a_missing_scientific_output_notice() -> None:
+    missing = CHANGELOG_TEXT.replace("**Scientific output changes.**", "", 1)
+    assert any("no scientific-output change notice" in error for error in _release_errors(missing))
+
+
+def test_release_version_gate_rejects_a_missing_historical_revalidation_caveat() -> None:
+    missing = CHANGELOG_TEXT.replace("have not been rerun under 0.32.0", "", 1)
+    assert any("no historical revalidation caveat" in error for error in _release_errors(missing))
 
 
 def test_documentation_gate_passes_current_tree() -> None:
@@ -328,8 +377,8 @@ def _replace_once(source: str, old: str, new: str) -> str:
         ("faq.html", '>Common problems<a class="heading-link"', '>Benchmarks<a class="heading-link"', "retired benchmark section remains"),
         ("faq.html", f"<strong>{LATEST_SCIENTIFIC_VERSION}:</strong>", "<strong>Latest:</strong>", "missing notice for scientific output changes"),
         ("faq.html", f"{RELEASE_TAG_LINK}{LATEST_SCIENTIFIC_VERSION}", f"{RELEASE_TAG_LINK}0.0.1", "does not link to the"),
-        ("README.md", f"Version {PUBLIC_VERSION} is the current public release.", f"Version {PUBLIC_VERSION} is a source candidate.", "source-candidate claim"),
-        ("README.md", f"Version {PUBLIC_VERSION} is the current public release.", "Version 0.30.1 is the current public release.", "release-status line does not name"),
+        ("README.md", f"Version {PUBLIC_VERSION} is the current public release.", f"Version {PUBLIC_VERSION} is the unreleased development source.", "published release is still presented"),
+        ("README.md", f"Version {PUBLIC_VERSION} is the current public release.", "Version 0.31.0 is the current public release.", "release-status line does not name"),
         ("README.md", f"Download public v{PUBLIC_VERSION}", "Download the latest release", "public-download boundary"),
         ("README.md", CANONICAL_RELEASE_LINK, "https://github.com/tunabirgun/bulkseq-studio/releases", "canonical public-release link"),
         ("README.md", "BulkSeq Studio is a cross-platform desktop application ", "BulkSeq Studio is a cross-platform desktop\napplication ", "one physical line"),
@@ -347,7 +396,7 @@ def _replace_once(source: str, old: str, new: str) -> str:
         "retired-benchmark-section",
         "missing-scientific-notice",
         "notice-without-a-release-link",
-        "unpublished-source-candidate",
+        "unpublished-release-status",
         "stale-release-status-line",
         "missing-download-boundary",
         "missing-canonical-release-link",

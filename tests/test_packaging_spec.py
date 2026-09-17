@@ -5,12 +5,14 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tomllib
+import zipfile
 
 import pytest
 
 
-def test_python_distribution_discovers_only_the_application_package() -> None:
+def test_python_distribution_includes_the_application_and_shared_workflow_helper() -> None:
     repo = Path(__file__).resolve().parents[1]
     with (repo / "pyproject.toml").open("rb") as handle:
         metadata = tomllib.load(handle)
@@ -22,10 +24,90 @@ def test_python_distribution_discovers_only_the_application_package() -> None:
     assert metadata["tool"]["setuptools"]["packages"]["find"]["include"] == [
         "app",
         "app.*",
+        "workflow",
+        "workflow.scripts",
     ]
+    assert metadata["tool"]["setuptools"]["packages"]["find"]["namespaces"] is True
     package_data = metadata["tool"]["setuptools"]["package-data"]["app"]
     assert "data/*.yaml" in package_data
     assert "assets/**/*" in package_data
+
+
+def test_release_version_declarations_are_synchronised() -> None:
+    repo = Path(__file__).resolve().parents[1]
+    expected = "0.32.0"
+    constants = (repo / "app" / "constants.py").read_text(encoding="utf-8")
+    assert f'APP_VERSION = "{expected}"' in constants
+    assert f'WORKFLOW_VERSION = "{expected}"' in constants
+    with (repo / "pyproject.toml").open("rb") as handle:
+        assert tomllib.load(handle)["project"]["version"] == expected
+    installer = (repo / "packaging" / "installer.iss").read_text(encoding="utf-8")
+    assert f'#define MyAppVersion "{expected}"' in installer
+
+
+def test_matrix_ci_installs_the_declared_no_isolation_build_requirements() -> None:
+    repo = Path(__file__).resolve().parents[1]
+    workflow = (repo / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    assert "import tomllib" in workflow
+    assert 'tomllib.load(handle)["build-system"]["requires"]' in workflow
+    assert '"pip", "install", *build_requires' in workflow
+
+
+def test_built_wheel_exposes_the_shared_count_validator_to_the_gui(tmp_path: Path) -> None:
+    repo = Path(__file__).resolve().parents[1]
+    source = tmp_path / "source"
+    source.mkdir()
+    for name in ("pyproject.toml", "README.md"):
+        shutil.copy2(repo / name, source / name)
+    shutil.copytree(repo / "app", source / "app", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    scripts = source / "workflow" / "scripts"
+    scripts.mkdir(parents=True)
+    shutil.copy2(
+        repo / "workflow" / "scripts" / "count_matrix_validation.py",
+        scripts / "count_matrix_validation.py",
+    )
+
+    wheel_dir = tmp_path / "wheel"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            "--no-build-isolation",
+            "--no-deps",
+            "--wheel-dir",
+            str(wheel_dir),
+            str(source),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    wheel = next(wheel_dir.glob("*.whl"))
+    installed = tmp_path / "installed"
+    with zipfile.ZipFile(wheel) as archive:
+        archive.extractall(installed)
+
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from app.ui import main_window; "
+                "from workflow.scripts import count_matrix_validation; "
+                "print(main_window.__file__); print(count_matrix_validation.__file__)"
+            ),
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(installed)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+    assert str(installed) in probe.stdout
 
 
 def test_pyinstaller_spec_resolves_repository_root() -> None:

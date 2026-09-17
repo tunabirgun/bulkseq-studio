@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import os
 import platform
-import shlex
 import signal
 import subprocess
 import uuid
 from pathlib import Path
 
-from app.core.paths import UnsupportedUncPathError, app_root, windows_to_wsl_path
+from app.core.paths import (
+    UnsupportedUncPathError,
+    app_root,
+    bioenv_setup_log_dir,
+    windows_to_wsl_path,
+)
 from app.core.snakemake_runner import RUN_TAG_PREFIX, build_wsl_kill_command
 
 
@@ -47,19 +51,21 @@ def build_wsl_bioenv_command(env_name: str = "bulkseq", distro: str | None = Non
                              profile: str = "core", rebuild: bool = False,
                              run_tag: str | None = None) -> list[str]:
     try:
-        repo = windows_to_wsl_path(app_root())
         script = windows_to_wsl_path(wsl_bioenv_script())
+        log_dir = windows_to_wsl_path(bioenv_setup_log_dir())
     except UnsupportedUncPathError as exc:
-        raise RuntimeError(f"The application is installed on a network share that WSL cannot open: {exc}") from exc
-    # BULKSEQ_REBUILD=1 tells the setup script to remove and recreate the env from scratch
-    # (a clean rebuild), instead of an in-place update that can leave R/Bioconductor mixed.
-    # Every interpolated value is shell-quoted: an install path containing an apostrophe
-    # (C:\Users\O'Brien\...) otherwise closed the quoting and broke the command apart.
-    prefix = "export BULKSEQ_REBUILD=1 && " if rebuild else ""
-    tag = f"export {run_tag}=1 && " if run_tag else ""
-    inner = (f"{tag}{prefix}cd {shlex.quote(repo)} && bash {shlex.quote(script)} "
-             f"{shlex.quote(env_name)} {shlex.quote(profile)}")
-    return ["wsl"] + (["-d", distro] if distro else []) + ["--", "bash", "-lc", inner]
+        raise RuntimeError(
+            f"The application or its installer-log directory is on a network share that WSL cannot open: {exc}"
+        ) from exc
+    # Transport the script, profile, and writable log destination as literal arguments.
+    # The setup script locates its own repository.
+    environment = [f"BULKSEQ_SETUP_LOG_DIR={log_dir}"]
+    if rebuild:
+        environment.append("BULKSEQ_REBUILD=1")
+    if run_tag:
+        environment.append(f"{run_tag}=1")
+    return (["wsl"] + (["-d", distro] if distro else []) +
+            ["--exec", "env", *environment, "bash", script, env_name, profile])
 
 
 def launch_wsl_bioenv_install(env_name: str = "bulkseq", distro: str | None = None,
@@ -93,9 +99,9 @@ def build_native_bioenv_command(env_name: str = "bulkseq", profile: str = "core"
 def launch_native_bioenv_install(env_name: str = "bulkseq", profile: str = "core",
                                  rebuild: bool = False) -> subprocess.Popen[str]:
     # A clean rebuild is requested via the BULKSEQ_REBUILD env var the setup script reads.
-    env = None
+    env = dict(os.environ)
+    env["BULKSEQ_SETUP_LOG_DIR"] = str(bioenv_setup_log_dir())
     if rebuild:
-        env = dict(os.environ)
         env["BULKSEQ_REBUILD"] = "1"
     return subprocess.Popen(
         build_native_bioenv_command(env_name, profile),

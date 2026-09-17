@@ -12,7 +12,7 @@ local({
 
 # Wilcoxon rank-sum per-gene SENSITIVITY / concordance diagnostic (0.6.0).
 # A non-parametric cross-check on the DESeq2/limma calls. NOT a DEG caller: at
-# small n per group (e.g. 3v3) the exact two-sided p cannot reach 0.05, so this
+# small n per group, exact p-values are discrete and power is limited, so this
 # is reported as a rank-concordance diagnostic and a small-n warning, never as
 # thresholded significance. Backend-agnostic (reads assay(vsd) + the contrast).
 
@@ -122,7 +122,7 @@ small <- n_min < 5
 status <- if (small) "WARNING" else "PASS"
 msg <- sprintf("Wilcoxon sensitivity DIAGNOSTIC (not for calling DEGs): %s vs %s, n=%d/%d; %d genes tested, %d skipped (constant), %d with ties.%s",
                num, den, length(i_num), length(i_den), sum(ok), sum(!ok), ties,
-               if (small) sprintf(" Small n/group (%d): Wilcoxon is underpowered here (exact p cannot reach 0.05); use as a rank-concordance check only.", n_min) else "")
+               if (small) sprintf(" Small n/group (%d): exact p-values are discrete and the test has limited power; use as a rank-concordance check only.", n_min) else "")
 write_check(out[["check"]], status, msg)
 
 sink(type = "message")

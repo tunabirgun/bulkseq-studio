@@ -72,6 +72,7 @@ if META_MODE:
         input:
             results="results/meta/meta_analysis_results.csv",
             de_results="results/deseq2/deseq2_results.csv",
+            selection_helper="workflow/scripts/meta_de_selection.R",
         output:
             manifest="results/meta/per_study/manifest.json",
         params:
@@ -93,9 +94,12 @@ if META_MODE:
         rule meta_enrichment:
             input:
                 results="results/meta/meta_analysis_results.csv",
+                mapping_helper="workflow/scripts/enrichment_mapping.R",
+                selection_helper="workflow/scripts/meta_de_selection.R",
             output:
                 ora="results/meta/meta_enrichment_ora.csv",
                 objects="results/meta/meta_enrichment_objects.rds",
+                mapping="results/meta/meta_enrichment_mapping.tsv",
                 check="checks/18_meta_enrichment_qc.json",
             params:
                 orgdb=_ENR.get("orgdb") or _MAPPED[0],
@@ -103,6 +107,7 @@ if META_MODE:
                 kegg=_ENR.get("kegg_organism") or _MAPPED[2],
                 ont=_ENR.get("go_ontology", "BP"),
                 alpha=_META_DE.get("alpha", 0.05),
+                lfc_threshold=_META_DE.get("lfc_threshold", 1.0),
             benchmark:
                 "benchmarks/meta_enrichment.tsv"
             log:

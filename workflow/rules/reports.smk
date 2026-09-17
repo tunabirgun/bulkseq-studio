@@ -100,6 +100,7 @@ rule final_reports:
 # and the DE table; reads figures/enrichment opportunistically. Runs in every input mode.
 rule html_report:
     input:
+        generator="workflow/scripts/make_html_report.py",
         run_txt="results/reports/run_summary.txt",
         results="results/deseq2/deseq2_results.csv",
         # Order the report AFTER the figures rule: the report embeds results/figures/*.png read off
@@ -136,6 +137,8 @@ if META_MODE:
 
     rule meta_report:
         input:
+            generator="workflow/scripts/make_meta_report.py",
+            shared_dialog_generator="workflow/scripts/make_html_report.py",
             **_meta_report_inputs,
         output:
             html="results/reports/meta_analysis_report.html",

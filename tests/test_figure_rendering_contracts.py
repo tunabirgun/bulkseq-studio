@@ -5,12 +5,13 @@ import html
 import json
 import os
 import re
-import shutil
 import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
+
+from _runtime import Runtime, rscript_runtime
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,23 +22,62 @@ def _text(name: str) -> str:
     return (SCRIPTS / name).read_text(encoding="utf-8")
 
 
-def _skip_or_fail(reason: str) -> None:
+def _skip_or_fail(reason: str, *, full_stack: bool = False) -> None:
     """Skip when R is merely absent, fail when the caller declared R mandatory.
 
     A rendering gate that silently skips is a gate that never runs: CI installs R and
     sets BULKSEQ_REQUIRE_R=1, so a missing Rscript or R package there is a defect in the
     job, not a property of the host.
     """
-    if os.environ.get("BULKSEQ_REQUIRE_R"):
+    if os.environ.get("BULKSEQ_REQUIRE_R_FULL") or (
+        not full_stack and os.environ.get("BULKSEQ_REQUIRE_R")
+    ):
         pytest.fail(reason)
     pytest.skip(reason)
 
 
-def _rscript() -> str:
-    path = shutil.which("Rscript")
-    if not path:
-        _skip_or_fail("Rscript is unavailable on this host")
-    return path
+def _r_runtime(*packages: str, full_stack: bool = False) -> Runtime:
+    runtime = rscript_runtime(*packages)
+    if runtime is None:
+        _skip_or_fail(
+            "Rscript or required R packages are unavailable in this environment",
+            full_stack=full_stack,
+        )
+    return runtime
+
+
+def test_missing_ordinary_runtime_skips_without_a_mandatory_flag(monkeypatch) -> None:
+    monkeypatch.delenv("BULKSEQ_REQUIRE_R", raising=False)
+    monkeypatch.delenv("BULKSEQ_REQUIRE_R_FULL", raising=False)
+    monkeypatch.setattr(__import__(__name__), "rscript_runtime", lambda *packages: None)
+    with pytest.raises(pytest.skip.Exception):
+        _r_runtime()
+
+
+@pytest.mark.parametrize("flag", ("BULKSEQ_REQUIRE_R", "BULKSEQ_REQUIRE_R_FULL"))
+def test_missing_ordinary_runtime_fails_under_either_mandatory_flag(monkeypatch, flag: str) -> None:
+    monkeypatch.delenv("BULKSEQ_REQUIRE_R", raising=False)
+    monkeypatch.delenv("BULKSEQ_REQUIRE_R_FULL", raising=False)
+    monkeypatch.setenv(flag, "1")
+    monkeypatch.setattr(__import__(__name__), "rscript_runtime", lambda *packages: None)
+    with pytest.raises(pytest.fail.Exception):
+        _r_runtime()
+
+
+def test_missing_full_stack_skips_in_the_cran_mandatory_job(monkeypatch) -> None:
+    monkeypatch.setenv("BULKSEQ_REQUIRE_R", "1")
+    monkeypatch.delenv("BULKSEQ_REQUIRE_R_FULL", raising=False)
+    monkeypatch.setattr(__import__(__name__), "rscript_runtime", lambda *packages: None)
+    with pytest.raises(pytest.skip.Exception):
+        _r_runtime("DESeq2", full_stack=True)
+
+
+def test_missing_full_stack_fails_in_the_full_mandatory_job(monkeypatch) -> None:
+    monkeypatch.delenv("BULKSEQ_REQUIRE_R", raising=False)
+    monkeypatch.setenv("BULKSEQ_REQUIRE_R_FULL", "1")
+    monkeypatch.setattr(__import__(__name__), "rscript_runtime", lambda *packages: None)
+    with pytest.raises(pytest.fail.Exception):
+        _r_runtime("DESeq2", full_stack=True)
 
 
 def _r_function_source(source: str, *names: str) -> str:
@@ -131,11 +171,12 @@ cat(sprintf(
 """
 
 
-def _run_r_values(rscript: str, tmp_path: Path, script: str, name: str) -> dict[str, float]:
+def _run_r_values(runtime: Runtime, tmp_path: Path, script: str, name: str) -> dict[str, float]:
     path = tmp_path / name
     path.write_text(script, encoding="utf-8")
+    command, runtime_path = runtime
     result = subprocess.run(
-        [rscript, "--vanilla", str(path)], capture_output=True, text=True, timeout=120,
+        [*command, runtime_path(path)], capture_output=True, text=True, timeout=120,
         check=False,
     )
     assert result.returncode == 0, result.stderr
@@ -148,9 +189,9 @@ def _run_r_values(rscript: str, tmp_path: Path, script: str, name: str) -> dict[
 
 
 def _assert_measured_label_angles(
-    rscript: str, tmp_path: Path, helper: str, probe: str, name: str
+    runtime: Runtime, tmp_path: Path, helper: str, probe: str, name: str
 ) -> None:
-    values = _run_r_values(rscript, tmp_path, helper + probe + _ANGLE_FIXTURE, name)
+    values = _run_r_values(runtime, tmp_path, helper + probe + _ANGLE_FIXTURE, name)
     gap = values["gap_pt"]
     # The narrow cell must sit inside the band where the upright column fits and neither
     # the horizontal nor the diagonal one does, so 90 is a measured choice, not a fallback.
@@ -542,8 +583,8 @@ def _assert_seam_free_continuous_svg(svg: str) -> None:
 
 
 def test_contrast_colour_mapping_is_semantic_and_order_invariant() -> None:
-    rscript = _rscript()
-    style_path = (SCRIPTS / "figure_style.R").as_posix().replace("'", "\\'")
+    command, runtime_path = _r_runtime()
+    style_path = runtime_path(SCRIPTS / "figure_style.R").replace("'", "\\'")
     expr = f"""
 source('{style_path}')
 p <- c('#2C7BB6','#C0392B','#2E7D32','#B26A00','#6A1B9A')
@@ -554,7 +595,7 @@ stopifnot(identical(a[sort(names(a))], b[sort(names(b))]))
 stopifnot(a[['control']] == p[1], a[['treated']] == p[2])
 """
     result = subprocess.run(
-        [rscript, "-e", expr], capture_output=True, text=True, timeout=30, check=False
+        [*command, "-e", expr], capture_output=True, text=True, timeout=30, check=False
     )
     assert result.returncode == 0, result.stderr
 
@@ -726,28 +767,14 @@ def test_volcano_ranked_key_contract_rejects_fixed_width_only_layout() -> None:
 def test_volcano_dense_capped_and_regular_key_renders_without_clipping(
     tmp_path: Path,
 ) -> None:
-    rscript = _rscript()
-    package_probe = subprocess.run(
-        [
-            rscript,
-            "-e",
-            "quit(status=ifelse(requireNamespace('ggplot2',quietly=TRUE)&&requireNamespace('svglite',quietly=TRUE),0,77))",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-    if package_probe.returncode == 77:
-        _skip_or_fail("ggplot2 or svglite is unavailable in the R environment")
-    assert package_probe.returncode == 0, package_probe.stderr
+    command, runtime_path = _r_runtime("ggplot2", "svglite")
 
     core = _text("make_figures.R")
     start = core.index("# ---- Volcano ranked-key geometry")
     end = core.index("# ---- End volcano-label geometry", start)
     helper = core[start:end]
     svg_path = tmp_path / "dense-volcano-key.svg"
-    r_path = svg_path.as_posix().replace("'", "\\'")
+    r_path = runtime_path(svg_path).replace("'", "\\'")
     capped_left = [f"leftg_{index:02d}" for index in range(1, 7)]
     capped_right = [f"rightg_{index:02d}" for index in range(1, 7)]
     regular = ["left_A", "left_B", "right_A", "right_B"]
@@ -786,7 +813,7 @@ grDevices::dev.off()
     script_path = tmp_path / "dense-volcano-key.R"
     script_path.write_text(script, encoding="utf-8")
     result = subprocess.run(
-        [rscript, "--vanilla", str(script_path)], capture_output=True, text=True,
+        [*command, runtime_path(script_path)], capture_output=True, text=True,
         timeout=120, check=False,
     )
     assert result.returncode == 0, result.stderr
@@ -802,7 +829,7 @@ grDevices::dev.off()
     )
 
     adaptive_svg_path = tmp_path / "adaptive-width-volcano-key.svg"
-    adaptive_r_path = adaptive_svg_path.as_posix().replace("'", "\\'")
+    adaptive_r_path = runtime_path(adaptive_svg_path).replace("'", "\\'")
     long_labels = [f"{label}_with_a_measured_long_identifier" for label in all_labels]
     r_long_labels = ",".join(f"'{label}'" for label in long_labels)
     adaptive_script = f"""
@@ -832,7 +859,7 @@ grDevices::dev.off()
     adaptive_script_path = tmp_path / "adaptive-width-volcano-key.R"
     adaptive_script_path.write_text(adaptive_script, encoding="utf-8")
     adaptive = subprocess.run(
-        [rscript, "--vanilla", str(adaptive_script_path)], capture_output=True, text=True,
+        [*command, runtime_path(adaptive_script_path)], capture_output=True, text=True,
         timeout=120, check=False,
     )
     assert adaptive.returncode == 0, adaptive.stderr
@@ -862,7 +889,7 @@ volcano_add_ranked_key(p,labels,xm=4,ytop=8,canvas_w=6,canvas_h=1,label_size=4)
     capacity_script_path = tmp_path / "capacity-volcano-key.R"
     capacity_script_path.write_text(capacity_script, encoding="utf-8")
     capacity = subprocess.run(
-        [rscript, "--vanilla", str(capacity_script_path)], capture_output=True, text=True,
+        [*command, runtime_path(capacity_script_path)], capture_output=True, text=True,
         timeout=120, check=False,
     )
     assert capacity.returncode != 0
@@ -875,7 +902,7 @@ def test_sample_distance_labels_adapt_to_rendered_geometry() -> None:
 def test_sample_distance_label_layout_returns_measured_angles(tmp_path: Path) -> None:
     helper = _r_function_source(_text("make_figures.R"), "sample_distance_label_layout")
     _assert_measured_label_angles(
-        _rscript(), tmp_path, helper, _SAMPLE_DISTANCE_PROBE, "sample-distance-angles.R"
+        _r_runtime(), tmp_path, helper, _SAMPLE_DISTANCE_PROBE, "sample-distance-angles.R"
     )
 
 
@@ -885,7 +912,7 @@ def test_sample_distance_angle_gate_rejects_a_transposed_projection(tmp_path: Pa
     # by an R script that failed to run.
     with pytest.raises(AssertionError, match="rotate upright"):
         _assert_measured_label_angles(
-            _rscript(), tmp_path, _swap_cos_and_sin(helper), _SAMPLE_DISTANCE_PROBE,
+            _r_runtime(), tmp_path, _swap_cos_and_sin(helper), _SAMPLE_DISTANCE_PROBE,
             "sample-distance-transposed.R",
         )
 
@@ -921,7 +948,7 @@ def test_correlation_label_layout_returns_measured_angles(tmp_path: Path) -> Non
         _text("sample_correlation.R"), "measure_correlation_text", "correlation_label_layout"
     )
     _assert_measured_label_angles(
-        _rscript(), tmp_path, helper, _CORRELATION_PROBE, "correlation-angles.R"
+        _r_runtime(), tmp_path, helper, _CORRELATION_PROBE, "correlation-angles.R"
     )
 
 
@@ -931,7 +958,7 @@ def test_correlation_angle_gate_rejects_a_transposed_projection(tmp_path: Path) 
     )
     with pytest.raises(AssertionError, match="rotate upright"):
         _assert_measured_label_angles(
-            _rscript(), tmp_path, _swap_cos_and_sin(helper), _CORRELATION_PROBE,
+            _r_runtime(), tmp_path, _swap_cos_and_sin(helper), _CORRELATION_PROBE,
             "correlation-transposed.R",
         )
 
@@ -992,13 +1019,13 @@ def test_sample_distance_legend_contract_rejects_the_seamed_rect_stack() -> None
 
 
 def test_sample_distance_legend_transform_renders_one_svg_gradient(tmp_path: Path) -> None:
-    rscript = _rscript()
+    command, runtime_path = _r_runtime("svglite")
     core = _text("make_figures.R")
     start = core.index("smooth_continuous_legend <- function")
     end = core.index("# ---- Grouping factor", start)
     helper = core[start:end]
     svg_path = tmp_path / "legend.svg"
-    r_path = svg_path.as_posix().replace("'", "\\'")
+    r_path = runtime_path(svg_path).replace("'", "\\'")
     script = f"""
 if (!requireNamespace('svglite', quietly = TRUE)) quit(status = 77)
 {helper}
@@ -1019,11 +1046,9 @@ grid::grid.newpage(); grid::grid.draw(fixed$grobs[[1]]); grDevices::dev.off()
     script_path = tmp_path / "sample-distance-gradient.R"
     script_path.write_text(script, encoding="utf-8")
     result = subprocess.run(
-        [rscript, "--vanilla", str(script_path)], capture_output=True, text=True,
+        [*command, runtime_path(script_path)], capture_output=True, text=True,
         timeout=30, check=False,
     )
-    if result.returncode == 77:
-        _skip_or_fail("svglite is unavailable in the R environment")
     assert result.returncode == 0, result.stderr
     assert svg_path.is_file(), result.stdout + result.stderr
     _assert_seam_free_continuous_svg(svg_path.read_text(encoding="utf-8"))
@@ -1215,7 +1240,7 @@ _CORE_FIGURE_KEYS = (
 )
 
 
-def _core_figure_render_script(work: Path) -> str:
+def _core_figure_render_script(work: Path, runtime_path) -> str:
     """Render make_figures.R on a synthetic DESeq2 object, twice.
 
     'normal' carries a low-count cloud whose padj is NA (independent filtering) and a
@@ -1223,8 +1248,8 @@ def _core_figure_render_script(work: Path) -> str:
     Counts are written to render_facts.json so the assertions are derived from the
     fixture rather than restated.
     """
-    scripts = SCRIPTS.as_posix().replace("'", "\'")
-    root = work.as_posix().replace("'", "\'")
+    scripts = runtime_path(SCRIPTS).replace("'", "\\'")
+    root = runtime_path(work).replace("'", "\\'")
     outputs = ",\n    ".join(
         f"{key}_png=file.path(w, paste0(tag, '_{key}.png')), "
         f"{key}_svg=file.path(w, paste0(tag, '_{key}.svg'))"
@@ -1287,25 +1312,16 @@ render('allna', res_na, rl_na)
 
 @pytest.fixture(scope="module")
 def core_figure_render(tmp_path_factory) -> tuple[Path, dict]:
-    rscript = _rscript()
-    probe = subprocess.run(
-        [rscript, "-e",
-         "quit(status=ifelse(all(vapply(c('DESeq2','ggplot2','ggrepel','pheatmap',"
-         "'svglite','ggnewscale','jsonlite'),requireNamespace,logical(1),quietly=TRUE)),0,77))"],
-        capture_output=True, text=True, timeout=300, check=False,
+    command, runtime_path = _r_runtime(
+        "DESeq2", "ggplot2", "ggrepel", "pheatmap", "svglite", "ggnewscale", "jsonlite",
+        full_stack=True,
     )
-    if probe.returncode == 77:
-        # The full-figure render needs the Bioconductor stack (DESeq2); a plain R runner has only
-        # CRAN, so this stays a skip unless the caller asks for the full stack explicitly.
-        (pytest.fail if os.environ.get("BULKSEQ_REQUIRE_R_FULL") else pytest.skip)(
-            "the R figure packages (incl. DESeq2) are unavailable in this environment")
-    assert probe.returncode == 0, probe.stderr
 
     work = tmp_path_factory.mktemp("core-figures")
     script = work / "render.R"
-    script.write_text(_core_figure_render_script(work), encoding="utf-8")
+    script.write_text(_core_figure_render_script(work, runtime_path), encoding="utf-8")
     result = subprocess.run(
-        [rscript, "--vanilla", str(script)], capture_output=True, text=True,
+        [*command, runtime_path(script)], capture_output=True, text=True,
         timeout=900, check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr

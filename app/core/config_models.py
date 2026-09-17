@@ -157,7 +157,7 @@ class InputConfig(BaseModel):
     # canonical results/counts/counts.txt and runs DESeq2 -> figures -> enrichment.
     count_matrix: str | None = None
     # When type == count_matrix: permit fractional RSEM/tximport ESTIMATED counts (rounded to
-    # integers for DESeq2). Off by default so mostly-fractional input (TPM/FPKM/RMA/normalized) is
+    # integers for DESeq2 using round-half-to-even). Off by default so any fractional input is
     # refused rather than silently rounded into a corrupt count model.
     estimated_counts: bool = False
     # When type == deseq2_results: a user-supplied DESeq2 results table; the pipeline

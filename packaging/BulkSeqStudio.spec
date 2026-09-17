@@ -67,7 +67,7 @@ a = Analysis(
     binaries=[],
     datas=datas,
     hiddenimports=["openpyxl"],
-    hookspath=[],
+    hookspath=[os.path.join(ROOT, "packaging", "hooks")],
     runtime_hooks=[],
     excludes=[
         "matplotlib",

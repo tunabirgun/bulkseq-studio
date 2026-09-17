@@ -49,9 +49,12 @@ ENRICHMENT_EVIDENCE_PREFIXES = (
     "ORA parameters:",
     "ORA multiple-testing families:",
     "GSEA parameters:",
+    "GSEA additional rank rows:",
+    "GSEA QC exclusion:",
     "GSEA ranking order:",
     "GSEA exact-score ties:",
     "GSEA duplicate canonical-ID collapse:",
+    "Mapped GSEA source collapse:",
     "Mapping limitation:",
 )
 

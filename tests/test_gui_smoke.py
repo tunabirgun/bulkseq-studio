@@ -555,11 +555,17 @@ def test_term_picker_reads_every_gene_list_csv_and_splits_joined_symbols(tmp_pat
     des = w.project_root / "results" / "deseq2"
     des.mkdir(parents=True, exist_ok=True)
     (des / "deseq2_results.csv").write_text(
-        "gene_id,symbol,log2FoldChange,padj\nFBgn1,GENB,1.0,0.01\n", encoding="utf-8")
+        "gene_id,symbol,log2FoldChange,padj\n"
+        "FBgn1,GENB,1.0,0.01\n"
+        "FBgn2,GENC,-2.0,\n",
+        encoding="utf-8")
     (enr / "id_map.csv").write_text(
-        "gene_id,base_id,symbol,entrez\nFBgn1,FBgn1,GENA;GENB,100\n", encoding="utf-8")
-    sub, unmatched = w._resolve_term_genes(["100"])
-    assert unmatched == 0 and list(sub["gene_id"]) == ["FBgn1"]
+        "gene_id,base_id,symbol,entrez\n"
+        "FBgn1,FBgn1,GENA;GENB,100\n"
+        "FBgn2,FBgn2,GENC,200\n",
+        encoding="utf-8")
+    sub, unmatched = w._resolve_term_genes(["100", "200"])
+    assert unmatched == 0 and list(sub["gene_id"]) == ["FBgn1", "FBgn2"]
     w.close()
 
 
@@ -604,20 +610,37 @@ def test_count_matrix_import_never_leaves_an_unbalanced_override_cursor(monkeypa
     _import(one_col)
     assert "gene-id column plus at least one sample" in warnings[-1]
 
-    tpm = tmp_path / "tpm.csv"
-    tpm.write_text("gene_id,s1,s2\nG1,333333.3,333333.3\nG2,333333.3,333333.3\n"
-                   "G3,333333.4,333333.4\n", encoding="utf-8")
-    _import(tpm)
-    assert "TPM, not raw counts" in warnings[-1]
+    invalid = tmp_path / "invalid.csv"
+    invalid.write_text("gene_id,s1,s2\nG1,10,20\nG2,30,oops\n", encoding="utf-8")
+    _import(invalid)
+    assert "numeric" in warnings[-1].lower()
     assert w.config.input.type != "count_matrix"
+    assert not (w.project_root / "config" / "counts_matrix.txt").exists()
 
-    frac = tmp_path / "fractional.csv"
-    frac.write_text("gene_id,s1,s2\nG1,1.5,2.5\nG2,3.5,4.5\n", encoding="utf-8")
+    negative = tmp_path / "negative.csv"
+    negative.write_text("gene_id,s1,s2\nG1,10,20\nG2,-0.1,40\n", encoding="utf-8")
+    _import(negative)
+    assert "negative" in warnings[-1].lower()
+    assert w.config.input.type != "count_matrix"
+    assert not (w.project_root / "config" / "counts_matrix.txt").exists()
+
+    prior = w.project_root / "config" / "counts_matrix.txt"
+    prior.write_bytes(b"prior count matrix bytes\n")
+    w.config.input.type = "count_matrix"
+    w.config.input.count_matrix = "config/counts_matrix.txt"
+    w.config.input.estimated_counts = True
+
+    frac = tmp_path / "single_fractional.csv"
+    frac.write_text(
+        "gene_id,s1,s2\nG1,1.5,2\nG2,3,4\nG3,5,6\nG4,7,8\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(QMessageBox, "question",
                         staticmethod(lambda *a, **k: QMessageBox.StandardButton.Cancel))
     _import(frac)
-    assert w.config.input.type != "count_matrix"      # cancelled
-    assert w.config.input.estimated_counts is False
+    assert w.config.input.type == "count_matrix"      # prior import preserved on cancellation
+    assert w.config.input.estimated_counts is True
+    assert prior.read_bytes() == b"prior count matrix bytes\n"
 
     monkeypatch.setattr(QMessageBox, "question",
                         staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
@@ -625,10 +648,14 @@ def test_count_matrix_import_never_leaves_an_unbalanced_override_cursor(monkeypa
     assert w.config.input.type == "count_matrix"
     assert w.config.input.estimated_counts is True    # RSEM/tximport estimated counts
 
-    integer = tmp_path / "counts.csv"
-    integer.write_text("gene_id,s1,s2\nG1,10,20\nG2,30,40\n", encoding="utf-8")
+    integer = tmp_path / "million_total_counts.csv"
+    integer.write_text(
+        "gene_id,s1,s2\nG1,600000,250000\nG2,400000,750000\n",
+        encoding="utf-8",
+    )
     _import(integer)
     assert w.config.input.estimated_counts is False
+    assert "near 1,000,000" in warnings[-1]
     assert (w.project_root / "config" / "counts_matrix.txt").exists()
     w.close()
 

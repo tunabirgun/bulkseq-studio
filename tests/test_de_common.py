@@ -9,6 +9,7 @@ through WSL, so the runner resolves Rscript natively first and falls back to WSL
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -127,6 +128,35 @@ def _bash_or_skip():
     if runtime is None:
         pytest.skip("no bash runtime: install WSL2 with a distribution on Windows")
     return runtime
+
+
+def test_wilcoxon_exact_four_vs_four_counterexample(tmp_path: Path) -> None:
+    bash, as_path = _bash_or_skip()
+    harness = tmp_path / "wilcoxon_exact_counterexample.R"
+    harness.write_text(
+        "cat(sprintf('R.version.string=%s\\n', R.version.string))\n"
+        "p <- stats::wilcox.test(1:4, 5:8, exact = TRUE)$p.value\n"
+        "stopifnot(p < 0.05, isTRUE(all.equal(p, 2 / choose(8, 4), tolerance = 1e-12)))\n"
+        "cat(sprintf('exact_p=%.8f expected=%.8f\\n', p, 2 / choose(8, 4)))\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    runner = tmp_path / "run_r.sh"
+    runner.write_text(_RUNNER, encoding="utf-8", newline="\n")
+    completed = subprocess.run(
+        [*bash, as_path(runner), as_path(harness)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if completed.returncode == _NO_R:
+        reason = "R runtime unavailable for the Wilcoxon exact-p counterexample"
+        (pytest.fail if (os.environ.get("BULKSEQ_REQUIRE_R")
+                         or os.environ.get("BULKSEQ_REQUIRE_R_FULL")) else pytest.skip)(reason)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "R.version.string=R version " in completed.stdout
+    assert "exact_p=0.02857143 expected=0.02857143" in completed.stdout
 
 
 @pytest.fixture(scope="module")

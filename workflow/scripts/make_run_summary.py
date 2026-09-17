@@ -1068,13 +1068,35 @@ def ppi_provenance_lines(payload: dict) -> list[str]:
     ]
 
 
+def workflow_tree_digest(root: Path) -> str | None:
+    """Hash the executable project workflow, excluding caches and its own metadata."""
+    if not root.is_dir():
+        return None
+    digest = hashlib.sha256()
+    paths = [
+        candidate for candidate in root.rglob("*")
+        if candidate.is_file()
+        and "__pycache__" not in candidate.relative_to(root).parts
+        and candidate.suffix.casefold() not in {".pyc", ".pyo"}
+        and candidate.name != "workflow_metadata.yaml"
+    ]
+    for path in sorted(paths, key=lambda candidate: candidate.relative_to(root).as_posix()):
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def workflow_provenance(root: Path, project: dict) -> dict:
     # The project's config.yaml project block stamps app/workflow version only at project
     # creation. app/core/project.py's sync_workflow_if_outdated re-copies workflow/ (and
     # writes workflow/workflow_metadata.yaml) whenever a newer app opens an existing
-    # project, so that file -- not the stamp -- reflects what actually ran. Fall back to
-    # the creation stamp, explicitly labelled, when the metadata file is absent or unusable.
+    # project, so that file -- not the stamp -- reflects the copied bundle identity. The
+    # execution digest is always calculated from the tree being summarized, independently
+    # of metadata that can describe an earlier copy.
     creation_stamp = project.get("workflow_version")
+    execution_digest = workflow_tree_digest(root / "workflow")
     meta_path = root / "workflow" / "workflow_metadata.yaml"
     if meta_path.exists():
         try:
@@ -1085,17 +1107,27 @@ def workflow_provenance(root: Path, project: dict) -> dict:
             return {
                 "executed_version": str(data["workflow_version"]),
                 "executed_app_version": str(data["app_version"]) if data.get("app_version") else None,
-                "digest": str(data["workflow_digest"]) if data.get("workflow_digest") else None,
+                "bundle_digest": str(data["workflow_digest"]) if data.get("workflow_digest") else None,
+                "execution_digest": execution_digest,
                 "copied_at": str(data["copied_at"]) if data.get("copied_at") else None,
             }
-    return {"executed_version": creation_stamp, "executed_app_version": None, "digest": None, "copied_at": None}
+    return {"executed_version": creation_stamp, "executed_app_version": None,
+            "bundle_digest": None, "execution_digest": execution_digest, "copied_at": None}
 
 
 def workflow_version_summary(p: dict) -> str:
     executed = p.get("workflow_version")
-    digest = p.get("workflow_digest")
-    if digest:
-        return (f"Workflow version: {executed} (digest {str(digest)[:12]}, "
+    execution_digest = p.get("workflow_execution_digest")
+    recorded_digest = p.get("workflow_digest")
+    bundle_digest = p.get("workflow_bundle_digest")
+    if execution_digest:
+        bundle_text = f"; bundled digest {str(bundle_digest)[:12]}" if bundle_digest else ""
+        return (f"Workflow version: {executed} (execution digest {str(execution_digest)[:12]}{bundle_text}, "
+                f"copied {p.get('workflow_copied_at') or 'unknown'}); "
+                f"project created with app {p.get('project_created_app_version')} "
+                f"/ workflow {p.get('project_created_workflow_version')}")
+    if recorded_digest:
+        return (f"Workflow version: {executed} (recorded workflow digest {str(recorded_digest)[:12]}, "
                 f"copied {p.get('workflow_copied_at') or 'unknown'}); "
                 f"project created with app {p.get('project_created_app_version')} "
                 f"/ workflow {p.get('project_created_workflow_version')}")
@@ -1138,7 +1170,9 @@ def main() -> int:
         "app_version": workflow_prov["executed_app_version"],
         "workflow_version": workflow_prov["executed_version"],
         "workflow_executed_version": workflow_prov["executed_version"],
-        "workflow_digest": workflow_prov["digest"],
+        "workflow_digest": workflow_prov["execution_digest"],
+        "workflow_execution_digest": workflow_prov["execution_digest"],
+        "workflow_bundle_digest": workflow_prov["bundle_digest"],
         "workflow_copied_at": workflow_prov["copied_at"],
         "project_created_app_version": project.get("app_version"),
         "project_created_workflow_version": project.get("workflow_version"),

@@ -46,12 +46,73 @@ def test_create_project_spaces_become_underscores(tmp_path) -> None:
     assert root.name == "my_project"
 
 
-@pytest.mark.parametrize("bad", ["a/b", "a:b", "proj#1", "x(y)", "a*b", "  "])
+@pytest.mark.parametrize("bad", [".", "..", "a/b", "a:b", "proj#1", "x(y)", "a*b", "  "])
 def test_create_project_rejects_unsafe_names(tmp_path, bad) -> None:
     # Names with characters that break Snakemake wildcards / the filesystem path
     # must be rejected rather than silently creating an unusable directory.
     with pytest.raises(ValueError):
         ProjectManager().create_project(bad, tmp_path)
+
+
+def test_create_project_refuses_an_occupied_non_project_target(tmp_path) -> None:
+    target = tmp_path / "occupied"
+    config = target / "config"
+    config.mkdir(parents=True)
+    sheet = config / "samples.tsv"
+    sheet.write_bytes(b"sample_id\tcondition\nS1\ttreated\n")
+    marker = target / "keep.txt"
+    marker.write_bytes(b"do not modify")
+
+    with pytest.raises(ProjectExistsError, match="destination already exists"):
+        ProjectManager().create_project("occupied", tmp_path)
+
+    assert sheet.read_bytes() == b"sample_id\tcondition\nS1\ttreated\n"
+    assert marker.read_bytes() == b"do not modify"
+    assert not is_project_root(target)
+
+
+def test_create_project_allows_an_empty_target_and_explicit_overwrite(tmp_path) -> None:
+    manager = ProjectManager()
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert manager.create_project("empty", tmp_path) == empty
+
+    occupied = tmp_path / "overwrite"
+    occupied.mkdir()
+    marker = occupied / "keep.txt"
+    marker.write_bytes(b"preserved unless this path is a scaffolded file")
+    assert manager.create_project("overwrite", tmp_path, overwrite=True) == occupied
+    assert marker.read_bytes() == b"preserved unless this path is a scaffolded file"
+    assert is_project_root(occupied)
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+def test_create_project_refuses_existing_file_targets(tmp_path, overwrite) -> None:
+    target = tmp_path / "file_target"
+    target.write_bytes(b"not a directory")
+
+    with pytest.raises(ProjectExistsError, match="file"):
+        ProjectManager().create_project("file_target", tmp_path, overwrite=overwrite)
+
+    assert target.read_bytes() == b"not a directory"
+
+
+def test_create_project_refuses_a_symlinked_target_outside_working_directory(tmp_path) -> None:
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    external = tmp_path / "external"
+    external.mkdir()
+    target = workdir / "study"
+    try:
+        target.symlink_to(external, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"creating a directory symlink is unavailable: {exc}")
+
+    marker = external / "keep.txt"
+    marker.write_bytes(b"outside target")
+    with pytest.raises(ValueError, match="inside the selected working directory"):
+        ProjectManager().create_project("study", workdir)
+    assert marker.read_bytes() == b"outside target"
 
 
 def test_create_project_refuses_to_overwrite_an_existing_project(tmp_path) -> None:

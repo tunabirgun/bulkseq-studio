@@ -88,6 +88,12 @@ from app.core.de_results import (
     validate_recorded_project_copy,
 )
 from app.core.input_detection import detect_fastq_inputs
+from workflow.scripts.count_matrix_validation import (
+    FEATURECOUNTS_METADATA,
+    MILLION_TOTAL_WARNING,
+    CountMatrixValidationError,
+    validate_count_values,
+)
 from app.core.metadata import (
     dataframe_from_rows,
     load_metadata,
@@ -921,13 +927,21 @@ class MainWindow(QMainWindow):
             "groups must still be reviewed on the Metadata page before differential expression.")
         public_hint.setWordWrap(True)
         public_layout.addWidget(public_hint)
+        public_accessions_label = QLabel("Public sequencing accessions")
         self.sra_box = QTextEdit()
+        public_accessions_label.setBuddy(self.sra_box)
+        self.sra_box.setAccessibleName("Public sequencing accessions")
+        self.sra_box.setAccessibleDescription(
+            "Enter SRA or ENA run and study accessions, one per line."
+        )
+        self.sra_box.setTabChangesFocus(True)
         # Paste as plain text: strip any source formatting (fonts/colours/links) so pasted
         # accessions come in clean.
         self.sra_box.setAcceptRichText(False)
         self.sra_box.setPlaceholderText("Paste SRR/ERR/DRR runs, or an SRP/PRJNA/GSE study accession, one per line")
         self.sra_box.setMinimumHeight(105)
         self.sra_box.setMaximumHeight(150)
+        public_layout.addWidget(public_accessions_label)
         public_layout.addWidget(self.sra_box)
         public_actions = QHBoxLayout()
         fetch_meta = QPushButton("Fetch metadata && build samples")
@@ -1006,7 +1020,13 @@ class MainWindow(QMainWindow):
             "RNA-seq GSE records are redirected to the public-accession route.")
         micro_hint.setWordWrap(True)
         micro_layout.addWidget(micro_hint)
+        gse_accession_label = QLabel("GEO Series accession")
         self.gse_box = QLineEdit()
+        gse_accession_label.setBuddy(self.gse_box)
+        self.gse_box.setAccessibleName("GEO Series accession")
+        self.gse_box.setAccessibleDescription(
+            "Enter a GEO Series microarray accession, such as GSE5583."
+        )
         self.gse_box.setPlaceholderText("GSE accession, e.g. GSE5583")
         self.gse_box.setToolTip(
             "GEO Series (GSE) microarray accessions only. For RNA-seq, enter SRA/ENA run "
@@ -1023,6 +1043,7 @@ class MainWindow(QMainWindow):
             "log2 intensities). Runs limma differential expression, figures, and enrichment just "
             "like a fetched GEO series — no download.")
         micro_upload_btn.clicked.connect(self._import_microarray_matrix)
+        micro_layout.addWidget(gse_accession_label)
         geo_row = QHBoxLayout()
         geo_row.addWidget(self.gse_box, 1)
         geo_row.addWidget(geo_btn)
@@ -1317,6 +1338,7 @@ class MainWindow(QMainWindow):
                 )
             self._set_info_label(self.alpha_threshold_info, threshold_title, threshold_help)
             self.alpha.setAccessibleName(threshold_title)
+            self.alpha.setAccessibleDescription(threshold_help)
             self.alpha.setToolTip(threshold_help)
         if getattr(self, "workflow_design_toggle", None) is not None:
             self.workflow_design_toggle.setVisible(not external_results)
@@ -1751,34 +1773,39 @@ class MainWindow(QMainWindow):
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             try:
-                df = read_user_table(src, sep=sep, comment="#", dtype=str)
+                df = read_user_table(
+                    src,
+                    sep=sep,
+                    comment="#",
+                    dtype=str,
+                    keep_default_na=False,
+                )
             except Exception as exc:
                 read_error: str | None = str(exc)
             else:
                 read_error = None
             if read_error is None and df.shape[1] < 2:
                 read_error = ""  # shape problem: its own message below
-            fractional = tpm = False
+            validation_error: str | None = None
+            fractional = near_million_totals = False
             if read_error is None:
                 # Sample columns = all but the gene-id column, minus featureCounts metadata.
-                meta_cols = {"Chr", "Start", "End", "Strand", "Length"}
-                sample_cols = [c for c in df.columns[1:] if c not in meta_cols]
+                sample_cols = [c for c in df.columns[1:] if c not in FEATURECOUNTS_METADATA]
                 # featureCounts BAM-path columns -> sample_ids.
                 def clean(c: str) -> str:
                     return re.sub(r"_Aligned\.sortedByCoord\.out\.bam$", "", Path(str(c)).name)
                 sample_ids = [clean(c) for c in sample_cols]
-                # Detect normalized / estimated input up front (mirrors the ingest_counts guard) so
-                # the user gets an immediate, clear choice instead of a downstream ingest failure.
-                # RSEM/tximport estimated counts are fractional but valid (rounded); TPM/FPKM/log/
-                # RMA are not.
-                _num = df[sample_cols].apply(pd.to_numeric, errors="coerce")
-                _vals = _num.to_numpy(dtype="float64").ravel()
-                _vals = _vals[~pd.isna(_vals)]
-                _nz = _vals[_vals != 0]
-                fractional = bool(_nz.size and float((_nz % 1 != 0).mean()) > 0.5)
-                if fractional:
-                    _colsum = _num.sum(axis=0, skipna=True).to_numpy(dtype="float64")
-                    tpm = bool(_colsum.size and float(((abs(_colsum - 1e6) / 1e6) < 0.01).mean()) >= 0.5)
+                try:
+                    validated = validate_count_values(
+                        df,
+                        sample_cols,
+                        estimated_counts=True,
+                    )
+                except CountMatrixValidationError as exc:
+                    validation_error = str(exc)
+                else:
+                    fractional = validated.has_fractional
+                    near_million_totals = validated.near_million_totals
         finally:
             QApplication.restoreOverrideCursor()
         if read_error is not None:
@@ -1786,18 +1813,17 @@ class MainWindow(QMainWindow):
                                 if read_error else
                                 "The matrix needs a gene-id column plus at least one sample column.")
             return
-        self.config.input.estimated_counts = False
-        if tpm:
-            QMessageBox.warning(self, APP_NAME,
-                "The matrix columns each sum to ~1,000,000, so this is TPM, not raw counts. "
-                "DESeq2 and the meta-analysis need raw integer counts — re-export "
-                "un-normalized counts and import again.")
+        if validation_error is not None:
+            QMessageBox.warning(self, APP_NAME, f"Could not import the count matrix: {validation_error}")
             return
+        prospective_estimated_counts = False
+        if near_million_totals:
+            QMessageBox.warning(self, APP_NAME, MILLION_TOTAL_WARNING)
         if fractional:
             resp = QMessageBox.question(self, APP_NAME,
-                "The matrix values are mostly non-integer.\n\n"
+                "The matrix contains non-integer values.\n\n"
                 "• If these are RSEM / tximport ESTIMATED counts, they will be rounded to "
-                "integers and the run can proceed.\n"
+                "integers using round-half-to-even and the run can proceed.\n"
                 "• If they are NORMALIZED data (FPKM/RPKM, log-CPM, RMA or microarray "
                 "intensities), DESeq2 cannot use them — cancel and re-export raw counts.\n\n"
                 "Are these estimated counts?",
@@ -1806,7 +1832,7 @@ class MainWindow(QMainWindow):
             if resp != QMessageBox.StandardButton.Yes:
                 self.statusBar().showMessage("Count-matrix import cancelled.", 4000)
                 return
-            self.config.input.estimated_counts = True
+            prospective_estimated_counts = True
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             # Copy the matrix into the project and switch to count-matrix mode.
@@ -1823,6 +1849,7 @@ class MainWindow(QMainWindow):
             self.metadata_table.load_dataframe(samples)
             self.config.input.type = "count_matrix"
             self.config.input.count_matrix = "config/counts_matrix.txt"
+            self.config.input.estimated_counts = prospective_estimated_counts
             # Switching to count-matrix mode: drop any stale microarray accession or
             # uploaded results table so a later save doesn't write inputs that no
             # longer apply.
@@ -2521,13 +2548,33 @@ class MainWindow(QMainWindow):
         self.trim.toggled.connect(self._sync_trimmer_controls)
         # DESeq2 design + contrast builder
         self.design = QLineEdit("~ condition")
+        self.design.setAccessibleName("Design formula")
+        self.design.setAccessibleDescription(
+            "R model formula for the differential-expression design."
+        )
         self.contrast_factor = QLineEdit("condition")
+        self.contrast_factor.setAccessibleName("Comparison factor")
+        self.contrast_factor.setAccessibleDescription(
+            "Metadata column used for the differential-expression comparison."
+        )
         self.numerator = QComboBox()
         self.numerator.setEditable(True)
+        self.numerator.setAccessibleName("Numerator group")
+        self.numerator.setAccessibleDescription(
+            "Group measured against the denominator; positive log2 fold change is higher in this group."
+        )
         self.denominator = QComboBox()
         self.denominator.setEditable(True)
+        self.denominator.setAccessibleName("Denominator group")
+        self.denominator.setAccessibleDescription(
+            "Comparison baseline; positive log2 fold change is higher in the numerator group."
+        )
         self.reference_level = QComboBox()
         self.reference_level.setEditable(True)
+        self.reference_level.setAccessibleName("Reference level")
+        self.reference_level.setAccessibleDescription(
+            "Baseline factor level used when DESeq2 relevels the comparison."
+        )
         self.contrast_info = QLabel("")
         self.contrast_info.setWordWrap(True)
         self.contrast_info.setStyleSheet(f"color: {PALETTES[self._current_theme_mode()]['MUTED_TEXT']};")
@@ -2539,11 +2586,19 @@ class MainWindow(QMainWindow):
         self.alpha.setSingleStep(0.01)
         self.alpha.setDecimals(4)
         self.alpha.setValue(0.05)
+        self.alpha.setAccessibleName("BH FDR")
+        self.alpha.setAccessibleDescription(
+            "Benjamini-Hochberg adjusted-p-value significance threshold."
+        )
         self.lfc_threshold = QDoubleSpinBox()
         self.lfc_threshold.setRange(0.0, 10.0)
         self.lfc_threshold.setSingleStep(0.25)
         self.lfc_threshold.setDecimals(2)
         self.lfc_threshold.setValue(1.0)
+        self.lfc_threshold.setAccessibleName("|log2FC|")
+        self.lfc_threshold.setAccessibleDescription(
+            "Minimum absolute log2 fold change required for up- or down-regulation."
+        )
         # Differential-expression engine (count-based routes). DESeq2 is the default;
         # limma-voom and edgeR are opt-in cross-checks emitting the same tables/figures
         # apart from the DESeq2-specific equivalence output (ALT_DE_ENGINES).
@@ -2565,6 +2620,10 @@ class MainWindow(QMainWindow):
                 f"{engine}: {test}" for engine, test in DE_ENGINE_EFFECT_SIZE_TESTS.items()) + "). "
             "Not used in microarray mode (which uses limma-trend) or when an external results "
             "table is uploaded."
+        )
+        self.de_engine.setAccessibleName("DE engine")
+        self.de_engine.setAccessibleDescription(
+            "Statistical engine for the differential-expression test on count data."
         )
         save = QPushButton("Save Workflow Settings")
         save.setProperty("primary", True)
@@ -2602,7 +2661,7 @@ class MainWindow(QMainWindow):
         de_outer.addWidget(self.external_de_direction_banner)
         de_form = QFormLayout()
         de_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        de_form.addRow(self._info_label("DE engine", "Statistical engine for the differential test on count data. DESeq2 (default) fits most studies, including small ones; limma-voom is an optional cross-check for larger designs (about 6+ samples per group). Both write the same result tables and figures. Ignored in microarray mode and for external-results uploads."), self.de_engine)
+        de_form.addRow(self._info_label("DE engine", "Statistical engine for the differential test on count data. DESeq2 (default) fits most studies, including small ones; limma-voom is an optional cross-check for larger designs (about 6+ samples per group). Both write the same result tables and figures. Ignored in microarray mode and for external-results uploads.", self.de_engine), self.de_engine)
 
         factor_row = QWidget()
         factor_layout = QHBoxLayout(factor_row)
@@ -2611,10 +2670,10 @@ class MainWindow(QMainWindow):
         factor_layout.addWidget(self.contrast_factor, 1)
         factor_layout.addWidget(self.refresh_conditions_button)
         de_form.addRow(
-            self._info_label("Comparison factor", "The metadata column compared in the differential test (usually 'condition')."),
+            self._info_label("Comparison factor", "The metadata column compared in the differential test (usually 'condition').", self.contrast_factor),
             factor_row)
-        de_form.addRow(self._info_label("Numerator group", "The group whose change is measured. Positive log2 fold change means higher in this group than the denominator."), self.numerator)
-        de_form.addRow(self._info_label("Denominator group", "The comparison baseline. Positive log2 fold change means higher in the numerator than this group."), self.denominator)
+        de_form.addRow(self._info_label("Numerator group", "The group whose change is measured. Positive log2 fold change means higher in this group than the denominator.", self.numerator), self.numerator)
+        de_form.addRow(self._info_label("Denominator group", "The comparison baseline. Positive log2 fold change means higher in the numerator than this group.", self.denominator), self.denominator)
         direction_hint = QLabel(
             "Direction: positive log2 fold change means higher expression in the numerator group.")
         direction_hint.setWordWrap(True)
@@ -2629,12 +2688,13 @@ class MainWindow(QMainWindow):
         self.alpha_threshold_info = self._info_label(
             "BH FDR",
             "Significance threshold on Benjamini-Hochberg adjusted p-values. Default 0.05.",
+            self.alpha,
         )
         threshold_layout.addWidget(self.alpha_threshold_info)
         threshold_layout.addWidget(self.alpha)
         threshold_layout.addSpacing(12)
         threshold_layout.addWidget(self._info_label(
-            "|log2FC|", "Minimum absolute log2 fold change for a gene to count as up/down-regulated. Default 1.0."))
+            "|log2FC|", "Minimum absolute log2 fold change for a gene to count as up/down-regulated. Default 1.0.", self.lfc_threshold))
         threshold_layout.addWidget(self.lfc_threshold)
         threshold_layout.addStretch(1)
         de_form.addRow("Decision thresholds", threshold_row)
@@ -2662,26 +2722,30 @@ class MainWindow(QMainWindow):
         design_form = QFormLayout(design_options)
         design_form.setContentsMargins(0, 0, 0, 0)
         design_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        design_form.addRow(self._info_label("Design formula", "R model formula used by every engine. The last term is the effect of interest; put known batch effects before it, e.g. '~ batch + condition'."), self.design)
+        design_form.addRow(self._info_label("Design formula", "R model formula used by every engine. The last term is the effect of interest; put known batch effects before it, e.g. '~ batch + condition'.", self.design), self.design)
         self.design_helper_button = QPushButton("Design helper: adjust for batch / covariates…")
         self.design_helper_button.setToolTip(
             "Compose the design formula from your metadata columns without typing R. Tick the "
             "batch/covariate columns to adjust for; the condition of interest is added last.")
         self.design_helper_button.clicked.connect(self._open_design_helper)
         design_form.addRow("", self.design_helper_button)
-        design_form.addRow(self._info_label("Reference level", "The factor's baseline level (normally the same as the denominator); DESeq2 is releveled to this."), self.reference_level)
+        design_form.addRow(self._info_label("Reference level", "The factor's baseline level (normally the same as the denominator); DESeq2 is releveled to this.", self.reference_level), self.reference_level)
         design_form.addRow(QLabel("featureCounts strandedness is auto-inferred per protocol."))
         self.organellar = QComboBox()
         self.organellar.addItem("Keep (include in analysis)", "keep")
         self.organellar.addItem("Discard before differential expression", "discard")
         self.organellar.addItem("Analyse separately (nuclear DE + organellar subset)", "separate")
+        self.organellar.setAccessibleName("Mitochondrial / chloroplast genes")
+        self.organellar.setAccessibleDescription(
+            "Choose whether organellar genes are kept, discarded before differential expression, or analysed separately."
+        )
         design_form.addRow(self._info_label(
             "Mitochondrial / chloroplast genes",
             "Organellar (mitochondrial + chloroplast) transcripts can dominate library size and "
             "skew DESeq2 normalization. Keep them, discard them before the differential test, or "
             "analyse them separately (the main DE runs on nuclear genes only; a separate organellar "
             "count subset and a per-sample organellar-fraction table are written). Applies to "
-            "STAR/HISAT2/Salmon runs (needs a reference genome)."), self.organellar)
+            "STAR/HISAT2/Salmon runs (needs a reference genome).", self.organellar), self.organellar)
         design_options.setVisible(False)
         design_toggle.toggled.connect(design_options.setVisible)
         design_toggle.toggled.connect(
@@ -4309,6 +4373,10 @@ class MainWindow(QMainWindow):
         self.output_table_pick.setSizeAdjustPolicy(
             QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.output_table_pick.setMinimumContentsLength(18)
+        self.output_table_pick.setAccessibleName("Table")
+        self.output_table_pick.setAccessibleDescription(
+            "Select a results table to display in the table preview."
+        )
         self.output_table_pick.addItems(
             ["results/counts/counts.txt", "results/deseq2/deseq2_results.csv",
              "results/deseq2/upregulated_genes.csv", "results/deseq2/downregulated_genes.csv",
@@ -4323,7 +4391,9 @@ class MainWindow(QMainWindow):
         load.clicked.connect(self._load_output_table)
         open_results = QPushButton("Open results folder")
         open_results.clicked.connect(lambda: self._open_subpath("results"))
-        controls.addWidget(QLabel("Table:"))
+        table_label = QLabel("Table:")
+        table_label.setBuddy(self.output_table_pick)
+        controls.addWidget(table_label)
         controls.addWidget(self.output_table_pick, 1)
         controls.addWidget(load)
         controls.addWidget(open_results)
@@ -4365,6 +4435,8 @@ class MainWindow(QMainWindow):
         self.figure_pick.setSizeAdjustPolicy(
             QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.figure_pick.setMinimumContentsLength(16)
+        self.figure_pick.setAccessibleName("Figure")
+        self.figure_pick.setAccessibleDescription("Select a result figure to preview.")
         self.figure_pick.currentTextChanged.connect(self._show_selected_figure)
         self.figure_pick.addItem("(open a project to browse figures)")
         self.figure_pick.setEnabled(False)
@@ -4386,7 +4458,9 @@ class MainWindow(QMainWindow):
         # the right edge of the controls row.
         self.svg_toggle.setMinimumWidth(self.svg_toggle.sizeHint().width() + 12)
         self.svg_toggle.toggled.connect(lambda _=False: self._show_selected_figure(self.figure_pick.currentText()))
-        fig_select.addWidget(QLabel("Figure:"))
+        figure_label = QLabel("Figure:")
+        figure_label.setBuddy(self.figure_pick)
+        fig_select.addWidget(figure_label)
         fig_select.addWidget(self.figure_pick, 1)
         fig_select.addWidget(self.svg_toggle)
         figure_layout.addLayout(fig_select)
@@ -4404,6 +4478,10 @@ class MainWindow(QMainWindow):
         figure_canvas_layout.setContentsMargins(0, 0, 0, 0)
         figure_canvas_layout.setStackingMode(QStackedLayout.StackingMode.StackAll)
         self.figure_viewer = ImageViewer()
+        self.figure_viewer.setAccessibleName("Figure preview")
+        self.figure_viewer.setAccessibleDescription(
+            "Preview of the selected figure. Scroll to zoom and drag to pan."
+        )
         self.figure_viewer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         # Keep the figure scientifically inspectable even when a saved splitter
         # state from a larger screen is restored at the compact desktop size.
@@ -4583,6 +4661,12 @@ class MainWindow(QMainWindow):
         self.ppi_conf.setRange(0, 100)
         self.ppi_conf.setValue(0)
         self.ppi_conf.setMaximumWidth(180)
+        self.ppi_conf.setAccessibleName("Edge filter")
+        self.ppi_conf.setAccessibleDescription(
+            "Filter loaded interaction edges in the current view by slider value 0 to 100, "
+            "corresponding to displayed confidence 0.00 to 1.00. "
+            "This does not rebuild the network or show edges below its build threshold."
+        )
         self.ppi_conf.setToolTip("View-only filter: hides interactions below this confidence in the "
                                  "network shown right now. It does NOT re-contact STRING and cannot go "
                                  "below the build threshold — to show weaker edges, lower the STRING "
@@ -5341,7 +5425,7 @@ class MainWindow(QMainWindow):
         self.manager.save_config(self.project_root, self.config)
         self._start_snakemake("ppi")
 
-    def _info_label(self, text: str, help_text: str) -> QWidget:
+    def _info_label(self, text: str, help_text: str, buddy: QWidget | None = None) -> QWidget:
         # A form-row label with a small info button that explains a complex
         # parameter (tooltip on hover, full text on click).
         holder = QWidget()
@@ -5359,6 +5443,8 @@ class MainWindow(QMainWindow):
         # mostly empty field column. Narrow inspector forms wrap the entire row.
         label.setWordWrap(False)
         label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        if buddy is not None:
+            label.setBuddy(buddy)
         row.addWidget(label)
         info = QToolButton()
         info.setObjectName("infoLabelButton")
@@ -6030,6 +6116,9 @@ class MainWindow(QMainWindow):
             self.figure_pick.setEnabled(False)
             self.figure_pick.blockSignals(False)
             self.figure_viewer.clear()
+            self.figure_viewer.setAccessibleDescription(
+                "Figure preview is unavailable until a result figure is selected."
+            )
 
     def _go_from_output_empty_state(self) -> None:
         self.tabs.setCurrentIndex(0 if self.project_root is None else 8)
@@ -6037,6 +6126,9 @@ class MainWindow(QMainWindow):
     def _show_selected_figure(self, name: str) -> None:
         if not name or name.startswith("(no figures") or self.project_root is None:
             return
+        self.figure_viewer.setAccessibleDescription(
+            f"Preview of selected figure: {name}. Scroll to zoom and drag to pan."
+        )
         # Per-study figures carry their full path as userData; regular figures have
         # None and are reconstructed under results/figures from the bare filename.
         data = self.figure_pick.currentData()
@@ -6126,14 +6218,14 @@ class MainWindow(QMainWindow):
         self.readiness_dialog = ReadinessDialog(self)
         self.readiness_dialog.show()
 
-    def _confirm_project_overwrite(self, root: Path) -> bool:
+    def _confirm_project_overwrite(self, root: Path, is_project: bool = True) -> bool:
         # Scaffolding resets the sample sheet, contrasts, gene sets and config to
         # empty defaults. Name exactly what is lost; default to No so Return or Esc
         # keeps the existing project.
         answer = QMessageBox.warning(
             self, APP_NAME,
-            f"A project already exists at:\n{root}\n\n"
-            "Creating it again resets that project's sample sheet (samples.tsv), "
+            f"{'A project already exists at' if is_project else 'The selected destination contains files'}:\n{root}\n\n"
+            "Creating a project here resets its sample sheet (samples.tsv), "
             "contrasts, gene sets and workflow settings to empty defaults. "
             "Existing results and downloaded data are left alone.\n\n"
             "Overwrite the project configuration?",
@@ -6158,7 +6250,11 @@ class MainWindow(QMainWindow):
         try:
             root = self.manager.create_project(name, workdir)
         except ProjectExistsError as exc:
-            if not self._confirm_project_overwrite(exc.root):
+            if exc.is_file:
+                self.project_status.setPlainText(f"Project creation failed: {exc}")
+                QMessageBox.critical(self, APP_NAME, f"Project creation failed:\n{exc}")
+                return
+            if not self._confirm_project_overwrite(exc.root, exc.is_project):
                 self.project_status.setPlainText(f"Kept the existing project at {exc.root}")
                 return
             try:
@@ -6206,7 +6302,11 @@ class MainWindow(QMainWindow):
         try:
             root = create_benchmark_project(benchmark_id, workdir, project_name)
         except ProjectExistsError as exc:
-            if not self._confirm_project_overwrite(exc.root):
+            if exc.is_file:
+                self.project_status.setPlainText(f"Benchmark project creation failed: {exc}")
+                QMessageBox.critical(self, APP_NAME, f"Benchmark project creation failed:\n{exc}")
+                return
+            if not self._confirm_project_overwrite(exc.root, exc.is_project):
                 self.project_status.setPlainText(f"Kept the existing project at {exc.root}")
                 return
             try:
@@ -7948,13 +8048,18 @@ class MainWindow(QMainWindow):
             # An existing project keeps its own copy of workflow/, so a workflow fix from an
             # app update would not reach it. Re-sync the bundled scripts when the project's
             # recorded workflow_version is older than this build's, before any run or figure
-            # regeneration. Best-effort: never block a run if the copy fails.
+            # regeneration. A failed sync blocks execution because its provenance cannot
+            # identify a verified workflow tree.
             try:
                 synced = self.manager.sync_workflow_if_outdated(self.project_root)
                 if synced:
                     self.log_text.append(f"Updated project workflow scripts to match this app version ({synced}).")
             except Exception as exc:
                 self.log_text.append(f"Could not refresh project workflow scripts: {exc}")
+                self._pending_recover = False
+                self._refresh_resume_banner()
+                self.statusBar().showMessage("Workflow synchronization failed; the run was not started.", 8000)
+                return
             # Persist the in-memory metadata table so the run uses current edits;
             # Snakemake reads config.input.samples from disk, not the GUI table.
             save_metadata(self.metadata_table.to_dataframe(), self._configured_samples_path())
@@ -7974,6 +8079,10 @@ class MainWindow(QMainWindow):
         ):
             self._refresh_resume_banner()  # a blocked resume/recover must not leave the banner stranded hidden
             return
+        if _validated_preflight is not None:
+            # The workflow was synchronized before the background preflight began. Confirm its
+            # content did not change while that worker ran before constructing any runner command.
+            self.manager.verify_workflow_integrity(self.project_root)
         run_tag = _new_run_tag() if self.use_wsl.isChecked() else None
         command = build_snakemake_command(
             self.project_root,

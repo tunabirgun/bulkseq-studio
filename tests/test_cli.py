@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from app.cli import EXIT_INVALID, EXIT_OK, main
+from app.cli import EXIT_GATE, EXIT_INVALID, EXIT_OK, main
 from app.cli_banner import banner_text, should_show_banner
 from app.constants import APP_VERSION, WORKFLOW_VERSION
 from app.core.project import ProjectManager
@@ -26,6 +26,23 @@ REPO = Path(__file__).resolve().parents[1]
 @pytest.fixture()
 def project(tmp_path) -> Path:
     return ProjectManager().create_project("clitest", tmp_path)
+
+
+def _configure_samples(project: Path, path: Path, input_type: str = "sra") -> None:
+    config = ProjectManager().load_config(project)
+    config.input.type = input_type
+    config.input.samples = str(path)
+    ProjectManager().save_config(project, config)
+
+
+def _pending_reads_sheet(*sample_ids: str) -> str:
+    rows = ["sample_id\tcondition\tlayout\tfastq_1"]
+    rows.extend(
+        f"{sample_id}\t{'control' if index == 0 else 'treated'}\tsingle\t"
+        f"data/raw/{sample_id}.fastq.gz"
+        for index, sample_id in enumerate(sample_ids)
+    )
+    return "\n".join(rows) + "\n"
 
 
 # ---- the banner ---------------------------------------------------------------
@@ -165,6 +182,22 @@ def test_run_builds_the_same_argv_as_print_command(project, monkeypatch) -> None
     tag_re = re.compile(r"export BULKSEQ_RUN_TAG_[0-9a-f]+=1 && ")
     actual = [tag_re.sub("", part) for part in captured["argv"]]
     assert actual == expected
+
+
+def test_run_does_not_start_runner_after_workflow_sync_failure(project, monkeypatch, capsys) -> None:
+    import app.cli as cli_module
+
+    started: list[bool] = []
+    monkeypatch.setattr(
+        ProjectManager,
+        "sync_workflow_if_outdated",
+        lambda self, root: (_ for _ in ()).throw(RuntimeError("project workflow changed since it was copied")),
+    )
+    monkeypatch.setattr(cli_module, "run_snakemake_sync", lambda *args, **kwargs: started.append(True) or 0)
+
+    assert main(["run", "-C", str(project), "--quiet"]) == EXIT_INVALID
+    assert started == []
+    assert "Could not refresh project workflow scripts" in capsys.readouterr().err
 
 
 def test_run_detects_a_masked_failure_marker(monkeypatch, project) -> None:
@@ -366,6 +399,97 @@ def test_project_info_json_is_parseable(project, capsys) -> None:
     assert Path(payload["project_root"]) == project
 
 
+def test_cli_uses_configured_custom_sheet_for_info_show_and_check(project, capsys) -> None:
+    configured = project / "config" / "sheets" / "study.tsv"
+    configured.parent.mkdir()
+    configured.write_text(_pending_reads_sheet("configured_a", "configured_b"), encoding="utf-8")
+    # A hardcoded config/samples.tsv must not be used as a quiet fallback for any CLI command.
+    (project / "config" / "samples.tsv").write_text("wrong\nvalue\n", encoding="utf-8")
+    _configure_samples(project, Path("config/sheets/study.tsv"))
+
+    assert main(["project", "info", "-C", str(project), "--json"]) == EXIT_OK
+    assert json.loads(capsys.readouterr().out)["samples"] == 2
+
+    assert main(["samples", "show", "-C", str(project)]) == EXIT_OK
+    shown = capsys.readouterr().out
+    assert "configured_a" in shown
+    assert "wrong" not in shown
+
+    assert main(["check", "-C", str(project)]) == EXIT_OK
+    assert "FASTQ R1 does not exist" not in capsys.readouterr().out
+
+
+def test_cli_uses_an_absolute_configured_sample_sheet(project, capsys) -> None:
+    configured = project.parent / "absolute-study.tsv"
+    configured.write_text(_pending_reads_sheet("absolute_a", "absolute_b"), encoding="utf-8")
+    (project / "config" / "samples.tsv").write_text("wrong\nvalue\n", encoding="utf-8")
+    _configure_samples(project, configured)
+
+    assert main(["project", "info", "-C", str(project), "--json"]) == EXIT_OK
+    assert json.loads(capsys.readouterr().out)["samples"] == 2
+    assert main(["samples", "show", "-C", str(project)]) == EXIT_OK
+    assert "absolute_a" in capsys.readouterr().out
+    assert main(["check", "-C", str(project)]) == EXIT_OK
+
+
+def test_cli_reports_missing_configured_sample_sheet(project, capsys) -> None:
+    missing = project / "config" / "sheets" / "missing.tsv"
+    _configure_samples(project, Path("config/sheets/missing.tsv"))
+
+    assert main(["project", "info", "-C", str(project), "--json"]) == EXIT_OK
+    assert json.loads(capsys.readouterr().out)["samples"] == 0
+    assert main(["samples", "show", "-C", str(project)]) == EXIT_INVALID
+    assert str(missing) in capsys.readouterr().err
+    assert main(["check", "-C", str(project)]) == EXIT_GATE
+    assert str(missing) in capsys.readouterr().err
+
+
+def test_cli_reports_an_unparseable_configured_sample_sheet(project, capsys) -> None:
+    configured = project / "config" / "sheets" / "broken.tsv"
+    configured.parent.mkdir()
+    configured.write_text("sample_id\tcondition\n\"unterminated\tcontrol\n", encoding="utf-8")
+    _configure_samples(project, Path("config/sheets/broken.tsv"))
+
+    assert main(["samples", "show", "-C", str(project)]) == EXIT_INVALID
+    assert str(configured) in capsys.readouterr().err
+    assert main(["check", "-C", str(project)]) == EXIT_GATE
+    assert str(configured) in capsys.readouterr().err
+
+
+def test_cli_check_requires_local_fastqs_for_a_fastq_project(project, capsys) -> None:
+    samples = project / "config" / "samples.tsv"
+    samples.write_text(_pending_reads_sheet("local_a", "local_b"), encoding="utf-8")
+    # InputConfig supplies config/sra_accessions.txt by default. That configured string does
+    # not make a local FASTQ project an SRA-download route.
+    assert main(["check", "-C", str(project)]) == EXIT_GATE
+    assert "FASTQ R1 does not exist" in capsys.readouterr().out
+
+
+def test_cli_check_resolves_project_relative_fastqs_from_another_directory(project, tmp_path, monkeypatch) -> None:
+    raw = project / "data" / "raw"
+    raw.mkdir(parents=True, exist_ok=True)
+    (raw / "local_a.fastq.gz").write_bytes(b"synthetic-a")
+    (raw / "local_b.fastq.gz").write_bytes(b"synthetic-b")
+    samples = project / "config" / "samples.tsv"
+    samples.write_text(_pending_reads_sheet("local_a", "local_b"), encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    assert main(["check", "-C", str(project)]) == EXIT_OK
+    assert "data/raw/local_a.fastq.gz" in samples.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("input_type", ["sra", "count_matrix", "microarray", "deseq2_results"])
+def test_cli_check_allows_pending_reads_for_nonlocal_input_routes(project, capsys, input_type) -> None:
+    samples = project / "config" / "samples.tsv"
+    samples.write_text(_pending_reads_sheet("pending_a", "pending_b"), encoding="utf-8")
+    _configure_samples(project, Path("config/samples.tsv"), input_type)
+
+    assert main(["check", "-C", str(project)]) == EXIT_OK
+    assert "FASTQ R1 does not exist" not in capsys.readouterr().out
+
+
 def test_commands_refuse_a_directory_that_is_not_a_project(tmp_path) -> None:
     assert main(["project", "info", "-C", str(tmp_path)]) == EXIT_INVALID
 
@@ -373,6 +497,27 @@ def test_commands_refuse_a_directory_that_is_not_a_project(tmp_path) -> None:
 def test_project_create_refuses_to_overwrite(tmp_path) -> None:
     assert main(["project", "create", "--name", "p", "--workdir", str(tmp_path)]) == EXIT_OK
     assert main(["project", "create", "--name", "p", "--workdir", str(tmp_path)]) == EXIT_INVALID
+
+
+def test_project_create_names_an_occupied_non_project_target(tmp_path, capsys) -> None:
+    target = tmp_path / "occupied"
+    target.mkdir()
+    marker = target / "keep.txt"
+    marker.write_bytes(b"keep")
+
+    assert main(["project", "create", "--name", "occupied", "--workdir", str(tmp_path)]) == EXIT_INVALID
+    assert "Project destination is occupied" in capsys.readouterr().err
+    assert marker.read_bytes() == b"keep"
+
+
+def test_project_create_refuses_a_file_even_with_overwrite(tmp_path, capsys) -> None:
+    target = tmp_path / "occupied"
+    target.write_bytes(b"keep")
+
+    assert main(["project", "create", "--name", "occupied", "--workdir", str(tmp_path),
+                 "--overwrite"]) == EXIT_INVALID
+    assert "Choose a new project name or working directory" in capsys.readouterr().err
+    assert target.read_bytes() == b"keep"
 
 
 def test_json_output_stays_clean_on_stdout(project) -> None:

@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.constants import APP_NAME
-from app.core.paths import app_root
+from app.core.paths import bioenv_setup_log_path
 from app.ui import theme
 from app.core.readiness import (
     ReadinessItem,
@@ -880,7 +880,7 @@ class ReadinessDialog(QDialog):
             "-----",
             "Windows PATH tools may stay REVIEW_REQUIRED when the tools live inside WSL; this is normal.",
             "WSL package setup is staged: first micromamba, then the core bulkseq environment, then the R/DESeq2 stack.",
-            "WSL environment install logs are written to scripts/logs/wsl_bioenv_install.log.",
+            f"WSL environment install logs are written to {bioenv_setup_log_path()}.",
             "The GUI can create projects, edit metadata, estimate runtime, and generate configs before the WSL tools are installed.",
         ]
         return "\n".join(parts)
@@ -996,7 +996,7 @@ class ReadinessDialog(QDialog):
             self.wsl_install_thread.stop()
 
     def show_setup_log(self) -> None:
-        log_path = app_root() / "scripts" / "logs" / "wsl_bioenv_install.log"
+        log_path = bioenv_setup_log_path()
         if not self._details_visible:
             self._toggle_details()
         if not log_path.exists():

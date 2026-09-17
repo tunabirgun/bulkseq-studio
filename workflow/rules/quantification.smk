@@ -13,6 +13,8 @@ if COUNT_MATRIX_MODE:
         input:
             matrix=COUNT_MATRIX,
             samples=config["input"]["samples"],
+            script="workflow/scripts/ingest_counts.py",
+            validator="workflow/scripts/count_matrix_validation.py",
         output:
             counts=COUNTS_RAW,
             summary=COUNTS_SUMMARY,
@@ -21,7 +23,7 @@ if COUNT_MATRIX_MODE:
         log:
             "logs/ingest_counts.log",
         shell:
-            "python workflow/scripts/ingest_counts.py --matrix {input.matrix:q} "
+            "python {input.script:q} --matrix {input.matrix:q} "
             "--samples {input.samples:q} --out {output.counts:q} --summary {output.summary:q} "
             "{params.estimated} > {log:q} 2>&1"
 

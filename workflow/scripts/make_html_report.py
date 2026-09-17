@@ -756,6 +756,7 @@ def _custom_enrichment_section(project: Path) -> str:
     summary_raw = _read(summary_path)
     evidence_prefixes = (
         "Custom gene sets (terms):", "Universe:", "Significant genes (ORA input):",
+        "Custom GSEA additional rank rows:", "Custom GSEA QC exclusion:",
         "Custom GSEA ranking order:", "Custom GSEA exact-score ties:",
         "Custom GSEA duplicate canonical-ID collapse:", "Custom ORA terms:",
         "Custom GSEA sets:", "Custom enrichment failed:",
@@ -1062,7 +1063,7 @@ def _timing_section(t: dict) -> str:
     machine_html = ""
     if machine:
         rows = "".join(
-            f"<tr><td>{html.escape(k)}</td><td class='mono'>{html.escape(v)}</td></tr>"
+            f"<tr><th scope='row'>{html.escape(k)}</th><td class='mono'>{html.escape(v)}</td></tr>"
             for k, v in machine)
         machine_html = (f"<h3>Machine</h3><div class='tablewrap'><table class='data'>"
                         f"<tbody>{rows}</tbody></table></div>"
@@ -1087,10 +1088,18 @@ def _provenance_rows(run: dict) -> list[tuple[str, str]]:
     executed = run.get("workflow_version")
     rows = [("App version",
              str(run.get("app_version") or "not recorded (workflow copied before 0.30.1)"))]
-    digest = run.get("workflow_digest")
-    if digest:
+    execution_digest = run.get("workflow_execution_digest")
+    recorded_digest = run.get("workflow_digest")
+    bundle_digest = run.get("workflow_bundle_digest")
+    if execution_digest:
         rows += [("Workflow version", str(executed)),
-                 ("Workflow digest", str(digest)[:12]),
+                 ("Workflow execution digest", str(execution_digest)[:12]),
+                 ("Workflow copied", str(run.get("workflow_copied_at") or "unknown"))]
+        if bundle_digest:
+            rows.append(("Bundled workflow digest", str(bundle_digest)[:12]))
+    elif recorded_digest:
+        rows += [("Workflow version", str(executed)),
+                 ("Recorded workflow digest", str(recorded_digest)[:12]),
                  ("Workflow copied", str(run.get("workflow_copied_at") or "unknown"))]
     else:
         rows.append(("Workflow version",
@@ -1485,10 +1494,12 @@ table.enr th.desc,table.enr td.desc{white-space:normal;min-width:190px;max-width
 table.data{border-collapse:collapse;width:100%;font-family:var(--sans);font-size:.83rem}
 table.data th,table.data td{padding:6px 10px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
 table.data thead th{background:var(--accent-tint);color:var(--accent-2);font-weight:600;position:sticky;top:0}
-table.sortable thead th{cursor:pointer;user-select:none}
-table.sortable thead th:not([data-sort])::after{content:" \\21C5";opacity:.35}
-table.sortable thead th[data-sort=asc]::after{content:" \\2191"}
-table.sortable thead th[data-sort=desc]::after{content:" \\2193"}
+table.sortable thead th{padding:0;user-select:none}
+table.sortable .sort-button{display:block;width:100%;appearance:none;border:0;background:transparent;color:inherit;font:inherit;font-weight:inherit;text-align:inherit;padding:6px 10px;cursor:pointer}
+table.sortable .sort-button::after{content:" \\21C5";opacity:.35}
+table.sortable th[data-sort=asc] .sort-button::after{content:" \\2191";opacity:1}
+table.sortable th[data-sort=desc] .sort-button::after{content:" \\2193";opacity:1}
+table.sortable .sort-button:focus-visible{outline:3px solid var(--brand-blue);outline-offset:-3px}
 table.data tbody tr:last-child td{border-bottom:none}
 table.data td.num,table.data th.num{text-align:right;font-variant-numeric:tabular-nums}
 table.data td.mono,table.data th.mono,.mono{font-family:var(--mono);font-size:.8rem;
@@ -1772,7 +1783,7 @@ def _study_design_section(run: dict, project: Path | None = None) -> str:
             ("Local route behavior", "No read processing, alignment, count quantification, local DE model, or local LFC shrinkage was run"),
         ]
         body = "".join(
-            f"<tr><td>{html.escape(str(k))}</td><td class='mono'>{html.escape(str(v))}</td></tr>"
+            f"<tr><th scope='row'>{html.escape(str(k))}</th><td class='mono'>{html.escape(str(v))}</td></tr>"
             for k, v in rows)
         details = ("<details class='howto'><summary>Imported-results provenance</summary>"
                    "<div class='tablewrap' style='margin-top:.5rem'><table class='data'>"
@@ -1837,7 +1848,7 @@ def _study_design_section(run: dict, project: Path | None = None) -> str:
     details = ""
     if rows:
         body = "".join(
-            f"<tr><td>{html.escape(k)}</td><td class='mono'>{html.escape(v)}</td></tr>"
+            f"<tr><th scope='row'>{html.escape(k)}</th><td class='mono'>{html.escape(v)}</td></tr>"
             for k, v in rows)
         details = ("<details class='howto'><summary>Full configuration</summary>"
                    "<div class='tablewrap' style='margin-top:.5rem'><table class='data'>"
@@ -2192,6 +2203,39 @@ def _glossary_section(run: dict | None = None) -> str:
             f'<dl>{items}</dl></section>')
 
 
+FIGURE_DIALOG_HTML = """<dialog id="bsq-lb" class="lb" aria-label="Figure viewer">
+<div class="lb-head"><h2 id="bsq-lb-title">Figure</h2><div class="lb-toolbar" aria-label="Figure tools">
+<button id="bsq-lb-close" class="lb-close" type="button" autofocus aria-label="Close figure viewer">Close</button>
+<button id="bsq-lb-fit" type="button">Fit</button><button id="bsq-lb-actual" type="button">Actual size</button>
+<button id="bsq-lb-out" type="button" aria-label="Zoom out">−</button><output id="bsq-lb-percent" aria-live="polite">100%</output>
+<button id="bsq-lb-in" type="button" aria-label="Zoom in">+</button></div></div>
+<div class="lb-stage" tabindex="0" aria-label="Scrollable figure"><img id="bsq-lb-img" alt="" tabindex="0"></div>
+<p id="bsq-lb-caption" class="lb-caption"></p></dialog>"""
+
+FIGURE_DIALOG_SCRIPT = """var bsqScale=1,bsqFit=true;
+function bsqSetScale(value){var lb=document.getElementById('bsq-lb'),li=document.getElementById('bsq-lb-img'),stage=lb.querySelector('.lb-stage');bsqScale=Math.min(8,Math.max(.05,value));if(!li.naturalWidth)return;li.style.width=(li.naturalWidth*bsqScale)+'px';li.style.height=(li.naturalHeight*bsqScale)+'px';li.classList.toggle('zoomed',!bsqFit);lb.classList.toggle('is-zoomed',!bsqFit);document.getElementById('bsq-lb-percent').textContent=Math.round(bsqScale*100)+'%';stage.scrollLeft=0;stage.scrollTop=0;}
+function bsqFitImage(){var li=document.getElementById('bsq-lb-img'),stage=document.querySelector('#bsq-lb .lb-stage');bsqFit=true;bsqSetScale(Math.min(1,stage.clientWidth/li.naturalWidth,stage.clientHeight/li.naturalHeight));}
+function bsqResetZoom(){var lb=document.getElementById('bsq-lb'),li=document.getElementById('bsq-lb-img'),stage=lb.querySelector('.lb-stage');bsqFit=true;bsqScale=1;li.classList.remove('zoomed');lb.classList.remove('is-zoomed');li.style.width='';li.style.height='';stage.scrollLeft=0;stage.scrollTop=0;}
+function bsqFinishClose(){var lb=document.getElementById('bsq-lb');if(lb.open)return;var li=document.getElementById('bsq-lb-img');var trigger=window._bsqTrig;window._bsqTrig=null;bsqResetZoom();li.removeAttribute('src');if(trigger&&trigger.isConnected)trigger.focus();}
+function bsqZoom(btn){var img=btn.querySelector('img'),lb=document.getElementById('bsq-lb'),li=document.getElementById('bsq-lb-img');if(!img||typeof lb.showModal!=='function')return;bsqResetZoom();window._bsqTrig=btn;li.alt=img.alt||'Figure';document.getElementById('bsq-lb-title').textContent=li.alt;var caption=btn.closest('figure').querySelector('figcaption');var parts=caption?Array.prototype.map.call(caption.querySelectorAll('.cap-lead,.cap-tech,.howto p'),function(n){return (n.textContent||'').trim();}).filter(Boolean):[];if(caption&&!parts.length)parts=[caption.textContent.trim()];parts.push('Use the scroll area to pan when enlarged.');document.getElementById('bsq-lb-caption').textContent=parts.join(' ');li.onload=function(){if(bsqFit)bsqFitImage();else bsqSetScale(bsqScale);};li.src=img.src;lb.showModal();if(li.complete)bsqFitImage();document.getElementById('bsq-lb-close').focus();}
+function bsqClose(){var lb=document.getElementById('bsq-lb');if(lb.open)lb.close();bsqFinishClose();}
+(function(){var lb=document.getElementById('bsq-lb'),li=document.getElementById('bsq-lb-img');document.getElementById('bsq-lb-close').addEventListener('click',bsqClose);document.getElementById('bsq-lb-fit').addEventListener('click',bsqFitImage);document.getElementById('bsq-lb-actual').addEventListener('click',function(){bsqFit=false;bsqSetScale(1);});document.getElementById('bsq-lb-out').addEventListener('click',function(){bsqFit=false;bsqSetScale(bsqScale/1.25);});document.getElementById('bsq-lb-in').addEventListener('click',function(){bsqFit=false;bsqSetScale(bsqScale*1.25);});li.addEventListener('click',function(){if(bsqFit){bsqFit=false;bsqSetScale(1);}else bsqFitImage();});li.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();li.click();}});lb.addEventListener('close',bsqFinishClose);lb.addEventListener('keydown',function(e){if(e.key!=='Tab')return;var items=Array.from(lb.querySelectorAll('button,[tabindex="0"]'));var first=items[0],last=items[items.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}});window.addEventListener('resize',function(){if(lb.open&&bsqFit)bsqFitImage();});})();"""
+
+
+def figure_dialog() -> str:
+    return FIGURE_DIALOG_HTML + "<script>" + FIGURE_DIALOG_SCRIPT + "</script>"
+
+
+def sortable_table_script() -> str:
+    return """(function(){
+function cellVal(cell){if(!cell)return '';var value=cell.getAttribute('data-sort-value');return value!==null?value:(cell.textContent||'');}
+function compare(left,right){var a=parseFloat(left),b=parseFloat(right);if(!isNaN(a)&&!isNaN(b))return a-b;return left.localeCompare(right);}
+document.querySelectorAll('table.sortable').forEach(function(table){var body=table.tBodies[0];if(!body)return;var original=Array.prototype.slice.call(body.rows);
+table.querySelectorAll('thead th').forEach(function(header,column){var label=(header.textContent||'').trim();var button=document.createElement('button');button.type='button';button.className='sort-button';button.textContent=label;button.setAttribute('aria-label','Sort by '+label);header.textContent='';header.appendChild(button);
+button.addEventListener('click',function(){var state=header.getAttribute('data-sort');var next=state==='asc'?'desc':(state==='desc'?'none':'asc');table.querySelectorAll('thead th').forEach(function(other){other.removeAttribute('data-sort');other.removeAttribute('aria-sort');});var rows=Array.prototype.slice.call(body.rows);if(next==='none'){original.forEach(function(row){body.appendChild(row);});return;}rows.sort(function(first,second){var order=compare(cellVal(first.cells[column]),cellVal(second.cells[column]));return next==='desc'?-order:order;});rows.forEach(function(row){body.appendChild(row);});header.setAttribute('data-sort',next);header.setAttribute('aria-sort',next==='asc'?'ascending':'descending');});});});
+})();"""
+
+
 def build(project: Path) -> str:
     reports = project / "results" / "reports"
     figs = project / "results" / "figures"
@@ -2275,52 +2319,10 @@ free and open-source under the MIT License. This report is fully self-contained 
 figures, tables and the logo are embedded, so no internet or external files are needed to view it.</p>
 </footer>
 <div id="term-tooltip" role="tooltip" hidden></div>
-<dialog id="bsq-lb" class="lb" aria-label="Figure viewer">
-<div class="lb-head"><h2 id="bsq-lb-title">Figure</h2><div class="lb-toolbar" aria-label="Figure tools">
-<button id="bsq-lb-close" class="lb-close" type="button" autofocus aria-label="Close figure viewer">Close</button>
-<button id="bsq-lb-fit" type="button">Fit</button><button id="bsq-lb-actual" type="button">Actual size</button>
-<button id="bsq-lb-out" type="button" aria-label="Zoom out">−</button><output id="bsq-lb-percent" aria-live="polite">100%</output>
-<button id="bsq-lb-in" type="button" aria-label="Zoom in">+</button></div></div>
-<div class="lb-stage" tabindex="0" aria-label="Scrollable figure"><img id="bsq-lb-img" alt="" tabindex="0"></div>
-<p id="bsq-lb-caption" class="lb-caption"></p></dialog>
+{figure_dialog()}
 <script>
-var bsqScale=1,bsqFit=true;
-function bsqSetScale(value){{var lb=document.getElementById('bsq-lb'),li=document.getElementById('bsq-lb-img'),stage=lb.querySelector('.lb-stage');bsqScale=Math.min(8,Math.max(.05,value));if(!li.naturalWidth)return;li.style.width=(li.naturalWidth*bsqScale)+'px';li.style.height=(li.naturalHeight*bsqScale)+'px';li.classList.toggle('zoomed',!bsqFit);lb.classList.toggle('is-zoomed',!bsqFit);document.getElementById('bsq-lb-percent').textContent=Math.round(bsqScale*100)+'%';stage.scrollLeft=0;stage.scrollTop=0;}}
-function bsqFitImage(){{var li=document.getElementById('bsq-lb-img'),stage=document.querySelector('#bsq-lb .lb-stage');bsqFit=true;bsqSetScale(Math.min(1,stage.clientWidth/li.naturalWidth,stage.clientHeight/li.naturalHeight));}}
-function bsqResetZoom(){{var lb=document.getElementById('bsq-lb'),li=document.getElementById('bsq-lb-img'),stage=lb.querySelector('.lb-stage');bsqFit=true;bsqScale=1;li.classList.remove('zoomed');lb.classList.remove('is-zoomed');li.style.width='';li.style.height='';stage.scrollLeft=0;stage.scrollTop=0;}}
-function bsqFinishClose(){{var lb=document.getElementById('bsq-lb');if(lb.open)return;var li=document.getElementById('bsq-lb-img');var trigger=window._bsqTrig;window._bsqTrig=null;bsqResetZoom();li.removeAttribute('src');if(trigger&&trigger.isConnected)trigger.focus();}}
-function bsqZoom(btn){{var img=btn.querySelector('img'),lb=document.getElementById('bsq-lb'),li=document.getElementById('bsq-lb-img');if(!img||typeof lb.showModal!=='function')return;bsqResetZoom();window._bsqTrig=btn;li.alt=img.alt||'Figure';document.getElementById('bsq-lb-title').textContent=li.alt;var caption=btn.closest('figure').querySelector('figcaption');var parts=caption?Array.prototype.map.call(caption.querySelectorAll('.cap-lead,.cap-tech,.howto p'),function(n){{return (n.textContent||'').trim();}}).filter(Boolean):[];if(caption&&!parts.length)parts=[caption.textContent.trim()];parts.push('Use the scroll area to pan when enlarged.');document.getElementById('bsq-lb-caption').textContent=parts.join(' ');li.onload=function(){{if(bsqFit)bsqFitImage();else bsqSetScale(bsqScale);}};li.src=img.src;lb.showModal();if(li.complete)bsqFitImage();document.getElementById('bsq-lb-close').focus();}}
-function bsqClose(){{var lb=document.getElementById('bsq-lb');if(lb.open)lb.close();bsqFinishClose();}}
-(function(){{var lb=document.getElementById('bsq-lb'),li=document.getElementById('bsq-lb-img');document.getElementById('bsq-lb-close').addEventListener('click',bsqClose);document.getElementById('bsq-lb-fit').addEventListener('click',bsqFitImage);document.getElementById('bsq-lb-actual').addEventListener('click',function(){{bsqFit=false;bsqSetScale(1);}});document.getElementById('bsq-lb-out').addEventListener('click',function(){{bsqFit=false;bsqSetScale(bsqScale/1.25);}});document.getElementById('bsq-lb-in').addEventListener('click',function(){{bsqFit=false;bsqSetScale(bsqScale*1.25);}});li.addEventListener('click',function(){{if(bsqFit){{bsqFit=false;bsqSetScale(1);}}else bsqFitImage();}});li.addEventListener('keydown',function(e){{if(e.key==='Enter'||e.key===' '){{e.preventDefault();li.click();}}}});lb.addEventListener('close',bsqFinishClose);lb.addEventListener('keydown',function(e){{if(e.key!=='Tab')return;var items=Array.from(lb.querySelectorAll('button,[tabindex="0"]'));var first=items[0],last=items[items.length-1];if(e.shiftKey&&document.activeElement===first){{e.preventDefault();last.focus();}}else if(!e.shiftKey&&document.activeElement===last){{e.preventDefault();first.focus();}}}});window.addEventListener('resize',function(){{if(lb.open&&bsqFit)bsqFitImage();}});}})();
 (function(){{var tip=document.getElementById('term-tooltip'),active=null,timer;function hide(){{clearTimeout(timer);if(active)active.removeAttribute('aria-describedby');tip.hidden=true;active=null;}}function later(){{clearTimeout(timer);timer=setTimeout(hide,180);}}function show(btn){{clearTimeout(timer);if(active&&active!==btn)active.removeAttribute('aria-describedby');active=btn;tip.textContent=btn.querySelector('.tip').textContent;tip.hidden=false;btn.setAttribute('aria-describedby',tip.id);place();}}function place(){{if(!active)return;var r=active.getBoundingClientRect(),t=tip.getBoundingClientRect();tip.style.left=Math.max(12,Math.min(r.left,innerWidth-t.width-12))+'px';tip.style.top=Math.max(12,Math.min(r.bottom+8,innerHeight-t.height-12))+'px';}}document.querySelectorAll('.term').forEach(function(btn){{btn.addEventListener('mouseenter',function(){{show(btn);}});btn.addEventListener('mouseleave',later);btn.addEventListener('focus',function(){{show(btn);}});btn.addEventListener('blur',later);btn.addEventListener('click',function(){{show(btn);}});}});tip.addEventListener('mouseenter',function(){{clearTimeout(timer);}});tip.addEventListener('mouseleave',later);document.addEventListener('keydown',function(e){{if(e.key==='Escape')hide();}});document.addEventListener('click',function(e){{if(!e.target.closest('.term')&&!tip.contains(e.target))hide();}});window.addEventListener('scroll',function(e){{if(!tip.contains(e.target))place();}},true);window.addEventListener('resize',place);}})();
-// Sortable tables: click a header to sort; numeric columns sort numerically. Third
-// click restores the original order. Purely client-side, no dependencies.
-(function(){{
-  function cellVal(cell){{if(!cell)return '';var v=cell.getAttribute('data-sort-value');return v!==null?v:(cell.textContent||'');}}
-  function cmp(a,b){{var x=parseFloat(a),y=parseFloat(b);
-    if(!isNaN(x)&&!isNaN(y))return x-y; return a.localeCompare(b);}}
-  document.querySelectorAll('table.sortable').forEach(function(tbl){{
-    var tb=tbl.tBodies[0]; if(!tb)return;
-    var orig=Array.prototype.slice.call(tb.rows);
-    tbl.querySelectorAll('thead th').forEach(function(th,ci){{
-      th.tabIndex=0; th.setAttribute('role','button'); th.setAttribute('aria-sort','none');
-      th.title='Sort by '+(th.textContent||'').trim();
-      function doSort(){{
-        var st=th.getAttribute('data-sort'); var next=st==='asc'?'desc':(st==='desc'?'none':'asc');
-        tbl.querySelectorAll('thead th').forEach(function(o){{o.removeAttribute('data-sort');o.setAttribute('aria-sort','none');}});
-        var rows=Array.prototype.slice.call(tb.rows);
-        if(next==='none'){{orig.forEach(function(r){{tb.appendChild(r);}});return;}}
-        rows.sort(function(r1,r2){{
-          var c=cmp(cellVal(r1.cells[ci]),cellVal(r2.cells[ci]));
-          return next==='asc'?c:-c;}});
-        rows.forEach(function(r){{tb.appendChild(r);}});
-        th.setAttribute('data-sort',next);
-        th.setAttribute('aria-sort',next==='asc'?'ascending':'descending');}}
-      th.addEventListener('click',doSort);
-      th.addEventListener('keydown',function(e){{if(e.key==='Enter'||e.key===' '){{e.preventDefault();doSort();}}}});
-    }});
-  }});
-}})();
+{sortable_table_script()}
 </script>
 </body></html>"""
 

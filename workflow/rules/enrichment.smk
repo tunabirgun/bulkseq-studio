@@ -92,6 +92,8 @@ rule enrichment:
         results="results/deseq2/deseq2_results.csv",
         up="results/deseq2/upregulated_genes.csv",
         down="results/deseq2/downregulated_genes.csv",
+        mapping_helper="workflow/scripts/enrichment_mapping.R",
+        eligibility_helper="workflow/scripts/enrichment_eligibility.R",
     output:
         summary="results/enrichment/enrichment_summary.txt",
         go="results/enrichment/go_ora_all.csv",
@@ -221,6 +223,7 @@ if _CUSTOM_GMT or _CUSTOM_ANNOT:
             results="results/deseq2/deseq2_results.csv",
             up="results/deseq2/upregulated_genes.csv",
             down="results/deseq2/downregulated_genes.csv",
+            eligibility_helper="workflow/scripts/enrichment_eligibility.R",
             # File inputs only when set, so editing them is a rerun trigger and a missing
             # path fails at DAG build rather than mid-script.
             **({"gmt": _CUSTOM_GMT} if _CUSTOM_GMT else {}),

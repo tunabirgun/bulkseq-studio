@@ -72,6 +72,56 @@ def test_protected_launch_routes_to_background_preflight_before_gate(
         window.close()
 
 
+def test_sync_failure_blocks_gui_runner_before_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = _window_with_project(tmp_path)
+    started: list[str] = []
+    try:
+        monkeypatch.setattr(
+            window.manager,
+            "sync_workflow_if_outdated",
+            lambda root: (_ for _ in ()).throw(RuntimeError("project workflow changed since it was copied")),
+        )
+        monkeypatch.setattr(window, "_begin_launch_preflight", lambda mode: started.append(mode))
+
+        window._start_snakemake_impl("run")
+
+        assert started == []
+        assert window.runner is None
+        assert "Could not refresh project workflow scripts" in window.log_text.toPlainText()
+    finally:
+        window.close()
+
+
+def test_gui_continuation_rechecks_workflow_before_starting_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = _window_with_project(tmp_path)
+    assert window.project_root is not None
+    try:
+        window.manager.copy_workflow_metadata(window.project_root)
+        script = window.project_root / "workflow" / "scripts" / "make_enrichment_figures.R"
+        script.write_bytes(script.read_bytes() + b"\n# changed after preflight\n")
+        monkeypatch.setattr(window, "_run_gate_ok", lambda **kwargs: True)
+        monkeypatch.setattr(
+            main_window_module,
+            "build_snakemake_command",
+            lambda *args, **kwargs: pytest.fail("runner command built after workflow changed"),
+        )
+
+        with pytest.raises(ValueError, match="changed since it was copied"):
+            window._start_snakemake_impl(
+                "run", _validated_preflight=object(), _validated_root=window.project_root,
+            )
+
+        assert window.runner is None
+    finally:
+        window.close()
+
+
 def test_launch_fingerprint_keeps_event_loop_responsive_and_continues_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -29,6 +29,7 @@ case "${HOST_OS}/${HOST_ARCH}" in
     echo "inside WSL2 on Windows." >&2
     exit 1 ;;
 esac
+FIXED_LOCK_ENV_FILE=""
 case "$PROFILE" in
 full)
   # Install the full R/Bioconductor + CLI stack from the pinned LOCK, not the floating
@@ -37,7 +38,8 @@ full)
   # package and build so the env reproduces exactly. bulkseq_full.yaml stays as a fallback
   # for what the lock cannot satisfy: a build garbage-collected from the channels, or a host
   # that is not linux-64 (the lock is a linux-64 snapshot).
-  ENV_FILE="$REPO_DIR/workflow/envs/bulkseq.lock.yaml"
+  FIXED_LOCK_ENV_FILE="$REPO_DIR/workflow/envs/bulkseq.lock.yaml"
+  ENV_FILE="$FIXED_LOCK_ENV_FILE"
   FALLBACK_ENV_FILE="$REPO_DIR/workflow/envs/bulkseq_full.yaml"
   if [ "$MM_PLATFORM" != "linux-64" ]; then
     # The lock is a linux-64 snapshot pinned to exact builds, so it cannot solve on
@@ -57,7 +59,9 @@ core)
   exit 2
   ;;
 esac
-LOG_DIR="$REPO_DIR/scripts/logs"
+# GUI launchers pass a common per-user location. A direct shell invocation still uses
+# the XDG data convention, keeping the source checkout and a mounted AppImage read-only.
+LOG_DIR="${BULKSEQ_SETUP_LOG_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/BulkSeq Studio/logs}"
 LOG_FILE="$LOG_DIR/wsl_bioenv_install.log"
 MAMBA_ROOT="$HOME/micromamba"
 MICROMAMBA="$HOME/.local/bin/micromamba"
@@ -172,11 +176,11 @@ mkdir -p "$HOME/.local/bin"
 # download never leaves a partial micromamba on PATH.
 bootstrap_with_python3() {
   python3 - "$1" "$2" "$3" <<'PY'
-import hashlib, io, os, stat, sys, tarfile, urllib.error, urllib.request
+import hashlib, http.client, io, os, stat, sys, tarfile, urllib.error, urllib.request
 url, dest, expected = sys.argv[1], sys.argv[2], sys.argv[3]
 try:
     data = urllib.request.urlopen(url, timeout=180).read()
-except (urllib.error.URLError, OSError) as exc:
+except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
     raise SystemExit(f"download failed: {getattr(exc, 'reason', exc)}")
 digest = hashlib.sha256(data).hexdigest()
 if digest != expected:
@@ -380,21 +384,23 @@ else
   exit 1
 fi
 
-# Stage 2b (full profile): confirm the R stack loads. An in-place update can leave a package
-# installed-but-unloadable that `env update` will not repair. Preserve that environment and ask
-# for explicit destructive-recovery authorization rather than silently removing it. No-op for a
-# healthy or core environment; an explicitly requested BULKSEQ_REBUILD was already done above.
-if ! r_stack_loads; then
-  if [ "$REBUILD" = "1" ]; then
-    echo "ERROR: the R/Bioconductor stack still does not load after the explicitly authorized rebuild." >&2
-    echo "The new environment has been retained for diagnosis; see R_STACK_BAD above." >&2
-  else
-    echo "ACTION REQUIRED: the R/Bioconductor stack does not load after the in-place update." >&2
-    echo "The existing environment was retained. Review R_STACK_BAD above, then explicitly choose" >&2
-    echo "Rebuild from scratch (BULKSEQ_REBUILD=1) if you authorize removal and recreation." >&2
+# Stage 2b (full profile)
+# A normal env update trusts conda metadata, so it does not restore a package file that
+# is missing or damaged. Verification below may request one exact-spec reinstall. The retry is
+# bounded, preserves the environment, and uses the spec that actually installed (lock, fallback,
+# or core); it never deletes the environment or silently changes pins.
+repair_attempted=0
+repair_installed_spec_once() {
+  if [ "$repair_attempted" -ne 0 ]; then
+    echo "Environment repair was already attempted once; refusing another automatic retry." >&2
+    return 1
   fi
-  exit 1
-fi
+  repair_attempted=1
+  echo "Verification found a damaged or unloadable component."
+  echo "Repairing '$ENV_NAME' once from $(basename "$INSTALLED_ENV_FILE") without removing it."
+  echo "Cached conda packages are reused, but package post-link steps may download data again."
+  "$MICROMAMBA" install --yes --force-reinstall -n "$ENV_NAME" -f "$INSTALLED_ENV_FILE"
+}
 
 echo ""
 echo "Configuring shell activation helper"
@@ -437,7 +443,6 @@ if [ "$PROFILE" = "full" ]; then
   PROBE_TOOLS+=("${FULL_ONLY_PROBE_TOOLS[@]}")
 fi
 
-verification_failed=0
 probe_tool() {
   local tool="$1" path="" out="" rc=0 expected_marker=""
   local -a probe_args=()
@@ -485,25 +490,51 @@ probe_tool() {
   return 0
 }
 
-for tool in "${PROBE_TOOLS[@]}"; do
-  probe_tool "$tool"
-done
+verify_environment() {
+  verification_failed=0
+  local tool python_path python_versions
+  for tool in "${PROBE_TOOLS[@]}"; do
+    probe_tool "$tool"
+  done
 
-printf "  %-22s" "Python imports"
-python_path="$("$MICROMAMBA" run -n "$ENV_NAME" bash -c 'command -v python' 2>/dev/null | tail -n 1 || true)"
-if python_versions="$(run_limited 20 "$MICROMAMBA" run -n "$ENV_NAME" python -c \
-    'import numpy, pandas, yaml; print("numpy=" + numpy.__version__ + "; pandas=" + pandas.__version__ + "; PyYAML=" + yaml.__version__)' 2>&1)"; then
-  echo "$python_path"
-  printf "    versions: %s\n" "$python_versions"
-else
-  echo "numpy/pandas/PyYAML import failed"
-  [ -n "$python_versions" ] && printf "    %s\n" "$(printf '%s\n' "$python_versions" | head -n 1)"
-  verification_failed=1
-fi
+  printf "  %-22s" "Python imports"
+  python_path="$("$MICROMAMBA" run -n "$ENV_NAME" bash -c 'command -v python' 2>/dev/null | tail -n 1 || true)"
+  if python_versions="$(run_limited 20 "$MICROMAMBA" run -n "$ENV_NAME" python -c \
+      'import numpy, pandas, yaml; print("numpy=" + numpy.__version__ + "; pandas=" + pandas.__version__ + "; PyYAML=" + yaml.__version__)' 2>&1)"; then
+    echo "$python_path"
+    printf "    versions: %s\n" "$python_versions"
+  else
+    echo "numpy/pandas/PyYAML import failed"
+    [ -n "$python_versions" ] && printf "    %s\n" "$(printf '%s\n' "$python_versions" | head -n 1)"
+    verification_failed=1
+  fi
 
-if [ "$verification_failed" -ne 0 ]; then
-  echo "ERROR: $PROFILE environment verification failed; see the probes above." >&2
-  exit 1
+  if [ "$PROFILE" = "full" ]; then
+    printf "  %-22s" "R package stack"
+    if r_stack_loads; then
+      echo "loaded"
+    else
+      echo "load failed"
+      verification_failed=1
+    fi
+  fi
+  [ "$verification_failed" -eq 0 ]
+}
+
+if ! verify_environment; then
+  echo "Initial $PROFILE environment verification failed; attempting one in-place repair." >&2
+  if repair_installed_spec_once; then
+    echo ""
+    echo "Re-running verification after repair:"
+    if ! verify_environment; then
+      echo "ERROR: $PROFILE environment verification still fails after one exact-spec repair." >&2
+      echo "The existing environment was retained for diagnosis; see the probes above." >&2
+      exit 1
+    fi
+  else
+    echo "ERROR: $PROFILE environment repair failed; the existing environment was retained." >&2
+    exit 1
+  fi
 fi
 
 # Record which profile this environment was installed with. app/core/readiness.py reads the
@@ -527,9 +558,10 @@ if [ -d "$ENV_PREFIX" ]; then
     spec_sha256="$(shasum -a 256 "$INSTALLED_ENV_FILE" | cut -d' ' -f1)"
   fi
   spec_source="fallback"
-  if [ "$INSTALLED_ENV_FILE" = "$ENV_FILE" ]; then
+  if [ "$PROFILE" = "core" ]; then
+    spec_source="core"
+  elif [ "$INSTALLED_ENV_FILE" = "$FIXED_LOCK_ENV_FILE" ]; then
     spec_source="lock"
-    [ "$PROFILE" = "core" ] && spec_source="core"
   fi
   printf '%s\n%s\n%s\n' "$spec_basename" "$spec_sha256" "$spec_source" > "$ENV_PREFIX/.bulkseq_spec"
   echo "Recorded installed spec '$spec_basename' (source: $spec_source) in $ENV_PREFIX/.bulkseq_spec"

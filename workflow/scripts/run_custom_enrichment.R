@@ -10,6 +10,8 @@ local({
   assign("require", .m(base::require), envir = globalenv())
 })
 
+source(file.path(snakemake@scriptdir, "enrichment_eligibility.R"))
+
 # Custom gene-set enrichment (optional): clusterProfiler ORA (enricher) + GSEA against a
 # user-supplied gene-set collection (a GMT and/or an id->term table), via TERM2GENE. This is
 # organism-agnostic (no OrgDb/KEGG needed), so it works even for organisms run_enrichment.R
@@ -112,6 +114,11 @@ build_custom_deterministic_rank <- function(statistic, canonical_id) {
   )
 }
 
+build_custom_population_rank <- function(population, canonical_id) {
+  build_custom_deterministic_rank(
+    population$rank_values[population$rank_mask], canonical_id[population$rank_mask])
+}
+
 custom_rank_evidence_lines <- function(rank_info) {
   c(
     sprintf("Custom GSEA ranking order: %s.", rank_info$policy),
@@ -176,7 +183,11 @@ result <- tryCatch({
 
   # --- universe: background file if given, else tested genes (non-NA padj), like GO ORA ---
   res <- read.csv(results_file, stringsAsFactors = FALSE)
-  tested <- unique(strip_version(as.character(res$gene_id[!is.na(res$padj)])))
+  populations <- prepare_enrichment_populations(
+    res, res$log2FoldChange, !is.na(res$padj),
+    !is.na(res$padj) & !is.na(res$log2FoldChange),
+    !is.na(res$log2FoldChange))
+  tested <- unique(strip_version(as.character(populations$ora$gene_id)))
   if (nzchar(bg) && file.exists(bg)) {
     universe <- unique(strip_version(trimws(readLines(bg, warn = FALSE))))
     universe <- universe[nzchar(universe) & !startsWith(universe, "#")]
@@ -184,11 +195,12 @@ result <- tryCatch({
 
   # --- significant set (up+down) + ranked list (log2FC) ---
   all_sig <- unique(c(read_ids_csv(up_file), read_ids_csv(down_file)))
-  res2 <- res[!is.na(res$padj) & !is.na(res$log2FoldChange), ]
-  res2$base_id <- strip_version(as.character(res2$gene_id))
-  rank_info <- build_custom_deterministic_rank(res2$log2FoldChange, res2$base_id)
+  base_id <- strip_version(as.character(res$gene_id))
+  rank_info <- build_custom_population_rank(populations, base_id)
   ranked <- rank_info$values
-  rank_evidence <- custom_rank_evidence_lines(rank_info)
+  rank_evidence <- c(
+    enrichment_eligibility_lines(populations, "Custom GSEA"),
+    custom_rank_evidence_lines(rank_info))
   message(paste(rank_evidence, collapse = "\n"))
 
   overlap <- length(intersect(unique(t2g$gene), c(all_sig, names(ranked))))

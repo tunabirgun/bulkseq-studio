@@ -388,7 +388,10 @@ def test_a_mislabelled_threshold_test_method_is_caught(sources) -> None:
 # The changelog publishes the same matrix. A table that drifts from DECLARED documents an
 # engine the workflow does not implement, which is worse than documenting nothing.
 CHANGELOG = ROOT / "CHANGELOG.md"
-CONSTANTS = ROOT / "app" / "constants.py"
+# The published parity matrix is the 0.31.0 engine-parity specification. The 0.32.0
+# release does not broaden that historical matrix into a claim about outputs it did not
+# revalidate.
+ENGINE_MATRIX_CHANGELOG_VERSION = "0.31.0"
 CELL_VALUES: dict[str, object] = {
     "yes": True,
     "no": False,
@@ -397,12 +400,6 @@ CELL_VALUES: dict[str, object] = {
     "not applicable": "not_applicable",
     "\u2014": None,
 }
-
-
-def _app_version() -> str:
-    match = re.search(r'^APP_VERSION = "([^"]+)"', CONSTANTS.read_text(encoding="utf-8"), re.M)
-    assert match, "app/constants.py declares no APP_VERSION"
-    return match.group(1)
 
 
 def changelog_entry(text: str, version: str) -> str:
@@ -448,7 +445,7 @@ def parse_engine_matrix(entry: str) -> dict[str, dict[str, object]]:
 
 
 def test_changelog_publishes_the_declared_engine_matrix() -> None:
-    entry = changelog_entry(CHANGELOG.read_text(encoding="utf-8"), _app_version())
+    entry = changelog_entry(CHANGELOG.read_text(encoding="utf-8"), ENGINE_MATRIX_CHANGELOG_VERSION)
     table = parse_engine_matrix(entry)
     # Structure first: a parser that found nothing must not compare two empty tables.
     assert set(table) == set(ENGINES)
@@ -460,7 +457,7 @@ def test_changelog_publishes_the_declared_engine_matrix() -> None:
 def test_a_mutated_changelog_cell_is_caught() -> None:
     # Negative control: publish edgeR as carrying a standard error it does not report.
     text = CHANGELOG.read_text(encoding="utf-8")
-    entry = changelog_entry(text, _app_version())
+    entry = changelog_entry(text, ENGINE_MATRIX_CHANGELOG_VERSION)
     mutated = entry.replace("| `lfcSE_populated` | yes | no |", "| `lfcSE_populated` | yes | yes |", 1)
     assert mutated != entry, "negative-control fixture drifted; the lfcSE row changed shape"
     table = parse_engine_matrix(mutated)
@@ -470,7 +467,13 @@ def test_a_mutated_changelog_cell_is_caught() -> None:
 
 def test_an_entry_without_the_matrix_is_caught() -> None:
     # The gate must fail loudly when the table is gone, not pass on an empty comparison.
-    entry = changelog_entry(CHANGELOG.read_text(encoding="utf-8"), _app_version())
+    entry = changelog_entry(CHANGELOG.read_text(encoding="utf-8"), ENGINE_MATRIX_CHANGELOG_VERSION)
     without = "\n".join(line for line in entry.splitlines() if not line.strip().startswith("|"))
     with pytest.raises(AssertionError, match="exactly one table"):
         parse_engine_matrix(without)
+
+
+def test_new_release_entry_does_not_inherit_the_historical_engine_matrix() -> None:
+    text = CHANGELOG.read_text(encoding="utf-8")
+    entry = changelog_entry(text, "0.32.0")
+    assert "| Artefact | DESeq2 | edgeR-QLF | limma-voom | limma | imported |" not in entry

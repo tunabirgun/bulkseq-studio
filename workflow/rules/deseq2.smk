@@ -83,6 +83,7 @@ if MICROARRAY_MODE:
         input:
             expression="results/microarray/normalized_expression.tsv",
             samples=config["input"]["samples"],
+            de_helper="workflow/scripts/de_common.R",
         output:
             results="results/deseq2/deseq2_results.csv",
             up="results/deseq2/upregulated_genes.csv",
@@ -164,6 +165,7 @@ elif VOOM_MODE:
         input:
             counts="results/counts/counts.txt",
             samples=config["input"]["samples"],
+            de_helper="workflow/scripts/de_common.R",
         output:
             results="results/deseq2/deseq2_results.csv",
             up="results/deseq2/upregulated_genes.csv",
@@ -203,6 +205,7 @@ elif EDGER_MODE:
         input:
             counts="results/counts/counts.txt",
             samples=config["input"]["samples"],
+            de_helper="workflow/scripts/de_common.R",
         output:
             results="results/deseq2/deseq2_results.csv",
             up="results/deseq2/upregulated_genes.csv",

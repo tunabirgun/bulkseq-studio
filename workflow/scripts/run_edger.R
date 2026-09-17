@@ -73,14 +73,9 @@ if (length(missing_cov)) {
   stop(sprintf("Design covariate(s) not found in the sample sheet: %s", paste(missing_cov, collapse = ", ")))
 }
 covariates <- covariates[covariates %in% colnames(coldata)]
-level_names <- make.names(lv)
-if (length(covariates)) {
-  cov_terms <- paste(covariates, collapse = " + ")
-  design <- model.matrix(as.formula(paste("~ 0 + grp +", cov_terms)), data = coldata)
-} else {
-  design <- model.matrix(~ 0 + grp)
-}
-colnames(design)[seq_along(lv)] <- level_names
+design_contrast <- group_means_design_contrast(
+  grp, coldata, covariates, numerator, denominator)
+design <- design_contrast$design
 
 # The formula actually fitted (additive group-means), not the typed one, so the check
 # message never affirms a term (e.g. an interaction) that was not fitted.
@@ -108,8 +103,7 @@ dge <- dge[keep, , keep.lib.sizes = FALSE]
 dge <- calcNormFactors(dge)            # TMM
 dge <- estimateDisp(dge, design)
 fit <- glmQLFit(dge, design)
-contrast_str <- paste0(make.names(numerator), " - ", make.names(denominator))
-cmat <- makeContrasts(contrasts = contrast_str, levels = design)
+cmat <- design_contrast$contrast
 qlf <- glmQLFTest(fit, contrast = cmat)
 # sort.by="none" keeps topTags in matrix row order (figures index assay(vsd) positionally).
 tt <- topTags(qlf, n = Inf, sort.by = "none")$table

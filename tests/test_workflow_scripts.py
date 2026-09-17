@@ -618,10 +618,13 @@ def test_enrichment_mapping_evidence_is_preserved_in_reports(mrs, tmp_path) -> N
 def test_enrichment_script_has_mixed_id_fallback_na_filter_and_fail_closed_gate() -> None:
     script = (Path(__file__).resolve().parents[1] / "workflow" / "scripts" /
               "run_enrichment.R").read_text(encoding="utf-8")
-    assert "map_ids_with_routing <- function" in script
-    assert 'eligible <- unique(c(effective_keytype, configured_keytype, "TAIR", "ENSEMBL",' in script
-    assert 'reason = "routed_one_to_many"' in script
-    assert 'reason = "unresolved_cross_keytype"' in script
+    mapping = (Path(__file__).resolve().parents[1] / "workflow" / "scripts" /
+               "enrichment_mapping.R").read_text(encoding="utf-8")
+    assert 'source(file.path(snakemake@scriptdir, "enrichment_mapping.R"))' in script
+    assert "map_ids_with_routing <- function" in mapping
+    assert 'eligible <- unique(c(effective_keytype, configured_keytype, "TAIR", "ENSEMBL",' in mapping
+    assert 'reason = "routed_one_to_many"' in mapping
+    assert 'reason = "unresolved_cross_keytype"' in mapping
     assert "collapse_entrez_results <- function" in script
     assert "stats::median(values)" in script
     assert 'res$direction == "up"' in script and 'res$direction == "down"' in script
@@ -674,6 +677,34 @@ def test_wilcoxon_axis_is_method_neutral() -> None:
               "run_wilcoxon.R").read_text(encoding="utf-8")
     assert 'labs(x = "Primary differential-expression statistic"' in script
     assert "DESeq2 / limma statistic" not in script
+
+
+def _assert_wilcoxon_warning_contract(source: str) -> None:
+    assert "small <- n_min < 5" in source
+    assert "exact p-values are discrete and the test has limited power" in source
+    assert "exact p cannot reach 0.05" not in source
+    assert "wilcox.test(a, b)$p.value" in source
+    assert "p.adjust(pvals[ok], method = \"BH\")" in source
+    assert "de_stat = res$stat[match(rownames(m), res$gene_id)]" in source
+
+
+def test_wilcoxon_small_sample_warning_is_qualitative_and_statistics_unchanged() -> None:
+    script = (Path(__file__).resolve().parents[1] / "workflow" / "scripts" /
+              "run_wilcoxon.R").read_text(encoding="utf-8")
+    _assert_wilcoxon_warning_contract(script)
+
+
+def test_wilcoxon_warning_contract_rejects_the_old_unattainable_p_claim() -> None:
+    script = (Path(__file__).resolve().parents[1] / "workflow" / "scripts" /
+              "run_wilcoxon.R").read_text(encoding="utf-8")
+    old_wording = script.replace(
+        "exact p-values are discrete and the test has limited power",
+        "exact p cannot reach 0.05",
+        1,
+    )
+    assert old_wording != script
+    with pytest.raises(AssertionError):
+        _assert_wilcoxon_warning_contract(old_wording)
 
 
 def _ppi_sidecar() -> dict:
@@ -1070,7 +1101,9 @@ def test_workflow_provenance_prefers_metadata_over_creation_stamp(tmp_path: Path
     prov = mrs.workflow_provenance(tmp_path, project)
 
     assert prov == {"executed_version": "0.30.1", "executed_app_version": "0.30.0",
-                    "digest": "a" * 64, "copied_at": "2026-09-10T12:00:00"}
+                    "bundle_digest": "a" * 64,
+                    "execution_digest": mrs.workflow_tree_digest(tmp_path / "workflow"),
+                    "copied_at": "2026-09-10T12:00:00"}
 
 
 def test_workflow_provenance_falls_back_when_metadata_absent(tmp_path: Path, mrs) -> None:
@@ -1078,7 +1111,8 @@ def test_workflow_provenance_falls_back_when_metadata_absent(tmp_path: Path, mrs
 
     prov = mrs.workflow_provenance(tmp_path, project)
 
-    assert prov == {"executed_version": "0.29.0", "executed_app_version": None, "digest": None, "copied_at": None}
+    assert prov == {"executed_version": "0.29.0", "executed_app_version": None,
+                    "bundle_digest": None, "execution_digest": None, "copied_at": None}
 
 
 @pytest.mark.parametrize("body", ["not: [valid, yaml:", "- just\n- a\n- list\n", "workflow_digest: only\n"])
@@ -1089,7 +1123,9 @@ def test_workflow_provenance_falls_back_on_malformed_metadata(tmp_path: Path, mr
 
     prov = mrs.workflow_provenance(tmp_path, project)
 
-    assert prov == {"executed_version": "0.29.0", "executed_app_version": None, "digest": None, "copied_at": None}
+    assert prov == {"executed_version": "0.29.0", "executed_app_version": None,
+                    "bundle_digest": None, "execution_digest": mrs.workflow_tree_digest(tmp_path / "workflow"),
+                    "copied_at": None}
 
 
 def test_workflow_provenance_negative_never_reports_stamp_when_metadata_disagrees(tmp_path: Path, mrs) -> None:
@@ -1105,6 +1141,31 @@ def test_workflow_provenance_negative_never_reports_stamp_when_metadata_disagree
     assert prov["executed_version"] == "0.30.1"
 
 
+def test_workflow_provenance_reports_the_executed_tree_not_only_its_metadata(tmp_path: Path, mrs) -> None:
+    _write_workflow_metadata(tmp_path, workflow_version="0.31.0", workflow_digest="b" * 64)
+    script = tmp_path / "workflow" / "scripts" / "rule.py"
+    script.parent.mkdir(exist_ok=True)
+    script.write_text("print('executed')\n", encoding="utf-8")
+
+    prov = mrs.workflow_provenance(tmp_path, {})
+
+    assert prov["bundle_digest"] == "b" * 64
+    assert prov["execution_digest"] == mrs.workflow_tree_digest(tmp_path / "workflow")
+    assert prov["execution_digest"] != prov["bundle_digest"]
+
+
+def test_run_summary_and_project_use_the_same_workflow_digest_order(tmp_path: Path, mrs) -> None:
+    from app.core.project import ProjectManager
+
+    workflow = tmp_path / "workflow"
+    (workflow / "z").mkdir(parents=True)
+    (workflow / "A").mkdir()
+    (workflow / "z" / "Snakefile").write_text("rule all:\n", encoding="utf-8")
+    (workflow / "A" / "__init__.py").write_text("value = 1\n", encoding="utf-8")
+
+    assert mrs.workflow_tree_digest(workflow) == ProjectManager().workflow_tree_digest(workflow)
+
+
 def test_workflow_provenance_with_metadata_lacking_app_version(tmp_path: Path, mrs) -> None:
     # Pre-0.30.1 metadata.yaml has no app_version field; executed_app_version must be None
     # so the fallback to project.get("app_version") activates in the payload.
@@ -1115,16 +1176,19 @@ def test_workflow_provenance_with_metadata_lacking_app_version(tmp_path: Path, m
     prov = mrs.workflow_provenance(tmp_path, project)
 
     assert prov == {"executed_version": "0.30.0", "executed_app_version": None,
-                    "digest": "c" * 64, "copied_at": "2026-09-10T08:00:00"}
+                    "bundle_digest": "c" * 64,
+                    "execution_digest": mrs.workflow_tree_digest(tmp_path / "workflow"),
+                    "copied_at": "2026-09-10T08:00:00"}
 
 
 def test_workflow_version_summary_reports_executed_version_and_creation_stamps(mrs) -> None:
     payload = {
-        "workflow_version": "0.30.1", "workflow_digest": "c" * 64, "workflow_copied_at": "2026-09-10T09:00:00",
+        "workflow_version": "0.30.1", "workflow_execution_digest": "c" * 64,
+        "workflow_bundle_digest": "b" * 64, "workflow_copied_at": "2026-09-10T09:00:00",
         "project_created_app_version": "0.29.0", "project_created_workflow_version": "0.29.0",
     }
     line = mrs.workflow_version_summary(payload)
-    assert line == ("Workflow version: 0.30.1 (digest cccccccccccc, copied 2026-09-10T09:00:00); "
+    assert line == ("Workflow version: 0.30.1 (execution digest cccccccccccc; bundled digest bbbbbbbbbbbb, copied 2026-09-10T09:00:00); "
                      "project created with app 0.29.0 / workflow 0.29.0")
 
 
@@ -1137,17 +1201,32 @@ def test_workflow_version_summary_labels_the_stamp_fallback(mrs) -> None:
 
 def test_render_text_and_tools_references_use_executed_workflow_version(mrs) -> None:
     payload = _base_payload(
-        workflow_version="0.30.1", workflow_digest="d" * 64, workflow_copied_at="2026-09-10T09:00:00",
+        workflow_version="0.30.1", workflow_execution_digest="d" * 64,
+        workflow_bundle_digest="c" * 64, workflow_copied_at="2026-09-10T09:00:00",
         project_created_app_version="0.29.0", project_created_workflow_version="0.29.0",
         enrichment={}, ppi={}, microarray={}, gene_sets={}, r_packages={}, sanity_checks="",
     )
     text = mrs.render_text(payload)
     refs = mrs.render_tools_references(payload)
-    assert "Workflow version: 0.30.1 (digest dddddddddddd" in text
+    assert "Workflow version: 0.30.1 (execution digest dddddddddddd" in text
     assert "0.29.0" in text  # only inside the "project created with" clause
     assert "Workflow version: 0.29.0" not in text
-    assert "Workflow version: 0.30.1 (digest dddddddddddd" in refs
+    assert "Workflow version: 0.30.1 (execution digest dddddddddddd" in refs
     assert "Workflow version: 0.29.0" not in refs
+
+
+def test_legacy_workflow_digest_is_not_described_as_an_execution_digest(mrs, mhr) -> None:
+    payload = _base_payload(
+        workflow_version="0.30.1", workflow_digest="d" * 64,
+        workflow_copied_at="2026-09-10T09:00:00", project_created_app_version="0.29.0",
+        project_created_workflow_version="0.29.0", enrichment={}, ppi={}, microarray={}, gene_sets={},
+        r_packages={}, sanity_checks="",
+    )
+
+    assert "recorded workflow digest dddddddddddd" in mrs.workflow_version_summary(payload)
+    rows = dict(mhr._provenance_rows(payload))
+    assert rows["Recorded workflow digest"] == "d" * 12
+    assert "Workflow execution digest" not in rows
 
 
 # --- Reports: shared renderers, provenance parity, enrichment-evidence drift, single contrast ---
@@ -1246,6 +1325,7 @@ def test_pre_fix_html_renderer_misreports_a_mixed_run(mrs, tmp_path) -> None:
 def _provenance_payload(**overrides) -> dict:
     payload = _base_payload(
         app_version="0.31.0", workflow_version="0.31.0", workflow_digest="e" * 64,
+        workflow_execution_digest="e" * 64, workflow_bundle_digest="e" * 64,
         workflow_copied_at="2026-09-12T08:00:00",
         project_created_app_version="0.29.0", project_created_workflow_version="0.29.0",
         workflow_git_commit="f" * 40, environment_lock_md5="9" * 32,

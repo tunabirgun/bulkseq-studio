@@ -56,8 +56,18 @@ jobs:
           cache-dependency-path: requirements.txt
 
       - name: Install dependencies
+        shell: bash
         run: |
           python -m pip install --upgrade pip
+          python - <<'PY'
+          import subprocess
+          import sys
+          import tomllib
+
+          with open("pyproject.toml", "rb") as handle:
+              build_requires = tomllib.load(handle)["build-system"]["requires"]
+          subprocess.check_call([sys.executable, "-m", "pip", "install", *build_requires])
+          PY
           python -m pip install -r requirements.txt -c constraints.txt
           python -m pip install "pytest>=8.2"
 
@@ -160,15 +170,25 @@ jobs:
       - name: Install pytest
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "pytest>=8.2"
+          python -m pip install -c constraints.txt "pytest>=8.2" "PyYAML>=6.0"
 
-      - name: Run the figure contracts with R mandatory
+      - name: Run the CRAN R contracts with R mandatory
         shell: bash
         env:
           BULKSEQ_REQUIRE_R: "1"
         run: |
           python -m pytest -q -rs --tb=short tests/test_figure_rendering_contracts.py \
+            tests/test_microarray_probe_mapping.py \
             | tee "$RUNNER_TEMP/pytest-figure-contracts-cran.txt"
+          python -m pytest -q -rs --tb=short \
+            tests/test_de_common.py::test_wilcoxon_exact_four_vs_four_counterexample \
+            | tee "$RUNNER_TEMP/pytest-wilcoxon-counterexample-cran.txt"
+          python -m pytest -q -rs --tb=short tests/test_enrichment_mapping.py \
+            tests/test_meta_enrichment_threshold.py \
+            -k "meta_mapping or all_ambiguous or meta_foreground" \
+            | tee "$RUNNER_TEMP/pytest-meta-mapping-cran.txt"
+          python -m pytest -q -rs --tb=short tests/test_enrichment_eligibility.py \
+            | tee "$RUNNER_TEMP/pytest-enrichment-eligibility-cran.txt"
 
       # The three full-figure render tests need the Bioconductor stack (DESeq2), which the
       # CRAN-only R above does not have. A separate micromamba layer supplies it, pinned to
@@ -185,6 +205,8 @@ jobs:
           dependencies:
             - r-base=4.5.2=h835929b_3
             - bioconductor-deseq2=1.50.2=r45ha27e39d_0
+            - bioconductor-edger=4.8.2=r45h01b2380_0
+            - bioconductor-limma=3.66.0=r45h01b2380_0
             - r-ggplot2=4.0.3=r45h785f33e_0
             - r-ggrepel=0.9.8=r45h3697838_0
             - r-pheatmap=1.0.13=r45hc72bb7e_1
@@ -213,6 +235,7 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest -q -rs --tb=short tests/test_figure_rendering_contracts.py \
+            tests/test_de_contrasts.py \
             | tee "$RUNNER_TEMP/pytest-figure-contracts-bioconductor.txt"
 
       # Same summary as the matrix job: the CRAN-only pass skips the Bioconductor renders,

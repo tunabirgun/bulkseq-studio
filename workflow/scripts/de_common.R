@@ -105,6 +105,36 @@ check_contrast <- function(numerator, denominator, level_set, con_factor) {
   invisible(TRUE)
 }
 
+# Build the additive group-means design used by edgeR, limma-voom and limma, plus a
+# positional numerator-minus-denominator contrast. Synthetic internal variable names keep
+# sample columns such as `grp` from changing formula lookup.
+# Coefficient names remain unique for readable fit objects, but the estimand does not depend
+# on sanitizing a raw level name back into a coefficient name.
+group_means_design_contrast <- function(grp, coldata, covariates, numerator, denominator) {
+  level_set <- levels(grp)
+  n_levels <- length(level_set)
+  model_data <- data.frame(.contrast_group = grp, row.names = rownames(coldata),
+                           check.names = FALSE)
+  if (length(covariates)) {
+    for (i in seq_along(covariates)) {
+      model_data[[sprintf(".covariate_%d", i)]] <- coldata[[covariates[[i]]]]
+    }
+  }
+  design <- stats::model.matrix(
+    stats::reformulate(names(model_data), intercept = FALSE), data = model_data)
+  if (ncol(design) < n_levels) {
+    stop("The group-means design did not produce one coefficient per contrast level.")
+  }
+  group_columns <- seq_len(n_levels)
+  colnames(design) <- make.unique(
+    c(make.names(level_set, unique = TRUE), colnames(design)[-group_columns]), sep = ".")
+  contrast <- numeric(ncol(design))
+  contrast[match(numerator, level_set)] <- 1
+  contrast[match(denominator, level_set)] <- -1
+  names(contrast) <- colnames(design)
+  list(design = design, contrast = contrast)
+}
+
 # A numeric column with few distinct values (batch coded 1/2/3) is fitted as a linear trend,
 # not as a factor; flag it so the user relabels the levels if they meant groups.
 numeric_covariate_checks <- function(coldata, covariates) {

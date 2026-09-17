@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shutil
+import tempfile
+import uuid
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 import yaml
@@ -20,16 +23,29 @@ _DECIMAL_COMMA_RE = re.compile(r"^-?\d+,\d+$")
 
 
 class ProjectExistsError(ValueError):
-    """Raised when scaffolding would overwrite an existing project.
+    """Raised when scaffolding would write to an occupied destination.
 
     Subclasses ValueError deliberately: both GUI call sites already catch
     (OSError, ValueError), so an unhandled escape is impossible even if a
     caller is not updated to handle this type specifically.
     """
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, is_project: bool = True,
+                 is_file: bool = False) -> None:
         self.root = root
-        super().__init__(f"A BulkSeq Studio project already exists at {root}")
+        self.is_project = is_project
+        self.is_file = is_file
+        if is_file:
+            message = f"Project destination is an existing file: {root}"
+        elif is_project:
+            message = f"A BulkSeq Studio project already exists at {root}"
+        else:
+            message = f"Project destination already exists and is not empty: {root}"
+        super().__init__(message)
+
+
+class WorkflowSyncError(ValueError):
+    """Raised when the copied workflow cannot be safely verified or promoted."""
 
 
 def is_project_root(path: Path) -> bool:
@@ -135,6 +151,8 @@ class ProjectManager:
         safe_name = project_name.strip().replace(" ", "_")
         if not safe_name:
             raise ValueError("Project name cannot be empty.")
+        if safe_name in {".", ".."}:
+            raise ValueError("Project name cannot be '.' or '..'.")
         # Reject names with characters that break Snakemake wildcards or the
         # filesystem path (slash, colon, #, parentheses, …) rather than silently
         # creating an unusable directory.
@@ -142,9 +160,15 @@ class ProjectManager:
             raise ValueError(
                 "Project name may only contain letters, numbers, '_', '-' and '.' "
                 f"(spaces become underscores). Got: {project_name!r}")
-        root = working_directory.expanduser().resolve() / safe_name
-        if not overwrite and is_project_root(root):
-            raise ProjectExistsError(root)
+        working_root = working_directory.expanduser().resolve()
+        requested_root = working_root / safe_name
+        root = requested_root.resolve()
+        if root.parent != working_root or root != requested_root:
+            raise ValueError("Project destination must be an immediate child inside the selected working directory.")
+        if root.exists() and not root.is_dir():
+            raise ProjectExistsError(root, is_file=True)
+        if root.is_dir() and any(root.iterdir()) and not overwrite:
+            raise ProjectExistsError(root, is_project=is_project_root(root))
         for relative in PROJECT_DIRS:
             (root / relative).mkdir(parents=True, exist_ok=True)
 
@@ -186,58 +210,178 @@ class ProjectManager:
             data, _ = normalize_decimal_commas(yaml.safe_load(handle))
         return AppConfig.model_validate(data)
 
-    def copy_workflow_metadata(self, project_root: Path) -> None:
-        source = workflow_root()
-        target = project_root / "workflow"
-        if source.exists():
-            shutil.copytree(
-                source,
-                target,
-                dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
-            )
-        self._write_yaml(
-            project_root / "workflow" / "workflow_metadata.yaml",
-            {"app_version": APP_VERSION,
-             "workflow_version": WORKFLOW_VERSION,
-             "workflow_digest": self._bundled_workflow_digest(),
-             "copied_at": datetime.now().isoformat(timespec="seconds")},
-        )
-
     @staticmethod
-    def _bundled_workflow_digest() -> str:
-        # Content hash of the bundled workflow/ so a project re-syncs when the scripts change
-        # even without a version bump (this project ships frequent same-version in-place
-        # revisions). Excludes the metadata file itself, which carries the digest.
-        source = workflow_root()
-        if not source.exists():
-            return ""
+    def workflow_tree_digest(root: Path) -> str | None:
+        """Hash workflow content while excluding generated caches and its metadata file."""
+        if not root.is_dir():
+            return None
         h = hashlib.sha256()
-        for path in sorted(
-            p
-            for p in source.rglob("*")
+        paths = [
+            p for p in root.rglob("*")
             if p.is_file()
-            and "__pycache__" not in p.relative_to(source).parts
+            and "__pycache__" not in p.relative_to(root).parts
             and p.suffix.casefold() not in {".pyc", ".pyo"}
-        ):
-            if path.name == "workflow_metadata.yaml":
-                continue
-            h.update(path.relative_to(source).as_posix().encode("utf-8"))
+            and p.name != "workflow_metadata.yaml"
+        ]
+        for path in sorted(paths, key=lambda path: path.relative_to(root).as_posix()):
+            h.update(path.relative_to(root).as_posix().encode("utf-8"))
             h.update(b"\0")
             h.update(path.read_bytes())
             h.update(b"\0")
         return h.hexdigest()
 
-    def workflow_digest_of(self, project_root: Path) -> str | None:
-        meta = project_root / "workflow" / "workflow_metadata.yaml"
-        if not meta.exists():
-            return None
+    @staticmethod
+    def _legacy_workflow_tree_digests(root: Path) -> set[str]:
+        """Read pre-0.32.0 Windows and POSIX orderings independent of this host."""
+        if not root.is_dir():
+            return set()
+        paths = [
+            p for p in root.rglob("*")
+            if p.is_file()
+            and "__pycache__" not in p.relative_to(root).parts
+            and p.suffix.casefold() not in {".pyc", ".pyo"}
+            and p.name != "workflow_metadata.yaml"
+        ]
+
+        def digest_for(key) -> str:
+            h = hashlib.sha256()
+            for path in sorted(paths, key=key):
+                h.update(path.relative_to(root).as_posix().encode("utf-8"))
+                h.update(b"\0")
+                h.update(path.read_bytes())
+                h.update(b"\0")
+            return h.hexdigest()
+
+        return {
+            digest_for(lambda path: PurePosixPath(*path.relative_to(root).parts)),
+            digest_for(lambda path: PureWindowsPath(*path.relative_to(root).parts)),
+        }
+
+    @staticmethod
+    def _is_digest(value: object) -> bool:
+        return isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{64}", value))
+
+    @staticmethod
+    def _workflow_metadata(project_root: Path) -> dict[str, Any] | None:
         try:
-            data = yaml.safe_load(meta.read_text(encoding="utf-8")) or {}
-        except Exception:
+            data = yaml.safe_load((project_root / "workflow" / "workflow_metadata.yaml").read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
             return None
-        recorded = data.get("workflow_digest")
+        return data if isinstance(data, dict) else None
+
+    def _promote_workflow_stage(self, stage: Path, target: Path) -> None:
+        backup = target.parent / f".workflow-backup-{uuid.uuid4().hex}"
+        had_target = target.exists()
+        try:
+            if had_target and any(target.iterdir()):
+                os.replace(target, backup)
+            elif had_target:
+                target.rmdir()
+            os.replace(stage, target)
+        except OSError as exc:
+            if backup.exists():
+                try:
+                    os.replace(backup, target)
+                except OSError as restore_exc:
+                    raise WorkflowSyncError(
+                        f"Could not promote the verified workflow stage ({exc}) and could not restore the original "
+                        f"workflow from {backup}: {restore_exc}. Restore that directory manually before running.") from restore_exc
+                raise WorkflowSyncError(
+                    f"Could not promote the verified workflow stage: {exc}. The original project workflow was restored; "
+                    "resolve the filesystem error and run again.") from exc
+            raise WorkflowSyncError(
+                f"Could not promote the verified workflow stage: {exc}. No project workflow was replaced.") from exc
+
+    def copy_workflow_metadata(self, project_root: Path) -> None:
+        source = workflow_root()
+        target = project_root / "workflow"
+        try:
+            source_ready = source.is_dir() and (source / "Snakefile").is_file() and (source / "Snakefile").stat().st_size > 0
+        except OSError as exc:
+            raise WorkflowSyncError(
+                f"Bundled workflow files could not be inspected, so the project workflow was not changed: {exc}") from exc
+        if not source_ready:
+            raise WorkflowSyncError(
+                "Bundled workflow files are incomplete (missing a non-empty Snakefile), so the project workflow was "
+                "not changed. Repair or reinstall the application before running.")
+        bundled_digest = self.workflow_tree_digest(source)
+        if bundled_digest is None:
+            raise WorkflowSyncError("Bundled workflow files could not be read, so the project workflow was not changed.")
+        stage: Path | None = None
+        try:
+            # A project can already be close to Windows MAX_PATH. Reserve an
+            # empty same-filesystem sibling without reducing that path budget.
+            stage = Path(tempfile.mkdtemp(prefix="", dir=project_root))
+            if len(stage.name) > len(target.name):
+                raise WorkflowSyncError(
+                    "Could not reserve a short workflow stage. The project workflow was not changed.")
+            shutil.copytree(
+                source,
+                stage,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+                dirs_exist_ok=True,
+            )
+            staged_digest = self.workflow_tree_digest(stage)
+            if staged_digest != bundled_digest:
+                raise WorkflowSyncError(
+                    "The staged project workflow does not match the bundled workflow. The project workflow was not changed.")
+            self._write_workflow_metadata(stage, bundled_digest, staged_digest)
+            self._promote_workflow_stage(stage, target)
+        except WorkflowSyncError:
+            raise
+        except OSError as exc:
+            raise WorkflowSyncError(
+                f"Could not stage the bundled workflow: {exc}. The project workflow was not changed.") from exc
+        finally:
+            if stage is not None and stage.exists():
+                shutil.rmtree(stage, ignore_errors=True)
+
+    def _bundled_workflow_digest(self) -> str | None:
+        source = workflow_root()
+        try:
+            ready = source.is_dir() and (source / "Snakefile").is_file() and (source / "Snakefile").stat().st_size > 0
+        except OSError:
+            return None
+        return self.workflow_tree_digest(source) if ready else None
+
+    def workflow_digest_of(self, project_root: Path) -> str | None:
+        data = self._workflow_metadata(project_root)
+        recorded = data.get("workflow_digest") if data else None
         return str(recorded) if recorded else None
+
+    def workflow_execution_digest_of(self, project_root: Path) -> str | None:
+        data = self._workflow_metadata(project_root)
+        recorded = data.get("workflow_execution_digest") if data else None
+        return str(recorded) if recorded else None
+
+    def _write_workflow_metadata(self, workflow: Path, bundle_digest: str, execution_digest: str) -> None:
+        self._write_yaml(
+            workflow / "workflow_metadata.yaml",
+            {"app_version": APP_VERSION, "workflow_version": WORKFLOW_VERSION,
+             "workflow_digest": bundle_digest, "workflow_execution_digest": execution_digest,
+             "copied_at": datetime.now().isoformat(timespec="seconds")},
+        )
+
+    def verify_workflow_integrity(self, project_root: Path) -> str:
+        """Confirm that the project tree still matches its recorded execution digest."""
+        metadata = self._workflow_metadata(project_root)
+        recorded = ((metadata or {}).get("workflow_execution_digest")
+                    if "workflow_execution_digest" in (metadata or {})
+                    else (metadata or {}).get("workflow_digest"))
+        actual = self.workflow_tree_digest(project_root / "workflow")
+        if not self._is_digest(recorded):
+            raise WorkflowSyncError(
+                "The project workflow has no valid execution digest, so it cannot be verified. Synchronize the "
+                "workflow before running.")
+        if actual != recorded:
+            if "workflow_execution_digest" not in (metadata or {}) and recorded in self._legacy_workflow_tree_digests(
+                    project_root / "workflow"):
+                return actual
+            raise WorkflowSyncError(
+                "The project workflow changed since it was copied. Its recorded digest does not match the files that "
+                "would run, so no files were overwritten. Restore the recorded workflow from a backup or review the "
+                "local edits before running again.")
+        return actual
 
     @staticmethod
     def _version_tuple(version: str) -> tuple[int, ...]:
@@ -251,12 +395,8 @@ class ProjectManager:
 
     def workflow_version_of(self, project_root: Path) -> str | None:
         # The workflow version recorded when the project's workflow/ was last copied.
-        meta = project_root / "workflow" / "workflow_metadata.yaml"
-        if not meta.exists():
-            return None
-        try:
-            data = yaml.safe_load(meta.read_text(encoding="utf-8")) or {}
-        except Exception:
+        data = self._workflow_metadata(project_root)
+        if data is None:
             return None
         recorded = data.get("workflow_version")
         return str(recorded) if recorded else None
@@ -266,12 +406,31 @@ class ProjectManager:
         # shipped in an app update does not reach it on its own. Re-copy the bundled
         # workflow when the project's recorded version is missing or older than this
         # build's; return the version synced to, or None when already current.
+        metadata = self._workflow_metadata(project_root)
         recorded = self.workflow_version_of(project_root)
         version_current = recorded is not None and self._version_tuple(recorded) >= self._version_tuple(WORKFLOW_VERSION)
+        workflow = project_root / "workflow"
+        actual_digest = self.workflow_tree_digest(workflow)
         # Also re-sync when the bundled workflow content changed under the SAME version — this
         # project ships frequent in-place same-version revisions, and a version-only check would
         # leave those projects on a stale (buggy) workflow copy.
-        digest_current = self.workflow_digest_of(project_root) == self._bundled_workflow_digest()
+        bundled_digest = self._bundled_workflow_digest()
+        if bundled_digest is None:
+            raise WorkflowSyncError(
+                "Bundled workflow files are unavailable or incomplete (missing a non-empty Snakefile), so the project "
+                "workflow was not changed. Repair or reinstall the application before running.")
+        recorded_execution_digest = ((metadata or {}).get("workflow_execution_digest")
+                                     if "workflow_execution_digest" in (metadata or {})
+                                     else (metadata or {}).get("workflow_digest"))
+        if not self._is_digest(recorded_execution_digest):
+            if actual_digest == bundled_digest:
+                self._write_workflow_metadata(workflow, bundled_digest, actual_digest)
+                return WORKFLOW_VERSION
+            raise WorkflowSyncError(
+                "The project workflow has no valid recorded digest and differs from the bundled workflow. No files "
+                "were overwritten. Review the local workflow or restore a known copy before running.")
+        self.verify_workflow_integrity(project_root)
+        digest_current = self.workflow_digest_of(project_root) == bundled_digest
         if version_current and digest_current:
             return None
         self.copy_workflow_metadata(project_root)

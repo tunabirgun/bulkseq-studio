@@ -44,13 +44,9 @@ workdir <- dirname(out_expr)
 dir.create(workdir, showWarnings = FALSE, recursive = TRUE)
 
 write_check <- function(path, name, status, messages) {
-  esc <- function(s) gsub('"', '\\\\"', s)
-  msg_json <- paste0(
-    sprintf('    {"status": "%s", "message": "%s"}', vapply(messages, `[[`, "", "status"),
-            vapply(lapply(messages, `[[`, "message"), esc, "")),
-    collapse = ",\n")
-  writeLines(sprintf('{\n  "check": "%s",\n  "status": "%s",\n  "messages": [\n%s\n  ]\n}',
-                     name, status, msg_json), path)
+  jsonlite::write_json(
+    list(check = name, status = status, messages = messages), path,
+    auto_unbox = TRUE, pretty = TRUE, null = "null", na = "null")
 }
 
 # Progress markers go to stdout (NOT the message sink), so Snakemake's console shows how
@@ -225,31 +221,90 @@ id_col <- if (!is.null(fdata)) {
 sym_col <- find_symbol_col(fdata)
 
 probe_ids <- rownames(exprs_mat)
-symbols <- rep(NA_character_, length(probe_ids))
-if (identical(source_kind, "local_matrix")) {
-  symbols <- probe_ids   # rows are already gene-level; map each id to itself
-} else if (!is.null(fdata) && !is.null(sym_col) && !is.null(id_col)) {
-  key <- as.character(fdata[[id_col]])
-  raw <- as.character(fdata[[sym_col]])
-  if (identical(sym_col, "gene_assignment")) {
-    raw <- vapply(strsplit(raw, "//", fixed = TRUE), function(p) if (length(p) >= 2) trimws(p[2]) else NA_character_, "")
-  } else {
-    raw <- trimws(sub("[ ]*//.*$", "", raw))            # "SYM // SYM2" -> first
-    raw <- trimws(sub("[ ]*///.*$", "", raw))           # GPL "SYM /// SYM2" -> first
+resolve_probe_mapping <- function(probe_ids, fdata, id_col, sym_col, direct = FALSE) {
+  escape_evidence <- function(x) {
+    x <- gsub("\\", "\\\\", as.character(x), fixed = TRUE)
+    x <- gsub("\r", "\\r", x, fixed = TRUE)
+    x <- gsub("\n", "\\n", x, fixed = TRUE)
+    x <- gsub("\t", "\\t", x, fixed = TRUE)
+    gsub('"', '\\"', x, fixed = TRUE)
   }
-  raw[!nzchar(raw) | raw %in% c("---", "NA")] <- NA
-  symbols <- raw[match(probe_ids, key)]
+  valid_candidates <- function(x) {
+    x <- trimws(as.character(x))
+    x[is.na(x) | !nzchar(x) | toupper(x) %in% c("---", "NA", "N/A", "NULL", "?")] <- NA_character_
+    sort(unique(x[!is.na(x)]))
+  }
+  parse_annotation <- function(value, gene_assignment) {
+    if (is.na(value) || !nzchar(trimws(value))) return(character())
+    if (gene_assignment) {
+      records <- strsplit(value, "///", fixed = TRUE)[[1]]
+      fields <- lapply(records, function(record) strsplit(record, "//", fixed = TRUE)[[1]])
+      return(valid_candidates(vapply(fields, function(parts) {
+        if (length(parts) >= 2L) parts[2] else NA_character_
+      }, "")))
+    }
+    valid_candidates(unlist(strsplit(value, "///|//", perl = TRUE), use.names = FALSE))
+  }
+
+  if (direct) {
+    candidates <- as.character(probe_ids)
+    resolved <- !is.na(candidates) & nzchar(candidates)
+    return(data.frame(
+      probe = probe_ids, annotation_rows = 1L,
+      raw_annotation = ifelse(is.na(candidates), "", paste0('"', escape_evidence(candidates), '"')),
+      candidate_gene_ids = ifelse(resolved, candidates, ""),
+      candidate_count = as.integer(resolved),
+      mapping_class = ifelse(resolved, "direct_gene_id", "unknown"),
+      gene_id = ifelse(resolved, candidates, NA_character_),
+      stringsAsFactors = FALSE))
+  }
+
+  keys <- if (is.null(fdata) || is.null(id_col)) character() else as.character(fdata[[id_col]])
+  annotations <- if (is.null(fdata) || is.null(sym_col)) character() else as.character(fdata[[sym_col]])
+  rows_by_probe <- split(seq_along(keys), keys)
+  gene_assignment <- identical(sym_col, "gene_assignment")
+  records <- lapply(probe_ids, function(probe) {
+    rows <- rows_by_probe[[probe]]
+    if (is.null(rows)) rows <- integer()
+    raw_values <- annotations[rows]
+    candidates <- valid_candidates(unlist(
+      lapply(raw_values, parse_annotation, gene_assignment = gene_assignment),
+      use.names = FALSE))
+    mapping_class <- if (!length(rows)) "missing_annotation" else if (!length(candidates)) {
+      "unknown"
+    } else if (length(candidates) == 1L) "unique" else "ambiguous"
+    raw_values <- sort(unique(raw_values[!is.na(raw_values)]))
+    raw_evidence <- if (length(raw_values)) {
+      paste0('"', escape_evidence(raw_values), '"', collapse = " | ")
+    } else ""
+    data.frame(
+      probe = probe, annotation_rows = length(rows), raw_annotation = raw_evidence,
+      candidate_gene_ids = paste(candidates, collapse = " | "),
+      candidate_count = length(candidates), mapping_class = mapping_class,
+      gene_id = if (length(candidates) == 1L) candidates else NA_character_,
+      stringsAsFactors = FALSE)
+  })
+  do.call(rbind, records)
 }
 
-probe_map <- data.frame(probe = probe_ids, gene_id = symbols, stringsAsFactors = FALSE)
-write.table(probe_map, out_map, sep = "\t", quote = FALSE, row.names = FALSE)
+probe_map <- resolve_probe_mapping(
+  probe_ids, fdata, id_col, sym_col, direct = identical(source_kind, "local_matrix"))
+symbols <- probe_map$gene_id
+write.table(probe_map, out_map, sep = "\t", quote = TRUE, qmethod = "double",
+            na = "", row.names = FALSE)
 
-mapped <- !is.na(symbols) & nzchar(symbols)
+mapped <- probe_map$mapping_class %in% c("unique", "direct_gene_id")
 map_rate <- if (length(symbols)) mean(mapped) else 0
+n_ambiguous <- sum(probe_map$mapping_class == "ambiguous")
+n_unknown <- sum(probe_map$mapping_class == "unknown")
+n_missing_annotation <- sum(probe_map$mapping_class == "missing_annotation")
 if (sum(mapped) < 1) {
+  failure_message <- sprintf(
+    "Probe->gene mapping resolved no probes to one gene; excluded %d ambiguous, %d unknown and %d missing-annotation probe(s). Check the platform annotation.",
+    n_ambiguous, n_unknown, n_missing_annotation)
   write_check(out_map_check, "12_probe_mapping_qc", "FAIL",
-              list(list(status = "FAIL", message = "No probes mapped to a gene symbol; check the platform annotation.")))
-  stop("Probe->gene mapping produced no symbols.")
+              list(list(status = "FAIL", message = failure_message)))
+  stop(failure_message)
 }
 
 # ---- 4. Collapse probes to unique genes by MaxMean --------------------------
@@ -274,8 +329,10 @@ map_status <- if (map_rate >= 0.5) "PASS" else "REVIEW_REQUIRED"
 drop_note <- if (n_dropped_na > 0) sprintf(" Dropped %d gene(s) with >50%% missing intensity.", n_dropped_na) else ""
 write_check(out_map_check, "12_probe_mapping_qc", map_status,
             list(list(status = map_status,
-                      message = sprintf("%.1f%% of probes mapped to a symbol; %d unique genes.%s",
-                                        100 * map_rate, nrow(gene_mat), drop_note))))
+                      message = sprintf(
+                        "%.1f%% of probes resolved to one gene; %d unique genes. Excluded %d ambiguous, %d unknown and %d missing-annotation probe(s) before MaxMean collapse.%s",
+                        100 * map_rate, nrow(gene_mat), n_ambiguous, n_unknown,
+                        n_missing_annotation, drop_note))))
 
 # ---- 5. Validate / order sample columns against samples.tsv -----------------
 samples <- read.delim(samples_file, stringsAsFactors = FALSE)

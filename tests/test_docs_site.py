@@ -54,10 +54,12 @@ def _versions_with_scientific_notice(changelog: str) -> list[str]:
     The same derivation tests/test_docs.py makes of the changelog, re-implemented here so
     the two gates cannot drift into agreeing by sharing one wrong reading.
     """
-    released = re.findall(r"^## (\d+\.\d+\.\d+)", changelog, re.MULTILINE)
-    sections = re.split(r"^## (?=\d+\.\d+\.\d+)", changelog, flags=re.MULTILINE)
-    return [version for index, version in enumerate(released)
-            if "(*scientific*)" in (sections[index + 1] if index + 1 < len(sections) else "")]
+    headings = list(re.finditer(r"^## (\d+\.\d+\.\d+) — \d{4}-\d{2}-\d{2}(?:\s|$)", changelog, re.MULTILINE))
+    return [
+        match.group(1)
+        for index, match in enumerate(headings)
+        if "(*scientific*)" in changelog[match.start(): headings[index + 1].start() if index + 1 < len(headings) else len(changelog)]
+    ]
 
 
 class _Page(HTMLParser):

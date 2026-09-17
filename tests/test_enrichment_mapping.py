@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import ast
+import csv
+import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -14,7 +17,11 @@ from _runtime import rscript_runtime
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "workflow" / "scripts" / "run_enrichment.R"
+META_SCRIPT = ROOT / "workflow" / "scripts" / "run_meta_enrichment.R"
+MAPPING_HELPER = ROOT / "workflow" / "scripts" / "enrichment_mapping.R"
+META_SELECTION_HELPER = ROOT / "workflow" / "scripts" / "meta_de_selection.R"
 SCOPE_SCRIPT = ROOT / "workflow" / "scripts" / "enrichment_scope.R"
+META_SMK = ROOT / "workflow" / "rules" / "meta.smk"
 ENRICHMENT_SMK = ROOT / "workflow" / "rules" / "enrichment.smk"
 CATALOG = ROOT / "app" / "data" / "reference_catalog.yaml"
 KEGG_KEY_FORMS = {"kegg", "ncbi-geneid", "ncbi-proteinid", "uniprot"}
@@ -39,9 +46,225 @@ def _r_runtime(script: Path) -> tuple[list[str], str, Callable[[Path], str]]:
     return command, convert(script), convert
 
 
+def _r_runtime_with_packages(
+    script: Path, *packages: str
+) -> tuple[list[str], str, Callable[[Path], str]]:
+    runtime = rscript_runtime(*packages)
+    if runtime is None:
+        reason = "Rscript with the required packages is unavailable for the meta-mapping regression"
+        (pytest.fail if os.environ.get("BULKSEQ_REQUIRE_R") else pytest.skip)(reason)
+    command, convert = runtime
+    return command, convert(script), convert
+
+
+def test_missing_r_fails_when_meta_mapping_contract_is_mandatory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("BULKSEQ_REQUIRE_R", "1")
+    monkeypatch.setattr("test_enrichment_mapping.rscript_runtime", lambda *packages: None)
+    with pytest.raises(pytest.fail.Exception, match="meta-mapping regression"):
+        _r_runtime_with_packages(tmp_path / "missing.R", "jsonlite")
+
+
+def test_missing_r_skips_when_meta_mapping_contract_is_optional(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("BULKSEQ_REQUIRE_R", raising=False)
+    monkeypatch.delenv("BULKSEQ_REQUIRE_R_FULL", raising=False)
+    monkeypatch.setattr("test_enrichment_mapping.rscript_runtime", lambda *packages: None)
+    with pytest.raises(pytest.skip.Exception, match="meta-mapping regression"):
+        _r_runtime_with_packages(tmp_path / "missing.R", "jsonlite")
+
+
+def test_meta_mapping_is_order_invariant_and_matches_the_accepted_id_oracle(
+    tmp_path: Path,
+) -> None:
+    command, script_path, runtime_path = _r_runtime_with_packages(META_SCRIPT)
+    helper_path = runtime_path(MAPPING_HELPER)
+    selection_helper_path = runtime_path(META_SELECTION_HELPER)
+    code = f'''
+source({helper_path!r})
+source({selection_helper_path!r})
+exprs <- parse(file={script_path!r})
+wanted <- c("build_meta_enrichment_sets", "meta_mapping_evidence")
+for (expr in exprs) {{
+  if (is.call(expr) && identical(as.character(expr[[1]]), "<-") &&
+      as.character(expr[[2]]) %in% wanted) eval(expr, envir=.GlobalEnv)
+}}
+
+source_ids <- c("AMB", paste0("U", 1:5), paste0("D", 1:5), "MISS")
+template <- data.frame(
+  gene_id=source_ids,
+  meta_sig=c(TRUE, rep(TRUE, 10), FALSE),
+  common_direction=c("up", rep("up", 5), rep("down", 5), ""),
+  study_A_log2FC=c(2, rep(2, 5), rep(-2, 5), 0),
+  study_A_padj=c(rep(0.01, 11), NA_real_),
+  check.names=FALSE, stringsAsFactors=FALSE)
+base_map <- data.frame(
+  SYMBOL=c("AMB", "AMB", "U1", "U1", paste0("U", 2:5), paste0("D", 1:5)),
+  ENTREZID=c("900", "901", "101", "101", as.character(102:105),
+             as.character(201:205)), stringsAsFactors=FALSE)
+
+run_case <- function(mapped) {{
+  names(mapped)[names(mapped) == "SYMBOL"] <- "input_id"
+  resolved <- merge_mapping_candidates(
+    source_ids, list(SYMBOL=mapped), "SYMBOL", "SYMBOL")
+  resolved$requested_keytype <- "SYMBOL"
+  resolved$effective_keytype <- "SYMBOL"
+  sets <- build_meta_enrichment_sets(template, source_ids, resolved, 0.05, 1.0)
+  evidence <- meta_mapping_evidence(source_ids, resolved, sets$source_sets)
+  list(universe=sets$universe, lists=sets$lists,
+       mapped=sets$res[, c("gene_id", "entrez")], evidence=evidence,
+       counts=c(mapped=resolved$mapped_inputs, ambiguous=resolved$ambiguous_excluded,
+                unmapped=resolved$unmapped_inputs,
+                foreground_mapped=sets$foreground_mapped_n,
+                foreground_total=sets$foreground_source_n))
+}}
+
+forward <- run_case(base_map)
+reverse <- run_case(base_map[nrow(base_map):1, , drop=FALSE])
+expected_universe <- as.character(c(101:105, 201:205))
+expected_lists <- list(
+  A_up=as.character(101:105), A_down=as.character(201:205),
+  convergent_up=as.character(101:105), convergent_down=as.character(201:205))
+stopifnot(identical(forward, reverse),
+          identical(forward$universe, expected_universe),
+          identical(forward$lists, expected_lists),
+          is.na(forward$mapped$entrez[forward$mapped$gene_id == "AMB"]),
+          is.na(forward$mapped$entrez[forward$mapped$gene_id == "MISS"]),
+          identical(unname(forward$counts), c(10L, 1L, 1L, 10L, 11L)),
+          forward$evidence$mapping_status[forward$evidence$input_id == "AMB"] == "ambiguous",
+          forward$evidence$candidate_entrez[forward$evidence$input_id == "AMB"] == "900;901",
+          forward$evidence$mapping_status[forward$evidence$input_id == "U1"] == "accepted",
+          forward$evidence$mapping_status[forward$evidence$input_id == "MISS"] == "unmapped")
+cat("meta mapping order and accepted-set oracle OK\\n")
+'''
+    harness = tmp_path / "meta_mapping_order.R"
+    harness.write_text(code, encoding="utf-8")
+    completed = subprocess.run(
+        [*command, runtime_path(harness)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "meta mapping order and accepted-set oracle OK" in completed.stdout
+
+
+def test_all_ambiguous_meta_mapping_stays_review_required_and_writes_valid_json(
+    tmp_path: Path,
+) -> None:
+    command, script_path, runtime_path = _r_runtime_with_packages(META_SCRIPT, "jsonlite")
+    helper_path = runtime_path(MAPPING_HELPER)
+    selection_helper_path = runtime_path(META_SELECTION_HELPER)
+    check_path = tmp_path / "meta_check.json"
+    evidence_path = tmp_path / "meta_mapping.tsv"
+    code = f'''
+source({helper_path!r})
+source({selection_helper_path!r})
+exprs <- parse(file={script_path!r})
+wanted <- c("write_check", "status_rank", "check_status", "check_messages",
+            "add_check_message", "empty_mapping_evidence", "write_mapping_evidence",
+            "skip", "build_meta_enrichment_sets", "meta_mapping_evidence")
+for (expr in exprs) {{
+  if (is.call(expr) && identical(as.character(expr[[1]]), "<-") &&
+      as.character(expr[[2]]) %in% wanted) eval(expr, envir=.GlobalEnv)
+}}
+source_lines <- readLines({script_path!r}, warn=FALSE)
+start <- grep("resolved <- tryCatch(", source_lines, fixed=TRUE)[1]
+end <- grep("set.seed(42)", source_lines, fixed=TRUE)[1] - 1L
+stopifnot(!is.na(start), !is.na(end), end > start)
+post_resolver_path <- parse(text=paste(source_lines[start:end], collapse="\\n"))
+
+out <- list(
+  ora=tempfile(fileext=".csv"), objects=tempfile(fileext=".rds"),
+  mapping={runtime_path(evidence_path)!r}, check={runtime_path(check_path)!r})
+log_con <- file(tempfile(fileext=".log"), open="wt")
+sink(log_con, type="message")
+write_mapping_evidence(empty_mapping_evidence())
+ids <- c("AMB\\t\\\"A\\\"", "AMB_B")
+candidates <- list(SYMBOL=data.frame(
+  input_id=c(ids[[1]], ids[[1]], ids[[2]], ids[[2]]),
+  ENTREZID=c("1", "2", "3", "4"), stringsAsFactors=FALSE))
+resolved <- merge_mapping_candidates(ids, candidates, "SYMBOL", "SYMBOL")
+resolved$requested_keytype <- "SYMBOL"
+resolved$effective_keytype <- "SYMBOL"
+stopifnot(resolved$mapped_inputs == 0L, resolved$ambiguous_excluded == 2L,
+          resolved$unmapped_inputs == 0L)
+
+# Stub only the database-access boundary. Everything after the resolver, including
+# ambiguity detection, evidence writing, status precedence and skip(), is production code.
+map_ids_with_routing <- function(...) resolved
+res <- data.frame(
+  gene_id=ids, meta_sig=c(TRUE, TRUE), common_direction=c("up", "down"),
+  study_A_log2FC=c(2, -2), study_A_padj=c(0.01, 0.01),
+  check.names=FALSE, stringsAsFactors=FALSE)
+keytype <- "SYMBOL"
+orgdb_name <- "synthetic.OrgDb"
+orgdb <- structure(list(), class="synthetic_orgdb")
+alpha <- 0.05
+lfc_threshold <- 1.0
+eval(post_resolver_path, envir=.GlobalEnv)
+stop("production all-ambiguous path did not terminate through skip()")
+'''
+    harness = tmp_path / "meta_all_ambiguous.R"
+    harness.write_text(code, encoding="utf-8")
+    completed = subprocess.run(
+        [*command, runtime_path(harness)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    payload = json.loads(check_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "REVIEW_REQUIRED"
+    assert [message["status"] for message in payload["messages"]] == [
+        "REVIEW_REQUIRED",
+        "PASS",
+    ]
+    assert "0/2 source ids accepted" in payload["messages"][0]["message"]
+    assert "2 ambiguous and 0 unmapped" in payload["messages"][0]["message"]
+    assert "0 of 2 gene ids mapped" in payload["messages"][1]["message"]
+    with evidence_path.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t", quotechar='"'))
+    assert len(rows) == 2
+    assert rows[0]["input_id"] == 'AMB\t"A"'
+    assert rows[0]["mapping_status"] == "ambiguous"
+    assert rows[0]["candidate_entrez"] == "1;2"
+
+
+def test_main_and_meta_scripts_share_the_same_mapping_helper_and_meta_evidence_output() -> None:
+    main_source = SCRIPT.read_text(encoding="utf-8")
+    meta_source = META_SCRIPT.read_text(encoding="utf-8")
+    helper_source = MAPPING_HELPER.read_text(encoding="utf-8")
+    source_line = 'source(file.path(snakemake@scriptdir, "enrichment_mapping.R"))'
+    assert source_line in main_source
+    assert source_line in meta_source
+    for name in ("merge_mapping_candidates", "resolve_configured_keytype", "map_ids_with_routing"):
+        assert f"{name} <- function" in helper_source
+        assert f"{name} <- function" not in main_source
+    assert "map_ids_with_routing(unique(ids), orgdb, keytype, orgdb_name)" in meta_source
+    assert "map$ENTREZID[match(ids, map[[keytype]])]" not in meta_source
+    assert "unique(accepted$ENTREZID)" in meta_source
+    assert "accepted$ENTREZID[match(source_ids, accepted$input_id)]" in meta_source
+    assert 'qmethod = "double"' in meta_source
+    assert meta_source.index("write_mapping_evidence(empty_mapping_evidence())") < meta_source.index(
+        "res <- tryCatch(read.csv(results_file"
+    )
+    rule_source = META_SMK.read_text(encoding="utf-8")
+    assert 'mapping_helper="workflow/scripts/enrichment_mapping.R"' in rule_source
+    assert 'mapping="results/meta/meta_enrichment_mapping.tsv"' in rule_source
+    enrichment_rule = ENRICHMENT_SMK.read_text(encoding="utf-8")
+    assert 'mapping_helper="workflow/scripts/enrichment_mapping.R"' in enrichment_rule
+
+
 def test_mixed_id_routing_excludes_ambiguity_and_direction_conflicts(tmp_path: Path) -> None:
     command, script_path, runtime_path = _r_runtime(SCRIPT)
+    helper_path = runtime_path(MAPPING_HELPER)
     code = f'''
+source({helper_path!r})
 exprs <- parse(file={script_path!r})
 wanted <- c("merge_mapping_candidates", "resolve_configured_keytype",
             "collapse_entrez_results", "direction_gate",
@@ -275,8 +498,10 @@ cat("current KEGG rice species and taxon route OK\n")
 
 def test_yeast_symbol_namespace_routes_to_orgdb_genename(tmp_path: Path) -> None:
     command, script_path, runtime_path = _r_runtime(SCRIPT)
+    helper_path = runtime_path(MAPPING_HELPER)
     code = f'''
 suppressPackageStartupMessages(library(org.Sc.sgd.db))
+source({helper_path!r})
 exprs <- parse(file={script_path!r})
 wanted <- c("merge_mapping_candidates", "resolve_configured_keytype", "map_ids_with_routing",
             "go_readable_for_orgdb")
@@ -422,7 +647,8 @@ cat("deterministic GSEA rank contract OK\\n")
     assert "deterministic GSEA rank contract OK" in completed.stdout
 
     source = SCRIPT.read_text(encoding="utf-8")
-    assert source.count("rank_info <- build_deterministic_rank(") == 3
+    assert source.count("rank_info <- build_population_rank(") == 2
+    assert source.count("rank_info <- build_mapped_gsea_rank(") == 1
     assert "gene_list <- sort" not in source
     assert "deduplicate_ids" not in source
 

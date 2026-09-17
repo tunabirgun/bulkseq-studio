@@ -22,6 +22,7 @@ suppressMessages({
   library(jsonlite)
 })
 source(file.path(snakemake@scriptdir, "figure_style.R"))
+source(file.path(snakemake@scriptdir, "meta_de_selection.R"))
 
 log_con <- file(snakemake@log[[1]], open = "wt"); sink(log_con, type = "message")
 
@@ -122,10 +123,7 @@ for (s in studies) {
   dir.create(tdir, recursive = TRUE, showWarnings = FALSE); dir.create(fdir, recursive = TRUE, showWarnings = FALSE)
 
   de$symbol <- gsym(de$gene_id)
-  de$direction <- "n.s."
-  sig <- !is.na(de$padj) & de$padj < alpha
-  de$direction[sig & de$log2FoldChange >=  lfc_thr] <- "Up"
-  de$direction[sig & de$log2FoldChange <= -lfc_thr] <- "Down"
+  de$direction <- meta_de_direction(de$padj, de$log2FoldChange, alpha, lfc_thr)
   de$direction <- factor(de$direction, levels = c("Up", "Down", "n.s."))
 
   cols <- c("gene_id", "symbol", "baseMean", "log2FoldChange", "lfcSE", "pvalue", "padj", "direction")
