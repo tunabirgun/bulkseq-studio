@@ -8,6 +8,8 @@ BulkSeq Studio is a cross-platform desktop application for reproducible bulk RNA
 
 [Read public v0.32.0 handbook](https://tunabirgun.github.io/bulkseq-studio/) · [Download public v0.32.0](https://github.com/tunabirgun/bulkseq-studio/releases/latest) · [Report an issue](https://github.com/tunabirgun/bulkseq-studio/issues) · [Changelog](CHANGELOG.md)
 
+The release candidate passed the repository Tests, Environment, Build packages, and documentation deployment workflows on GitHub Actions. The downloadable packages are built by the successful Build packages workflow for the published commit; verify every download against `SHA256SUMS.txt`.
+
 ![BulkSeq Studio in light mode: the four stage groups down the left with Project and data selected, and the Project page open](docs/assets/images/four-stage-navigator.png)
 
 ## What it covers
