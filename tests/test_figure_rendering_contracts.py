@@ -353,7 +353,8 @@ def _assert_volcano_label_geometry_contract(source: str) -> None:
     assert 'sprintf("%02d  %s  (%+.2f)"' in source
     assert "required_height_in > panel_h_in" in source
     assert "em_height_in <- font_points / 72" in source
-    assert "minimum_data_fraction <- 0.34" in source
+    assert "panel_width_fraction <- 0.84" in source
+    assert "minimum_data_fraction <- 0.30" in source
     assert "required_panel_w_in <- sum(reserved_key_in) /" in source
     assert "canvas_w <- max(canvas_w, required_canvas_w_in)" in source
     assert "data_panel_in < minimum_data_fraction * panel_w_in" in source
