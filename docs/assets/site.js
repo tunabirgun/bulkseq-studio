@@ -22,7 +22,7 @@ $('#search-input').addEventListener('input', event => {
   const query = event.target.value.trim().toLowerCase(), words = query.split(/\s+/), list = $('#search-results'); list.replaceChildren();
   if (!query) { $('#search-status').textContent = 'Type to search the complete manual.'; return; }
   const results = (window.manualSearch || []).filter(item => words.every(word => `${item.title} ${item.text}`.toLowerCase().includes(word))).sort((a,b) => Number(b.title.toLowerCase().includes(query)) - Number(a.title.toLowerCase().includes(query)));
-  $('#search-status').textContent = results.length ? `${results.length} matching chapter${results.length === 1 ? '' : 's'}.` : 'No matching chapters. Try a broader term, such as counts, design or plots.';
+  $('#search-status').textContent = results.length ? `${results.length} matching page${results.length === 1 ? '' : 's'}.` : 'No matching pages. Try a broader term, such as counts, design or plots.';
   for (const item of results) {
     const li = document.createElement('li'), link = document.createElement('a'), summary = document.createElement('p');
     link.href = item.url; link.textContent = item.title;
@@ -105,7 +105,7 @@ document.querySelectorAll('.walkthrough').forEach(container => {
       if (!step[key]) continue; const section = document.createElement('div'), heading = document.createElement('h3'), paragraph = document.createElement('p');
       heading.textContent = label; paragraph.textContent = Array.isArray(step[key]) ? step[key].join(' ') : step[key]; section.append(heading,paragraph); body.append(section);
     }
-    if (step.href) { const link = document.createElement('a'); link.href = step.href; link.textContent = 'Read the full chapter →'; body.append(link); }
+    if (step.href) { const link = document.createElement('a'); link.href = step.href; link.textContent = 'Read the full page →'; body.append(link); }
     list.querySelectorAll('button').forEach((button,index) => { if(index === current) button.setAttribute('aria-current','step'); else button.removeAttribute('aria-current'); });
     if (list.scrollWidth > list.clientWidth) list.scrollTo({left:list.children[current].getBoundingClientRect().left-list.getBoundingClientRect().left+list.scrollLeft,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'});
     container.querySelector('[data-step="previous"]').disabled = current === 0;

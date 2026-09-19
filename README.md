@@ -29,17 +29,14 @@ The 0.32.0 interface update gives the accession, differential-expression, output
 
 ## Documentation
 
-The handbook at **[tunabirgun.github.io/bulkseq-studio](https://tunabirgun.github.io/bulkseq-studio/)** is the complete reference. It covers every route, setting, output and check in detail, and each page states the release it documents.
+The handbook at **[tunabirgun.github.io/bulkseq-studio](https://tunabirgun.github.io/bulkseq-studio/)** is the complete reference. It is organised as a tutorial, how-to guides, reference and explanation, and each page states the release it documents.
 
 Backend environment setup writes its persistent log in the current user's BulkSeq Studio application-data directory, separate from the installed or portable application files. Open **Show details / log** and choose **Load setup log** when a setup attempt needs review. After a tool, R or import verification failure, setup can make one in-place repair using the same installed specification, then rechecks it. Post-link steps can redownload required files; an unresolved verification failure remains failed. Run provenance records `lock` only when the exact linux-64 lock was installed; a floating-spec install records `fallback`, including a direct native Linux ARM install, with the actual specification filename and SHA-256. The published AppImage remains x86-64; this marker correction does not establish an ARM package or end-to-end ARM run.
 
-- [Install and first run](https://tunabirgun.github.io/bulkseq-studio/guide.html) — set up the application and the analysis environment
-- [Interactive walkthrough](https://tunabirgun.github.io/bulkseq-studio/walkthrough.html) — the decisions in order, for each of the five starting points
-- [Input routes](https://tunabirgun.github.io/bulkseq-studio/inputs.html) and [experimental design](https://tunabirgun.github.io/bulkseq-studio/design.html) — choose the right entry point and contrast
-- [Pre-run checks](https://tunabirgun.github.io/bulkseq-studio/checks.html) — what each check tests and how to act on it
-- [Outputs and provenance](https://tunabirgun.github.io/bulkseq-studio/outputs.html) — what a finished run writes and what records it
-- [Command line and HPC profiles](https://tunabirgun.github.io/bulkseq-studio/cli.html) — scripted and scheduled runs
-- [Troubleshooting, version notices and citation](https://tunabirgun.github.io/bulkseq-studio/faq.html) — including which release changed which output
+- **Tutorial** — [your first analysis](https://tunabirgun.github.io/bulkseq-studio/tutorial.html): one complete run of a bundled four-sample study, with a recorded result to check your own against
+- **How-to guides** — [install and first run](https://tunabirgun.github.io/bulkseq-studio/guide.html), the [walkthrough](https://tunabirgun.github.io/bulkseq-studio/walkthrough.html) for each of the five starting points, [input routes](https://tunabirgun.github.io/bulkseq-studio/inputs.html), [experimental design](https://tunabirgun.github.io/bulkseq-studio/design.html), and [command line and HPC profiles](https://tunabirgun.github.io/bulkseq-studio/cli.html)
+- **Reference** — [pre-run checks](https://tunabirgun.github.io/bulkseq-studio/checks.html), [outputs and provenance](https://tunabirgun.github.io/bulkseq-studio/outputs.html), and [troubleshooting, version notices and citation](https://tunabirgun.github.io/bulkseq-studio/faq.html)
+- **Explanation** — [what the workflow checks for you](https://tunabirgun.github.io/bulkseq-studio/safeguards.html), [choosing a differential-expression engine](https://tunabirgun.github.io/bulkseq-studio/engines.html), [what the numbers mean](https://tunabirgun.github.io/bulkseq-studio/interpreting.html), and [reproducibility and provenance](https://tunabirgun.github.io/bulkseq-studio/provenance.html)
 
 ## Scientific safeguards
 
