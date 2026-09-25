@@ -296,6 +296,12 @@ jobs:
           assert digest.hexdigest() in header.lower()
           PY
 
+      - name: Documented glibc floor matches the AppImage
+        run: |
+          set -euo pipefail
+          VERSION="$(.venv/bin/python -c 'from app.constants import APP_VERSION; print(APP_VERSION)')"
+          bash scripts/check_appimage_glibc.sh "installer_output/BulkSeqStudio-${VERSION}-x86_64.AppImage"
+
       - uses: actions/upload-artifact@v4
         with:
           name: BulkSeqStudio-linux

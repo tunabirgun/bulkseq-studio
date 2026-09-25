@@ -20,12 +20,16 @@ import json
 import sys
 from pathlib import Path
 
+import yaml
+from pydantic import ValidationError
+
 from app.cli_banner import print_banner
 from app.constants import APP_VERSION
 from app.core.config_models import AppConfig
 from app.core.metadata import load_metadata, validate_metadata
 from app.core.paths import project_configured_path
 from app.core.project import ProjectExistsError, ProjectManager, is_project_root
+from app.core.sanity_checks import aggregate_status
 from app.core.snakemake_runner import (
     EXEC_PROFILES,
     SnakemakeRunner,
@@ -36,9 +40,25 @@ from app.core.snakemake_runner import (
 
 EXIT_OK = 0
 EXIT_USAGE = 2
-EXIT_INVALID = 3       # bad config key/value, or a project that is not one
-EXIT_GATE = 4          # sanity checks refuse the run
+EXIT_INVALID = 3       # not a project, an unreadable or invalid config, or a workflow copy that cannot be refreshed
+EXIT_GATE = 4          # `bulkseq check` found a FAIL, or the sample sheet is missing or unreadable
 EXIT_RUN_FAILED = 5    # the Snakemake run itself failed
+EXIT_INTERRUPTED = 130
+
+# Listed by --help. Exit 1 is Python's own status for an unhandled error, not one of ours.
+EXIT_CODE_HELP = (
+    (EXIT_OK, "success; for check, also when the worst finding is WARNING or REVIEW_REQUIRED"),
+    (1, "unexpected error, printed with a traceback; please report it"),
+    (EXIT_USAGE, "usage error: no command, or an invalid option"),
+    (EXIT_INVALID, "not a project, an unreadable or invalid config, or the workflow copy could not be refreshed"),
+    (EXIT_GATE, "check found a FAIL, or the sample sheet is missing or unreadable"),
+    (EXIT_RUN_FAILED, "the workflow run failed"),
+    (EXIT_INTERRUPTED, "interrupted with Ctrl-C"),
+)
+
+
+class ConfigLoadError(Exception):
+    """config/config.yaml exists but cannot be parsed, or does not validate."""
 
 
 def _configure_streams() -> None:
@@ -81,7 +101,15 @@ def _resolve_project(args) -> Path | None:
 
 
 def _load(root: Path) -> AppConfig:
-    return ProjectManager().load_config(root)
+    try:
+        return ProjectManager().load_config(root)
+    except ValidationError as exc:
+        fields = "; ".join(f"{'.'.join(map(str, error['loc']))}: {error['msg']}" for error in exc.errors()[:3])
+        raise ConfigLoadError(f"Invalid config/config.yaml in {root}: {fields}") from exc
+    except yaml.YAMLError as exc:
+        detail = str(exc).strip().splitlines()
+        raise ConfigLoadError(
+            f"Unreadable config/config.yaml in {root}: {detail[0] if detail else 'YAML syntax error'}") from exc
 
 
 def _metadata_for_project_validation(root: Path, frame):
@@ -293,12 +321,7 @@ def cmd_check(args) -> int:
     allow_pending = config.input.type in ("sra", "count_matrix", "microarray", "deseq2_results")
     messages = validate_metadata(
         _metadata_for_project_validation(root, frame), allow_pending_sra=allow_pending)
-    worst = "PASS"
-    for message in messages:
-        if message["status"] == "FAIL":
-            worst = "FAIL"
-        elif message["status"] in ("REVIEW_REQUIRED", "WARNING") and worst == "PASS":
-            worst = message["status"]
+    worst = aggregate_status(messages)
     if args.json:
         print(json.dumps({"status": worst, "messages": messages}, indent=2))
     else:
@@ -380,6 +403,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bulkseq",
         description="BulkSeq Studio — reproducible bulk RNA-seq from the command line.",
+        epilog="exit status:\n" + "\n".join(f"  {code:>3}  {meaning}" for code, meaning in EXIT_CODE_HELP),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         parents=[common])
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
@@ -455,9 +480,12 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         return args.func(args)
+    except ConfigLoadError as exc:
+        _err(str(exc))
+        return EXIT_INVALID
     except KeyboardInterrupt:
         _err("\nInterrupted.")
-        return 130
+        return EXIT_INTERRUPTED
 
 
 if __name__ == "__main__":

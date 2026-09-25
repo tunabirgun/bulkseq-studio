@@ -35,7 +35,7 @@ def test_python_distribution_includes_the_application_and_shared_workflow_helper
 
 def test_release_version_declarations_are_synchronised() -> None:
     repo = Path(__file__).resolve().parents[1]
-    expected = "0.32.0"
+    expected = "0.32.1"
     constants = (repo / "app" / "constants.py").read_text(encoding="utf-8")
     assert f'APP_VERSION = "{expected}"' in constants
     assert f'WORKFLOW_VERSION = "{expected}"' in constants

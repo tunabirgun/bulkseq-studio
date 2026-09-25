@@ -200,6 +200,40 @@ def test_run_does_not_start_runner_after_workflow_sync_failure(project, monkeypa
     assert "Could not refresh project workflow scripts" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(("statuses", "overall", "code"), [
+    (["WARNING", "REVIEW_REQUIRED"], "REVIEW_REQUIRED", EXIT_OK),
+    (["REVIEW_REQUIRED", "WARNING"], "REVIEW_REQUIRED", EXIT_OK),
+    (["PASS", "WARNING"], "WARNING", EXIT_OK),
+    (["WARNING", "FAIL", "REVIEW_REQUIRED"], "FAIL", EXIT_GATE),
+])
+def test_check_reports_the_most_severe_finding_in_any_order(project, monkeypatch, capsys,
+                                                             statuses, overall, code) -> None:
+    # A WARNING listed before a REVIEW_REQUIRED once left the overall status at WARNING.
+    messages = [{"status": status, "message": f"finding {n}"} for n, status in enumerate(statuses)]
+    monkeypatch.setattr("app.cli.validate_metadata", lambda *args, **kwargs: messages)
+    assert main(["check", "-C", str(project), "--json"]) == code
+    assert json.loads(capsys.readouterr().out)["status"] == overall
+
+
+@pytest.mark.parametrize("text", ["input:\n  type: [unclosed\n", "deseq2:\n  alpha: not-a-number\n"])
+@pytest.mark.parametrize("command", [["project", "info"], ["config", "show"], ["check"]])
+def test_a_corrupt_config_is_an_invalid_project_not_a_crash(project, capsys, text, command) -> None:
+    (project / "config" / "config.yaml").write_text(text, encoding="utf-8")
+    assert main([*command, "-C", str(project), "--quiet"]) == EXIT_INVALID
+    err = capsys.readouterr().err
+    assert "config/config.yaml" in err and "Traceback" not in err
+
+
+def test_help_names_every_exit_status(capsys) -> None:
+    import app.cli as cli
+    # Derived from the module's own constants, so a new code added without documentation fails.
+    defined = {value for name, value in vars(cli).items() if name.startswith("EXIT_") and isinstance(value, int)}
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    listed = {int(line.split()[0]) for line in capsys.readouterr().out.split("exit status:", 1)[1].strip().splitlines()}
+    assert listed == defined | {1}
+
+
 def test_run_detects_a_masked_failure_marker(monkeypatch, project) -> None:
     # `micromamba run` under WSL returns exit 0 even when snakemake failed; a marker line
     # in the output must still fail the CLI run.

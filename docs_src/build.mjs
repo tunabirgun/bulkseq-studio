@@ -45,6 +45,9 @@ for (const page of pages) {
     const shown = step ? `${step[1]}<em>${step[2]}</em>` : title;
     return `<h${level}${attrs}>${shown}<a class="heading-link" href="#${id}" aria-label="Link to ${escape(plain(title))}">#</a></h${level}>`;
   });
+  // A callout must say what kind it is: a warning rendered as a routine note is the defect this prevents.
+  const untyped = (body.match(/<aside class="callout(?! callout-(check|warning|caution|note|new)")/g) || []).length;
+  if (untyped) throw new Error(`${page.slug}: ${untyped} callout(s) without a kind`);
   search.push({title: page.title, url: href(page), summary: page.summary, section: page.section, text: plain(page.body)});
   const toc = headings.map(h => `<li class="toc-level-${h.level}"><a href="#${h.id}">${escape(h.title)}</a></li>`).join('');
   const hub = page.section === 'Home';

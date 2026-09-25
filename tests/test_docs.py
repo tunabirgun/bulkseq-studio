@@ -26,7 +26,7 @@ DOCS_SRC = ROOT / "docs_src"
 README_PATH = ROOT / "README.md"
 # These independent states are deliberately not derived from application values. The
 # application and public handbook must advance together, while the archive remains fixed.
-PUBLIC_VERSION = "0.32.0"
+PUBLIC_VERSION = "0.32.1"
 ARCHIVE_VERSION = "0.26.6"
 CANONICAL_RELEASE_LINK = "https://github.com/tunabirgun/bulkseq-studio/releases/latest"
 RELEASE_TAG_LINK = "https://github.com/tunabirgun/bulkseq-studio/releases/tag/v"
@@ -260,26 +260,27 @@ def _validation_errors(
 def _release_errors(changelog: str) -> list[str]:
     errors = []
     released = dict(_released_sections(changelog))
-    entry = released.get(PUBLIC_VERSION, "")
-    expected_heading = f"## {PUBLIC_VERSION} — 2026-09-18"
-    if expected_heading not in changelog:
-        errors.append("CHANGELOG.md: no dated public-release heading")
     if f"## {PUBLIC_VERSION} — Unreleased" in changelog:
         errors.append("CHANGELOG.md: public version is marked unreleased")
-    if not entry:
+    if PUBLIC_VERSION not in released:
         errors.append("CHANGELOG.md: public version is not presented as released")
-    if "**Scientific output changes.**" not in entry:
-        errors.append("CHANGELOG.md: no scientific-output change notice")
-    if "Synthetic regressions establish these corrected contracts" not in entry:
-        errors.append("CHANGELOG.md: no revalidation notice")
-    if "have not been rerun under 0.32.0" not in entry:
-        errors.append("CHANGELOG.md: no historical revalidation caveat")
+    # The notice is owed by the newest scientific release the public version contains, which
+    # need not be the public version itself: a documentation release carries none of its own.
+    scientific = _latest_scientific_version(PUBLIC_VERSION, changelog)
+    if scientific:
+        entry = released[scientific]
+        if "**Scientific output changes.**" not in entry:
+            errors.append("CHANGELOG.md: no scientific-output change notice")
+        if "Synthetic regressions establish these corrected contracts" not in entry:
+            errors.append("CHANGELOG.md: no revalidation notice")
+        if f"have not been rerun under {scientific}" not in entry:
+            errors.append("CHANGELOG.md: no historical revalidation caveat")
     return errors
 
 
 def _release_artifact_errors(readme: str, pages: dict[str, str]) -> list[str]:
     errors = []
-    if "Unreleased development version 0.32.0" in "\n".join(pages.values()):
+    if f"Unreleased development version {PUBLIC_VERSION}" in "\n".join(pages.values()):
         errors.append("docs/: published handbook is still presented as unpublished development source")
     return errors
 
@@ -334,12 +335,12 @@ def test_public_release_and_archive_versions_remain_independent() -> None:
 
 
 def test_release_version_gate_rejects_an_unreleased_public_heading() -> None:
-    forged = CHANGELOG_TEXT.replace(
-        f"## {PUBLIC_VERSION} — 2026-09-18",
-        f"## {PUBLIC_VERSION} — Unreleased (2026-09-18)",
-        1,
-    )
-    assert any("public version is marked unreleased" in error for error in _release_errors(forged))
+    heading = re.search(rf"^## {re.escape(PUBLIC_VERSION)} — (\d{{4}}-\d{{2}}-\d{{2}})", CHANGELOG_TEXT, re.MULTILINE)
+    assert heading, f"CHANGELOG.md has no dated heading for {PUBLIC_VERSION}"
+    forged = CHANGELOG_TEXT.replace(heading.group(0), f"## {PUBLIC_VERSION} — Unreleased ({heading.group(1)})", 1)
+    errors = _release_errors(forged)
+    assert any("public version is marked unreleased" in error for error in errors)
+    assert any("not presented as released" in error for error in errors)
 
 
 def test_release_version_gate_rejects_a_missing_revalidation_notice() -> None:
@@ -353,7 +354,7 @@ def test_release_version_gate_rejects_a_missing_scientific_output_notice() -> No
 
 
 def test_release_version_gate_rejects_a_missing_historical_revalidation_caveat() -> None:
-    missing = CHANGELOG_TEXT.replace("have not been rerun under 0.32.0", "", 1)
+    missing = CHANGELOG_TEXT.replace(f"have not been rerun under {LATEST_SCIENTIFIC_VERSION}", "", 1)
     assert any("no historical revalidation caveat" in error for error in _release_errors(missing))
 
 

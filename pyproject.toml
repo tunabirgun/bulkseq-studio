@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bulkseq-studio"
-version = "0.32.0"
+version = "0.32.1"
 description = "Cross-platform Windows and Linux GUI project manager for reproducible bulk RNA-seq Snakemake workflows"
 readme = "README.md"
 license = { text = "MIT" }
