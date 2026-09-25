@@ -265,3 +265,20 @@ def test_full_run_completion_retains_unambiguous_completed_state(
     assert "Explore results > Figures and tables" in completion_route
     assert "Explore results > Protein network" in completion_route
     assert "Outputs tab" not in completion_route
+
+
+@pytest.mark.parametrize("size", [(1093, 640), (1440, 900)])
+def test_empty_state_messages_are_never_clipped(window: MainWindow, size) -> None:
+    from PySide6.QtWidgets import QLabel
+
+    window.resize(*size)
+    checked = 0
+    for index in range(window.tabs.count()):
+        window.tabs.setCurrentIndex(index)
+        QApplication.processEvents()
+        for label in window.findChildren(QLabel):
+            if label.property("uiRole") == "emptyBody" and label.isVisible():
+                checked += 1
+                assert label.heightForWidth(label.width()) <= label.height(), (
+                    index, label.text(), label.width(), label.height())
+    assert checked >= 5

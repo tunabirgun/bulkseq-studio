@@ -473,3 +473,22 @@ def test_empty_state_repaints_light_dark_light(static_viewer, qapp):
 
     static_viewer.update_theme(light)
     assert rendered_colours() == first_light
+
+
+@pytest.mark.parametrize("message", [
+    None,
+    "The interactive PPI viewer could not be loaded.",
+    "No PPI network is available yet. Run the pipeline or rebuild the STRING network.",
+    "STRING returned no interactions for this project. Try a supported organism, "
+    "check gene-symbol mapping, or adjust the Network construction threshold.",
+])
+@pytest.mark.parametrize("size", [(520, 360), (940, 620), (1400, 900)])
+def test_empty_state_message_is_never_clipped(static_viewer, qapp, message, size):
+    static_viewer.resize(*size)
+    static_viewer.set_empty_state(message)
+    qapp.processEvents()
+    label = _empty_label(static_viewer)
+    card = static_viewer._empty_card
+
+    assert label.heightForWidth(label.width()) <= label.height(), (label.width(), label.height())
+    assert card.geometry().bottom() <= static_viewer._empty_page.height()

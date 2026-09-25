@@ -195,7 +195,7 @@ def _readme_errors(readme: str, pages: dict[str, str]) -> list[str]:
     status_lines = [line for line in readme.splitlines() if "release status" in line.lower()]
     if not status_lines:
         errors.append("README.md: no release-status line")
-    elif not any(PUBLIC_VERSION in line for line in status_lines):
+    elif not any(f"Version {PUBLIC_VERSION} is the current public release" in line for line in status_lines):
         errors.append(f"README.md: release-status line does not name the public release {PUBLIC_VERSION}")
     if f"Download public v{PUBLIC_VERSION}" not in readme:
         errors.append(f"README.md: public-download boundary does not name {PUBLIC_VERSION}")

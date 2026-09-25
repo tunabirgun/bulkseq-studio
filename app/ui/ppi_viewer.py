@@ -8,6 +8,7 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QFrame, QLabel, QStackedWidget, QVBoxLayout, QWidget
 
 from app.core.paths import app_root
+from app.ui.card_fit import CenteredCardFit
 
 # QtWebEngine is a large, separately-shipped Chromium module; guard the import so
 # the PPI tab degrades to the static figure (never crashes) if it is missing in a
@@ -60,8 +61,6 @@ class PpiViewer(QWidget):
         empty_layout.addStretch(1)
         self._empty_card = QFrame(self._empty_page)
         self._empty_card.setObjectName("ppiEmptyCard")
-        self._empty_card.setMinimumWidth(380)
-        self._empty_card.setMaximumWidth(560)
         empty_card_layout = QVBoxLayout(self._empty_card)
         empty_card_layout.setContentsMargins(20, 18, 20, 18)
         empty_card_layout.setSpacing(8)
@@ -79,6 +78,7 @@ class PpiViewer(QWidget):
         empty_card_layout.addWidget(self._empty_label)
         empty_layout.addWidget(self._empty_card, 0, Qt.AlignmentFlag.AlignHCenter)
         empty_layout.addStretch(1)
+        self._empty_fit = CenteredCardFit(self._empty_page, self._empty_card, margin=24)
         self._stack.addWidget(self._empty_page)
         layout.addWidget(self._stack, 1)
 

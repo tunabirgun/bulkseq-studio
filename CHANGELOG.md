@@ -2,12 +2,13 @@
 
 ## 0.32.1 — 2026-09-25
 
-Patch release: documentation, the command line and the documentation site. Nothing under `workflow/` changed, so every analysis output is as 0.32.0 produced it. The workflow version moves with the application version, so an existing project re-copies an identical workflow on its next run.
+Patch release: documentation, the command line, the documentation site and one interface fix. Nothing under `workflow/` changed, so every analysis output is as 0.32.0 produced it. The bundled pasilla benchmark was rerun from the installed 0.32.1 Windows package: 7,532 tested genes, 467 at padj < 0.05, and a count matrix and DESeq2 table byte-identical to the 0.31.0 result. The workflow version moves with the application version, so an existing project re-copies an identical workflow on its next run.
 
 ### Fixed
 
 - **`bulkseq check` reports the most severe finding as its overall status.** It upgraded only from `PASS`, so a `WARNING` listed before a `REVIEW_REQUIRED` produced `Overall: WARNING`. It now uses the severity order of the workflow's own aggregation. The exit code was unaffected, since only `FAIL` returns 4.
 - **A corrupt project configuration returns exit 3 instead of a traceback.** A `config/config.yaml` with a YAML syntax error or an invalid value made every command fail with exit 1. The command now names the file and the offending field and returns 3, the documented code for a configuration it cannot use. Exit 1 remains for a genuinely unexpected error.
+- **Empty-state messages in the interface are no longer cut off.** The protein-network placeholder and the centred empty-state cards on other pages took their height from the message's size hint, which does not know the width the card receives, so a message that wrapped onto more lines lost its last line: the network page ended at "build one with the Network". The cards now take their height from the wrapped text at their actual width, and a test fails if any empty-state message needs more height than it gets.
 - **The documentation theme button names the theme that is showing.** When the operating system switched between light and dark while the page followed it, the button kept its old label until it was clicked.
 
 ### Changed
@@ -21,6 +22,7 @@ Patch release: documentation, the command line and the documentation site. Nothi
 ### Documentation
 
 - Corrections from a review of every page against the code: the Linux AppImage needs glibc 2.38 or newer rather than 2.34, measured from its bundled libraries; the Windows packages are not code-signed; low free disk space in the working directory produces a warning, not a refusal; the sample sheet is on the Samples page; the run monitor names the step in progress in plain language and shows elapsed time, not a remaining estimate; `pip install -e .` installs the graphical interface, with no command-line-only option; Ctrl-C sends TERM, waits up to eight seconds, then sends KILL; the meta-analysis joint fit adds `dataset` to any additive design, and a study enters the per-study combination only with at least two replicates in each arm; the checks page shows its statuses under status headers; the version notices read newest first.
+- The tutorial says to expect an overall WARNING from the pre-run checks on the bundled pasilla subset, and the checks page explains why check 01 can read WARNING before a run and PASS after it: the interface's pre-run check warns below three replicates per condition, while the copy the workflow writes when the run starts warns only below two. The two thresholds are documented rather than aligned in this release, because aligning them changes a workflow check.
 - Known issue, documented rather than changed in this release: the custom gene-set enrichment check (11) is shown on Pre-run checks but is missing from `sanity_checks.txt`, because the summary rule reads a fixed list of checks that does not include it.
 - The 0.31.0 entry said the old fixed floor of check 23 was the stricter of the two from eight samples upward in two groups. The crossover is at seven: the chance ceiling is 0.483 at seven samples and 0.573 at six. That entry is corrected.
 

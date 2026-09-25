@@ -139,6 +139,7 @@ from app.core.paths import (
     wsl_unc_distro,
     wsl_vhdx_basepath,
 )
+from app.ui.card_fit import CenteredCardFit
 from app.ui.image_viewer import SVG_AVAILABLE, ImageViewer
 from app.ui.metadata_editor import MetadataTable
 from app.ui.readiness_dialog import ReadinessDialog
@@ -664,9 +665,6 @@ class MainWindow(QMainWindow):
         outer.addStretch(1)
         card = QFrame()
         card.setProperty("uiRole", "emptyState")
-        card.setMinimumWidth(380)
-        card.setMaximumWidth(560)
-        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(20, 18, 20, 18)
         card_layout.setSpacing(8)
@@ -677,11 +675,6 @@ class MainWindow(QMainWindow):
         text.setProperty("uiRole", "emptyBody")
         text.setAlignment(Qt.AlignmentFlag.AlignCenter)
         text.setWordWrap(True)
-        # QLabel's size hint underestimates wrapped copy until the card has its
-        # final width.  Reserve two text lines so longer empty-state guidance is
-        # never compressed underneath the action button at compact sizes.
-        if action_text:
-            text.setMinimumHeight(40)
         card_layout.addWidget(heading)
         card_layout.addWidget(text)
         button: QPushButton | None = None
@@ -696,6 +689,7 @@ class MainWindow(QMainWindow):
             card_layout.addLayout(action_row)
         outer.addWidget(card, 0, Qt.AlignmentFlag.AlignHCenter)
         outer.addStretch(1)
+        CenteredCardFit(wrapper, card, margin=12)
         return wrapper, heading, text, button
 
     def _section_panel(
