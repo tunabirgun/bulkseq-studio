@@ -57,7 +57,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from PySide6.QtGui import (
-    QDesktopServices,
     QFontDatabase,
     QKeySequence,
     QPainter,
@@ -66,7 +65,7 @@ from PySide6.QtGui import (
     QShortcut,
     QTextCursor,
 )
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt
 
 from app.constants import (
     APP_NAME,
@@ -142,6 +141,7 @@ from app.core.paths import (
 from app.ui.card_fit import CenteredCardFit
 from app.ui.image_viewer import SVG_AVAILABLE, ImageViewer
 from app.ui.metadata_editor import MetadataTable
+from app.ui.open_external import open_path
 from app.ui.readiness_dialog import ReadinessDialog
 from app.ui.task_navigator import TaskNavigator
 from app.ui.theme import IMAGEVIEWER_BG, PALETTES, STATUS_PILL_BG, apply_theme, status_color
@@ -4160,14 +4160,14 @@ class MainWindow(QMainWindow):
 
     def _open_folder(self) -> None:
         if self.project_root is not None:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.project_root)))
+            open_path(self.project_root)
 
     def _open_report(self) -> None:
         if self.project_root is None:
             return
         report = self.project_root / "results" / "qc" / "multiqc" / "multiqc_report.html"
         if report.exists():
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(report)))
+            open_path(report)
         else:
             self.log_text.append(f"MultiQC report not found yet: {report}")
 
@@ -4176,7 +4176,7 @@ class MainWindow(QMainWindow):
             return
         report = self.project_root / "results" / "reports" / "results_report.html"
         if report.exists():
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(report)))
+            open_path(report)
         else:
             self.log_text.append(f"Results report not found yet: {report}")
 
@@ -5980,7 +5980,7 @@ class MainWindow(QMainWindow):
 
     def _open_subpath(self, relative: str) -> None:
         if self.project_root is not None:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.project_root / relative)))
+            open_path(self.project_root / relative)
 
     def _load_output_table(self) -> None:
         if not self._require_project():

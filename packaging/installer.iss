@@ -176,9 +176,23 @@ begin
 
   { Guarantee a completely clean slate: delete any leftover install directory the
     uninstaller did not remove, so the new version installs fresh with no stale files.
-    Gate on the app name so DelTree can never target an unrelated directory. }
-  if (instLoc <> '') and (Pos('BulkSeq Studio', instLoc) > 0) and DirExists(instLoc) then
-    DelTree(instLoc, True, True, True);
+    Gate on the app name so DelTree can never target an unrelated directory. A file can
+    stay locked for a few seconds after the application exits, and a single failed pass
+    left the folder behind, so the wizard then asked whether to install into an existing
+    folder; retry for up to 15 s. }
+  if (instLoc <> '') and (Pos('BulkSeq Studio', instLoc) > 0) then
+  begin
+    waited := 0;
+    while DirExists(instLoc) and (waited <= 15000) do
+    begin
+      DelTree(instLoc, True, True, True);
+      if DirExists(instLoc) then
+      begin
+        Sleep(500);
+        waited := waited + 500;
+      end;
+    end;
+  end;
 
   if choice = IDNO then
   begin

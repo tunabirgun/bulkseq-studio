@@ -7,13 +7,14 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QLocale, QRect, QSettings, Qt, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QLocale, QRect, QSettings, Qt
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMessageBox, QSplashScreen
 
 from app.constants import APP_NAME, APP_VERSION, APP_MUTEX_NAME
 from app.core.paths import app_root
 from app.ui.main_window import MainWindow
+from app.ui.open_external import open_path
 from app.ui.theme import PALETTES, apply_theme, system_ui_font_family
 
 
@@ -72,7 +73,7 @@ def _install_excepthook() -> None:
                 open_btn = box.addButton("Open log folder", QMessageBox.ButtonRole.ActionRole)
                 box.exec()
                 if box.clickedButton() is open_btn:
-                    QDesktopServices.openUrl(QUrl.fromLocalFile(str(written.parent)))
+                    open_path(written.parent)
             else:
                 box.exec()
         except Exception:
