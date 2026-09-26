@@ -382,7 +382,7 @@ def _replace_once(source: str, old: str, new: str) -> str:
         ("README.md", f"Version {PUBLIC_VERSION} is the current public release.", "Version 0.31.0 is the current public release.", "release-status line does not name"),
         ("README.md", f"Download public v{PUBLIC_VERSION}", "Download the latest release", "public-download boundary"),
         ("README.md", CANONICAL_RELEASE_LINK, "https://github.com/tunabirgun/bulkseq-studio/releases", "canonical public-release link"),
-        ("README.md", "BulkSeq Studio is a cross-platform desktop application ", "BulkSeq Studio is a cross-platform desktop\napplication ", "one physical line"),
+        ("README.md", "BulkSeq Studio is a desktop application for Windows and Linux ", "BulkSeq Studio is a desktop\napplication for Windows and Linux ", "one physical line"),
         ("README.md", f"({SITE_BASE}guide.html)", f"({SITE_BASE}guide-notes.html)", "link into the site does not resolve"),
         ("README.md", f"({SITE_BASE}faq.html#version-notices)", f"({SITE_BASE}faq.html#no-such-heading)", "link into the site does not resolve"),
         ("README.md", f"archive. Version {ARCHIVE_VERSION}.", f"archive. Version {PUBLIC_VERSION}.", "relabels the deposited archive"),
