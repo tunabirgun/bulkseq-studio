@@ -691,6 +691,41 @@ normalize_species_name <- function(value) {
   trimws(gsub("\\s+", " ", value))
 }
 
+# Genus and species epithet agree and one name is the other plus trailing strain,
+# subspecies or variety words: "Fusarium graminearum PH-1" vs KEGG's "Fusarium
+# graminearum". Whole tokens only, so "tritici" never matches "triticiae". The taxon
+# is still compared separately.
+species_names_share_prefix <- function(a, b) {
+  ta <- strsplit(normalize_species_name(a), " ", fixed = TRUE)[[1]]
+  tb <- strsplit(normalize_species_name(b), " ", fixed = TRUE)[[1]]
+  n <- min(length(ta), length(tb))
+  n >= 2L && identical(ta[seq_len(n)], tb[seq_len(n)])
+}
+
+# Per-code identities KEGG records in a different form from the reference catalogue
+# (a current name, an added subspecies, or the species taxon of a catalogued strain),
+# each verified once against NCBI Taxonomy and the KEGG GENOME record. Matching stays
+# exact against these recorded values; an unrecorded difference still fails.
+load_kegg_identity_records <- function(path) {
+  if (!nzchar(path) || !file.exists(path)) return(NULL)
+  tryCatch(utils::read.delim(path, comment.char = "#", quote = "", colClasses = "character",
+                             stringsAsFactors = FALSE),
+           error = function(e) NULL)
+}
+
+match_kegg_identity_record <- function(records, code, registry_name, expected_name) {
+  if (!is.data.frame(records) || !nrow(records)) return(NULL)
+  hit <- records[records$kegg_code == code, , drop = FALSE]
+  if (nrow(hit) != 1L) return(NULL)
+  accepted <- normalize_species_name(strsplit(hit$accepted_names, "|", fixed = TRUE)[[1]])
+  if (!identical(normalize_species_name(hit$registry_name), normalize_species_name(registry_name)) ||
+      !normalize_species_name(expected_name) %in% accepted) return(NULL)
+  as.list(hit)
+}
+
+KEGG_IDENTITY_RECORDS <- load_kegg_identity_records(
+  file.path(snakemake@scriptdir, "kegg_identity_records.tsv"))
+
 load_kegg_registry <- function() {
   # clusterProfiler's current internal species catalog is the authority for the
   # organism-code namespace used by enrichKEGG/gseKEGG. Its legacy kegg_taxa.rds
@@ -776,7 +811,8 @@ resolve_kegg_taxon <- function(kegg_code) {
 
 validate_kegg_identity <- function(kegg_code, expected_name, expected_taxon = NA_character_,
                                    registry = load_kegg_registry(),
-                                   taxon_resolver = resolve_kegg_taxon) {
+                                   taxon_resolver = resolve_kegg_taxon,
+                                   records = get0("KEGG_IDENTITY_RECORDS", ifnotfound = NULL)) {
   if (is.data.frame(registry)) registry <- list(
     status = "PASS", reason = "", data = registry, source = "synthetic")
   empty <- list(status = "NOT_INTERPRETABLE", reason = "", configured_code = as.character(kegg_code),
@@ -801,8 +837,13 @@ validate_kegg_identity <- function(kegg_code, expected_name, expected_taxon = NA
     empty$reason <- "configured reference organism name is missing"
     return(empty)
   }
-  if (!identical(normalize_species_name(expected_name),
-                 normalize_species_name(empty$registry_name))) {
+  record <- match_kegg_identity_record(records, code, empty$registry_name, expected_name)
+  name_rule <- if (identical(normalize_species_name(expected_name),
+                             normalize_species_name(empty$registry_name))) "exact"
+    else if (species_names_share_prefix(expected_name, empty$registry_name)) "strain suffix"
+    else if (!is.null(record)) "recorded"
+    else ""
+  if (!nzchar(name_rule)) {
     empty$reason <- sprintf("KEGG code %s resolves to %s, not configured organism %s",
                             code, empty$registry_name, expected_name)
     return(empty)
@@ -830,8 +871,11 @@ validate_kegg_identity <- function(kegg_code, expected_name, expected_taxon = NA
                                      as.character(hits$kegg.taxon.source[[1]]))
   }
   expected_taxon <- trimws(as.character(expected_taxon))
+  taxon_recorded <- !is.null(record) &&
+    identical(record$registry_taxon, empty$registry_taxon) &&
+    expected_taxon %in% strsplit(record$accepted_taxa, "|", fixed = TRUE)[[1]]
   if (nzchar(expected_taxon) && !is.na(expected_taxon) &&
-      !identical(expected_taxon, empty$registry_taxon)) {
+      !identical(expected_taxon, empty$registry_taxon) && !taxon_recorded) {
     empty$reason <- sprintf("KEGG code %s resolves to taxon %s, not expected taxon %s",
                             code, empty$registry_taxon, expected_taxon)
     return(empty)
@@ -840,10 +884,22 @@ validate_kegg_identity <- function(kegg_code, expected_name, expected_taxon = NA
     empty$reason <- sprintf("KEGG code %s has no registry taxon", code)
     return(empty)
   }
+  # A recorded name is only trusted together with its recorded taxon.
+  if (identical(name_rule, "recorded") && !identical(record$registry_taxon, empty$registry_taxon)) {
+    empty$reason <- sprintf("KEGG code %s resolves to taxon %s, not the recorded taxon %s for %s",
+                            code, empty$registry_taxon, record$registry_taxon, empty$registry_name)
+    return(empty)
+  }
   empty$status <- "PASS"
-  empty$reason <- if (nzchar(expected_taxon) && !is.na(expected_taxon))
-    "exact code/name/taxon registry match" else
-    "exact code/name registry match; independent expected taxon not configured"
+  taxon_rule <- if (!nzchar(expected_taxon) || is.na(expected_taxon)) "" else
+    if (identical(expected_taxon, empty$registry_taxon)) "taxon" else "recorded taxon"
+  empty$reason <- if (!nzchar(taxon_rule))
+    sprintf("code/name registry match (%s name); independent expected taxon not configured", name_rule)
+    else if (identical(name_rule, "exact") && identical(taxon_rule, "taxon"))
+    "exact code/name/taxon registry match"
+    else sprintf("code/name/taxon registry match (%s name, %s)", name_rule, taxon_rule)
+  if (!is.null(record) && (identical(name_rule, "recorded") || identical(taxon_rule, "recorded taxon")))
+    empty$reason <- sprintf("%s; recorded KEGG identity: %s", empty$reason, record$relation)
   empty
 }
 
@@ -1587,6 +1643,7 @@ if (orgdb_ok) {
 
     # gprofiler2 is a Stage-2 env addition and may be absent: wrap the load + gost
     # so a missing package or a network failure degrades to KEGG-only, never crashes.
+    gp_diagnostic <- NULL
     gp <- tryCatch({
       suppressMessages(library(gprofiler2))
       query <- all_ids
@@ -1594,19 +1651,30 @@ if (orgdb_ok) {
                  sources = c("GO:BP", "KEGG", "REAC"),
                  custom_bg = tested_genes, significant = TRUE,
                  user_threshold = alpha, correction_method = "g_SCS")
-      # On a namespace mismatch (gost returns nothing because g:Profiler did not
-      # recognise the query ids), retry once after gconvert maps the query into the
-      # g:Profiler internal namespace.
+      # An empty result is either no enriched term or ids g:Profiler does not know.
+      # gost and gconvert share one conversion service, so report how many ids it
+      # recognised rather than retrying blind; retry only with query and background
+      # converted into the same namespace.
       if (is.null(gg$result) || nrow(gg$result) == 0) {
-        conv <- tryCatch(gconvert(query = query, organism = gprofiler_org),
-                         error = function(e) NULL)
-        if (!is.null(conv) && nrow(conv) > 0) {
-          q2 <- unique(conv$target[!is.na(conv$target)])
-          if (length(q2) > 0)
-            gg <- gost(query = q2, organism = gprofiler_org,
-                       sources = c("GO:BP", "KEGG", "REAC"),
-                       custom_bg = tested_genes, significant = TRUE,
-                       user_threshold = alpha, correction_method = "g_SCS")
+        recognised <- function(ids) {
+          conv <- tryCatch(gconvert(query = ids, organism = gprofiler_org),
+                           error = function(e) NULL)
+          if (is.null(conv) || !nrow(conv)) return(character(0))
+          unique(conv$target[!is.na(conv$target) & nzchar(conv$target)])
+        }
+        q2 <- recognised(query)
+        bg2 <- recognised(tested_genes)
+        gp_diagnostic <- sprintf(
+          "g:Profiler (%s) recognised %d of %d significant ids and %d of %d tested ids.",
+          gprofiler_org, length(q2), length(query), length(bg2), length(tested_genes))
+        if (length(q2) && length(bg2)) {
+          gg <- gost(query = q2, organism = gprofiler_org,
+                     sources = c("GO:BP", "KEGG", "REAC"),
+                     custom_bg = bg2, significant = TRUE,
+                     user_threshold = alpha, correction_method = "g_SCS")
+        } else {
+          gp_diagnostic <- paste(gp_diagnostic, "These gene ids are not in this g:Profiler",
+                                 "namespace, so GO via g:Profiler is unavailable for this reference.")
         }
       }
       gg
@@ -1672,6 +1740,7 @@ if (orgdb_ok) {
     summary_lines <<- c(summary_lines,
       sprintf("GO route: g:Profiler (organism %s).", gprofiler_org),
       sprintf("GO BP terms (gost ORA): %d", n_go),
+      gp_diagnostic,
       sprintf("Significant genes (ORA input): %d", length(all_ids)),
       sprintf("Ranked genes (GSEA input): %d", length(kegg_rank_info$values)),
       enrichment_eligibility_lines(populations, "GSEA"),

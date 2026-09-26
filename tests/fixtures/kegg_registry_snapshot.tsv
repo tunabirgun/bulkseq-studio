@@ -1,0 +1,48 @@
+# clusterProfiler 4.18.4 internal KEGG species catalog (registry_name) and extdata/kegg_taxa.rds (offline_taxon, NA where absent);
+# genome_taxon is the KEGG GENOME record (KEGGREST keggGet gn:<code>) the workflow consults when offline_taxon is NA. Captured 2026-09-26.
+kegg_code	registry_name	offline_taxon	genome_taxon
+hsa	Homo sapiens	9606	9606
+mmu	Mus musculus	10090	10090
+sce	Saccharomyces cerevisiae	4932	559292
+spo	Schizosaccharomyces pombe	4896	284812
+fgr	Fusarium graminearum	5518	229533
+fox	Fusarium oxysporum	5507	426428
+fpu	Fusarium pseudograminearum	101028	1028729
+fvr	Fusarium verticillioides	117187	334819
+ath	Arabidopsis thaliana	3702	3702
+osa	Oryza sativa japonica	NA	39947
+zma	Zea mays	4577	4577
+taes	Triticum aestivum	4565	4565
+gmx	Glycine max	3847	3847
+hvg	Hordeum vulgare subsp. vulgare	NA	112509
+sbi	Sorghum bicolor	4558	4558
+sly	Solanum lycopersicum	4081	4081
+sot	Solanum tuberosum	4113	4113
+dme	Drosophila melanogaster	7227	7227
+cel	Caenorhabditis elegans	6239	6239
+dre	Danio rerio	7955	7955
+cal	Candida albicans	5476	237561
+ncr	Neurospora crassa	5141	367110
+ani	Aspergillus nidulans	162425	227321
+afm	Aspergillus fumigatus	746128	330879
+cng	Cryptococcus neoformans var. grubii H99	235443	235443
+bfu	Botrytis cinerea	40559	332648
+mgr	Pyricularia oryzae	318829	242507
+eco	Escherichia coli K-12 MG1655	NA	511145
+bsu	Bacillus subtilis subsp. subtilis 168	224308	224308
+rno	Rattus norvegicus	10116	10116
+gga	Gallus gallus	9031	9031
+ssc	Sus scrofa	9823	9823
+bta	Bos taurus	9913	9913
+vvi	Vitis vinifera	29760	29760
+ghi	Gossypium hirsutum	3635	3635
+mtr	Medicago truncatula	3880	3880
+nta	Nicotiana tabacum	4097	4097
+ztr	Zymoseptoria tritici	1047171	336722
+uma	Mycosarcoma maydis	5270	5270
+ssl	Sclerotinia sclerotiorum	5180	665079
+ang	Aspergillus niger	5061	425011
+pae	Pseudomonas aeruginosa PAO1	208964	208964
+mtu	Mycobacterium tuberculosis H37Rv	83332	83332
+sao	Staphylococcus aureus subsp. aureus NCTC8325	NA	93061
+pfa	Plasmodium falciparum 3D7	36329	36329
