@@ -222,3 +222,17 @@ def test_installer_refuses_to_run_while_the_application_holds_its_mutex() -> Non
     assert kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS: Setup will see the running app
     kernel32.CloseHandle(second)
     kernel32.CloseHandle(handle)
+
+
+def test_update_removes_the_old_folder_with_retries_and_offers_it_again() -> None:
+    import re
+
+    installer = (Path(__file__).resolve().parents[1] / "packaging" / "installer.iss").read_text(encoding="utf-8")
+    # One DelTree pass left a briefly locked folder behind; the removal must sit in a bounded retry loop.
+    loop = re.search(r"while DirExists\(instLoc\) and \(waited <= (\d+)\) do\s+begin\s+DelTree\(instLoc", installer)
+    assert loop is not None and 5000 <= int(loop.group(1)) <= 60000
+    # The uninstaller erases the recorded location, so the update must offer the remembered folder.
+    assert "PreviousInstallDir := RemoveBackslashUnlessRoot(instLoc);" in installer
+    assert installer.index("PreviousInstallDir := RemoveBackslashUnlessRoot(instLoc)") > installer.index("instLoc := InstalledLocation()")
+    assert re.search(r"procedure InitializeWizard\(\);\s+begin\s+if PreviousInstallDir <> '' then\s+"
+                     r"WizardForm\.DirEdit\.Text := PreviousInstallDir;", installer)

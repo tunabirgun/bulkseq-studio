@@ -95,6 +95,11 @@ begin
          or RegQueryStringValue(HKLM, UNINST_KEY, 'UninstallString', s);
 end;
 
+var
+  { The uninstaller deletes the record of where the previous version lived, so remember it
+    and offer it on the directory page instead of falling back to the default folder. }
+  PreviousInstallDir: String;
+
 function InstalledLocation(): String;
 begin
   Result := '';
@@ -194,10 +199,19 @@ begin
     end;
   end;
 
+  if (choice = IDYES) and (instLoc <> '') then
+    PreviousInstallDir := RemoveBackslashUnlessRoot(instLoc);
+
   if choice = IDNO then
   begin
     { Uninstall-only: stop after removing the old version. }
     MsgBox('BulkSeq Studio has been uninstalled.', mbInformation, MB_OK);
     Result := False;
   end;
+end;
+
+procedure InitializeWizard();
+begin
+  if PreviousInstallDir <> '' then
+    WizardForm.DirEdit.Text := PreviousInstallDir;
 end;
