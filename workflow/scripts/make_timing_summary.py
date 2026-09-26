@@ -78,6 +78,7 @@ PHASES = [
     # enrichment (includes enrichment_figures and enrichment_term_heatmap)
     ("enrichment", "Enrichment"),
     ("custom_enrichment", "Enrichment"),
+    ("transfer_enrichment", "Enrichment"),
     # DE figures
     ("figures", "Figures"),
     ("genes_of_interest", "Figures"),

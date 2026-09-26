@@ -413,6 +413,14 @@ class EnrichmentConfig(BaseModel):
     # enrichment.go_ontology and defaults to BP). Declared here so it survives a save:
     # pydantic drops keys the model does not know.
     go_ontology: Literal["BP", "MF", "CC"] = "BP"
+    # Annotation-transfer enrichment (STRING orthology-transferred GO/Reactome/InterPro):
+    # auto runs it only for organisms without an OrgDb, on also runs it as a cross-check,
+    # off never runs it.
+    transfer: Literal["auto", "on", "off"] = "auto"
+    # Optional eggNOG-mapper .emapper.annotations file, tested alongside STRING's annotation.
+    transfer_emapper: str | None = None
+    # Optional KofamScan/KofamKOALA KO table; its KEGG pathways come from the live KEGG REST API.
+    transfer_ko_table: str | None = None
 
 
 class PpiConfig(BaseModel):

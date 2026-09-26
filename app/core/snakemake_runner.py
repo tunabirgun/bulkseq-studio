@@ -357,6 +357,13 @@ def build_snakemake_args(
             project_root, "results/enrichment/custom_enrichment_objects.rds"
         ):
             targets.append("custom_enrichment_figure")
+        # Annotation-transfer ORA dot plot. Its rule input is transfer_ora.csv alone, so that is
+        # the only existence gate; enrichment.transfer == "off" mirrors TRANSFER_ON's own hard
+        # stop, but the rest of TRANSFER_ON (OrgDb presence, imports, taxon) is not replicated
+        # here because forcing an undefined rule aborts the whole regenerate.
+        if (config.workflow.enrichment and config.enrichment.transfer != "off"
+                and _target_input_exists(project_root, "results/enrichment/transfer/transfer_ora.csv")):
+            targets.append("transfer_enrichment_figure")
         # GSVA writes a styled heatmap, so a restyle must re-render it. Mirror the Snakefile's
         # GSVA_ON exactly (gsva AND a custom gene-set file AND a per-sample matrix, i.e. not a
         # deseq2-results upload), because forcing an undefined rule aborts the regenerate. Gate on

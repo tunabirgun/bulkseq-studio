@@ -3007,6 +3007,78 @@ class MainWindow(QMainWindow):
             holder = QWidget()
             holder.setLayout(holder_row)
             cs_form.addRow(self._info_label(label, tip), holder)
+
+        # Annotation-transfer enrichment is a second, independent opt-in branch (organisms
+        # without a curated Bioconductor package), kept collapsed like the custom-sets panel.
+        transfer_section = QWidget()
+        transfer_layout = QVBoxLayout(transfer_section)
+        transfer_layout.setContentsMargins(0, 0, 0, 0)
+        transfer_layout.setSpacing(4)
+        (self.transfer_enrichment_toggle,
+         self.transfer_enrichment_panel) = self._disclosure(
+            "Annotation-transfer enrichment (non-model organisms)", expanded=False)
+        self.transfer_enrichment_toggle.setObjectName("transferEnrichmentToggle")
+        self.transfer_enrichment_panel.setObjectName("transferEnrichmentPanel")
+        self.transfer_enrichment_toggle.setToolTip(
+            "Optional GO, Reactome and InterPro enrichment transferred by orthology from "
+            "STRING, for organisms without a curated annotation package.")
+        self.transfer_enrichment_toggle.toggled.connect(
+            self._schedule_workflow_section_height_update)
+        transfer_layout.addWidget(self.transfer_enrichment_toggle)
+        transfer_layout.addWidget(self.transfer_enrichment_panel)
+        te_form = QFormLayout(self.transfer_enrichment_panel)
+        te_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        te_help = QLabel(
+            "Runs GO, Reactome and InterPro enrichment from STRING's orthology-transferred "
+            "annotation for this project's STRING organism — useful when no curated "
+            "Bioconductor package exists. You can also supply eggNOG-mapper or KofamScan/"
+            "KofamKOALA output to add your own GO/KO annotation. These terms are transferred "
+            "by orthology, not curated for this organism specifically; KEGG pathways for "
+            "imported KO assignments are looked up live from the KEGG REST service.")
+        te_help.setWordWrap(True)
+        te_form.addRow(te_help)
+        self.transfer_mode = QComboBox()
+        self.transfer_mode.addItem("Automatic (organisms without a curated package)", "auto")
+        self.transfer_mode.addItem("On", "on")
+        self.transfer_mode.addItem("Off", "off")
+        self.transfer_mode.setToolTip(
+            "Automatic runs this route only for organisms without a curated Bioconductor "
+            "annotation package (OrgDb). On also runs it for OrgDb organisms as a cross-check "
+            "against curated GO. Off never runs it.")
+        self.transfer_mode.setAccessibleName("Annotation transfer")
+        self.transfer_mode.setAccessibleDescription(
+            "Whether to run STRING orthology-transferred GO, Reactome and InterPro enrichment.")
+        te_form.addRow(self._info_label(
+            "Annotation transfer", self.transfer_mode.toolTip(), buddy=self.transfer_mode),
+            self.transfer_mode)
+        self.transfer_emapper = QLineEdit()
+        self.transfer_ko_table = QLineEdit()
+        for label, le, filt, tip, acc_name in (
+            ("eggNOG-mapper annotations", self.transfer_emapper,
+             "eggNOG-mapper (*.emapper.annotations *.tsv *.txt)",
+             "Optional eggNOG-mapper .emapper.annotations file. Its GO terms are propagated "
+             "and tested alongside STRING's own annotation.",
+             "eggNOG-mapper annotations file"),
+            ("KO assignments (KofamScan/KofamKOALA)", self.transfer_ko_table,
+             "KO table (*.txt *.tsv)",
+             "Optional KofamScan/KofamKOALA KO assignment table. KEGG pathways for these "
+             "imported KOs are looked up live from the KEGG REST service.",
+             "KofamScan/KofamKOALA KO assignments file"),
+        ):
+            le.setToolTip(tip)
+            le.setAccessibleName(acc_name)
+            le.setAccessibleDescription(tip)
+            browse = QPushButton("Browse")
+            browse.setAccessibleName(f"Browse for {acc_name}")
+            browse.setToolTip(f"Choose the {acc_name}.")
+            browse.clicked.connect(lambda _=False, t=le, f=filt: self._pick_reference_file(t, f))
+            holder_row = QHBoxLayout()
+            holder_row.addWidget(le)
+            holder_row.addWidget(browse)
+            holder = QWidget()
+            holder.setLayout(holder_row)
+            te_form.addRow(self._info_label(label, tip, buddy=le), holder)
+
         workflow_intro = self._page_intro(
             "Analysis settings",
             "Resolve the input route, comparison direction and active analysis modules for this project.")
@@ -3042,7 +3114,9 @@ class MainWindow(QMainWindow):
         section_tabs.addTab(section_page(de_group), "Comparison")
         section_tabs.addTab(section_page(align_group), "Read processing")
         self.custom_gene_sets_section = custom_sets_section
-        section_tabs.addTab(section_page(out_group, custom_sets_section), "Output options")
+        self.transfer_enrichment_section = transfer_section
+        section_tabs.addTab(
+            section_page(out_group, custom_sets_section, transfer_section), "Output options")
         section_tabs.addTab(section_page(adv_group), "Advanced")
         layout.addWidget(section_tabs)
         self.workflow_section_tabs = section_tabs
@@ -5157,6 +5231,11 @@ class MainWindow(QMainWindow):
         ("results/enrichment/kegg_gsea.csv", "KEGG GSEA"),
         ("results/enrichment/custom_ora.csv", "Custom gene sets (ORA)"),
         ("results/enrichment/custom_gsea.csv", "Custom gene sets (GSEA)"),
+        # Annotation-transfer ORA/GSEA carry gene_id (not STRING protein id) in geneID /
+        # core_enrichment: run_transfer_enrichment.R maps every protein back to its gene(s)
+        # before writing the CSV, so these read like any other clusterProfiler result here.
+        ("results/enrichment/transfer/transfer_ora.csv", "Annotation transfer (ORA)"),
+        ("results/enrichment/transfer/transfer_gsea.csv", "Annotation transfer (GSEA)"),
     ]
 
     def _build_enrichment_terms_group(self) -> QWidget:
@@ -6679,6 +6758,10 @@ class MainWindow(QMainWindow):
         self.custom_gmt.setText(self.config.gene_sets.custom_gene_sets or "")
         self.custom_annot.setText(self.config.gene_sets.functional_annotation_table or "")
         self.custom_background.setText(self.config.gene_sets.background_gene_list or "")
+        _tm_idx = self.transfer_mode.findData(self.config.enrichment.transfer)
+        self.transfer_mode.setCurrentIndex(_tm_idx if _tm_idx >= 0 else 0)
+        self.transfer_emapper.setText(self.config.enrichment.transfer_emapper or "")
+        self.transfer_ko_table.setText(self.config.enrichment.transfer_ko_table or "")
         organism = self.config.reference.organism_name
         for i in range(self.reference_list.count()):
             if self.reference_list.item(i).text().startswith(f"{organism} "):
@@ -7015,12 +7098,17 @@ class MainWindow(QMainWindow):
         try:
             gene_set_paths = [_to_wsl_input(field.text()) for field in
                               (self.custom_gmt, self.custom_annot, self.custom_background)]
+            transfer_paths = [_to_wsl_input(field.text()) for field in
+                              (self.transfer_emapper, self.transfer_ko_table)]
         except UnsupportedUncPathError as exc:
             QMessageBox.warning(self, APP_NAME, str(exc) + "\n\nWorkflow settings were not saved.")
             return False
         (self.config.gene_sets.custom_gene_sets,
          self.config.gene_sets.functional_annotation_table,
          self.config.gene_sets.background_gene_list) = gene_set_paths
+        self.config.enrichment.transfer = self.transfer_mode.currentData()  # type: ignore[assignment]
+        (self.config.enrichment.transfer_emapper,
+         self.config.enrichment.transfer_ko_table) = transfer_paths
         self.config.fastp.qualified_quality_phred = self.fastp_q.value()
         self.config.fastp.length_required = self.fastp_len.value()
         self.config.fastp.trim_poly_g = self.trim_poly_g.isChecked()

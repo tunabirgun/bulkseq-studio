@@ -1209,6 +1209,86 @@ def test_custom_enrichment_absent_route_and_explicitly_unconfigured_stale_output
     assert "Custom gene-set enrichment" not in mhr._enrichment_section(tmp_path)
 
 
+# Annotation-transfer ORA/GSEA carry a category (and, for ORA, a foreground) column ahead of
+# the usual clusterProfiler columns; run_transfer_enrichment.R already maps geneID back to
+# gene_id, so the same recognized column set as _CP_COLS applies.
+_TRANSFER_ORA_COLS = ["category", "foreground"] + _CP_COLS
+_TRANSFER_GSEA_COLS = ["category", "Description", "NES", "p.adjust", "setSize"]
+
+
+def test_transfer_enrichment_results_evidence_and_dotplot_render(mhr, tmp_path):
+    enr = tmp_path / "results" / "enrichment" / "transfer"
+    figs = tmp_path / "results" / "figures"
+    enr.mkdir(parents=True)
+    figs.mkdir(parents=True)
+    # Written up, then combined, matching run_transfer_enrichment.R's per-category foreground
+    # loop order — the report must still show the combined row first.
+    up_row = ["GO BP", "up"] + _CP_ROWS[0]
+    combined_row = ["GO BP", "combined", "GO:0006956", "complement activation", "20/100",
+                    "180/12000", "1e-9", "1e-7", "1e-7", "A/B/C/D", 20, 8.1]
+    _write_csv(enr / "transfer_ora.csv", _TRANSFER_ORA_COLS, [up_row, combined_row])
+    _write_csv(
+        enr / "transfer_gsea.csv", _TRANSFER_GSEA_COLS,
+        [["Reactome", "cytokine signalling", 1.7, 0.01, 42]],
+    )
+    (enr / "transfer_summary.txt").write_text(
+        "Annotation-transfer enrichment summary\n"
+        "STRING version 12.0, taxon 7227 (orthology-transferred annotation; Szklarczyk et al. 2023, CC BY 4.0).\n"
+        "Files: 7227.protein.aliases.v12.0.txt.gz (retrieved 2026-09-20), 7227.protein.enrichment.terms.v12.0.txt.gz (retrieved 2026-09-20).\n"
+        "Tested genes mapped: 900/1000 (90.0%); keys used: gene_id=900.\n"
+        "Universe: 900 STRING proteins from the tested genes. Foregrounds: up 40, down 35, combined 75; 0 proteins carried genes in both directions.\n"
+        "GSEA: 950 ranked proteins (ranked on stat); 0 proteins with sign-discordant genes excluded.\n"
+        "GO sets are used as STRING propagated them under its own GO release; they are not re-propagated.\n"
+        "GO BP: 12 sets of 10-500 genes; annotated tested proteins 88.0% (proteome 80.0%); ORA combined 1, GSEA 0 adjusted terms.\n"
+        "Reactome: 4 sets of 10-500 genes; annotated tested proteins 70.0% (proteome 60.0%); ORA combined 0, GSEA 1 adjusted terms.\n"
+        "Check 25 status: PASS\n",
+        encoding="utf-8",
+    )
+    (figs / "transfer_enrichment_dotplot.png").write_bytes(b"synthetic")
+
+    rendered = mhr._enrichment_section(tmp_path)
+    assert "Annotation-transfer enrichment" in rendered
+    assert "Annotation transfer — over-representation (ORA)" in rendered
+    assert "Annotation transfer — ranked-list enrichment (GSEA)" in rendered
+    assert "Terms are transferred by orthology from STRING" in rendered
+    assert "not curated annotation for this organism" in rendered
+    for expected in (
+        "Category", "Foreground", "GO BP", "cytokine signalling",
+        "STRING version 12.0, taxon 7227", "Tested genes mapped: 900/1000 (90.0%)",
+        "Check 25 status: PASS",
+    ):
+        assert expected in rendered
+    # The combined row is written second but must render first (combined-foreground-first sort).
+    assert rendered.index("complement activation") < rendered.index("immune response")
+    transfer_panel = rendered[rendered.index("Annotation-transfer over-representation") - 500:]
+    _assert_responsive_panel_contract(transfer_panel, "transfer_enrichment_dotplot")
+
+
+def test_transfer_enrichment_empty_tables_render_the_empty_message(mhr, tmp_path):
+    enr = tmp_path / "results" / "enrichment" / "transfer"
+    enr.mkdir(parents=True)
+    # run_transfer_enrichment.R's empty convention is write.csv(data.frame()), which R renders
+    # as a single quoted-empty header field, not a truly blank line.
+    (enr / "transfer_ora.csv").write_text('""\n', encoding="utf-8")
+    (enr / "transfer_gsea.csv").write_text('""\n', encoding="utf-8")
+    (enr / "transfer_summary.txt").write_text(
+        "Annotation-transfer enrichment summary\nCheck 25 status: PASS\n", encoding="utf-8")
+
+    rendered = mhr._enrichment_section(tmp_path)
+    assert "No annotation-transfer term met the adjusted ORA criterion" in rendered
+    assert "No annotation-transfer term met the adjusted GSEA criterion" in rendered
+    assert "could not be interpreted" not in rendered
+
+
+def test_transfer_enrichment_absent_when_no_artifacts_exist(mhr, tmp_path):
+    enr = tmp_path / "results" / "enrichment"
+    enr.mkdir(parents=True)
+    (enr / "enrichment_summary.txt").write_text(
+        "KEGG resource status: NOT_RUN\n", encoding="utf-8")
+    assert mhr._transfer_enrichment_section(tmp_path) == ""
+    assert "Annotation-transfer enrichment" not in mhr._enrichment_section(tmp_path)
+
+
 # ---- Figure captions follow the realized assay kind, not the input type ------
 
 def _svg_figs(tmp_path: Path, *names: str) -> Path:

@@ -721,6 +721,68 @@ def test_a_network_share_path_is_refused_with_a_warning_at_every_wsl_conversion(
     w.close()
 
 
+def test_transfer_enrichment_fields_round_trip_through_save_and_reload() -> None:
+    # The annotation-transfer disclosure (combo + two path fields) must save to config,
+    # persist to disk, and hydrate back into the widgets on reload — mirroring the custom
+    # gene-set fields' own round trip.
+    _app()
+    w = MainWindow()
+    w.resize(1366, 768)
+    w.show()
+    w.workdir.setText(str(Path("manual_test_gui") / uuid4().hex))
+    w.project_name.setText("transfer_enrichment")
+    w._create_benchmark_project("pasilla_paired_subset")
+    assert w.project_root is not None
+
+    w.tabs.setCurrentIndex(4)  # Workflow Settings
+    w.workflow_section_tabs.setCurrentIndex(2)  # Output options
+    QApplication.processEvents()
+    assert w.transfer_enrichment_toggle.text() == "Annotation-transfer enrichment (non-model organisms)"
+    assert not w.transfer_enrichment_panel.isVisible()
+    w.transfer_enrichment_toggle.setChecked(True)
+    QApplication.processEvents()
+    assert w.transfer_enrichment_panel.isVisible()
+    assert all(control.isVisible() for control in (
+        w.transfer_mode, w.transfer_emapper, w.transfer_ko_table))
+    # Every new control carries both an accessible name and a tooltip, not just one or the other.
+    for control in (w.transfer_mode, w.transfer_emapper, w.transfer_ko_table):
+        assert control.accessibleName()
+        assert control.toolTip()
+    from PySide6.QtWidgets import QPushButton
+    browse_buttons = [
+        b for b in w.transfer_enrichment_panel.findChildren(QPushButton) if b.text() == "Browse"]
+    assert len(browse_buttons) == 2
+    for button in browse_buttons:
+        assert button.accessibleName()
+        assert button.toolTip()
+
+    idx = w.transfer_mode.findData("on")
+    assert idx >= 0
+    w.transfer_mode.setCurrentIndex(idx)
+    w.transfer_emapper.setText("config/proteins.emapper.annotations")
+    w.transfer_ko_table.setText("config/ko_list.txt")
+    assert w._save_workflow_settings() is not False
+    assert w.config.enrichment.transfer == "on"
+    assert w.config.enrichment.transfer_emapper == "config/proteins.emapper.annotations"
+    assert w.config.enrichment.transfer_ko_table == "config/ko_list.txt"
+    reloaded = w.manager.load_config(w.project_root)
+    assert reloaded.enrichment.transfer == "on"
+    assert reloaded.enrichment.transfer_emapper == "config/proteins.emapper.annotations"
+    assert reloaded.enrichment.transfer_ko_table == "config/ko_list.txt"
+
+    w.transfer_mode.setCurrentIndex(0)
+    w.transfer_emapper.clear()
+    w.transfer_ko_table.clear()
+    w.config.enrichment.transfer = "off"
+    w.config.enrichment.transfer_emapper = "config/other.emapper.annotations"
+    w.config.enrichment.transfer_ko_table = "config/other_ko.txt"
+    w._populate_widgets_from_config()
+    assert w.transfer_mode.currentData() == "off"
+    assert w.transfer_emapper.text() == "config/other.emapper.annotations"
+    assert w.transfer_ko_table.text() == "config/other_ko.txt"
+    w.close()
+
+
 def test_reports_page_shows_reports_already_on_disk(tmp_path) -> None:
     import os
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

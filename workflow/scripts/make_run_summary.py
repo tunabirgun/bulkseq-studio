@@ -913,6 +913,27 @@ def enrichment_mapping_evidence(root: Path) -> dict:
     return {"summary_path": "results/enrichment/enrichment_summary.txt", "evidence": evidence}
 
 
+def transfer_enrichment_evidence(root: Path) -> dict:
+    """Whether annotation-transfer enrichment ran, and its check 25 status/first message."""
+    summary_path = root / "results" / "enrichment" / "transfer" / "transfer_summary.txt"
+    ran = summary_path.exists()
+    if not ran:
+        return {"ran": False}
+    check_path = root / "checks" / "25_transfer_enrichment_qc.json"
+    status = None
+    message = None
+    try:
+        payload = json.loads(check_path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            status = payload.get("status")
+            messages = payload.get("messages")
+            if isinstance(messages, list) and messages and isinstance(messages[0], dict):
+                message = messages[0].get("message")
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        pass
+    return {"ran": True, "check_status": status, "check_message": message}
+
+
 _PPI_REQUIRED_FIELDS = {
     "database": (
         "name", "configured_version", "realized_version", "realized_build",
@@ -1202,6 +1223,7 @@ def main() -> int:
         "output_paths": existing_outputs(root),
         "download_integrity": download_integrity(root),
         "enrichment_mapping": enrichment_mapping_evidence(root),
+        "enrichment_transfer": transfer_enrichment_evidence(root),
         "ppi_provenance": ppi_provenance(root),
         "reference_integrity": (
             reference_integrity(root)
@@ -1332,6 +1354,11 @@ def render_text(p: dict) -> str:
     if mapping.get("evidence"):
         lines += ["", "Enrichment identifier mapping", "-----------------------------"]
         lines += [str(value) for value in mapping["evidence"]]
+    transfer = p.get("enrichment_transfer") or {}
+    if transfer.get("ran"):
+        lines += ["", "Annotation-transfer enrichment", "------------------------------",
+                  f"Ran: yes    Check 25 status: {transfer.get('check_status') or 'not recorded'}",
+                  f"First message: {transfer.get('check_message') or 'not recorded'}"]
     lines += ["", "STRING PPI realized provenance", "------------------------------"]
     lines += ppi_provenance_lines(p)
     lines += ["", "Output paths", "------------"]
@@ -1418,6 +1445,11 @@ def render_tools_references(p: dict) -> str:
     if mapping.get("evidence"):
         lines += ["Enrichment identifier mapping", "-----------------------------"]
         lines += [str(value) for value in mapping["evidence"]] + [""]
+    transfer = p.get("enrichment_transfer") or {}
+    if transfer.get("ran"):
+        lines += ["Annotation-transfer enrichment", "------------------------------",
+                  f"Ran: yes    Check 25 status: {transfer.get('check_status') or 'not recorded'}",
+                  f"First message: {transfer.get('check_message') or 'not recorded'}", ""]
     lines += ["STRING PPI realized provenance", "------------------------------"]
     lines += ppi_provenance_lines(p) + [""]
     lines += ["Route-active tool versions", "--------------------------"]

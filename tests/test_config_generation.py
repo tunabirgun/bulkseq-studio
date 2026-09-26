@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from app.core.config_models import ReferenceConfig, WorkflowConfig, default_config
+from app.core.config_models import (
+    EnrichmentConfig, ReferenceConfig, WorkflowConfig, default_config)
 from app.core.project import ProjectManager
 
 
@@ -77,6 +78,30 @@ def test_de_engine_rejects_unknown():
 
     with pytest.raises(ValidationError):
         WorkflowConfig(de_engine="sleuth")
+
+
+def test_transfer_enrichment_fields_default_and_round_trip():
+    # auto is the default (organisms without a curated OrgDb); the mode and the two optional
+    # import paths all survive a dump -> reload round-trip.
+    default = EnrichmentConfig()
+    assert default.transfer == "auto"
+    assert default.transfer_emapper is None
+    assert default.transfer_ko_table is None
+    for mode in ("auto", "on", "off"):
+        enr = EnrichmentConfig(transfer=mode, transfer_emapper="config/proteins.emapper.annotations",
+                               transfer_ko_table="config/ko_list.txt")
+        reloaded = EnrichmentConfig(**enr.model_dump())
+        assert reloaded.transfer == mode
+        assert reloaded.transfer_emapper == "config/proteins.emapper.annotations"
+        assert reloaded.transfer_ko_table == "config/ko_list.txt"
+
+
+def test_transfer_enrichment_rejects_unknown_mode():
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        EnrichmentConfig(transfer="sometimes")
 
 
 def test_quantifier_dead_htseq_value_removed():

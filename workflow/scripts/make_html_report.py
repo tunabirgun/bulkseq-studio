@@ -615,21 +615,20 @@ _GSEA_COLS = [("Description", ["Description", "term_name"], "desc"), ("NES", ["N
 _ORA_PVALUE_HEADERS = {"p.adjust": "p.adjust (BH)", "p_value": "p (g:SCS)"}
 
 
-def _enrich_rows(csv_path: Path, top: int) -> list[dict]:
+def _enrich_rows(csv_path: Path, top: int, sort_key=None) -> list[dict]:
     if not csv_path.exists():
         return []
-    rows: list[dict] = []
     with csv_path.open(encoding="utf-8", errors="replace", newline="") as fh:
-        for i, r in enumerate(csv.DictReader(fh)):
-            if i >= top:
-                break
-            rows.append(r)
-    return rows
+        rows = list(csv.DictReader(fh))
+    if sort_key is not None:
+        rows.sort(key=sort_key)  # stable: ties keep the file's original order
+    return rows[:top]
 
 
 def _enrich_block(title: str, csv_path: Path, mode: str, top: int = 10,
-                  empty_msg: str = "No terms passed the significance threshold.") -> str:
-    rows = _enrich_rows(csv_path, top)
+                  empty_msg: str = "No terms passed the significance threshold.",
+                  sort_key=None, extra_cols: tuple = ()) -> str:
+    rows = _enrich_rows(csv_path, top, sort_key=sort_key)
     if not rows:
         # CSV present but with no rows -> the analysis RAN and nothing passed the threshold; say so
         # instead of the block silently vanishing. CSV absent -> that analysis did not run for this
@@ -641,8 +640,10 @@ def _enrich_block(title: str, csv_path: Path, mode: str, top: int = 10,
         return ""
     # Resolve each logical column to the first candidate header actually in the CSV, so both the
     # clusterProfiler and g:Profiler column vocabularies render. spec entries are (header, key, kind).
+    # extra_cols (e.g. category/foreground on the annotation-transfer route) are resolved the same
+    # way and placed first.
     spec = []
-    for header, keys, kind in (_GSEA_COLS if mode == "gsea" else _ORA_COLS):
+    for header, keys, kind in list(extra_cols) + (_GSEA_COLS if mode == "gsea" else _ORA_COLS):
         key = next((k for k in keys if k in rows[0]), None)
         if key is not None:
             if header == "p.adjust":
@@ -685,8 +686,11 @@ def _enrich_table_state(csv_path: Path, mode: str) -> str:
                     value is not None and str(value).strip() for value in row.values())
     except (OSError, csv.Error):
         return "malformed"
-    if not fieldnames:
-        # run_custom_enrichment.R deliberately creates a blank file when no result passes.
+    # run_custom_enrichment.R deliberately creates a blank file (writeLines("", ...)) when no
+    # result passes, which csv.DictReader reads as fieldnames == []. write.csv(data.frame())
+    # (the annotation-transfer route's empty convention) instead writes a single quoted-empty
+    # field, fieldnames == [""]; both mean "no header", not an unrecognized schema.
+    if not fieldnames or all(not (f or "").strip() for f in fieldnames):
         return "empty"
     candidates = _GSEA_COLS if mode == "gsea" else _ORA_COLS
     recognized = any(key in fieldnames for _, keys, _ in candidates for key in keys)
@@ -805,6 +809,87 @@ def _custom_enrichment_section(project: Path) -> str:
             f"{evidence_html}{figure_html}{ora}{gsea}</section>")
 
 
+# Category (+ Foreground, on the ORA table only) resolved the same way as the mode-specific
+# columns and placed first; GSEA rows carry no foreground.
+_TRANSFER_EXTRA_COLS = (("Category", ["category"], "desc"), ("Foreground", ["foreground"], "desc"))
+
+
+def _transfer_enrich_block(title: str, csv_path: Path, mode: str, empty_msg: str) -> str:
+    state = _enrich_table_state(csv_path, mode)
+    if state == "data":
+        # Rows are written up, down, then combined per category (run_transfer_enrichment.R
+        # loops foregrounds in that order); show the combined foreground first so it is not
+        # pushed out by the top-N truncation.
+        sort_key = (lambda r: r.get("foreground") != "combined") if mode == "ora" else None
+        return _enrich_block(title, csv_path, mode, sort_key=sort_key, extra_cols=_TRANSFER_EXTRA_COLS)
+    if state == "empty":
+        msg = empty_msg
+    elif state == "missing":
+        msg = (f"The {mode.upper()} result table is unavailable; do not interpret the missing "
+               "artifact as an empty annotation-transfer result.")
+    else:
+        msg = (f"The {mode.upper()} result table could not be interpreted; review the "
+               "annotation-transfer log and source artifact before drawing conclusions.")
+    return (f"<div class='enr-block empty'><h3>{html.escape(title)}</h3>"
+            f"<p class='muted small'>{html.escape(msg)}</p></div>")
+
+
+def _transfer_enrichment_section(project: Path) -> str:
+    enr = project / "results" / "enrichment" / "transfer"
+    figs = project / "results" / "figures"
+    summary_path = enr / "transfer_summary.txt"
+    artifacts = (
+        enr / "transfer_ora.csv", enr / "transfer_gsea.csv", summary_path,
+        enr / "transfer_provenance.json", enr / "transfer_id_map.csv",
+        figs / "transfer_enrichment_dotplot.png", figs / "transfer_enrichment_dotplot.svg",
+    )
+    if not any(path.exists() for path in artifacts):
+        return ""
+
+    summary_raw = _read(summary_path)
+    evidence_prefixes = (
+        "STRING version", "Files:", "Tested genes mapped:", "Universe:", "GSEA:",
+        "GO sets are used", "GO BP:", "GO MF:", "GO CC:", "Reactome:", "InterPro:",
+        "eggNOG GO", "KEGG pathway via KO", "Check 25 status:",
+    )
+    summary_lines = [line.strip() for line in summary_raw.splitlines()
+                     if line.strip().startswith(evidence_prefixes)]
+    if not summary_path.exists():
+        summary_lines.append(
+            "Annotation-transfer enrichment reproducibility summary: unavailable; review "
+            "results/enrichment/transfer/transfer_summary.txt before interpretation.")
+    elif not summary_lines:
+        summary_lines.append(
+            "Annotation-transfer enrichment reproducibility summary: present but no recognized "
+            "evidence line could be read.")
+    evidence_html = ""
+    if summary_lines:
+        items = "".join(f"<li>{html.escape(line)}</li>" for line in summary_lines)
+        evidence_html = ("<details class='howto enrichment-coverage' open>"
+                         "<summary>Annotation-transfer evidence</summary>"
+                         f"<ul>{items}</ul></details>")
+
+    figure = _fig(figs, "transfer_enrichment_dotplot",
+                  "Annotation-transfer over-representation (ORA)")
+    figure_html = f"<div class='panels'>{figure}</div>" if figure else ""
+    ora = _transfer_enrich_block(
+        "Annotation transfer — over-representation (ORA)", enr / "transfer_ora.csv", "ora",
+        "No annotation-transfer term met the adjusted ORA criterion. This result is limited to "
+        "the transferred annotation and tested-gene universe.",
+    )
+    gsea = _transfer_enrich_block(
+        "Annotation transfer — ranked-list enrichment (GSEA)", enr / "transfer_gsea.csv", "gsea",
+        "No annotation-transfer term met the adjusted GSEA criterion. This result is limited to "
+        "the transferred annotation and ranked genes.",
+    )
+    return ("<section class='transfer-enrichment' aria-labelledby='transfer-enrichment-title'>"
+            "<h3 id='transfer-enrichment-title'>Annotation-transfer enrichment</h3>"
+            "<p class='muted small'>Terms are transferred by orthology from STRING's "
+            "per-organism annotation (Szklarczyk et al. 2023) or from the imported "
+            "eggNOG-mapper/KofamScan annotation — not curated annotation for this organism.</p>"
+            f"{evidence_html}{figure_html}{ora}{gsea}</section>")
+
+
 def _kegg_leg_message(summary_raw: str, leg: str, label: str, fallback: str) -> str:
     # "KEGG <leg> status: <STATUS>; adjusted pathways=<n>; detail=<reason>"
     prefix = f"KEGG {leg} status: "
@@ -895,6 +980,7 @@ def _enrichment_section(project: Path) -> str:
     blocks += _enrich_block("KEGG pathways — over-representation", enr / "kegg_ora.csv", "ora", empty_msg=kegg_ora_msg)
     blocks += _enrich_block("KEGG pathways — gene-set enrichment (GSEA)", enr / "kegg_gsea.csv", "gsea", empty_msg=kegg_gsea_msg)
     blocks += _custom_enrichment_section(project)
+    blocks += _transfer_enrichment_section(project)
     if not blocks:
         if not summ.exists():
             return ""
