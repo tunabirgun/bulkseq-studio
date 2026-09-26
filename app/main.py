@@ -302,7 +302,35 @@ def main() -> int:
     if os.environ.get("BULKSEQ_SELFTEST") == "1":
         _ppi_self_test(app, window)
     window._exit_on_close = True  # closeEvent owns the exit so web views die first
-    return app.exec()
+    code = app.exec()
+    return _finish_background_threads(code)
+
+
+# A QThread destroyed while its thread still runs makes Qt abort (0xC0000409 on Windows),
+# and a startup probe such as the WSL work-directory lookup can outlast closeEvent's bounded
+# wait on a cold machine. Give running threads time to finish once the window is gone; if one
+# never does, leave without destroying it.
+THREAD_EXIT_GRACE_MS = 15000
+
+
+def _running_qthreads() -> list:
+    import gc
+
+    import shiboken6
+    from PySide6.QtCore import QThread
+
+    return [obj for obj in gc.get_objects()
+            if isinstance(obj, QThread) and shiboken6.isValid(obj) and obj.isRunning()]
+
+
+def _finish_background_threads(code: int) -> int:
+    for thread in _running_qthreads():
+        thread.wait(THREAD_EXIT_GRACE_MS)
+    if _running_qthreads():
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(code)
+    return code
 
 
 if __name__ == "__main__":
