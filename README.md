@@ -4,7 +4,7 @@
 
 BulkSeq Studio is a cross-platform desktop application for reproducible bulk RNA-seq and microarray analysis. Its PySide6 interface drives a transparent Snakemake workflow from raw reads or processed inputs through differential expression, enrichment, protein-interaction networks, figures, reports, and route-aware provenance.
 
-> **Release status — 26 September 2026.** Version 0.32.1 is the current public release. It corrects documentation, the command line and several interface faults, and every analysis output is as 0.32.0 produced it. All seven bundled datasets were rerun through the installed 0.32.1 interface and completed; pasilla, rice and both *Fusarium* datasets reproduced their recorded results (see [Bundled datasets](#bundled-datasets)). Use only the checksummed packages published on GitHub Releases. The separately versioned B1–B20 validation archive remains deposited as version 0.26.6 on Zenodo.
+> **Release status — 26 September 2026.** Version 0.32.1 is the current public release. It corrects documentation, the command line, and interface and installer faults, and every analysis output is as 0.32.0 produced it. All seven bundled datasets were rerun through the installed 0.32.1 interface and passed: every run completed without a FAIL, and pasilla, rice and both *Fusarium* datasets reproduced their recorded results (see [Bundled datasets](#bundled-datasets)). Use only the checksummed packages published on GitHub Releases. The separately versioned B1–B20 validation archive remains deposited as version 0.26.6 on Zenodo.
 
 [Read public v0.32.1 handbook](https://tunabirgun.github.io/bulkseq-studio/) · [Download public v0.32.1](https://github.com/tunabirgun/bulkseq-studio/releases/latest) · [Report an issue](https://github.com/tunabirgun/bulkseq-studio/issues) · [Changelog](CHANGELOG.md)
 
@@ -87,7 +87,7 @@ The `bulkseq` command returns:
 
 ## Bundled datasets
 
-**Create Benchmark Project** scaffolds one of seven bundled public datasets with its reference, sample sheet and comparison already set. All seven were rerun under 0.32.1 from the installed Windows package, through the interface alone, and every run completed. Significant genes are counted at an adjusted p-value below 0.05 with no fold-change filter.
+**Create Benchmark Project** scaffolds one of seven bundled public datasets with its reference, sample sheet and comparison already set. All seven were rerun under 0.32.1 from the installed Windows package, through the interface alone, and all seven passed: every run completed without a FAIL, and each result was compared with its recorded value where one exists. Significant genes are counted at an adjusted p-value below 0.05 with no fold-change filter.
 
 | Dataset | Route | Genes tested | Significant | 0.32.1 result |
 |---|---|---|---|---|

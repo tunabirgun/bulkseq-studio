@@ -2,7 +2,7 @@
 
 ## 0.32.1 — 2026-09-26
 
-Patch release: documentation, the command line, the documentation site, and fixes to the interface, the installer and the space-reclaim script. Nothing under `workflow/` changed, so every analysis output is as 0.32.0 produced it. All seven bundled datasets were rerun from the installed 0.32.1 Windows package through the interface, and every run completed; pasilla, rice and both *Fusarium* datasets reproduced their recorded results (see Validation). The workflow version moves with the application version, so an existing project re-copies an identical workflow on its next run.
+Patch release: documentation, the command line, the documentation site, and fixes to the interface, the installer and the space-reclaim script. Nothing under `workflow/` changed, so every analysis output is as 0.32.0 produced it. All seven bundled datasets were rerun from the installed 0.32.1 Windows package through the interface and passed: every run completed without a FAIL, and pasilla, rice and both *Fusarium* datasets reproduced their recorded results (see Validation). The workflow version moves with the application version, so an existing project re-copies an identical workflow on its next run.
 
 ### Fixed
 
@@ -35,7 +35,7 @@ Patch release: documentation, the command line, the documentation site, and fixe
 
 ### Validation
 
-- All seven bundled datasets were rerun one after another from the installed 0.32.1 Windows package, through the interface alone, with 24 threads and 58 GB, and every run completed without a FAIL. Significant genes are counted at padj < 0.05 with no fold-change filter.
+- All seven bundled datasets were rerun one after another from the installed 0.32.1 Windows package, through the interface alone, with 24 threads and 58 GB, and all seven passed: every run completed without a FAIL. Significant genes are counted at padj < 0.05 with no fold-change filter.
 - Reproduced a recorded result: pasilla, 7,532 genes tested and 467 significant, with the count matrix and DESeq2 table byte-identical to the 0.31.0 run, and the strandedness re-count control passing against a 0.32.1 pasilla run; rice CY1000, 23,935 and 12,171, the count recorded under 0.9.0; *Fusarium* spores vs mycelium, 9,028 and 5,734, with 2,723 up and 2,478 down at |log2FC| > 1 as recorded; *Fusarium* heat shock, 8,280 and 5,836 as recorded.
 - Recorded for the first time: yeast UME6, 5,967 and 97; Arabidopsis hub2-3 on the microarray route, 21,323 and 1,401; yeast cbc2 on the microarray route, 5,683 and 486.
 - Every run ends with an overall WARNING or REVIEW_REQUIRED from advisory checks. Both *Fusarium* runs are REVIEW_REQUIRED for the enrichment known issue above.
