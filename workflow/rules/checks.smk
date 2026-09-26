@@ -51,6 +51,11 @@ if ALT_DE_MODE and "checks/13_equivalence_qc.json" in ALL_CHECKS:
     ALL_CHECKS.remove("checks/13_equivalence_qc.json")
 if WF.get("enrichment", True):
     ALL_CHECKS.append("checks/10_enrichment_qc.json")
+    # Optional enrichment routes report into the summary whenever their rules exist.
+    if _CUSTOM_GMT or _CUSTOM_ANNOT:
+        ALL_CHECKS.append("checks/24_custom_enrichment_qc.json")
+    if TRANSFER_ON:
+        ALL_CHECKS.append("checks/25_transfer_enrichment_qc.json")
 # Wilcoxon sensitivity diagnostic reads the normalized matrix, which the
 # External-results mode does not have; it runs on every other mode.
 if not DE_RESULTS_MODE:

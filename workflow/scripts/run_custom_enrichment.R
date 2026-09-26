@@ -33,7 +33,7 @@ out <- snakemake@output
 
 write_check <- function(path, status, message) {
   msg <- gsub('"', '\\\\"', message)
-  json <- sprintf('{\n  "check": "11_custom_enrichment_qc",\n  "status": "%s",\n  "messages": [\n    {"status": "%s", "message": "%s"}\n  ]\n}',
+  json <- sprintf('{\n  "check": "24_custom_enrichment_qc",\n  "status": "%s",\n  "messages": [\n    {"status": "%s", "message": "%s"}\n  ]\n}',
                   status, status, msg)
   writeLines(json, path)
 }

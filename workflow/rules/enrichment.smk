@@ -234,7 +234,7 @@ if _CUSTOM_GMT or _CUSTOM_ANNOT:
             gsea="results/enrichment/custom_gsea.csv",
             summary="results/enrichment/custom_enrichment_summary.txt",
             objects="results/enrichment/custom_enrichment_objects.rds",
-            check="checks/11_custom_enrichment_qc.json",
+            check="checks/24_custom_enrichment_qc.json",
         params:
             keytype=_ENR.get("keytype") or ("SYMBOL" if MICROARRAY_MODE else _MAPPED[1]),
             gmt=_CUSTOM_GMT or "",

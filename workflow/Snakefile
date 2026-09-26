@@ -389,6 +389,7 @@ include: "rules/microarray.smk"
 include: "rules/deseq2.smk"
 include: "rules/figures.smk"
 include: "rules/enrichment.smk"
+include: "rules/enrichment_transfer.smk"
 # meta.smk is included AFTER enrichment.smk so it can reuse _ENRICH_MAP / _MAPPED for the
 # cross-study enrichment rule (organism -> OrgDb / keytype / KEGG code).
 include: "rules/meta.smk"
@@ -496,6 +497,10 @@ def final_targets():
             targets.append("results/enrichment/custom_enrichment_summary.txt")
             targets.append("results/figures/custom_enrichment_dotplot.png")
             targets.append("results/figures/custom_enrichment_dotplot.svg")
+        if TRANSFER_ON:
+            targets.append("results/enrichment/transfer/transfer_summary.txt")
+            targets.append("results/figures/transfer_enrichment_dotplot.png")
+            targets.append("results/figures/transfer_enrichment_dotplot.svg")
     if GSVA_ON:
         targets.append("results/gsva/gsva_scores.csv")
         targets.append("results/figures/gsva_heatmap.png")
