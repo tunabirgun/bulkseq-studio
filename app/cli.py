@@ -26,7 +26,8 @@ from pydantic import ValidationError
 from app.cli_banner import print_banner
 from app.constants import APP_VERSION
 from app.core.config_models import AppConfig
-from app.core.metadata import load_metadata, validate_metadata
+from app.core.metadata import load_metadata
+from app.core.preflight_checks import input_validation_messages
 from app.core.paths import project_configured_path
 from app.core.project import ProjectExistsError, ProjectManager, is_project_root
 from app.core.sanity_checks import aggregate_status
@@ -318,9 +319,8 @@ def cmd_check(args) -> int:
     except Exception as exc:  # noqa: BLE001 - report malformed user tables without a traceback
         _err(f"Could not read sample sheet {path}: {exc}")
         return EXIT_GATE
-    allow_pending = config.input.type in ("sra", "count_matrix", "microarray", "deseq2_results")
-    messages = validate_metadata(
-        _metadata_for_project_validation(root, frame), allow_pending_sra=allow_pending)
+    # The same findings the interface's Start gate records, so both front doors agree.
+    messages = input_validation_messages(config, root, _metadata_for_project_validation(root, frame))
     worst = aggregate_status(messages)
     if args.json:
         print(json.dumps({"status": worst, "messages": messages}, indent=2))

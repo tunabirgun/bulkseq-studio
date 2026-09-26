@@ -25,7 +25,16 @@ REPO = Path(__file__).resolve().parents[1]
 
 @pytest.fixture()
 def project(tmp_path) -> Path:
-    return ProjectManager().create_project("clitest", tmp_path)
+    # A reference and an organism as a real project records them, so `bulkseq check` reports
+    # only what each test sets up (it shares the Start gate's route and enrichment findings).
+    manager = ProjectManager()
+    root = manager.create_project("clitest", tmp_path)
+    config = manager.load_config(root)
+    config.reference.genome_fasta_url = "https://example.org/genome.fa.gz"
+    config.reference.annotation_gtf_url = "https://example.org/annotation.gtf.gz"
+    config.enrichment.kegg_organism = "dme"
+    manager.save_config(root, config)
+    return root
 
 
 def _configure_samples(project: Path, path: Path, input_type: str = "sra") -> None:
@@ -210,7 +219,7 @@ def test_check_reports_the_most_severe_finding_in_any_order(project, monkeypatch
                                                              statuses, overall, code) -> None:
     # A WARNING listed before a REVIEW_REQUIRED once left the overall status at WARNING.
     messages = [{"status": status, "message": f"finding {n}"} for n, status in enumerate(statuses)]
-    monkeypatch.setattr("app.cli.validate_metadata", lambda *args, **kwargs: messages)
+    monkeypatch.setattr("app.core.preflight_checks.validate_metadata", lambda *args, **kwargs: messages)
     assert main(["check", "-C", str(project), "--json"]) == code
     assert json.loads(capsys.readouterr().out)["status"] == overall
 
@@ -519,9 +528,17 @@ def test_cli_check_allows_pending_reads_for_nonlocal_input_routes(project, capsy
     samples = project / "config" / "samples.tsv"
     samples.write_text(_pending_reads_sheet("pending_a", "pending_b"), encoding="utf-8")
     _configure_samples(project, Path("config/samples.tsv"), input_type)
+    if input_type == "count_matrix":
+        config = ProjectManager().load_config(project)
+        (project / "config" / "counts.tsv").write_text("gene_id\tpending_a\tpending_b\n", encoding="utf-8")
+        config.input.count_matrix = "config/counts.tsv"
+        ProjectManager().save_config(project, config)
 
-    assert main(["check", "-C", str(project)]) == EXIT_OK
-    assert "FASTQ R1 does not exist" not in capsys.readouterr().out
+    code = main(["check", "-C", str(project)])
+    out = capsys.readouterr().out
+    assert "FASTQ R1 does not exist" not in out
+    # Imported results are judged by their own provenance, which this sheet does not provide.
+    assert code == (EXIT_GATE if input_type == "deseq2_results" else EXIT_OK), out
 
 
 def test_commands_refuse_a_directory_that_is_not_a_project(tmp_path) -> None:

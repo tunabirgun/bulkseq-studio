@@ -409,6 +409,10 @@ def test_enrichment_without_organism_flags_review() -> None:
     window.config.enrichment.kegg_organism = None
     window.config.enrichment.orgdb = None
     window.config.enrichment.gprofiler_organism = None
+    # A STRING taxon alone still runs annotation-transfer enrichment, so it is not the trap.
+    window.config.ppi.taxon = 7227
+    assert window._enrichment_config_messages() == []
+    window.config.ppi.taxon = None
     window._run_sanity_checks()
     payload = json.loads(
         (window.project_root / "checks" / "01_input_validation.json").read_text(encoding="utf-8"))

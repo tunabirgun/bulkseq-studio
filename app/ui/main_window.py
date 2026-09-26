@@ -84,7 +84,6 @@ from app.core.de_results import (
     ExternalDEImportDetails,
     provenance_payload,
     validate_de_results_table,
-    validate_recorded_project_copy,
 )
 from app.core.input_detection import detect_fastq_inputs
 from workflow.scripts.count_matrix_validation import (
@@ -92,6 +91,14 @@ from workflow.scripts.count_matrix_validation import (
     MILLION_TOTAL_WARNING,
     CountMatrixValidationError,
     validate_count_values,
+)
+from app.core.preflight_checks import (
+    ALIGNMENT_ROUTES,
+    deseq2_results_preflight_messages,
+    design_variables,
+    enrichment_config_messages,
+    input_validation_messages,
+    route_preflight_messages,
 )
 from app.core.metadata import (
     dataframe_from_rows,
@@ -151,12 +158,6 @@ from app.ui.theme import IMAGEVIEWER_BG, PALETTES, STATUS_PILL_BG, apply_theme, 
 # (VOOM_MODE or EDGER_MODE): they skip the DESeq2-specific TOST equivalence test, so
 # unchanged_genes.csv and check 13 are not produced. Every other DE output is shared.
 ALT_DE_ENGINES = ("limma-voom", "edgeR")
-
-# Input routes that align raw reads, mirroring the Snakefile's
-# `not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)` guard on the
-# alignment-only targets (MultiQC, the reference gate). Pinned by
-# tests/test_gui_checks_page.py so the literal cannot drift from the workflow.
-ALIGNMENT_ROUTES = ("fastq", "sra", "mixed")
 
 # The effect-size companion column (padj_lfc_ge_threshold) tests the same hypothesis in
 # every engine, but through that engine's own threshold test.
@@ -6800,22 +6801,12 @@ class MainWindow(QMainWindow):
         self._apply_input_mode_ui()
 
     def _design_variables(self) -> list[str]:
-        # Parse a DESeq2 design formula (e.g. "~ batch + condition") into the
-        # metadata columns it references, plus the contrast factor, so missing
-        # columns are flagged in Sanity Checks before DESeq2 runs.
+        # The LIVE design field, so a formula typed but not yet saved is checked against the
+        # metadata columns; reading the saved formula would give false reassurance.
         if self.config is None:
             return []
-        # Read the LIVE design field (mirrors _active_contrast, which reads the live combos in the same
-        # validation call) so a design edited via the helper or typed but not yet saved is checked
-        # against the metadata columns — reading the saved formula would give false reassurance.
-        raw = self.design.text() if getattr(self, "design", None) is not None else self.config.deseq2.design_formula
-        formula = str(raw).split("~", 1)[-1]
-        tokens = re.split(r"[+*:]", formula)
-        variables = [t.strip() for t in tokens if t.strip()]
-        for contrast in self.config.deseq2.contrasts:
-            if contrast.factor and contrast.factor not in variables:
-                variables.append(contrast.factor)
-        return variables
+        formula = self.design.text() if getattr(self, "design", None) is not None else None
+        return design_variables(self.config, formula)
 
     def _select_fastqs(self) -> None:
         if not self._require_project():
@@ -7379,19 +7370,7 @@ class MainWindow(QMainWindow):
             self._save_resources()
             self._apply_figure_style()
 
-            if self.config.input.type == "deseq2_results":
-                messages = self._deseq2_results_preflight_messages()
-            else:
-                allow_pending_sra = self.config.input.type in (
-                    "sra", "count_matrix", "microarray")
-                messages = validate_metadata(
-                    self.metadata_table.to_dataframe(),
-                    allow_pending_sra=allow_pending_sra,
-                    design_variables=self._design_variables(),
-                    contrast=self._active_contrast(),
-                )
-            messages = list(messages) + self._route_preflight_messages()
-            messages = list(messages) + self._enrichment_config_messages()
+            messages = self._input_validation_messages()
             check_path = write_check(self.project_root, "01_input_validation", messages)
             import json
 
@@ -7462,117 +7441,25 @@ class MainWindow(QMainWindow):
         )
 
     def _deseq2_results_preflight_messages(self) -> list[dict[str, str]]:
-        """Validate direction, full project copy, and its import-time provenance."""
         if self.config is None or self.project_root is None:
             return [{"status": "FAIL", "message": "Project configuration is not loaded."}]
-        direction = self.config.input.deseq2_results_direction
-        messages: list[dict[str, str]] = []
-        try:
-            confirmed = Deseq2ResultsDirectionProvenance.model_validate(direction.model_dump(mode="json"))
-            if not confirmed.confirmed:
-                raise ValueError("the recorded direction has not been explicitly confirmed")
-        except ValueError as exc:
-            messages.append({
-                "status": "FAIL",
-                "message": f"Imported-results direction provenance is incomplete or invalid: {exc}",
-            })
-        else:
-            messages.append({
-                "status": "PASS",
-                "message": (
-                    "Imported-results direction confirmed: positive log2FoldChange means higher in "
-                    f"{confirmed.numerator} than {confirmed.denominator}."
-                ),
-            })
-
-        configured = self.config.input.deseq2_results
-        if not configured:
-            messages.append({
-                "status": "FAIL",
-                "message": "The external-results route has no configured project-copy table.",
-            })
-            return messages
-        project_copy = Path(configured)
-        if not project_copy.is_absolute():
-            project_copy = self.project_root / project_copy
-        if not project_copy.exists():
-            messages.append({
-                "status": "FAIL",
-                "message": f"The external-results project copy is missing: {configured}",
-            })
-            return messages
-
-        file_provenance = self.config.input.deseq2_results_provenance
-        file_provenance_invalid = False
-        try:
-            file_provenance = Deseq2ResultsFileProvenance.model_validate(
-                file_provenance.model_dump(mode="json")
-            )
-        except ValueError as exc:
-            file_provenance_invalid = True
-            messages.append({
-                "status": "FAIL",
-                "message": f"External-results file provenance is invalid: {exc}",
-            })
-        validated, errors = validate_recorded_project_copy(
-            project_copy,
-            file_provenance,
-            configured_project_copy=configured,
-        )
-        messages.extend({"status": "FAIL", "message": error} for error in errors)
-        if validated is not None and not errors and not file_provenance_invalid:
-            messages.append({
-                "status": "PASS",
-                "message": (
-                    f"Validated the complete external-results project copy: {validated.row_count:,} rows, "
-                    f"{len(validated.column_names)} columns, SHA-256 {validated.sha256[:12]}…."
-                ),
-            })
-        return messages
+        return deseq2_results_preflight_messages(self.config, self.project_root)
 
     def _route_preflight_messages(self) -> list[dict[str, str]]:
         """Validate route-specific project files and reference requirements."""
         if self.config is None or self.project_root is None:
             return [{"status": "FAIL", "message": "Project configuration is not loaded."}]
-        messages: list[dict[str, str]] = []
-        mode = self.config.input.type
-        configured_input = None
-        if mode == "count_matrix":
-            configured_input = self.config.input.count_matrix
-        elif mode == "deseq2_results":
-            configured_input = self.config.input.deseq2_results
-        elif mode == "microarray" and self.config.microarray.source == "local_matrix":
-            configured_input = self.config.microarray.expression_matrix
-        if configured_input:
-            input_path = Path(configured_input)
-            if not input_path.is_absolute():
-                input_path = self.project_root / input_path
-            if not input_path.exists():
-                messages.append({
-                    "status": "FAIL",
-                    "message": f"Configured input file is missing: {configured_input}",
-                })
-        elif mode in ("count_matrix", "deseq2_results"):
-            messages.append({
-                "status": "FAIL",
-                "message": f"The {mode.replace('_', ' ')} route has no configured input table.",
-            })
+        return route_preflight_messages(self.config, self.project_root)
 
-        if mode in ALIGNMENT_ROUTES:
-            ref = self.config.reference
-            has_url = bool(ref.genome_fasta_url and ref.annotation_gtf_url)
-            has_local = bool(ref.genome_fasta and ref.annotation_file)
-            if not (has_url or has_local):
-                messages.append({
-                    "status": "FAIL",
-                    "message": "Raw-read processing needs a genome FASTA and annotation. Select a preset or custom reference.",
-                })
-        if not messages:
-            messages.append({
-                "status": "PASS",
-                "message": "The active input route and reference requirements are configured.",
-            })
-        return messages
+    def _input_validation_messages(self) -> list[dict[str, str]]:
+        """Check 01 as the Start gate records it: the findings `bulkseq check` reports, read
+        against the live design and contrast fields rather than the last saved ones."""
+        assert self.config is not None and self.project_root is not None
+        contrast = self._active_contrast() or ("", "")
+        formula = self.design.text() if getattr(self, "design", None) is not None else None
+        return input_validation_messages(
+            self.config, self.project_root, self.metadata_table.to_dataframe(),
+            formula=formula, numerator=contrast[0], denominator=contrast[1])
 
     def _phase_check_statuses(self, *, preflight=None) -> dict[str, str]:
         # Read every checks/*.json the GUI and pipeline have produced.
@@ -8431,18 +8318,7 @@ class MainWindow(QMainWindow):
         self.current_organism_label.setText(f"Selected organism: {name or '— none —'}")
 
     def _enrichment_config_messages(self) -> list[dict[str, str]]:
-        # Surface the silent count-matrix/microarray enrichment trap: enrichment is
-        # enabled but no organism id is set, so GO/KEGG/PPI would be skipped.
-        if self.config is None or not self.config.workflow.enrichment:
-            return []
-        enr = self.config.enrichment
-        if not enr.kegg_organism and not enr.orgdb:
-            return [{"status": "REVIEW_REQUIRED",
-                     "message": "Enrichment is enabled but no organism is configured "
-                                "(no KEGG code or OrgDb). GO/KEGG enrichment and the STRING "
-                                "PPI network will be skipped. Select your organism on the "
-                                "Reference Manager tab, or disable Enrichment."}]
-        return []
+        return enrichment_config_messages(self.config) if self.config is not None else []
 
     def _require_project(self) -> bool:
         if self.project_root is None:
