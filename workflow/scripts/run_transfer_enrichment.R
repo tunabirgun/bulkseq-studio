@@ -254,13 +254,29 @@ propagate_go <- function(pairs) {
   list(sets = out, unknown_terms = length(setdiff(unique(pairs$term), known)))
 }
 
+# KEGG's pathway hierarchy (BRITE br08901) groups the reference maps. Maps under
+# Organismal Systems, Human Diseases and Drug Development describe animal physiology,
+# disease and drugs; for an organism without a KEGG code nothing restricts them to its
+# lineage, so a fungus would otherwise be scored against "Coronavirus disease".
+KO_PATHWAY_GROUPS <- c("Metabolism", "Genetic Information Processing",
+                       "Environmental Information Processing", "Cellular Processes")
+
+kept_reference_maps <- function() {
+  tree <- jsonlite::fromJSON(KEGGREST::keggGet("br:br08901", option = "json"), simplifyVector = FALSE)
+  maps <- unlist(lapply(tree$children, function(top) {
+    if (!top$name %in% KO_PATHWAY_GROUPS) return(NULL)
+    unlist(lapply(top$children, function(mid) vapply(mid$children, function(leaf) leaf$name, "")))
+  }))
+  paste0("map", sub("^([0-9]{5}).*$", "\\1", maps))
+}
+
 # KO to KEGG reference pathways ("map" ids) through the live KEGG REST API, the only
 # access KEGG's licence allows; nothing KEGG-derived is bundled.
 ko_to_pathway_sets <- function(ko_pairs) {
   link <- KEGGREST::keggLink("pathway", "ko")
   link <- data.frame(ko = sub("^ko:", "", names(link)), path = sub("^path:", "", unname(link)),
                      stringsAsFactors = FALSE)
-  link <- link[grepl("^map", link$path), , drop = FALSE]
+  link <- link[link$path %in% kept_reference_maps(), , drop = FALSE]
   names_ <- KEGGREST::keggList("pathway")
   t2g <- merge(ko_pairs, link, by = "ko")
   t2g <- unique(data.frame(term = t2g$path, gene = t2g$gene, stringsAsFactors = FALSE))
@@ -432,13 +448,16 @@ main <- function() {
   imports <- list(emapper = emapper, ko_table = ko_table)
   imports <- imports[nzchar(unlist(imports))]
   if (length(imports)) {
-    gene_ids <- unique(res$gene_id[tested_rows])
+    gene_ids <- unique(res$gene_id)
+    tested_ids <- unique(res$gene_id[tested_rows])
     bridge <- tryCatch(protein_gene_bridge(annotation), error = function(e) NULL)
     for (kind in names(imports)) {
       tryCatch({
         parsed <- if (identical(kind, "emapper")) read_emapper(imports[[kind]]) else read_ko_table(imports[[kind]])
         resolved <- resolve_import_queries(parsed$queries, gene_ids, bridge)
-        fraction <- length(unique(resolved$gene_id)) / length(gene_ids)
+        # The gate is identifier resolution: a KO or GO file covers only part of a genome by
+        # design, so its coverage of the tested genes is reported, not judged.
+        fraction <- length(unique(resolved$query)) / max(1L, length(parsed$queries))
         sets <- list()
         if (!is.null(parsed$go) && nrow(parsed$go)) {
           pairs <- merge(parsed$go, resolved, by = "query")
@@ -450,7 +469,7 @@ main <- function() {
           kp <- ko_to_pathway_sets(data.frame(ko = pairs$value, gene = pairs$gene_id, stringsAsFactors = FALSE))
           sets[["KEGG pathway via KO"]] <- kp
         }
-        universe <- unique(resolved$gene_id)
+        universe <- intersect(unique(resolved$gene_id), tested_ids)
         foregrounds <- list(up = intersect(up, universe), down = intersect(down, universe),
                             combined = intersect(union(up, down), universe))
         rank <- rank_stat$values[rank_rows]; names(rank) <- res$gene_id[rank_rows]
@@ -468,8 +487,12 @@ main <- function() {
                                         if (is.null(r$gsea)) 0L else nrow(r$gsea)))
         }
         checks[[length(checks) + 1L]] <- list(mapping_status(fraction), sprintf(
-          "%s import %s: %d of %d tested genes (%.1f%%) carry an imported annotation.",
-          kind, basename(imports[[kind]]), length(universe), length(gene_ids), 100 * fraction))
+          "%s import %s: %d of %d annotated ids (%.1f%%) resolved to genes of this reference; %d of %d tested genes (%.1f%%) carry an imported annotation.",
+          kind, basename(imports[[kind]]), length(unique(resolved$query)), length(parsed$queries), 100 * fraction,
+          length(universe), length(tested_ids), 100 * length(universe) / max(1L, length(tested_ids))))
+        if (!is.null(sets[["KEGG pathway via KO"]]))
+          summary <- c(summary, sprintf("KEGG reference maps limited to %s (KEGG BRITE br08901); links retrieved %s.",
+                                        paste(KO_PATHWAY_GROUPS, collapse = ", "), sets[["KEGG pathway via KO"]]$retrieved))
         provenance$imports[[kind]] <- list(file = basename(imports[[kind]]), md5 = unname(tools::md5sum(imports[[kind]])),
                                            queries = length(parsed$queries), genes = length(universe),
                                            kegg_rest_retrieved = if (!is.null(sets[["KEGG pathway via KO"]])) sets[["KEGG pathway via KO"]]$retrieved else NULL)
