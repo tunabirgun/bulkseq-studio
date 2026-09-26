@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import os
 import queue
 import re
@@ -14,7 +15,9 @@ from pathlib import Path
 
 from app.constants import WSL_ENV_NAME, WSL_MAMBA_ROOT, WSL_MICROMAMBA
 from app.core.config_models import AppConfig
-from app.core.paths import UnsupportedUncPathError, windows_to_wsl_path, without_bundle_library_path
+from app.core.paths import (
+    UnsupportedUncPathError, windows_to_wsl_path, without_bundle_library_path, workflow_root,
+)
 
 # Marker prefix exported into the WSL process environment so the whole process
 # tree can be found and killed from a separate `wsl` invocation (terminating the
@@ -215,6 +218,34 @@ def _samples_sheet(project_root: Path) -> Path:
     return candidate if candidate.is_absolute() else project_root / candidate
 
 
+def _enrich_map(project_root: Path | None) -> dict:
+    """The workflow's organism -> (OrgDb, keytype, KEGG code) map, read from the project's
+    enrichment.smk (the copy that runs) or the bundled one, so it cannot drift from it."""
+    bases = ([Path(project_root) / "workflow"] if project_root is not None else []) + [workflow_root()]
+    for base in bases:
+        try:
+            source = (base / "rules" / "enrichment.smk").read_text(encoding="utf-8")
+        except OSError:
+            continue
+        match = re.search(r"_ENRICH_MAP\s*=\s*(\{.*?\n\})", source, re.DOTALL)
+        if match:
+            return ast.literal_eval(match.group(1))
+    return {}
+
+
+def _transfer_on(project_root: Path | None, config: AppConfig, meta_on: bool) -> bool:
+    """Exact mirror of enrichment_transfer.smk's TRANSFER_ON for the current configuration."""
+    enr = config.enrichment
+    mode = str(enr.transfer or "auto").lower()
+    imports = bool(enr.transfer_emapper or enr.transfer_ko_table)
+    if not config.workflow.enrichment or meta_on or mode == "off":
+        return False
+    organism = str(config.reference.organism_name or "").lower()
+    mapped = next((v for k, v in _enrich_map(project_root).items() if k in organism), ("", "", ""))
+    has_orgdb = bool(enr.orgdb or mapped[0])
+    return (mode == "on" or not has_orgdb or imports) and bool(config.ppi.taxon or imports)
+
+
 def _is_multistudy(project_root: Path | None) -> bool:
     """True when the project's samples.tsv is a genuine multi-study sheet (a 'dataset' column with
     more than one distinct non-empty value) — an EXACT mirror of the Snakefile's MULTI_DATASET, using
@@ -357,11 +388,13 @@ def build_snakemake_args(
             project_root, "results/enrichment/custom_enrichment_objects.rds"
         ):
             targets.append("custom_enrichment_figure")
-        # Annotation-transfer ORA dot plot. Its rule input is transfer_ora.csv alone, so that is
-        # the only existence gate; enrichment.transfer == "off" mirrors TRANSFER_ON's own hard
-        # stop, but the rest of TRANSFER_ON (OrgDb presence, imports, taxon) is not replicated
-        # here because forcing an undefined rule aborts the whole regenerate.
-        if (config.workflow.enrichment and config.enrichment.transfer != "off"
+        # Mirror of the Snakefile's META_MODE (meta_analysis AND multi-study AND a count-based
+        # input); the meta and annotation-transfer gates below both depend on it.
+        _meta_on = (config.workflow.meta_analysis and _is_multistudy(project_root)
+                    and config.input.type not in ("microarray", "deseq2_results"))
+        # Annotation-transfer ORA dot plot: the rule exists only when TRANSFER_ON holds for the
+        # current configuration, and forcing an undefined rule aborts the whole regenerate.
+        if (_transfer_on(project_root, config, _meta_on)
                 and _target_input_exists(project_root, "results/enrichment/transfer/transfer_ora.csv")):
             targets.append("transfer_enrichment_figure")
         # GSVA writes a styled heatmap, so a restyle must re-render it. Mirror the Snakefile's
@@ -382,8 +415,6 @@ def build_snakemake_args(
         # the meta rules are undefined when the sheet is single-study OR the input is microarray /
         # uploaded DE results, and forcing an undefined rule aborts the whole regenerate run. Gate on
         # the CURRENT sheet + input type, not merely on stale meta outputs left on disk.
-        _meta_on = (config.workflow.meta_analysis and _is_multistudy(project_root)
-                    and config.input.type not in ("microarray", "deseq2_results"))
         if _meta_on and _target_input_exists(
             project_root, "results/meta/meta_analysis_results.csv"
         ):

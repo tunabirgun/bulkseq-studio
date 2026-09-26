@@ -422,6 +422,12 @@ class EnrichmentConfig(BaseModel):
     # Optional KofamScan/KofamKOALA KO table; its KEGG pathways come from the live KEGG REST API.
     transfer_ko_table: str | None = None
 
+    @field_validator("transfer", mode="before")
+    @classmethod
+    def _transfer_from_yaml_boolean(cls, value):
+        # YAML 1.1 reads an unquoted on/off as a boolean; the workflow maps it the same way.
+        return {True: "on", False: "off"}[value] if isinstance(value, bool) else value
+
 
 class PpiConfig(BaseModel):
     # Protein-protein interaction network (STRING) built from the DE / genes-of-

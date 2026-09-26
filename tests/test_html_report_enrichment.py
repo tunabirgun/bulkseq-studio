@@ -1280,6 +1280,21 @@ def test_transfer_enrichment_empty_tables_render_the_empty_message(mhr, tmp_path
     assert "could not be interpreted" not in rendered
 
 
+def test_transfer_enrichment_omitted_when_the_run_did_not_configure_it(mhr, tmp_path):
+    enr = tmp_path / "results" / "enrichment" / "transfer"
+    enr.mkdir(parents=True)
+    (enr / "transfer_summary.txt").write_text(
+        "Annotation-transfer enrichment summary\nCheck 25 status: PASS\n", encoding="utf-8")
+    reports = tmp_path / "results" / "reports"
+    reports.mkdir(parents=True)
+    run_json = reports / "run_summary.json"
+    run_json.write_text(json.dumps({"enrichment_transfer": {"ran": True}}), encoding="utf-8")
+    assert "Annotation-transfer" in mhr._transfer_enrichment_section(tmp_path)
+    run_json.write_text(json.dumps({"enrichment_transfer": {"ran": False, "configured": False}}),
+                        encoding="utf-8")
+    assert mhr._transfer_enrichment_section(tmp_path) == ""
+
+
 def test_transfer_enrichment_absent_when_no_artifacts_exist(mhr, tmp_path):
     enr = tmp_path / "results" / "enrichment"
     enr.mkdir(parents=True)

@@ -120,6 +120,43 @@ def test_figures_mode_forces_gsva_only_when_its_rule_and_inputs_exist(tmp_path) 
     assert "gsva" not in build_snakemake_command(tmp_path, cfg, mode="figures").command
 
 
+def test_figures_mode_forces_the_transfer_figure_only_under_transfer_on(tmp_path) -> None:
+    # The figure rule exists only while the Snakefile's TRANSFER_ON holds for the current
+    # configuration; naming it otherwise aborts the whole regenerate.
+    cfg = default_config("demo", tmp_path)
+    cfg.workflow.enrichment = True
+    cfg.reference.organism_name = "Fusarium graminearum"
+    cfg.ppi.taxon = 229533
+
+    def forced() -> bool:
+        return "transfer_enrichment_figure" in build_snakemake_command(tmp_path, cfg, mode="figures").command
+
+    assert not forced()
+    out = tmp_path / "results" / "enrichment" / "transfer"
+    out.mkdir(parents=True)
+    (out / "transfer_ora.csv").write_text("x")
+    assert forced()
+    cfg.enrichment.transfer = "off"
+    assert not forced()
+    cfg.enrichment.transfer = "auto"
+    cfg.reference.organism_name = "Drosophila melanogaster"
+    assert not forced()
+    cfg.enrichment.transfer = "on"
+    assert forced()
+    cfg.ppi.taxon = None
+    assert not forced()
+    cfg.enrichment.transfer_ko_table = "config/ko.txt"
+    assert forced()
+    (tmp_path / "config").mkdir(exist_ok=True)
+    (tmp_path / "config" / "samples.tsv").write_text(
+        "sample\tcondition\tdataset\na\tx\tS1\nb\ty\tS2\n", encoding="utf-8")
+    cfg.workflow.meta_analysis = True
+    assert not forced()
+    cfg.workflow.meta_analysis = False
+    cfg.workflow.enrichment = False
+    assert not forced()
+
+
 def test_figures_mode_forces_meta_per_study_under_the_meta_guard(tmp_path) -> None:
     # meta_per_study renders styled per-study figures; it must be forced when its manifest and
     # inputs exist, and must stay out whenever the meta rules themselves are undefined.

@@ -845,6 +845,12 @@ def _transfer_enrichment_section(project: Path) -> str:
     )
     if not any(path.exists() for path in artifacts):
         return ""
+    # The run summary records the workflow's own decision; files left by an earlier run are
+    # not this run's result once the current configuration no longer runs the route.
+    run = _load_json(project / "results" / "reports" / "run_summary.json")
+    recorded = run.get("enrichment_transfer") if isinstance(run, dict) else None
+    if isinstance(recorded, dict) and recorded.get("configured") is False:
+        return ""
 
     summary_raw = _read(summary_path)
     evidence_prefixes = (

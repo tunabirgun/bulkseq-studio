@@ -913,11 +913,17 @@ def enrichment_mapping_evidence(root: Path) -> dict:
     return {"summary_path": "results/enrichment/enrichment_summary.txt", "evidence": evidence}
 
 
-def transfer_enrichment_evidence(root: Path) -> dict:
-    """Whether annotation-transfer enrichment ran, and its check 25 status/first message."""
+def transfer_enrichment_evidence(root: Path, active: bool | None = None) -> dict:
+    """Whether annotation-transfer enrichment ran, and its check 25 status/first message.
+
+    active is the workflow's own decision for this configuration; when it is False, files left
+    by an earlier run are not reported as this run's result. None (direct invocation) falls
+    back to the files on disk.
+    """
+    if active is False:
+        return {"ran": False, "configured": False}
     summary_path = root / "results" / "enrichment" / "transfer" / "transfer_summary.txt"
-    ran = summary_path.exists()
-    if not ran:
+    if not summary_path.exists():
         return {"ran": False}
     check_path = root / "checks" / "25_transfer_enrichment_qc.json"
     status = None
@@ -1158,6 +1164,8 @@ def workflow_version_summary(p: dict) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
+    parser.add_argument("--transfer", choices=("on", "off"), default=None,
+                        help="whether this configuration runs annotation-transfer enrichment")
     args = parser.parse_args()
     root = Path(args.project)
     config = yaml.safe_load((root / "config/config.yaml").read_text(encoding="utf-8")) or {}
@@ -1223,7 +1231,8 @@ def main() -> int:
         "output_paths": existing_outputs(root),
         "download_integrity": download_integrity(root),
         "enrichment_mapping": enrichment_mapping_evidence(root),
-        "enrichment_transfer": transfer_enrichment_evidence(root),
+        "enrichment_transfer": transfer_enrichment_evidence(
+            root, None if args.transfer is None else args.transfer == "on"),
         "ppi_provenance": ppi_provenance(root),
         "reference_integrity": (
             reference_integrity(root)

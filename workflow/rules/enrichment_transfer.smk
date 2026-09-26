@@ -4,7 +4,10 @@
 # Bioconductor OrgDb, so enrichment.transfer "auto" runs it only there; "on" also runs it
 # for OrgDb organisms (a cross-check against curated GO) and "off" never runs it. Its
 # outputs are separate files, so the curated routes' results are unchanged.
-_TRANSFER_MODE = str(_ENR.get("transfer") or "auto").lower()
+# YAML 1.1 reads an unquoted on/off as a boolean, so a hand-edited `transfer: off` arrives as False.
+_TRANSFER_RAW = _ENR.get("transfer")
+_TRANSFER_MODE = ({True: "on", False: "off"}[_TRANSFER_RAW] if isinstance(_TRANSFER_RAW, bool)
+                  else str(_TRANSFER_RAW or "auto").lower())
 _TRANSFER_TAXON = str(config.get("ppi", {}).get("taxon") or "")
 _TRANSFER_IMPORTS = {k: (_ENR.get(f"transfer_{k}") or "") for k in ("emapper", "ko_table")}
 _HAS_ORGDB = bool(_ENR.get("orgdb") or _MAPPED[0])

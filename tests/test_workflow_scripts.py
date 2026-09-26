@@ -656,6 +656,18 @@ def test_transfer_enrichment_evidence_absent_when_it_did_not_run(mrs, tmp_path) 
         assert "Annotation-transfer enrichment" not in report
 
 
+def test_transfer_enrichment_evidence_ignores_files_from_an_earlier_run(mrs, tmp_path) -> None:
+    # The route was turned off after a run that left its outputs: the workflow says so, and
+    # those files must not be reported as this run's result.
+    transfer = tmp_path / "results" / "enrichment" / "transfer"
+    transfer.mkdir(parents=True)
+    (transfer / "transfer_summary.txt").write_text(
+        "Annotation-transfer enrichment summary\n", encoding="utf-8")
+    assert mrs.transfer_enrichment_evidence(tmp_path, active=False) == {"ran": False, "configured": False}
+    assert mrs.transfer_enrichment_evidence(tmp_path, active=True)["ran"] is True
+    assert mrs.transfer_enrichment_evidence(tmp_path)["ran"] is True
+
+
 def test_transfer_enrichment_evidence_tolerates_a_malformed_check_file(mrs, tmp_path) -> None:
     # The check ran (transfer_summary.txt exists) but its JSON is not the {status, messages:
     # [...]} shape write_check() writes -- read defensively rather than raising KeyError/

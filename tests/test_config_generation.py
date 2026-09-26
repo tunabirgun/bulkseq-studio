@@ -224,3 +224,10 @@ def test_bundled_default_config_matches_the_model_defaults():
     bundled.pop("project")
     model.pop("project")
     assert dict(leaves(bundled)) == dict(leaves(model))
+
+
+def test_transfer_mode_reads_yaml_on_off_booleans() -> None:
+    # A hand-edited `transfer: off` is a YAML boolean; the workflow reads it as off, so must the app.
+    assert EnrichmentConfig(transfer=False).transfer == "off"
+    assert EnrichmentConfig(transfer=True).transfer == "on"
+    assert EnrichmentConfig(transfer="auto").transfer == "auto"

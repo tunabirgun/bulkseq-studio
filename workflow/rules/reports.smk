@@ -43,6 +43,8 @@ if WF.get("enrichment", True):
 _CUSTOM_SETS = config.get("gene_sets", {})
 if _CUSTOM_SETS.get("custom_gene_sets") or _CUSTOM_SETS.get("functional_annotation_table"):
     _REPORT_SINKS["custom_enrichment"] = "results/figures/custom_enrichment_dotplot.png"
+if TRANSFER_ON:
+    _REPORT_SINKS["transfer_enrichment"] = "results/figures/transfer_enrichment_dotplot.png"
 if GSVA_ON:
     _REPORT_SINKS["gsva"] = "results/figures/gsva_heatmap.png"
 if _CUSTOM_SETS.get("custom_gene_list") and not DE_RESULTS_MODE:
@@ -88,10 +90,14 @@ rule final_reports:
         versions="results/reports/software_versions.txt",
         tools_refs="results/reports/tools_references.txt",
         study_design="results/reports/study_design.txt",
+    params:
+        # Outputs of an earlier annotation-transfer run stay on disk after the route is turned
+        # off, so the summary is told whether the current configuration runs it.
+        transfer="on" if TRANSFER_ON else "off",
     benchmark:
         "benchmarks/final_reports.tsv"
     shell:
-        "python workflow/scripts/make_run_summary.py --project . && "
+        "python workflow/scripts/make_run_summary.py --project . --transfer {params.transfer} && "
         "python workflow/scripts/make_timing_summary.py --project ."
 
 
