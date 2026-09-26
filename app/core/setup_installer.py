@@ -12,6 +12,7 @@ from app.core.paths import (
     app_root,
     bioenv_setup_log_dir,
     windows_to_wsl_path,
+    without_bundle_library_path,
 )
 from app.core.snakemake_runner import RUN_TAG_PREFIX, build_wsl_kill_command
 
@@ -99,7 +100,7 @@ def build_native_bioenv_command(env_name: str = "bulkseq", profile: str = "core"
 def launch_native_bioenv_install(env_name: str = "bulkseq", profile: str = "core",
                                  rebuild: bool = False) -> subprocess.Popen[str]:
     # A clean rebuild is requested via the BULKSEQ_REBUILD env var the setup script reads.
-    env = dict(os.environ)
+    env = without_bundle_library_path(dict(os.environ))
     env["BULKSEQ_SETUP_LOG_DIR"] = str(bioenv_setup_log_dir())
     if rebuild:
         env["BULKSEQ_REBUILD"] = "1"

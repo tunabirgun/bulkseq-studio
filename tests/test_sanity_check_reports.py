@@ -47,3 +47,35 @@ def test_workflow_aggregate_report_uses_route_neutral_title(tmp_path: Path) -> N
     text = output.read_text(encoding="utf-8")
     assert text.startswith(f"{TITLE}\n{'=' * len(TITLE)}\nOverall: PASS\n")
     assert "RNA-seq Sanity Checks" not in text
+
+
+def test_app_and_workflow_writers_produce_identical_summaries(tmp_path: Path) -> None:
+    from app.core.sanity_checks import write_sanity_text
+
+    checks = tmp_path / "checks"
+    checks.mkdir()
+    files = {
+        "01_input_validation": {"check": "01_input_validation", "status": "PASS",
+                                "messages": [{"status": "PASS", "message": "ok"}]},
+        "10_enrichment_qc": {"check": "10_enrichment_qc",
+                             "messages": [{"status": "WARNING", "message": "no explicit status"},
+                                          "not a message"]},
+        "16_ppi_network": {"check": "16_ppi_network", "status": "REVIEW_REQUIRED",
+                           "messages": [{"status": "WARNING", "message": "explicit status wins"}]},
+        "20_list": ["not", "an", "object"],
+    }
+    for name, payload in files.items():
+        (checks / f"{name}.json").write_text(json.dumps(payload), encoding="utf-8")
+    (checks / "21_broken.json").write_text("{not json", encoding="utf-8")
+
+    app_text = write_sanity_text(tmp_path).read_text(encoding="utf-8")
+    out = tmp_path / "workflow_sanity.txt"
+    script = Path(__file__).resolve().parents[1] / "workflow" / "scripts" / "aggregate_sanity_checks.py"
+    completed = subprocess.run(
+        [sys.executable, str(script), "--checks", *sorted(str(p) for p in checks.glob("*.json")),
+         "--out", str(out)],
+        cwd=tmp_path, capture_output=True, text=True, check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert app_text == out.read_text(encoding="utf-8")
+    assert "Overall: FAIL" in app_text.splitlines()[2]

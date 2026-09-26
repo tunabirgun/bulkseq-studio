@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import shutil
 import subprocess
@@ -11,6 +12,7 @@ from typing import Any
 import yaml
 
 from app.constants import WSL_ENV_NAME, WSL_MAMBA_ROOT, WSL_MICROMAMBA
+from app.core.paths import without_bundle_library_path
 
 
 # Command catalog. Which of these a run actually executed is decided by select_tools()
@@ -151,6 +153,7 @@ def _capture_versions_local(tools: dict[str, list[str]]) -> dict[str, str]:
             # leads with a blank line — indexing [0] of an empty split raised IndexError.
             result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     text=True, encoding="utf-8", errors="replace",
+                                    env=without_bundle_library_path(dict(os.environ)),
                                     timeout=10, check=False)
             versions[name] = _first_nonempty_line(result.stdout or "") or "no version output"
         except Exception as exc:

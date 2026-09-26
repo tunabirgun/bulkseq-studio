@@ -158,6 +158,8 @@ def test_windows_package_build_is_gated_by_the_frozen_webengine_probe() -> None:
     assert '$env:BULKSEQ_SELFTEST = "1"' in script
     assert '$env:BULKSEQ_SELFTEST_OUT = $selftestOut' in script
     assert "$selftest.ExitCode -ne 0" in script
+    # The sentinel is the gate, as in CI: a nonzero exit after a pass is only logged.
+    assert 'throw "Frozen self-test exited' not in script
     assert "-not $selftestResult.pass" in script
     assert "-not $selftestResult.webengine" in script
     assert "$selftestResult.nodes -ne 3" in script

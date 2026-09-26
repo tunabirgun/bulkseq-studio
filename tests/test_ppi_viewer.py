@@ -524,7 +524,9 @@ def _synthetic_network() -> dict:
     return {"nodes": nodes, "edges": edges}
 
 
-def test_real_viewer_default_layout_keeps_nodes_and_labels_apart(tmp_path):
+def _probe_real_viewer(viewer_html: Path, graph: dict, measure_js: str) -> dict:
+    """Render ``graph`` in the real viewer under offscreen QtWebEngine and return the
+    JSON value of ``measure_js`` evaluated after the layout settles."""
     import json
 
     probe = textwrap.dedent(
@@ -559,26 +561,80 @@ def test_real_viewer_default_layout_keeps_nodes_and_labels_apart(tmp_path):
         settle = QEventLoop()
         QTimer.singleShot(1500, settle.quit)
         settle.exec()
-        print(js("""JSON.stringify((function () {
-            var boxes = cy.nodes().map(function (n) { return n.boundingBox({ includeLabels: true }); });
-            var overlaps = 0;
-            for (var i = 0; i < boxes.length; i++) for (var j = i + 1; j < boxes.length; j++) {
-              var a = boxes[i], b = boxes[j];
-              if (a.x1 < b.x2 && b.x1 < a.x2 && a.y1 < b.y2 && b.y1 < a.y2) overlaps++;
-            }
-            return { nodes: cy.nodes().length, overlaps: overlaps };
-        })())"""))
+        print(js("JSON.stringify((function () {" + __MEASURE__ + "})())"))
         view.close()
         app.processEvents()
         '''
-    ).replace("__VIEWER__", json.dumps(str(ppi_viewer_module.viewer_html_path()))).replace(
-        "__GRAPH__", json.dumps(_synthetic_network()))
+    ).replace("__VIEWER__", json.dumps(str(viewer_html))).replace(
+        "__GRAPH__", json.dumps(graph)).replace("__MEASURE__", json.dumps(measure_js))
     env = os.environ.copy()
     env["QT_QPA_PLATFORM"] = "offscreen"
     env["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --no-sandbox"
     completed = subprocess.run([sys.executable, "-c", probe], cwd=Path(__file__).resolve().parents[1],
                                env=env, capture_output=True, text=True, timeout=120, check=False)
     assert completed.returncode == 0, completed.stderr
-    result = json.loads(completed.stdout.strip().splitlines()[-1])
+    return json.loads(completed.stdout.strip().splitlines()[-1])
+
+
+_NODE_OVERLAPS_JS = """
+    var boxes = cy.nodes().map(function (n) { return n.boundingBox({ includeLabels: true }); });
+    var overlaps = 0;
+    for (var i = 0; i < boxes.length; i++) for (var j = i + 1; j < boxes.length; j++) {
+      var a = boxes[i], b = boxes[j];
+      if (a.x1 < b.x2 && b.x1 < a.x2 && a.y1 < b.y2 && b.y1 < a.y2) overlaps++;
+    }
+    return { nodes: cy.nodes().length, overlaps: overlaps };
+"""
+
+# Packing density: summed component bounding-box area over the area of the box that
+# holds them all. fcose tiles components only when cytoscape-layout-utilities is
+# registered; without it the components scatter and the density collapses.
+_COMPONENT_PACKING_JS = """
+    var comps = cy.elements().components();
+    var area = 0, overlaps = 0, boxes = [];
+    comps.forEach(function (c) {
+      var b = c.boundingBox({ includeLabels: true });
+      boxes.push(b); area += b.w * b.h;
+    });
+    for (var i = 0; i < boxes.length; i++) for (var j = i + 1; j < boxes.length; j++) {
+      var a = boxes[i], b = boxes[j];
+      if (a.x1 < b.x2 && b.x1 < a.x2 && a.y1 < b.y2 && b.y1 < a.y2) overlaps++;
+    }
+    var all = cy.elements().boundingBox({ includeLabels: true });
+    return { registered: typeof cy.layoutUtilities === "function", components: comps.length,
+             overlaps: overlaps, density: area / (all.w * all.h) };
+"""
+
+
+def test_real_viewer_default_layout_keeps_nodes_and_labels_apart(tmp_path):
+    result = _probe_real_viewer(ppi_viewer_module.viewer_html_path(), _synthetic_network(),
+                                _NODE_OVERLAPS_JS)
     assert result["nodes"] == len(_synthetic_network()["nodes"])
     assert result["overlaps"] == 0, result
+
+
+def _component_packing(viewer_html: Path) -> dict:
+    return _probe_real_viewer(viewer_html, _synthetic_network(), _COMPONENT_PACKING_JS)
+
+
+def test_real_viewer_packs_disconnected_components(tmp_path):
+    import shutil
+
+    packed = _component_packing(ppi_viewer_module.viewer_html_path())
+    assert packed["registered"] is True, packed
+    assert packed["components"] == 15, packed
+    # Component boxes may nest (polyomino packing fills a component's concave outline),
+    # so visual overlap is gated at node and label level by the test above.
+
+    # Negative control: the same viewer without the vendored plugin must score lower,
+    # so the density criterion measures packing rather than passing unconditionally.
+    bare = tmp_path / "ppi"
+    shutil.copytree(ppi_viewer_module.viewer_html_path().parent, bare)
+    html = bare / "viewer.html"
+    tag = '<script src="cytoscape-layout-utilities.js"></script>\n'
+    text = html.read_text(encoding="utf-8")
+    assert tag in text
+    html.write_text(text.replace(tag, ""), encoding="utf-8")
+    unpacked = _component_packing(html)
+    assert unpacked["registered"] is False, unpacked
+    assert packed["density"] > unpacked["density"] * 1.25, (packed, unpacked)

@@ -740,3 +740,38 @@ def test_reports_page_shows_reports_already_on_disk(tmp_path) -> None:
     w.report_text.setPlainText("No reports yet.")
     w._refresh_report_status()
     assert "Run finished: earlier" in w.report_text.toPlainText()
+
+
+def test_close_deletes_web_views_before_the_deferred_exit(monkeypatch) -> None:
+    import shiboken6
+
+    import app.ui.main_window as mw
+    from app.ui.ppi_viewer import PpiViewer
+
+    app = _app()
+    # A window the test built does not own the event loop: closing it must leave the
+    # shared application's quit policy alone.
+    window = MainWindow()
+    window.close()
+    assert app.quitOnLastWindowClosed() is True
+
+    owner = MainWindow()
+    owner._exit_on_close = True
+    owner._quit_code = 3
+    viewers = owner.findChildren(PpiViewer)
+    assert viewers
+    scheduled, exits = [], []
+    # Patch only this module's QTimer; the shared class also drives conftest teardown.
+    monkeypatch.setattr(mw, "QTimer", type("Timer", (), {"singleShot": staticmethod(
+        lambda ms, fn: scheduled.append((ms, fn)))}))
+    monkeypatch.setattr(app, "exit", lambda code: exits.append(code))
+    try:
+        owner.close()
+        assert app.quitOnLastWindowClosed() is False
+        assert [ms for ms, _ in scheduled] == [250]
+        QApplication.sendPostedEvents(None, 52)  # QEvent.Type.DeferredDelete
+        assert not any(shiboken6.isValid(v) for v in viewers)
+        scheduled[0][1]()
+        assert exits == [3]
+    finally:
+        app.setQuitOnLastWindowClosed(True)

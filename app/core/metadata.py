@@ -29,6 +29,12 @@ def drop_blank_library_name(df: pd.DataFrame) -> pd.DataFrame:
     return df.drop(columns=["library_name"]) if not values.ne("").any() else df
 
 
+def export_metadata(df: pd.DataFrame, path: Path) -> None:
+    """Write the sheet the user exports with the same library_name rule as save_metadata."""
+    sep = "," if str(path).lower().endswith(".csv") else "\t"
+    drop_blank_library_name(df).to_csv(path, sep=sep, index=False, encoding="utf-8")
+
+
 def existing_line_terminator(path: Path) -> str:
     """The newline the sheet on disk already uses; "\\n" when there is no sheet yet.
 

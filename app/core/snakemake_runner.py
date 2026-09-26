@@ -14,7 +14,7 @@ from pathlib import Path
 
 from app.constants import WSL_ENV_NAME, WSL_MAMBA_ROOT, WSL_MICROMAMBA
 from app.core.config_models import AppConfig
-from app.core.paths import UnsupportedUncPathError, windows_to_wsl_path
+from app.core.paths import UnsupportedUncPathError, windows_to_wsl_path, without_bundle_library_path
 
 # Marker prefix exported into the WSL process environment so the whole process
 # tree can be found and killed from a separate `wsl` invocation (terminating the
@@ -121,7 +121,7 @@ def _pump_output(stream, lines: "queue.SimpleQueue[str]") -> None:
 def _snakemake_child_env(use_wsl: bool) -> dict[str, str]:
     # Dot decimal separator for the native (Linux) run too, so a comma-decimal host
     # locale cannot leak "0,05" into tool output. (WSL runs set this inside _wrap_wsl.)
-    env = {**os.environ, "LC_NUMERIC": "C"}
+    env = {**without_bundle_library_path(dict(os.environ)), "LC_NUMERIC": "C"}
     if not use_wsl:
         # The WSL branch exports PATH inside _wrap_wsl; do the equivalent here so a
         # native run finds the environment's tools.

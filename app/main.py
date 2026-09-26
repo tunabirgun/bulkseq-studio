@@ -134,6 +134,8 @@ def _ppi_self_test(app, window) -> None:
         queue-delete both the dedicated probe and the main window first, then
         leave one event-loop turn for their deferred deletes to run.
         """
+        if window is not None:
+            window._quit_code = code
         for widget in (viewer, window):
             if widget is None:
                 continue
@@ -299,6 +301,7 @@ def main() -> int:
     # Chromium helper.
     if os.environ.get("BULKSEQ_SELFTEST") == "1":
         _ppi_self_test(app, window)
+    window._exit_on_close = True  # closeEvent owns the exit so web views die first
     return app.exec()
 
 

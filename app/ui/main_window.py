@@ -95,6 +95,7 @@ from workflow.scripts.count_matrix_validation import (
 )
 from app.core.metadata import (
     dataframe_from_rows,
+    export_metadata,
     load_metadata,
     read_user_table,
     save_metadata,
@@ -571,6 +572,18 @@ class MainWindow(QMainWindow):
                 worker.wait(3000)
         if self.runner_thread is not None and self.runner_thread.isRunning():
             self.runner_thread.wait(5000)
+        # A QWebEngineView still alive when QApplication exits trips Chromium's
+        # fast-fail (0xC0000409) at teardown. Queue the web views for deletion and
+        # keep the event loop running one short turn so the deletes happen first.
+        from app.ui.ppi_viewer import PpiViewer
+        for viewer in self.findChildren(PpiViewer):
+            viewer.close()
+            viewer.deleteLater()
+        app = QApplication.instance()
+        if app is not None and getattr(self, "_exit_on_close", False):
+            app.setQuitOnLastWindowClosed(False)
+            code = getattr(self, "_quit_code", 0)
+            QTimer.singleShot(250, lambda: app.exit(code))
         super().closeEvent(event)
 
     # A settings form has no reason to grow past a readable measure. Without this the
@@ -6829,8 +6842,7 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "Export metadata", "samples.tsv", "TSV (*.tsv);;CSV (*.csv)")
         if not path:
             return
-        sep = "," if path.lower().endswith(".csv") else "\t"
-        self.metadata_table.to_dataframe().to_csv(path, sep=sep, index=False)
+        export_metadata(self.metadata_table.to_dataframe(), Path(path))
 
     def _restore_auto_metadata(self) -> None:
         if not self._require_project():

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.constants import WSL_MAMBA_ROOT
-from app.core.paths import app_root, wsl_has_working_distro
+from app.core.paths import app_root, without_bundle_library_path, wsl_has_working_distro
 
 
 # Environment profile ('core' or 'full') recorded by scripts/setup_wsl_bioenv.sh inside the
@@ -473,6 +473,7 @@ def _native_r_packages_item(profile: str = "full") -> ReadinessItem:
     try:
         rp = subprocess.run([rscript, "-e", _r_packages_check_code(R_ANALYSIS_PACKAGES)],
                             capture_output=True, text=True,
+                            env=without_bundle_library_path(dict(os.environ)),
                             timeout=r_probe_timeout(R_ANALYSIS_PACKAGES), check=False)
         text = (rp.stdout or rp.stderr or "").strip()
         out = text.splitlines()[-1][:240] if text else ""

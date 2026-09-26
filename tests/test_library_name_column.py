@@ -198,3 +198,17 @@ def test_imported_results_sheet_keeps_exactly_the_required_columns() -> None:
     sheets = [h for h in headers if "sample_id" in h]
     assert len(sheets) == 1, f"expected one literal sample-sheet header, found {sheets}"
     assert sheets[0] == REQUIRED_METADATA_COLUMNS
+
+
+def test_exported_sheet_drops_an_all_blank_library_name(tmp_path):
+    import pandas as pd
+
+    from app.core.metadata import export_metadata
+
+    blank = pd.DataFrame({"sample_id": ["a", "b"], "condition": ["x", "y"], "library_name": ["", None]})
+    export_metadata(blank, tmp_path / "s.tsv")
+    assert (tmp_path / "s.tsv").read_text(encoding="utf-8").splitlines()[0] == "sample_id\tcondition"
+
+    named = blank.assign(library_name=["L1", ""])
+    export_metadata(named, tmp_path / "s.csv")
+    assert (tmp_path / "s.csv").read_text(encoding="utf-8").splitlines()[0] == "sample_id,condition,library_name"

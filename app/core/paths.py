@@ -278,3 +278,21 @@ def usable_disk_free_bytes(path: str | Path) -> int:
     except OSError:
         return virtual_free
     return min(virtual_free, host_free)
+
+
+def without_bundle_library_path(env: dict[str, str]) -> dict[str, str]:
+    """Undo the frozen bundle's LD_LIBRARY_PATH for a child process.
+
+    PyInstaller's Linux bootloader points LD_LIBRARY_PATH at the bundle and keeps the
+    caller's value in LD_LIBRARY_PATH_ORIG; a child inheriting the bundle path can load
+    the app's copies of libstdc++, libz or libssl instead of its environment's own.
+    """
+    env = dict(env)
+    if not getattr(sys, "frozen", False):
+        return env
+    original = env.pop("LD_LIBRARY_PATH_ORIG", None)
+    if original:
+        env["LD_LIBRARY_PATH"] = original
+    else:
+        env.pop("LD_LIBRARY_PATH", None)
+    return env
