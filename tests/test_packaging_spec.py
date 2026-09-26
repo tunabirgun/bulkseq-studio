@@ -62,10 +62,16 @@ def test_built_wheel_exposes_the_shared_count_validator_to_the_gui(tmp_path: Pat
     shutil.copytree(repo / "app", source / "app", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     scripts = source / "workflow" / "scripts"
     scripts.mkdir(parents=True)
-    shutil.copy2(
-        repo / "workflow" / "scripts" / "count_matrix_validation.py",
-        scripts / "count_matrix_validation.py",
-    )
+    # Every workflow module the application imports, read from the application's own imports.
+    imported = sorted({
+        node.module.rsplit(".", 1)[1]
+        for path in (repo / "app").rglob("*.py")
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("workflow.scripts.")
+    })
+    assert "count_matrix_validation" in imported and "validate_metadata" in imported
+    for module in imported:
+        shutil.copy2(repo / "workflow" / "scripts" / f"{module}.py", scripts / f"{module}.py")
 
     wheel_dir = tmp_path / "wheel"
     result = subprocess.run(
