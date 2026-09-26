@@ -615,6 +615,47 @@ def test_enrichment_mapping_evidence_is_preserved_in_reports(mrs, tmp_path) -> N
         assert "incomplete" not in report  # exact sidecar wording is rendered, never invented
 
 
+def test_transfer_enrichment_evidence_reports_ran_status_and_first_message(mrs, tmp_path) -> None:
+    transfer = tmp_path / "results" / "enrichment" / "transfer"
+    transfer.mkdir(parents=True)
+    (transfer / "transfer_summary.txt").write_text(
+        "Annotation-transfer enrichment summary\nCheck 25 status: REVIEW_REQUIRED\n",
+        encoding="utf-8",
+    )
+    checks = tmp_path / "checks"
+    checks.mkdir(parents=True)
+    (checks / "25_transfer_enrichment_qc.json").write_text(
+        json.dumps({
+            "check": "25_transfer_enrichment_qc", "status": "REVIEW_REQUIRED",
+            "messages": [{"status": "REVIEW_REQUIRED",
+                         "message": "STRING v12.0 taxon 7227: 400 of 500 tested genes (80.0%) mapped."}],
+        }),
+        encoding="utf-8",
+    )
+    evidence = mrs.transfer_enrichment_evidence(tmp_path)
+    assert evidence == {
+        "ran": True, "check_status": "REVIEW_REQUIRED",
+        "check_message": "STRING v12.0 taxon 7227: 400 of 500 tested genes (80.0%) mapped.",
+    }
+    payload = _base_payload(enrichment_transfer=evidence)
+    for report in (mrs.render_text(payload), mrs.render_tools_references(payload)):
+        assert "Annotation-transfer enrichment" in report
+        assert "Ran: yes" in report
+        assert "Check 25 status: REVIEW_REQUIRED" in report
+        assert "First message: STRING v12.0 taxon 7227: 400 of 500 tested genes (80.0%) mapped." in report
+
+
+def test_transfer_enrichment_evidence_absent_when_it_did_not_run(mrs, tmp_path) -> None:
+    assert mrs.transfer_enrichment_evidence(tmp_path) == {"ran": False}
+    payload = _base_payload(enrichment_transfer={"ran": False})
+    for report in (mrs.render_text(payload), mrs.render_tools_references(payload)):
+        assert "Annotation-transfer enrichment" not in report
+    # A payload predating this feature (no "enrichment_transfer" key at all) must render
+    # identically, never a KeyError or a spurious section.
+    for report in (mrs.render_text(_base_payload()), mrs.render_tools_references(_base_payload())):
+        assert "Annotation-transfer enrichment" not in report
+
+
 def test_enrichment_script_has_mixed_id_fallback_na_filter_and_fail_closed_gate() -> None:
     script = (Path(__file__).resolve().parents[1] / "workflow" / "scripts" /
               "run_enrichment.R").read_text(encoding="utf-8")

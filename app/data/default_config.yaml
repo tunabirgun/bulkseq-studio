@@ -159,6 +159,10 @@ enrichment:
   gprofiler_organism: null
   # GO ontology used by the meta-analysis enrichment rules: BP | MF | CC.
   go_ontology: BP
+  # Annotation-transfer enrichment: auto (organisms without an OrgDb) | on | off.
+  transfer: auto
+  transfer_emapper: null   # optional eggNOG-mapper .emapper.annotations file
+  transfer_ko_table: null  # optional KofamScan/KofamKOALA KO table
 ppi:
   # STRING PPI network. taxon is the curated STRING taxid (null => derived from the
   # organism); the rule degrades to empty outputs when STRING is unreachable or the
