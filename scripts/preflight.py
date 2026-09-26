@@ -3,7 +3,7 @@
 
     python scripts/preflight.py [--skip-tests]
 
-The manuscript and benchmark gates live under `article/`, which is gitignored, so no CI job can
+The manuscript gates live under `article/`, which is gitignored, so no CI job can
 run them: their inputs are not in the repository. That is a real constraint rather than an
 oversight, and it means the gates only ever run when someone runs them. This is that someone's
 one command.
@@ -32,17 +32,13 @@ def gates(skip_tests: bool) -> list[Gate]:
     g = [
         Gate("consistency", [py, "-X", "utf8", str(REPO / "article/scripts/check_consistency.py")],
              [REPO / "article/scripts/check_consistency.py"],
-             "manuscript, docs and deposit agree with the deposited tables"),
+             "manuscript and docs agree with the result tables"),
         Gate("typography", [py, "-X", "utf8", str(REPO / "article/scripts/check_typography.py")],
              [REPO / "article/scripts/check_typography.py"],
              "italics, superscripts and subscripts"),
         Gate("table generation", [py, "-X", "utf8", str(REPO / "article/scripts/build_main_tables.py")],
              [REPO / "article/scripts/build_main_tables.py"],
              "every table caption has a body, and the deliverables regenerate"),
-        Gate("B19 interval self-test",
-             [py, "-X", "utf8", str(REPO / "article/bench/B19_meta/scripts/score_b19.py"), "--self-test"],
-             [REPO / "article/bench/B19_meta/scripts/score_b19.py"],
-             "the exact binomial matches binom.test"),
     ]
     if not skip_tests:
         g.append(Gate("python tests", [py, "-X", "utf8", "-m", "pytest", str(REPO / "tests"),

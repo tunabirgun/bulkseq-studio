@@ -3,9 +3,8 @@
 tests/test_docs_site.py holds the generated site to its own source: it re-runs
 docs_src/build.mjs, compares the result with the committed docs/, resolves every internal
 link and image, and checks each page header against the living ``APP_VERSION``. This file
-holds the same tree to independent public-release and archive version boundaries. Those
-values are written by hand when their states change, so the checks cannot simply follow a
-bumped application declaration.
+holds the same tree to the public-release boundary. That value is written by hand when the
+release state changes, so the checks cannot simply follow a bumped application declaration.
 
 Checks that belong to the generated site alone (build parity, internal links and anchors,
 images and their alt text, the per-page label against APP_VERSION) live in
@@ -24,10 +23,9 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS_ROOT = ROOT / "docs"
 DOCS_SRC = ROOT / "docs_src"
 README_PATH = ROOT / "README.md"
-# These independent states are deliberately not derived from application values. The
-# application and public handbook must advance together, while the archive remains fixed.
-PUBLIC_VERSION = "0.32.1"
-ARCHIVE_VERSION = "0.26.6"
+# Deliberately not derived from application values: the application and the public
+# handbook must advance together, and this records the release they both describe.
+PUBLIC_VERSION = "0.33.0"
 CANONICAL_RELEASE_LINK = "https://github.com/tunabirgun/bulkseq-studio/releases/latest"
 RELEASE_TAG_LINK = "https://github.com/tunabirgun/bulkseq-studio/releases/tag/v"
 SITE_BASE = "https://tunabirgun.github.io/bulkseq-studio/"
@@ -204,19 +202,6 @@ def _readme_errors(readme: str, pages: dict[str, str]) -> list[str]:
     if "unreleased" in lowered or "development source" in lowered:
         errors.append("README.md: published release is still presented as unpublished development source")
 
-    # The deposited archive is versioned separately; advancing the application must not
-    # relabel it. Its citation block is the place that would silently inherit a bump.
-    if ARCHIVE_VERSION not in readme:
-        errors.append(f"README.md: the deposited archive version {ARCHIVE_VERSION} is not named")
-    citations = [b for b in re.findall(r"```[a-z]*\n(.*?)```", readme, flags=re.DOTALL) if "Zenodo" in b]
-    if not citations:
-        errors.append("README.md: no fenced Zenodo citation block to check the archive version against")
-    for block in citations:
-        if f"Version {ARCHIVE_VERSION}." not in block:
-            errors.append(f"README.md: the archive citation does not name version {ARCHIVE_VERSION}")
-        if PUBLIC_VERSION in block:
-            errors.append(f"README.md: the archive citation relabels the deposited archive as {PUBLIC_VERSION}")
-
     # Every link into the published site must land on a page the site actually builds; the
     # page list is read from docs/ so a renamed or dropped chapter fails here.
     for link in re.findall(r"\((%s[^)\s]*)\)" % re.escape(SITE_BASE), readme):
@@ -273,8 +258,9 @@ def _release_errors(changelog: str) -> list[str]:
             errors.append("CHANGELOG.md: no scientific-output change notice")
         if "Synthetic regressions establish these corrected contracts" not in entry:
             errors.append("CHANGELOG.md: no revalidation notice")
-        if f"have not been rerun under {scientific}" not in entry:
-            errors.append("CHANGELOG.md: no historical revalidation caveat")
+        # The notice states what was, or was not, rerun under this release.
+        if f"rerun under {scientific}" not in entry:
+            errors.append("CHANGELOG.md: no rerun statement")
     return errors
 
 
@@ -324,13 +310,12 @@ def test_the_public_release_owes_a_notice_this_tree_must_carry() -> None:
     )
 
 
-def test_public_release_and_archive_versions_remain_independent() -> None:
+def test_public_release_version_is_declared_everywhere() -> None:
     documented = _documented_version()
     assert documented == PUBLIC_VERSION
     assert _app_version() == PUBLIC_VERSION
     project_version = re.search(r'^version = "([^"]+)"', _read(ROOT / "pyproject.toml"), re.MULTILINE)
     assert project_version and project_version.group(1) == PUBLIC_VERSION
-    assert len({PUBLIC_VERSION, ARCHIVE_VERSION}) == 2
     assert _release_errors(CHANGELOG_TEXT) == []
 
 
@@ -353,9 +338,9 @@ def test_release_version_gate_rejects_a_missing_scientific_output_notice() -> No
     assert any("no scientific-output change notice" in error for error in _release_errors(missing))
 
 
-def test_release_version_gate_rejects_a_missing_historical_revalidation_caveat() -> None:
-    missing = CHANGELOG_TEXT.replace(f"have not been rerun under {LATEST_SCIENTIFIC_VERSION}", "", 1)
-    assert any("no historical revalidation caveat" in error for error in _release_errors(missing))
+def test_release_version_gate_rejects_a_missing_rerun_statement() -> None:
+    missing = CHANGELOG_TEXT.replace(f"rerun under {LATEST_SCIENTIFIC_VERSION}", "", 1)
+    assert any("no rerun statement" in error for error in _release_errors(missing))
 
 
 def test_documentation_gate_passes_current_tree() -> None:
@@ -385,8 +370,6 @@ def _replace_once(source: str, old: str, new: str) -> str:
         ("README.md", "BulkSeq Studio is a desktop application for Windows and Linux ", "BulkSeq Studio is a desktop\napplication for Windows and Linux ", "one physical line"),
         ("README.md", f"({SITE_BASE}guide.html)", f"({SITE_BASE}guide-notes.html)", "link into the site does not resolve"),
         ("README.md", f"({SITE_BASE}faq.html#version-notices)", f"({SITE_BASE}faq.html#no-such-heading)", "link into the site does not resolve"),
-        ("README.md", f"archive. Version {ARCHIVE_VERSION}.", f"archive. Version {PUBLIC_VERSION}.", "relabels the deposited archive"),
-        ("README.md", f"Version {ARCHIVE_VERSION}. Zenodo.", f"Version {ARCHIVE_VERSION}.", "no fenced Zenodo citation block"),
     ],
     ids=(
         "stale-version-label",
@@ -404,8 +387,6 @@ def _replace_once(source: str, old: str, new: str) -> str:
         "hard-wrapped-readme-prose",
         "broken-site-link",
         "broken-site-anchor",
-        "relabelled-archive-citation",
-        "citation-block-that-stopped-matching",
     ),
 )
 def test_documentation_gate_rejects_negative_mutations(

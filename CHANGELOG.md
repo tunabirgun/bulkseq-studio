@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.33.0 — 2026-09-26
+
+> **Scientific output changes.** KEGG pathway enrichment now runs for organisms whose name or taxon KEGG records in a different form from the reference catalogue. Until 0.32.1 the identity check required both to match exactly. It rejected a correct organism whenever the catalogue recorded a strain KEGG did not (*Fusarium graminearum* PH-1 against KEGG's *Fusarium graminearum*, code `fgr`; *Zymoseptoria tritici* IPO323, `ztr`), KEGG recorded a subspecies or variety the catalogue did not (`hvg`, `cng`, `bsu`, `sao`), the two sides used different taxonomic ranks for the same species (`fox`, `fpu`, `fvr`, `cal`, `ncr`, `ani`, `afm`, `bfu`, `pfa`), or KEGG had adopted a current name (*Pyricularia oryzae* for *Magnaporthe oryzae*, `mgr`; *Mycosarcoma maydis* for *Ustilago maydis*, `uma`). For these 17 organisms KEGG ORA and GSEA were reported as not interpretable and written as empty tables while the run completed. The check now accepts a strain or subspecies suffix when genus, species and taxon agree, and compares the other 13 codes against identities recorded per KEGG code, each verified against NCBI Taxonomy and the KEGG GENOME record; a wrong code, a different species or an unrecorded taxon is still refused. On the bundled *Fusarium* spores dataset KEGG now finds 9 ORA and 31 GSEA pathways at the adjusted criterion, and on the heat-shock dataset 0 and 11, where 0.32.1 reported none; these are newly populated results, not corrected numbers. Both datasets still end with check 10 at REVIEW_REQUIRED, now only because g:Profiler recognises none of their RefSeq gene identifiers. GO results from g:Profiler can also differ for other references: a retry that paired converted query identifiers with an unconverted background was removed, and GO via g:Profiler is now reported as unavailable when the identifiers do not convert; no bundled dataset's GO result changed. Separately, organisms without an annotation package now also receive annotation-transfer enrichment, written to new files under `results/enrichment/transfer/` with check 25; existing output files are unchanged by it. KEGG content depends on the KEGG release at retrieval, and STRING content on the recorded STRING 12.0 snapshot. Synthetic regressions establish these corrected contracts; the seven bundled datasets carried over from 0.32.1 were rerun under 0.33.0, and the two new ones were run for the first time (see Validation).
+
+Minor release: KEGG identity repair, annotation-transfer enrichment for organisms without a curated annotation package, and two bundled non-model datasets, *Magnaporthe oryzae* and sorghum. Count matrices, differential-expression tables and every recorded count are unchanged. All nine bundled datasets were run from the installed 0.33.0 Windows package through the interface alone, and all nine passed: every run completed without a FAIL. The seven datasets carried over from 0.32.1 reproduced their 0.32.1 results byte for byte, and the two new ones are recorded for the first time.
+
+### Added
+
+- **Annotation-transfer enrichment for organisms without a curated annotation package (*scientific*).** A new route runs over-representation and GSEA against the Gene Ontology, Reactome and InterPro term sets STRING 12.0 distributes for each of its genomes, whose terms STRING transfers by orthology (Szklarczyk et al. 2023). It runs by itself for an organism with a STRING taxon and no OrgDb (Analysis settings → Output options → Annotation transfer: Automatic), writes to `results/enrichment/transfer/` with a dot plot and a provenance record, and reports in check 25, in the HTML report and in the run summary. Gene identifiers are matched to STRING proteins through STRING's alias file, never its sequence-similarity aliases; an identifier naming several proteins is excluded, genes sharing a protein are collapsed, a protein whose genes changed in opposite directions is left out of every set and of the universe, which is otherwise the mapped tested genes, those with an adjusted p-value; every category and direction is corrected separately. The STRING files are downloaded once into the project with their retrieval date and checksum. On the bundled *Fusarium* spores dataset, 91.9% of the genes with an adjusted p-value map and 13 GO biological-process terms are over-represented and 222 enriched by GSEA, where no GO result was available before.
+- **Imported eggNOG-mapper and KofamScan annotation.** An eggNOG-mapper `.emapper.annotations` file adds GO terms, propagated to their ancestors, and KEGG reference pathways from its KO column; a KofamScan or KofamKOALA table adds KEGG reference pathways from its KO calls. KO-to-pathway links come from the live KEGG REST service. Maps under KEGG's Organismal Systems, Human Diseases and Drug Development groups are excluded, since nothing restricts them to the organism's lineage. Protein ids are matched to genes through the project annotation, and the check judges how many imported ids resolve to genes, not how many genes carry a term. Both files are chosen under Analysis settings → Output options, and either one turns the route on.
+- **Two bundled non-model datasets.** *Magnaporthe oryzae* wild type against a deletion of the carbon catabolite repressor MoCreA (GEO GSE153084; Hong et al. 2021), and sorghum shoots under sulfur deficiency (GEO GSE184725, RNA-seq arm; Sotta et al. 2022). Neither organism has an OrgDb, so both use annotation-transfer enrichment, and *M. oryzae* exercises the repaired KEGG identity check.
+
+### Fixed
+
+- **KEGG enrichment runs for organisms KEGG names differently from the catalogue (*scientific*).** See the notice above. A per-code record of 13 identities, each verified against NCBI Taxonomy and the KEGG GENOME record, lives in `workflow/scripts/kegg_identity_records.tsv`, so existing projects receive it through the workflow update.
+- **g:Profiler says when it recognises none of the gene identifiers (*scientific*).** An empty g:Profiler result now reports how many significant and tested ids g:Profiler recognised; on the RefSeq *Fusarium* reference it recognises none, and the summary says GO via g:Profiler is unavailable instead of reporting zero terms. A retry that sent converted query ids with an unconverted background was removed.
+- **The application no longer aborts at exit (0xC0000409).** A background thread started with the window, the WSL work-directory probe, could outlast the three-second wait when the window closed on a cold machine; its QThread was then destroyed while running and Qt aborted the process. The application now waits up to 15 s for running threads after the window closes, and leaves without destroying any that still run. The interactive network's web views are also deleted before the event loop ends.
+- **The interactive network packs disconnected components.** Its layout requested component packing, but the library that performs it was not loaded, so the option did nothing. The library is now bundled; on a test network the share of the canvas the components fill rose from 0.31 to 0.51.
+- **Programs started from the Linux build no longer inherit its library path.** The frozen Linux build points `LD_LIBRARY_PATH` at its bundled libraries; pipeline rules, `snakemake --unlock`, environment setup and tool probes now receive the caller's original value.
+- **`bulkseq check` reports what the Start button checks.** It validated the sample sheet alone, so it passed a project the interface blocks: a design column missing from the sheet, a raw-read route without a reference, a missing input table, or enrichment with no organism. Both now call one implementation, and a test compares them on fixture projects.
+- **The custom gene-set check reaches `sanity_checks.txt`.** It was left out of the fixed list the summary reads, and it now counts toward the overall status.
+- **Report sample labels match the figures.** The run summary and the report labelled samples over every sample-sheet row, while the figures label only the samples the model retained, so a repeated library name surviving once gained a sample-id suffix in the reports alone.
+- **Exported sample sheets drop an all-blank `library_name` column,** as saved sheets already did.
+- **The application's check summary has an Overall line,** identical to the workflow's for the same check files.
+
+### Changed
+
+- **Check 01 applies one replicate rule before and during the run.** The workflow's copy now warns below three biological replicates and flags empty or unknown conditions, as the interface did, so a two-versus-two design reads WARNING in `sanity_checks.txt` too (pasilla and the UME6 subset change from PASS to WARNING; no overall status changes).
+- **Check 22's warning says which kind it is:** "not assessable" when replicate structure could not be assessed, "advisory finding" when replicates cluster no more tightly than other conditions.
+- **Check numbers.** The custom gene-set check moves from 11, which it shared with the microarray normalisation check, to 24; annotation transfer is check 25.
+- **Application dependencies:** numpy 2.5.3, pandas 3.0.6 and PyInstaller 6.22.3. The workflow environment is unchanged.
+
+### Documentation
+
+- The enrichment page describes annotation-transfer enrichment: when it runs, how genes reach STRING proteins, what the imports add, how check 25 judges coverage, and its limits. The checks page lists checks 24 and 25 and the new wording of checks 01 and 22, and the design page states that one contrast is analysed per project.
+- The tutorial's dataset table, the version notices and the README list all nine bundled datasets with their 0.33.0 results.
+- The README and the site describe the application as running on Windows and Linux, the platforms with published packages, instead of calling it cross-platform.
+- The README and the site ask you to cite the exact release recorded in your run summary, and the benchmark results they state are those of the bundled datasets.
+
+### Known limitations
+
+- Rice maps 61.0% of its genes with an adjusted p-value to STRING proteins, so its check 25 reads WARNING.
+- Annotation transfer does not run in multi-study meta-analysis mode.
+- The STRING cache manifest records MD5 checksums, not SHA-256.
+- Automatic activation is decided from the configuration: an OrgDb that fails to load during the run does not fall back to annotation transfer.
+- Annotation transfer has no identity check on the configured STRING taxon beyond the share of genes that map.
+- A KofamScan import can still yield a few animal-lineage maps filed under Environmental Information Processing, such as cell adhesion molecules and HIF-1 signalling.
+
+### Validation
+
+- All nine bundled datasets were run one after another from the installed 0.33.0 Windows package, through the interface alone, with 24 threads and 58 GB, and all nine passed: every run completed without a FAIL. The package was installed over 0.32.1 through the setup wizard. Those runs used a 0.33.0 build from before the release review, whose fixes touch only report ordering, the run summary, figure regeneration and configuration parsing; pasilla was then rerun through the final installed build with identical results and the same pinned hashes. Significant genes are counted at padj < 0.05 with no fold-change filter.
+- Byte-identical to the 0.32.1 runs, in the count matrix and differential-expression tables of the read-based datasets and in the limma table and statistics files of the microarray datasets: pasilla, 7,532 genes tested and 467 significant; yeast UME6, 5,967 and 97; Arabidopsis hub2-3 on the microarray route, 21,323 and 1,401; yeast cbc2 on the microarray route, 5,683 and 486; *Fusarium* spores vs mycelium, 9,028 and 5,734, with 2,723 up and 2,478 down at |log2FC| > 1; *Fusarium* heat shock, 8,280 and 5,836; rice CY1000, 23,935 and 12,171. Pasilla's strandedness re-count control passed against the installed 0.33.0 run: recounting reproduces the pinned count and DESeq2 hashes, flipping one sample's strandedness moves both and check 21 names the sample, and restoring it restores both.
+- KEGG on *Fusarium*: every gene reported in the 9 spores and 11 heat-shock pathways belongs to that pathway's gene set as retrieved separately from KEGG's REST service, with matching set sizes. A same-day rerun of the enrichment step with the 0.32.1 and 0.33.0 workflows on all seven earlier projects left every enrichment table byte-identical for the five other datasets.
+- Recorded for the first time: *M. oryzae* ΔMocreA, 9,777 and 4,778, unstranded, 90–93% of reads uniquely mapped, KEGG 12 ORA and 23 GSEA pathways through the recorded `mgr` identity, and annotation transfer mapping 99.4% of the genes with an adjusted p-value, with 27 GO biological-process terms over-represented and 147 enriched by GSEA; sorghum under sulfur deficiency, 20,591 and 302, reverse-stranded, 93–95% uniquely mapped, KEGG 6 and 34, and annotation transfer mapping 90.5% with 23 and 210.
+- The biology stated before the two new runs was recovered. In ΔMocreA, carbohydrate use rises, as expected when carbon catabolite repression is lost: sugar-transporter domains (InterPro IPR005828, NES +2.73), carbohydrate metabolic process (GO:0005975, +1.75), polysaccharide catabolic process (GO:0000272, +1.83), glycoside hydrolase family 3 (IPR001764, +2.11) and KEGG starch and sucrose metabolism (+2.11). Under sulfur deficiency, the most significant sorghum gene is RESPONSE TO LOW SULFUR 4, up-regulated; ATP sulfurylase and SulP-family sulfate transporters rise; sulfate assimilation and sulfur compound metabolic process are over-represented among up-regulated genes; and all 14 GSEA terms naming sulfur have a positive NES, with KEGG sulfur metabolism at +2.26.
+- Annotation transfer against curated annotation, on yeast, fly and Arabidopsis, which have both: STRING's transferred GO biological-process annotation has precision 0.80–0.87 and recall 0.77–0.82 against the organism's OrgDb. The sets of GSEA terms significant under each route overlap with Jaccard 0.22–0.63, and on the shared terms the NES sign agrees in every case, with Spearman ρ 0.91–0.97.
+- Controls for the transfer route: three gene-label permutations of *Fusarium* spores gave no over-represented term in any category and at most one GSEA term; a hypergeometric test and BH correction written separately in Python reproduce the route's p-values and adjusted values, and the test fails when the correction is dropped or sequence-similarity aliases are admitted; a KO table built from KEGG's own `fgr` gene–KO links reproduces exactly every one of the 152 `fgr` pathway gene sets that contain a tested gene (KEGG lists 153; the other contains none).
+- KEGG identity: all 45 KEGG-coded catalogue organisms pass against a snapshot of the KEGG organism registry, and ten negative controls, among them a wrong species, a genus-only name, an unrelated taxon, a wrong code and an unrecorded synonym, are refused.
+- Exit: on the installed build, 10 of 10 closes, and 3 of 3 closes after WSL was stopped, left no crash event.
+- Test suites on the release tree: Windows, 1,367 passed and 8 skipped; Linux under WSL, 1,339 passed and 36 skipped. The skips are branches for the other platform and the opt-in live KEGG test; the strandedness re-count control, skipped by default, ran separately and passed. macOS is covered by the CI test job only, and the pipeline itself has not been run on macOS.
+
 ## 0.32.1 — 2026-09-26
 
 Patch release: documentation, the command line, the documentation site, and fixes to the interface, the installer and the space-reclaim script. Nothing under `workflow/` changed, so every analysis output is as 0.32.0 produced it. All seven bundled datasets were rerun from the installed 0.32.1 Windows package through the interface and passed: every run completed without a FAIL, and pasilla, rice and both *Fusarium* datasets reproduced their recorded results (see Validation). The workflow version moves with the application version, so an existing project re-copies an identical workflow on its next run.
@@ -42,7 +103,7 @@ Patch release: documentation, the command line, the documentation site, and fixe
 
 ## 0.32.0 — 2026-09-18
 
-> **Scientific output changes.** Count-matrix imports that contain malformed values, negative fractions or undeclared fractional values are now rejected instead of being converted or rounded silently. Explicitly admitted RSEM/tximport estimated counts retain the existing rounding route. Microarray probes assigned to multiple distinct genes are now excluded before gene-level collapse instead of being assigned to the first listed gene. GSEA now retains independently filtered rows with a finite route-specific rank and finite raw p-value even when the adjusted p-value is missing; the ORA tested family is unchanged. Fallback KEGG rankings now reduce source aliases once in the final GeneID space, so an already-ranked alias group can also change. Cross-study enrichment excludes unresolved one-to-many identifier mappings instead of selecting the first returned Entrez identifier and applies the configured per-study effect threshold instead of admitting every FDR-significant nonzero effect. Alternative-engine contrasts now distinguish condition labels that previously collapsed to the same R-safe coefficient name. Synthetic regressions establish these corrected contracts; the historical pasilla, *Fusarium*, rice, GEO microarray, enrichment and meta-analysis benchmark claims have not been rerun under 0.32.0.
+> **Scientific output changes.** Count-matrix imports that contain malformed values, negative fractions or undeclared fractional values are now rejected instead of being converted or rounded silently. Explicitly admitted RSEM/tximport estimated counts retain the existing rounding route. Microarray probes assigned to multiple distinct genes are now excluded before gene-level collapse instead of being assigned to the first listed gene. GSEA now retains independently filtered rows with a finite route-specific rank and finite raw p-value even when the adjusted p-value is missing; the ORA tested family is unchanged. Fallback KEGG rankings now reduce source aliases once in the final GeneID space, so an already-ranked alias group can also change. Cross-study enrichment excludes unresolved one-to-many identifier mappings instead of selecting the first returned Entrez identifier and applies the configured per-study effect threshold instead of admitting every FDR-significant nonzero effect. Alternative-engine contrasts now distinguish condition labels that previously collapsed to the same R-safe coefficient name. Synthetic regressions establish these corrected contracts; the historical pasilla, *Fusarium*, rice and GEO microarray benchmark claims have not been rerun under 0.32.0.
 
 ### Fixed
 
@@ -56,13 +117,13 @@ Patch release: documentation, the command line, the documentation site, and fixe
 
 - **The cross-study report now uses the same native figure viewer as the main report.** `meta_analysis_report.html` no longer places an always-visible legacy overlay over the page. Its comparative figures open in a labelled modal dialog with Fit, Actual size and zoom controls; Escape and Close return focus to the figure trigger, and the dialog keeps keyboard focus within the viewer. The shared main-report component is an explicit workflow input for the meta-report rule, so a viewer repair regenerates cached cross-study reports. The figures and tables are unchanged.
 - **Sortable report tables retain their header semantics.** Main and cross-study report headers remain column headers and contain one native labelled sort button. Mouse, Enter and Space cycle ascending, descending and the source order without changing saved results. `aria-sort` identifies only the active column, and the focus indicator remains visible in the report's light and dark presentations. Machine, imported-results provenance and full-configuration key/value tables now expose their left cells as row headers. Numeric sorting continues to use stored values when displayed text is grouped.
-- **Cross-study enrichment foregrounds match published per-study DEG tables (*scientific*).** Each study's enrichment foreground now uses the same configured FDR and absolute log2-fold-change thresholds as its `upregulated.csv` and `downregulated.csv` tables. The strict FDR boundary remains `padj < alpha`, the effect boundary remains inclusive, and an exact zero effect is neutral when the configured threshold is zero. Nonfinite or missing adjusted p-values and effects are excluded. The resulting table selections are restricted to the shared tested universe and the same accepted ambiguity-aware mappings before enrichment; the convergent `meta_sig` policy, pooling models and universe definition are unchanged. Synthetic base-R regressions cover positive and zero thresholds, both directions, exact boundaries, missing and nonfinite values, shared-only genes and mapping ambiguity. No real study, enrichment analysis or published benchmark was rerun.
+- **Cross-study enrichment foregrounds match published per-study DEG tables (*scientific*).** Each study's enrichment foreground now uses the same configured FDR and absolute log2-fold-change thresholds as its `upregulated.csv` and `downregulated.csv` tables. The strict FDR boundary remains `padj < alpha`, the effect boundary remains inclusive, and an exact zero effect is neutral when the configured threshold is zero. Nonfinite or missing adjusted p-values and effects are excluded. The resulting table selections are restricted to the shared tested universe and the same accepted ambiguity-aware mappings before enrichment; the convergent `meta_sig` policy, pooling models and universe definition are unchanged. Synthetic base-R regressions cover positive and zero thresholds, both directions, exact boundaries, missing and nonfinite values, shared-only genes and mapping ambiguity. No real study or enrichment analysis was rerun.
 - **Wilcoxon small-sample wording is qualitative.** The sensitivity check now describes exact p-value discreteness and limited power for small groups instead of claiming that a two-sided p-value below 0.05 is unattainable whenever the smaller group has fewer than five samples. The Wilcoxon statistic, adjusted p-values, diagnostic status and differential-expression calls are unchanged; a pinned R 4.5.2 regression covers the exact 4-v-4 counterexample.
-- **Alternative-engine contrasts retain raw condition identity (*scientific*).** edgeR quasi-likelihood, limma-voom and microarray limma now construct the configured numerator-minus-denominator comparison as a positional numeric contrast. Distinct admitted condition levels containing spaces, hyphens or dots, including `A-B` and `A.B`, therefore cannot collapse into the zero contrast `A.B - A.B`, and a sample-sheet column named `grp` cannot shadow the configured contrast factor during model construction. Synthetic internal variable names prevent group/covariate coefficient collisions; coefficient names are unique but do not define the estimand. Fixed-seed synthetic fits for all three engines agree numerically with an independently constructed clean-label design and numeric contrast, retain the expected effect direction, preserve sample identities, and preserve ordinary-label results. The additive group-means design, covariate values, thresholds, fitting methods and package pins are unchanged; interactions remain rejected. No real study or published benchmark was rerun.
-- **GSEA eligibility is separated from ORA eligibility (*scientific*).** Built-in OrgDb, g:Profiler fallback, KEGG-only and custom gene-set routes admit a row to the ranked population when its adjusted p-value is missing but its selected rank and raw p-value are finite. Main enrichment retains its established signed-statistic choice and fallback after route-specific QC and identifier acceptance; custom enrichment intentionally remains ranked by log2 fold change. An additional adjusted-p-missing row without a finite raw p-value, including a DESeq2 Cook's-distance outlier, and an additional row with a nonfinite selected rank remain excluded; legacy adjusted-p-finite rows keep their supported eligibility. The ORA tested universe, foregrounds, identifier bridge, ambiguity policy and direction-conflict collapse remain isolated. Full eligible mapped aliases use the established median reducer, while an ORA conflict cannot re-enter through a rank-only alias. Fallback KEGG routes reduce all eligible source scores once after the final GeneID bridge instead of taking a median of already-collapsed aliases; this can change already-ranked alias groups as well as restore adjusted-p-missing genes. Tables lacking raw-p evidence retain legacy eligibility. Synthetic offline R regressions cover exact ranks and ORA sets across all routes, metric fallback, empty ORA, duplicate and nonfinite accounting, alias conflicts and helper dependency tracking; no live enrichment service, real study or published benchmark was rerun.
-- **Count-matrix validation is strict and shared by the interface and copied workflow (*scientific*).** Missing, nonnumeric, nonfinite and negative cells are rejected before rounding or output creation, so `-0.1` cannot become zero and malformed cells cannot become counts. Any fractional value now requires the explicit estimated-count declaration; admitted RSEM/tximport estimates use the existing round-half-to-even convention, while integer text is preserved without conversion through binary floating point. At least half of the column totals falling within 1% of one million produces a normalized-data suspicion warning, not a categorical TPM rejection, because valid integer libraries can have the same total. The copied workflow treats its ingest entrypoint and validator as inputs, so a change to either re-runs the import rather than reusing stale counts. Entry-point regressions cover text, blank/NA, NaN/infinity, a single fraction among integers, a small negative, exact million-count totals, large integers and an independent decimal rounding oracle. These are R-free synthetic checks, not a reproduction of published benchmarks.
-- **Microarray probe annotation is ambiguity-aware before MaxMean collapse (*scientific*).** Ordinary symbol fields are parsed across all `//` and `///` candidates. Affymetrix `gene_assignment` is parsed as `///`-separated records whose second `//`-separated field is the symbol, so transcript, description and other fields are not mistaken for genes. Repeated annotation rows and repeated transcripts are combined by probe and deduplicated; exactly one distinct gene is retained, while ambiguous, unknown and missing-annotation probes are excluded. `probe_gene_map.tsv` records the raw annotations, complete sorted candidates, classification and annotation-row count with escaped control characters, and check 12 reports each exclusion count. Local gene-level matrices retain direct identifiers. Synthetic R regressions cover order invariance, repeated same-gene assignments, unresolved mappings, evidence escaping, mapping coverage and an independent expected MaxMean matrix. No GEO study or published benchmark was rerun.
-- **Cross-study enrichment uses the main enrichment route's ambiguity-aware identifier resolver (*scientific*).** Official-identifier routing, configured keytype handling and alias fallback retain the established main-analysis policy. Duplicate copies of one source-to-Entrez pair collapse harmlessly; unresolved one-to-many and cross-keytype mappings are excluded from both the shared universe and every study/convergent foreground instead of inheriting database row order. `meta_enrichment_mapping.tsv` records every accepted, unmapped and ambiguous source identifier, its candidates, resolution route and foreground memberships. Check 18 reports universe and foreground coverage and remains `REVIEW_REQUIRED` when ambiguity was excluded, including when enrichment later skips for small gene sets or no terms. Synthetic offline regressions establish order invariance and exact set membership; no real study, enrichment service, benchmark or published result was rerun.
+- **Alternative-engine contrasts retain raw condition identity (*scientific*).** edgeR quasi-likelihood, limma-voom and microarray limma now construct the configured numerator-minus-denominator comparison as a positional numeric contrast. Distinct admitted condition levels containing spaces, hyphens or dots, including `A-B` and `A.B`, therefore cannot collapse into the zero contrast `A.B - A.B`, and a sample-sheet column named `grp` cannot shadow the configured contrast factor during model construction. Synthetic internal variable names prevent group/covariate coefficient collisions; coefficient names are unique but do not define the estimand. Fixed-seed synthetic fits for all three engines agree numerically with an independently constructed clean-label design and numeric contrast, retain the expected effect direction, preserve sample identities, and preserve ordinary-label results. The additive group-means design, covariate values, thresholds, fitting methods and package pins are unchanged; interactions remain rejected. No real study was rerun.
+- **GSEA eligibility is separated from ORA eligibility (*scientific*).** Built-in OrgDb, g:Profiler fallback, KEGG-only and custom gene-set routes admit a row to the ranked population when its adjusted p-value is missing but its selected rank and raw p-value are finite. Main enrichment retains its established signed-statistic choice and fallback after route-specific QC and identifier acceptance; custom enrichment intentionally remains ranked by log2 fold change. An additional adjusted-p-missing row without a finite raw p-value, including a DESeq2 Cook's-distance outlier, and an additional row with a nonfinite selected rank remain excluded; legacy adjusted-p-finite rows keep their supported eligibility. The ORA tested universe, foregrounds, identifier bridge, ambiguity policy and direction-conflict collapse remain isolated. Full eligible mapped aliases use the established median reducer, while an ORA conflict cannot re-enter through a rank-only alias. Fallback KEGG routes reduce all eligible source scores once after the final GeneID bridge instead of taking a median of already-collapsed aliases; this can change already-ranked alias groups as well as restore adjusted-p-missing genes. Tables lacking raw-p evidence retain legacy eligibility. Synthetic offline R regressions cover exact ranks and ORA sets across all routes, metric fallback, empty ORA, duplicate and nonfinite accounting, alias conflicts and helper dependency tracking; no live enrichment service or real study was rerun.
+- **Count-matrix validation is strict and shared by the interface and copied workflow (*scientific*).** Missing, nonnumeric, nonfinite and negative cells are rejected before rounding or output creation, so `-0.1` cannot become zero and malformed cells cannot become counts. Any fractional value now requires the explicit estimated-count declaration; admitted RSEM/tximport estimates use the existing round-half-to-even convention, while integer text is preserved without conversion through binary floating point. At least half of the column totals falling within 1% of one million produces a normalized-data suspicion warning, not a categorical TPM rejection, because valid integer libraries can have the same total. The copied workflow treats its ingest entrypoint and validator as inputs, so a change to either re-runs the import rather than reusing stale counts. Entry-point regressions cover text, blank/NA, NaN/infinity, a single fraction among integers, a small negative, exact million-count totals, large integers and an independent decimal rounding oracle. These are R-free synthetic checks.
+- **Microarray probe annotation is ambiguity-aware before MaxMean collapse (*scientific*).** Ordinary symbol fields are parsed across all `//` and `///` candidates. Affymetrix `gene_assignment` is parsed as `///`-separated records whose second `//`-separated field is the symbol, so transcript, description and other fields are not mistaken for genes. Repeated annotation rows and repeated transcripts are combined by probe and deduplicated; exactly one distinct gene is retained, while ambiguous, unknown and missing-annotation probes are excluded. `probe_gene_map.tsv` records the raw annotations, complete sorted candidates, classification and annotation-row count with escaped control characters, and check 12 reports each exclusion count. Local gene-level matrices retain direct identifiers. Synthetic R regressions cover order invariance, repeated same-gene assignments, unresolved mappings, evidence escaping, mapping coverage and an independent expected MaxMean matrix. No GEO study was rerun.
+- **Cross-study enrichment uses the main enrichment route's ambiguity-aware identifier resolver (*scientific*).** Official-identifier routing, configured keytype handling and alias fallback retain the established main-analysis policy. Duplicate copies of one source-to-Entrez pair collapse harmlessly; unresolved one-to-many and cross-keytype mappings are excluded from both the shared universe and every study/convergent foreground instead of inheriting database row order. `meta_enrichment_mapping.tsv` records every accepted, unmapped and ambiguous source identifier, its candidates, resolution route and foreground memberships. Check 18 reports universe and foreground coverage and remains `REVIEW_REQUIRED` when ambiguity was excluded, including when enrichment later skips for small gene sets or no terms. Synthetic offline regressions establish order invariance and exact set membership; no real study or enrichment service was rerun.
 - **Project destinations are checked before scaffolding.** Project names `.` and `..`, resolved paths outside the selected working directory, and symlink or junction targets that escape it are refused. A non-empty existing directory now requires explicit overwrite whether or not it is already a BulkSeq Studio project; an existing file is never overwritten. An empty directory remains a valid new target. The command line and interface distinguish an occupied non-project directory from an existing project, so their messages no longer assert that arbitrary files are a recognized project.
 - **Workflow synchronization is verified and fail-closed.** Before replacing an outdated or legacy copied workflow, the application stages a complete copy, verifies its content digest, and promotes it with rollback if promotion fails. A valid recorded digest that disagrees with the project workflow now blocks the run without overwriting local files. A copy without a valid digest is repaired only when its actual tree matches the trusted bundled tree; otherwise it stops for review. A valid legacy recorded workflow is upgraded with the original tree retained in a project-local backup. The command line and interface stop before creating a runner when synchronization fails, and the run report distinguishes the actual execution-tree digest from the bundled-workflow identity. Re-run only after reviewing any reported local workflow edits.
 - **Command-line sample-sheet checks follow the configured input route.** `bulkseq project info`, `samples show`, and `check` now read `input.samples`, including project-relative and absolute paths, instead of silently using `config/samples.tsv`. `check` permits pending reads only on SRA and processed-input routes; local FASTQ paths remain required. Relative FASTQ cells are resolved against the selected project even when the command is invoked from another directory. `samples show` and `check` name a missing or malformed configured sheet; `project info` retains its established zero-sample fallback for an unreadable sheet.
@@ -215,7 +276,7 @@ Patch release: guards, messages, interface and documentation corrections from th
 
 ### Changed
 
-- **Documentation.** The site landing page carries a notice for the 0.29.0 output changes, and a docs gate now requires such a notice for any changelog entry marked scientific; the archive section states which deposited output classes predate 0.29.0; the README qualifies the meta-analysis p-value statement (finite up to a combined |Z| of about 38; per-study p-values at the double-precision floor still saturate it); the analysis page states the built-in over-representation universe (tested genes), the STRING version default and where the realized version and query date are printed, the two-level contrast rule with the interaction-formula refusal, and the per-study meta-analysis design; the outputs page documents the mapping (06) and assignment (07) thresholds and the network pruning rule; the FAQ's S. pombe KEGG explanation states the catalogue's key form and the open locus-tag question.
+- **Documentation.** The site landing page carries a notice for the 0.29.0 output changes, and a docs gate now requires such a notice for any changelog entry marked scientific; the README qualifies the meta-analysis p-value statement (finite up to a combined |Z| of about 38; per-study p-values at the double-precision floor still saturate it); the analysis page states the built-in over-representation universe (tested genes), the STRING version default and where the realized version and query date are printed, the two-level contrast rule with the interaction-formula refusal, and the per-study meta-analysis design; the outputs page documents the mapping (06) and assignment (07) thresholds and the network pruning rule; the FAQ's S. pombe KEGG explanation states the catalogue's key form and the open locus-tag question.
 
 ## 0.29.0 — 2026-09-08
 
@@ -287,7 +348,7 @@ Patch release: guards, messages, interface and documentation corrections from th
 
 ## 0.27.0 — 2026-08-10
 
-> **Release status:** 0.27.0 is a local acceptance-test candidate. Its Windows installer and portable archive, Linux AppImage and zsync metadata, and Linux portable archive have not been published. The current public GitHub release and latest deposited Zenodo benchmark snapshot remain 0.26.6 until explicit release approval.
+> **Release status:** 0.27.0 is a local acceptance-test candidate. Its Windows installer and portable archive, Linux AppImage and zsync metadata, and Linux portable archive have not been published. The current public GitHub release remains 0.26.6 until explicit release approval.
 
 ### Changed
 
@@ -300,7 +361,7 @@ Patch release: guards, messages, interface and documentation corrections from th
 - **A saved pre-run pass could outlive the inputs it described.** Input validation now stores a content fingerprint over the configuration, configured sample sheet, local input files, reference locks, and index contents. Launch and resume compare that state with the current project, including same-size file replacements and index-shard changes; missing or unreadable inputs, unsupported direct URLs, unsafe symlink or junction escapes, malformed manifests, and over-broad directory materialization fail closed. Unchanged files reuse recorded content digests, and initial hashing and revalidation are cancellable without blocking the GUI thread.
 - **Imported differential-expression tables could be accepted from a short preview and later be reinterpreted by the workflow.** The GUI and R ingest now validate the complete CSV/TSV with matched field counts and aligned UTF-8, Windows-1252, and Latin-1 handling; require unique, nonblank, whitespace-safe gene IDs; reject malformed, non-finite, or out-of-range numeric fields; accept canonical missing values only where finite data remain; and reject a supplied statistic whose sign contradicts the confirmed log2-fold-change direction. The verified project copy is bound to its SHA-256, byte size, row count, column schema, selected columns, import timestamp, and source-direction record before Snakemake can ingest it.
 - **Imported-result provenance could incorrectly inherit a local contrast, DESeq2 model, shrinkage method, or adjustment label.** Direction now comes only from the explicitly confirmed source numerator and denominator; stale local design fields cannot change it. Reports and exports state that no local differential-expression model or shrinkage ran, identify the upstream method and p-adjustment only when recorded, omit inactive read-processing and local-model settings, and exclude stale count-dependent figures. Unknown adjustment methods remain generic rather than being called Benjamini–Hochberg.
-- **The imported-results preranked export could use an undocumented upstream statistic.** `ranked_genes.rnk` now ranks imported rows by the confirmed `log2FoldChange`; locally fitted routes retain their model statistic. This is the only intentional scientific-output change in 0.27.0: it affects the exported ranking for results-only projects and may cause previously tolerated malformed or provenance-incomplete imports to stop. The local FASTQ, count-matrix, and microarray statistical routes and the deposited 0.26.6 benchmark claims are unchanged.
+- **The imported-results preranked export could use an undocumented upstream statistic.** `ranked_genes.rnk` now ranks imported rows by the confirmed `log2FoldChange`; locally fitted routes retain their model statistic. This is the only intentional scientific-output change in 0.27.0: it affects the exported ranking for results-only projects and may cause previously tolerated malformed or provenance-incomplete imports to stop. The local FASTQ, count-matrix, and microarray statistical routes are unchanged.
 - **Run provenance could list tools and inputs that were configured but inactive.** Run summaries now report the selected trimmer, rRNA tool, contamination screen, DE engine, operating system and architecture, and recorded R/BLAS/LAPACK details for the route that actually ran; study-design export follows the configured sample-sheet path instead of assuming `config/samples.tsv`.
 - **A successful frozen WebEngine probe could terminate with a Windows fast-fail during interpreter shutdown.** The self-test now closes and deferred-deletes its Chromium views while the Qt event loop is still alive, then exits after deferred destruction; a passing sentinel and a zero process exit are both required.
 - **Silent upgrades could wait indefinitely behind an invisible existing-version prompt.** Explicit `/SILENT` and `/VERYSILENT` installs now take the normal fresh-update path without opening the interactive three-way dialog; interactive installs retain the update, uninstall, and cancel choices.
@@ -316,218 +377,42 @@ Patch release: guards, messages, interface and documentation corrections from th
   guarantee does not transfer to such a subset, and the filter is not independent of the
   p-values: a gene with strong opposing per-study effects has both a small combined p-value and a
   high chance of being discordant, so discordant genes crowded the low tail, raised the cutoff and
-  admitted null genes that then survived the filter. Measured in B19's discordance arm, which
-  plants only discordant genes and therefore contains no true positive, the combination reported
-  **58 meta-DEGs across five runs, every one a false positive**, at approximately α × (discordant
-  rejections) per run. The correction restricts the family to concordant genes before adjusting;
+  admitted null genes that then survived the filter. The correction restricts the family to concordant genes before adjusting;
   discordant genes keep their row and raw combined p-value but carry no adjusted value, because
-  they are not being tested. Re-run, the arm reports **1** gene across five runs, and the power
-  arm improves slightly because the tested family is smaller. Anyone who has run a meta-analysis
+  they are not being tested. Anyone who has run a meta-analysis
   should re-run it: the differentially expressed gene set changes.
 - **The meta-volcano would have drawn discordant genes as the most significant points.** With
   discordant genes carrying no adjusted p-value, `NA <= 0 | !is.finite(NA)` evaluates to TRUE, so
   the fit-all branch placed every one of them at the capped ceiling. The volcano now excludes
   genes with no adjusted p-value and states how many in its subtitle.
-- **B19's acceptance criteria missed the defect they existed to catch.** Criterion C asked only
-  whether discordant genes were kept out of the called set, never what the called set contained.
-  A new criterion F bounds the discordance arm's false-positive count; scored against the pre-fix
-  data it fails at 5 of 5 runs with a lower confidence limit of 0.478.
-- **Five release gates could not fail.** `check_typography.py` returned 0 unconditionally and, run
-  from outside the repository root, read no files while reporting "0 issues across 2 file(s)";
-  `build_main_tables.py` returned 0 regardless of its own checks, so deleting a table body
-  propagated silently into every deliverable; an early return made the article-wide placeholder
-  sweep unreachable; `check_b19` verified only the study-count stratum that decides the verdict,
-  which let a wrong three-study count stand in the manuscript; and `extract()` scanned forward
-  with no stop condition, so a missing table body made it return a different table's rows. Each is
-  now demonstrated to fail on an injected defect.
-- **B19 was not regenerable from the deposit.** Its simulator sources
-  `workflow/scripts/run_meta_analysis.R`, which lives outside `article/` and was never staged. The
-  archive builder now derives its external dependencies from what the deposited scripts actually
-  source.
-
-### Changed
-
-- **Benchmark archive deposited (Zenodo)** as version 0.26.6, [10.5281/zenodo.21833538](https://doi.org/10.5281/zenodo.21833538), under the concept DOI [10.5281/zenodo.20955660](https://doi.org/10.5281/zenodo.20955660), which resolves to it. This is the first deposit carrying the corrected meta-analysis; 0.26.4 and 0.26.5 were built but never deposited, and every earlier deposit describes software with the defect.
 
 ### Added
 
 - **`scripts/preflight.py`** runs every release gate in one command and reports which could not
-  run. The manuscript and benchmark gates cannot run in CI because `article/` is gitignored, so
-  they only ever run when someone runs them; a gate that cannot run is reported as a failure
-  rather than a pass.
+  run; a gate that cannot run is reported as a failure rather than a pass.
 
 ## 0.26.5 — 2026-08-06
 
-### Fixed
-
-- **B19 simulated from a defective dispersion estimate, and its central result changed when that
-  was corrected.** `make_sim_params.R` took `mcols(dds)$dispGeneEst`, the unshrunken gene-wise
-  maximum-likelihood estimate. That estimator collapses to the optimiser's lower boundary for any
-  gene whose observed variance sits at or below the Poisson expectation, which at six samples is
-  common: 4,203 of 10,303 genes (40.8%) carried dispersion 10⁻⁸, including 1,133 with a base mean
-  above 100, so two fifths of the simulation was very nearly Poisson. Using the maximum-a-posteriori
-  dispersions a DESeq2 analysis actually tests with puts 0.0% at the boundary. Re-simulated, the
-  complete-null rejection falls from 5 of 10 runs to 2 of 10, and the null-calibration criterion is
-  met — weakly, since at ten runs a true rate of 0.20 escapes the criterion 68% of the time, which
-  the manuscript now states rather than reporting the pass as a demonstration of control.
-- **B19's source count matrix was unnamed and unreproducible.** The manuscript said only "a real
-  count matrix"; no matrix available reproduced the deposited parameter file's row count. The
-  source is the pasilla count matrix, now named in the script, recorded in the output table, and
-  printed in the run log.
-- **B19 ran at one replicate count only.** Five replicates per group was hardcoded in four places,
-  so every conclusion was scoped to that design. The count is now `--reps`, and a ten-replicate arm
-  is deposited alongside. The power criterion passes at five replicates (+11 to +33 true positives
-  over the best single study) and **fails** at ten (−16 to +14, four runs of ten below the best
-  single study), while the combination's observed false-discovery rate stays at about half the best
-  single study's at both. Combining buys sensitivity when the constituent studies are individually
-  underpowered and specificity when they are not.
-- **The exact binomial interval was wrong for n ≥ 60.** `clopper_pearson` in `score_b19.py` returned
-  (1.0, 1.0) because the continued fraction for the regularised incomplete beta diverges above
-  x = (a+1)/(a+b+2) without the reflection identity. No reported interval was affected — B19 scores
-  ten runs and B17's 200-draw intervals come from R's `binom.test` — but the helper ships in the
-  archive. Fixed, and guarded by `score_b19.py --self-test` against values from `binom.test`.
-- **The B9 bread-wheat index was reported as two different measurements as though it were one.**
-  There are two Salmon indexes: 221,398 transcripts at 1.14 GB for the resource-scaling row and
-  216,567 at 1.18 GB for the end-to-end quantification. The Results quoted the first index's
-  transcript count and the second run's expressed-transcript count, and the two were labelled GiB
-  and GB, which do not reconcile. Both statements now name their index and use one unit.
-- **The deposited B17 figure was a superseded version** carrying the pre-correction rejection rates
-  and KEGG counts, contradicting the published Figure B17 and the B17 tables beside it.
+No application changes.
 
 ## 0.26.4 — 2026-08-06
 
-### Fixed
-
-- **B2's complete-null conclusion was scored on the wrong quantity, and the paper argues so
-  itself.** B17 and B19 both state that under a complete null every rejection is false, so the
-  Benjamini-Hochberg guarantee reduces to the probability that a run rejects at all, and B19's
-  correction of record says a count "made the arm incapable of failing". B2 nonetheless concluded
-  from a mean false-positive count that its null was well calibrated at ten replicates. Scored on
-  the run-level rate, B2 rejects in 5 of 5 null runs at n=5 and 2 of 5 at n=10, both exact
-  intervals lying above 0.05, and B18's own deposited per-seed table records 5 of 5 seeds
-  rejecting at the nominally identical design. Table 1, the B2 summary and B18's opening premise
-  are corrected.
-- **B15's marker claim was not supported and its evidence was not deposited.** The manuscript
-  named six canonical targets as "the most strongly up-regulated genes"; in the run's own DESeq2
-  table *FKBP5* ranks third by adjusted p and ninth by fold change among 125 up-regulated genes.
-  The panel is pre-specified, not top-ranked, and is now described that way. The per-gene table
-  and a marker panel are deposited, and the panel ships as Table B15b.
-- **B19's realism justification omitted a limitation of its own parameters.** 4,203 of 10,313
-  resampled rows carry the gene-wise dispersion estimator's lower boundary of 10⁻⁸, so about 41%
-  of simulated genes are near-Poisson and the absolute true-positive counts in the power arm are
-  optimistic. Disclosed.
-- **The documentation site contradicted the deposit on B19**, claiming 96% sensitivity, an
-  empirical false-discovery rate "about 1%", and that the null design showed type-I control. The
-  deposit records a true-positive rate of 0.65 to 0.72 and a failed null-calibration criterion.
-- **`manifest.sha256` was written with CRLF terminators**, so `sha256sum -c`, the command the
-  archive itself documents, failed on every line under GNU coreutils 8.32 and earlier.
-- **`REGENERABILITY.md` labelled a family "partly" regenerable with nothing regenerable.** The
-  verdict counted implemented scripts alone; it now accounts for whether the family deposits any
-  result, and a new "driver only" category separates code-without-output from the rest.
-- **Three accessions used to produce reported results were missing from the availability
-  statement** (SRA000299, GSE11045, DRR003149), and every image reference in the preprint
-  resolved from the wrong directory, so no figure rendered without an explicit resource path.
-- **Four table legends promised columns their tables did not carry.** B14 and B17.1 now deliver
-  the enumerated columns from their deposited sources; B20's legend describes the table as
-  delivered and points to the deposited files holding the per-sample split and the Salmon
-  cross-check.
-
-### Added
-
-- **Supplementary tables ship as a single workbook**, `Supplementary_Tables.xlsx`, one sheet per
-  table grouped by theme with a contents sheet, alongside the per-table CSV and DOCX. All three
-  forms are generated from the manuscript by the same script.
-- **`check_consistency.py` gained four gates**: every accession used in the text must appear in
-  the availability statement; the supplementary set must agree across CSV, DOCX, workbook and the
-  manuscript's own declaration; no deposited table may leave a ground-truth basis unresolved; and
-  the documentation site's version badge must match the application.
+No application changes.
 
 ## 0.26.3 — 2026-08-06
-
-### Changed
-
-- **Released as 0.26.3, aligning the application with the deposited benchmark archive.** Versions
-  0.26.0, 0.26.1 and 0.26.2 were never released: 0.26.0 and 0.26.1 carried benchmark, manuscript
-  and packaging work under version-string bumps, and 0.26.1 and 0.26.2 were archive builds each
-  superseded by review before deposit — 0.26.1 over an unsatisfiable form of the B19 null
-  criterion, 0.26.2 over six deposited tables that left a ground-truth basis unresolved. Their
-  entries below are kept as the record. The analysis path is unchanged across all of them:
-  `git diff v0.25.0..HEAD -- workflow app` is empty, so every benchmark reported against 0.26.x
-  ran against the same analysis code this release ships.
-- **Benchmark archive deposited (Zenodo)** as version 0.26.3, [10.5281/zenodo.21825754](https://doi.org/10.5281/zenodo.21825754), under the concept DOI [10.5281/zenodo.20955660](https://doi.org/10.5281/zenodo.20955660), which resolves to the latest version. Versions 0.26.1 and 0.26.2 were built but never deposited: each was superseded by review before it went out, 0.26.1 over an unsatisfiable form of the B19 null criterion and 0.26.2 over six deposited tables that left a ground-truth basis unresolved. The published chain therefore runs 0.26.0 to 0.26.3.
-
-### Added
-
-- **Two generators replace hand-maintained deliverables.** `article/scripts/build_main_tables.py`
-  derives Table 1, Table 2 and all nineteen supplementary tables from the manuscript; the
-  standalone Table 1 had stopped at B13 while the manuscript ran to B20, and three supplementary
-  tables carried values the manuscript contradicted. `article/scripts/check_consistency.py`
-  derives every checkable claim from the deposited tables and verifies it across the manuscripts,
-  README, documentation site and `CITATION.cff`, including that the archive description agrees
-  with the deposited acceptance table.
 
 ### Fixed
 
 - **The documentation site advertised v0.24.0 on all seven pages** while the application was at
-  0.26.x, and the FAQ's citation examples named version 0.24.0 under a superseded archive title.
-- **`build_b_tables.sh` is superseded and now refuses to run.** Its table bodies were hardcoded
-  heredocs that had drifted from the manuscript, and its final line invoked a build whose input
-  does not exist, killing the script after it had already rewritten `main.docx`.
+  0.26.x.
 
 ## 0.26.1 — 2026-08-06
 
-### Fixed
-
-- **B19's null-calibration criterion bounded a quantity that cannot fail, and the correct quantity fails.** The criterion compared the proportion of genes called under the complete null to 0.05. A Benjamini-Hochberg procedure at q = 0.05 can never call more than that fraction under the null, so the test passed trivially and concealed the result; B17 states the correct principle explicitly for the same situation, and B19 did the opposite. Measured as the run-level rejection rate, which is what Benjamini-Hochberg bounds when every rejection is false, the arm fails: 5 of 10 runs reject at least once, 4 of 5 at two studies, against a bound of 0.05. The combination is still a large improvement on its inputs, but the comparison that first appeared here was withdrawn: it set the combination's run-level rejection RATE against a mean of 19.4 false-positive COUNTS from B2, a different simulation at a different gene count and dispersion model. Measured on one quantity within one simulation, all 15 distinct constituent single studies reject in every null run against 5 of 10 for the combination. A two-study combination at that replicate count still does not control the family-wise error rate, and the manuscript says so.
-- **The second study in B19's real-data arm was unidentified.** It was described only as "kidney podocytes", with no accession, citation or design, so the arm could not be reproduced. It is Jiang et al. 2016 (GEO GSE80651, SRA SRP073810): three conditionally immortalised human podocyte lines from independent donors, 0.1 µM dexamethasone or vehicle for 24 hours. Now cited, referenced and listed under availability of data.
-- **B19's real-data arm reported only the panel that passed.** The scoring defines an induced and a suppressed marker panel and deposits both; the manuscript reported the induced panel and omitted the suppressed one, in which one gene is discordant between studies and two are not significant. Both are now reported, with the reason the negative panel is weak.
-- **Table 1 listed the airway libraries as B20 data.** They carry no strandedness call: they were quantified through the Salmon route and produced no alignment for either inference mechanism to read. Their actual role, as the best-documented library against which the independent cross-tool check was itself validated, is now stated.
-- **B19 and B20 rendered as subsections of "Availability and requirements".** They were inserted before the Discussion without accounting for that heading sitting between, and are now inside Results.
-- **The Discussion still declared the meta-analysis and strandedness detection unvalidated**, thirty lines after the two families that measure them.
-- **Figure 1 did not render in the built submission document.** Pandoc emits an SVG as a bare `<a:blip>` with no `r:embed`, so Word had no image part to draw. The DOCX build now substitutes the raster on a copy, leaving the markdown vector-first for every other output.
-- **Both tables in the built document had no borders or header styling**, because pandoc writes a `tblStyle` the reference template does not define. The existing `fix_docx_tables.py` is now wired into the build.
-- **Six of twenty figures shipped as vector only.** The rasterisation loop hardcoded fourteen filenames from an earlier revision; it now derives the list from disk and cross-checks it against the figure legends in the manuscript.
-- **The read-level determinism comparison was reported but not deposited.** `b10_readlevel_rerun.csv` now carries both re-runs: the rice STAR route against an earlier local run of the same accessions (identical gene set, Jaccard 1.0, maximum absolute log2 fold-change difference 0) and the rice Salmon route against the deposited results table (Jaccard 1.0, maximum difference 0.0894, the expected signature of its expectation-maximisation step).
-
-### Changed
+No application changes.
 
 ## 0.26.0 — 2026-08-06
 
-### Added
-
-- **Two benchmark families, both previously shipped but unmeasured.** **B19** benchmarks the
-  multi-study meta-analysis: four simulation arms driving the shipped combination directly
-  (null calibration, power against the best single study, direction concordance, between-study
-  heterogeneity), a real-data arm combining two independent human glucocorticoid experiments of
-  deliberately unequal power, and a gate arm confirming that designs which cannot support the
-  contrast are refused. **B20** benchmarks automatic library-strandedness detection across
-  documented, independently inferred and constructed libraries, scoring both inference
-  mechanisms separately and reporting the margin from each observed ratio to its decision
-  boundary. Acceptance criteria for both were fixed before the measurements were taken, and
-  both families are fully regenerable from the deposited code.
-
-### Changed
-
-- **Benchmark archive re-deposited (Zenodo).** The validation suite now covers twenty families
-  and is deposited as version 0.26.0, DOI
-  [10.5281/zenodo.21819488](https://doi.org/10.5281/zenodo.21819488). The concept DOI
-  10.5281/zenodo.20955660 is unchanged and continues to resolve to the latest version. The
-  archive holds 430 files with 281 released tables and figures under `manifest.sha256`, and
-  `REGENERABILITY.md` now records 52 of 103 scripts as implemented.
-
-### Fixed
-
-- **The KEGG background-correction result was measured on the wrong gene list.** The B17
-  scoring selected differentially expressed genes on adjusted p-value alone, while the pipeline
-  thresholds on adjusted p-value *and* raw fold change and submits the resulting up- and
-  down-regulated files. The earlier measurement therefore described a query the software never
-  issues, and it reported the correction as uniformly raising the significant-pathway count.
-  Rescored on the real query it reproduces the pipeline's own output exactly, and the direction
-  is dataset-dependent: it removes all four *Fusarium* pathways, leaves pasilla with none under
-  either background, adds two net on a rice STAR run and removes two net on a rice Salmon run.
-  The B17 null-control draws were sized on the same wrong list and were re-run; all three arms
-  still straddle the nominal 0.05 and the power arm still fails to separate, so both
-  conclusions of that family survive.
+No application changes.
 
 ## 0.25.0 — 2026-08-06
 
@@ -561,18 +446,6 @@ Patch release: guards, messages, interface and documentation corrections from th
   a container image carrying the full tool stack must be supplied first, and a green
   `--dry-run` proves the job graph is valid and nothing about whether a rule can execute.
 
-### Changed
-
-- **Benchmark archive re-deposited (Zenodo).** The validation suite now covers eighteen
-  families and is deposited as version 0.24.0, DOI
-  [10.5281/zenodo.21807799](https://doi.org/10.5281/zenodo.21807799). The concept DOI
-  10.5281/zenodo.20955660 is unchanged and continues to resolve to the latest version. The
-  archive is built by `article/scripts/build_zenodo_package.py`, which derives its version
-  from `app/constants.py`, and now ships `REGENERABILITY.md` stating per family how many of
-  its scripts are runnable code: 34 of 85 are implemented, so several families are deposited
-  as data only. Publishing that inventory keeps `REPRODUCE.md` from being read as a promise
-  the archive cannot keep.
-
 ### Fixed
 
 - **A config naming a file the project does not have now fails with a message that names the
@@ -604,15 +477,6 @@ Patch release: guards, messages, interface and documentation corrections from th
   it could not measure the file. It now positions per baseline, accepts single-quoted
   attributes and unit-suffixed root dimensions, and reports SKIP with a reason when its
   monospace width model does not apply.
-- **`article/scripts/seeds.yaml` contradicted its own data.** Three of four entries
-  disagreed with the results they govern: polyester recorded five seeds against six result
-  directories, B2 twenty against five, and B10 listed thread counts the determinism run never
-  used. It now records what each family ran, cites the deposited file each value came from,
-  and covers B3, B17 and B18.
-- **`b7_limma_validate.R` rounded a floating-point residual to zero.** `round(maxd, 4)`
-  printed the maximum absolute log2 fold-change difference as 0, a value it cannot take, so
-  the manuscript contradicted its own deposited table. It now uses `signif(maxd, 3)` and
-  reports 1.25e-14.
 
 ## 0.24.0 — 2026-08-04
 
@@ -755,7 +619,7 @@ Patch release: guards, messages, interface and documentation corrections from th
 
 ### Added
 
-- **Multi-study meta-analysis.** Two or more independent studies of the same comparison — a `dataset` (study-of-origin) column in the sample sheet with more than one study, and the new **Multi-study meta-analysis** switch on the Workflow Settings tab — can now be combined in a single differential-expression meta-analysis. Each study is analysed on its own with DESeq2 and filtered independently (HTSFilter), so a difference in platform, library preparation, or sequencing depth stays inside that study; only the per-study statistics are combined. The p-values are combined with `metaRNASeq`'s replicate-weighted inverse-normal method and the unshrunken log2 fold changes are pooled with a `metafor` effect-size model (fixed-effect for two studies, DerSimonian-Laird random-effect for three or more, reporting between-study heterogeneity I²/τ²). Because the inverse-normal combination is directionless, a gene whose fold-change direction disagrees across studies is flagged as discordant and never reported as a cross-study hit — a convergent meta-DEG is significant on the combined FDR and consistent in direction in every study. A dedicated, self-contained **cross-study report** (`meta_analysis_report.html`) shows the convergence/divergence summary, a meta-volcano, per-gene forest plots, a cross-study log2FC concordance scatter, a convergent-gene heatmap, and a `compareCluster` dotplot contrasting each study's up/down sets with the convergent sets; the convergent-gene table, a per-study differential-expression summary, and the cross-study enrichment table are written to `results/meta/` and appear in the Outputs tab. The comparative figures restyle with **Regenerate figures** like the rest, and a `comparative_meta` group is available in the per-figure style overrides. The joint DESeq2 that runs alongside automatically models study-of-origin as a covariate (a default `~ condition` design becomes `~ dataset + condition`, with a rank-deficiency fallback), and a hard sanity gate blocks a design in which the compared groups are perfectly confounded with study (no single study contains both arms). Studies must share one organism and gene-identifier namespace; a mismatch is flagged before the run. Validated on simulated ground truth (96% sensitivity at ~1% empirical FDR, null type-I control, discordant flagging, random-effect heterogeneity recovery) and on two independent human glucocorticoid studies that recover the conserved FKBP5/KLF15/TSC22D3/DUSP1 signature convergently.
+- **Multi-study meta-analysis.** Two or more independent studies of the same comparison — a `dataset` (study-of-origin) column in the sample sheet with more than one study, and the new **Multi-study meta-analysis** switch on the Workflow Settings tab — can now be combined in a single differential-expression meta-analysis. Each study is analysed on its own with DESeq2 and filtered independently (HTSFilter), so a difference in platform, library preparation, or sequencing depth stays inside that study; only the per-study statistics are combined. The p-values are combined with `metaRNASeq`'s replicate-weighted inverse-normal method and the unshrunken log2 fold changes are pooled with a `metafor` effect-size model (fixed-effect for two studies, DerSimonian-Laird random-effect for three or more, reporting between-study heterogeneity I²/τ²). Because the inverse-normal combination is directionless, a gene whose fold-change direction disagrees across studies is flagged as discordant and never reported as a cross-study hit — a convergent meta-DEG is significant on the combined FDR and consistent in direction in every study. A dedicated, self-contained **cross-study report** (`meta_analysis_report.html`) shows the convergence/divergence summary, a meta-volcano, per-gene forest plots, a cross-study log2FC concordance scatter, a convergent-gene heatmap, and a `compareCluster` dotplot contrasting each study's up/down sets with the convergent sets; the convergent-gene table, a per-study differential-expression summary, and the cross-study enrichment table are written to `results/meta/` and appear in the Outputs tab. The comparative figures restyle with **Regenerate figures** like the rest, and a `comparative_meta` group is available in the per-figure style overrides. The joint DESeq2 that runs alongside automatically models study-of-origin as a covariate (a default `~ condition` design becomes `~ dataset + condition`, with a rank-deficiency fallback), and a hard sanity gate blocks a design in which the compared groups are perfectly confounded with study (no single study contains both arms). Studies must share one organism and gene-identifier namespace; a mismatch is flagged before the run.
 
 ### Changed
 
@@ -923,7 +787,7 @@ Patch release: guards, messages, interface and documentation corrections from th
 
 - **Design pre-check stops bad contrasts in seconds.** If the reference level or a contrast's numerator/denominator does not match any value in the sample sheet's condition column, the run now fails at the first validation step with a plain message (e.g. "The design uses 'control' for 'condition', but the sample sheet has no such value. Available condition values: MUT, WT"), instead of running download, trimming, alignment and counting and only then crashing at DESeq2 with "'ref' must be an existing level".
 - **Fonts bundled for the figures.** A serif/sans/mono font set (`font-ttf-dejavu`) plus fontconfig setup (`fonts-conda-ecosystem`) are now part of the pipeline environment, and a resolver maps a configured Windows font name (e.g. "Times New Roman") to an installed serif when that exact font is absent — so a serif choice renders as a serif rather than silently falling back to a sans default, on any machine.
-- **Alternative differential-expression engines.** Alongside the default DESeq2, RNA-seq counts can now be tested with **limma-voom** or **edgeR** (quasi-likelihood F-test). All three engines emit the same result schema (`deseq2_results.csv`, up/down gene lists, figures), so downstream enrichment and PPI steps are identical regardless of engine. Concordance with DESeq2 is high (fgval Jaccard ≈ 0.94 for limma-voom, direction agreement 100%); see benchmark B14.
+- **Alternative differential-expression engines.** Alongside the default DESeq2, RNA-seq counts can now be tested with **limma-voom** or **edgeR** (quasi-likelihood F-test). All three engines emit the same result schema (`deseq2_results.csv`, up/down gene lists, figures), so downstream enrichment and PPI steps are identical regardless of engine.
 - **Alternative read trimmers.** The trimmer is now selectable: **fastp** (default), **Trim Galore**, or **Trimmomatic**. Each exposes its own parameters in the GUI.
 - **Alternative rRNA removal.** rRNA filtering can use **SortMeRNA** (default, reference-based) or **RiboDetector** (reference-free, machine-learning). RiboDetector runs on CPU and needs no rRNA reference database.
 - **Contamination screening.** Optional **FastQ Screen** step maps a read subsample against a panel of reference genomes to flag cross-species or adapter/vector contamination before alignment. It runs against a FastQ Screen config you point it at (Advanced parameters → Contamination: FastQ Screen config); it does not auto-download a genome panel. If screening is enabled without a config, it is skipped and the sanity check flags it.
@@ -947,7 +811,6 @@ Patch release: guards, messages, interface and documentation corrections from th
 - **Pipeline environments** gained the new tools: `aria2`, `edger`, `trim-galore`, `cutadapt`, `pigz`, `trimmomatic`, `fastq-screen`, `bowtie2`, `ribodetector`, `gsva`, `rseqc`, and the UCSC `gtfToGenePred`/`genePredToBed` utilities. The pinned lock (`bulkseq.lock.yaml`) was regenerated; RiboDetector installs its CPU ONNX runtime (no CUDA). `r-base` is pinned to 4.5.2 in `bulkseq_full.yaml`: an environment update that bumps R leaves the compiled Bioconductor packages binary-incompatible (clusterProfiler and others fail to load), so it must not float, and the clusterProfiler floor blocks conda-forge's obsolete 3.x build from being selected.
 - **Runtime estimate recalibrated** against real per-step benchmark data from five completed runs: alignment minutes-per-gigabase were roughly halved (the previous hand-set value over-charged alignment), QC/quant were tightened, and the range was widened on the high side. The SRA/ENA download is treated as a separate, network-dependent line item ("minutes to hours") rather than folded into the point estimate, because measured download time varied ~80× independent of data size.
 - **Overview figure** (`figure1_overview`) was redrawn to show all three DE engines, the alternative preprocessing tools, single-end input, and the existing DESeq2-results-upload path that feeds enrichment, PPI, and figures without recomputing DE.
-- **Validation** was extended with a human dataset (airway smooth muscle ± dexamethasone, GRCh38/Ensembl via the Salmon route): the run recovers the canonical glucocorticoid signature (FKBP5, ZBTB16, KLF15, SPARCL1 up; VCAM1 down), confirming the human/`org.Hs.eg.db` path end to end.
 - **Documentation** now explains how to raise the WSL2 memory cap on Windows via `%UserProfile%\.wslconfig` (`[wsl2] memory=`), linking Microsoft's `.wslconfig` reference, since that VM cap (not the Windows host total) bounds memory-heavy steps such as STAR indexing and DESeq2.
 - **Windows installer** detects an existing BulkSeq Studio install and offers to update or uninstall before continuing, instead of installing over the top. Updating first removes the old version completely (runs its uninstaller and deletes any leftover install directory) and then installs the new version fresh, so no stale files carry over. The setup wizard is branded with the BulkSeq Studio logo in place of the default Inno Setup artwork.
 - **Linux AppImage** now embeds zsync update information and ships a companion `.AppImage.zsync` asset, so `AppImageUpdate BulkSeqStudio-<version>-x86_64.AppImage` upgrades in place from the latest GitHub release.
@@ -991,7 +854,7 @@ Patch release: guards, messages, interface and documentation corrections from th
 
 ### Added
 
-- **STAR gene-counts quantifier.** With the STAR aligner the Quantifier control is now a real choice: `STAR_GeneCounts` takes gene counts from STAR's own `--quantMode GeneCounts` output (no extra counting pass), strand-matched to the run's inferred strandedness, instead of running featureCounts. The counts converge on the same matrix the rest of the pipeline expects — validated at Pearson r ≈ 0.998 (unstranded) to 1.000 (stranded) against featureCounts on the same BAMs. featureCounts remains the default; HISAT2 uses featureCounts and Salmon uses tximport.
+- **STAR gene-counts quantifier.** With the STAR aligner the Quantifier control is now a real choice: `STAR_GeneCounts` takes gene counts from STAR's own `--quantMode GeneCounts` output (no extra counting pass), strand-matched to the run's inferred strandedness, instead of running featureCounts. The counts converge on the same matrix the rest of the pipeline expects. featureCounts remains the default; HISAT2 uses featureCounts and Salmon uses tximport.
 - **Custom gene-set enrichment.** Supply your own gene sets — a GMT and/or an id→term annotation table, with an optional background list for the over-representation universe — to run a clusterProfiler ORA + GSEA alongside the built-in GO/KEGG, producing custom ORA/GSEA tables and a dotplot. It is organism-agnostic (no Bioconductor OrgDb needed), so it works where the built-in GO route is skipped (e.g. most fungi). The gene IDs must use the run's identifier format; a namespace mismatch is flagged (`REVIEW_REQUIRED`) rather than returned as a silent empty result. The built-in GO/KEGG enrichment is unchanged.
 
 ## 0.14.2 — 2026-06-26

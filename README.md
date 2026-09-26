@@ -4,9 +4,9 @@
 
 BulkSeq Studio is a desktop application for Windows and Linux for reproducible bulk RNA-seq and microarray analysis. Its PySide6 interface drives a transparent Snakemake workflow from raw reads or processed inputs through differential expression, enrichment, protein-interaction networks, figures, reports, and route-aware provenance.
 
-> **Release status — 26 September 2026.** Version 0.32.1 is the current public release. It corrects documentation, the command line, and interface and installer faults, and every analysis output is as 0.32.0 produced it. All seven bundled datasets were rerun through the installed 0.32.1 interface and passed: every run completed without a FAIL, and pasilla, rice and both *Fusarium* datasets reproduced their recorded results (see [Bundled datasets](#bundled-datasets)). Use only the checksummed packages published on GitHub Releases. The separately versioned B1–B20 validation archive remains deposited as version 0.26.6 on Zenodo.
+> **Release status — 26 September 2026.** Version 0.33.0 is the current public release. It changes enrichment output: KEGG enrichment now runs for 17 catalogue organisms whose identity check it previously failed, and organisms without a curated annotation package receive annotation-transfer enrichment; count matrices and differential-expression tables are unchanged (see the [changelog](CHANGELOG.md)). All nine bundled datasets, two of them new non-model organisms, were run through the installed 0.33.0 interface and passed: every run completed without a FAIL, and the seven datasets carried over from 0.32.1 reproduced their 0.32.1 results byte for byte (see [Bundled datasets](#bundled-datasets)). Use only the checksummed packages published on GitHub Releases.
 
-[Read public v0.32.1 handbook](https://tunabirgun.github.io/bulkseq-studio/) · [Download public v0.32.1](https://github.com/tunabirgun/bulkseq-studio/releases/latest) · [Report an issue](https://github.com/tunabirgun/bulkseq-studio/issues) · [Changelog](CHANGELOG.md)
+[Read public v0.33.0 handbook](https://tunabirgun.github.io/bulkseq-studio/) · [Download public v0.33.0](https://github.com/tunabirgun/bulkseq-studio/releases/latest) · [Report an issue](https://github.com/tunabirgun/bulkseq-studio/issues) · [Changelog](CHANGELOG.md)
 
 A release is published only after the Tests and Build packages workflows succeed for its commit, and its packages are the ones that workflow built; verify every download against the release's `SHA256SUMS.txt`. The Windows installer and portable build are not code-signed, so Windows SmartScreen can warn about an unrecognised publisher before the first launch. The Linux AppImage needs glibc 2.38 or newer.
 
@@ -87,28 +87,25 @@ The `bulkseq` command returns:
 
 ## Bundled datasets
 
-**Create Benchmark Project** scaffolds one of seven bundled public datasets with its reference, sample sheet and comparison already set. All seven were rerun under 0.32.1 from the installed Windows package, through the interface alone, and all seven passed: every run completed without a FAIL, and each result was compared with its recorded value where one exists. Significant genes are counted at an adjusted p-value below 0.05 with no fold-change filter.
+**Create Benchmark Project** scaffolds one of nine bundled public datasets with its reference, sample sheet and comparison already set. All nine were run under 0.33.0 from the installed Windows package, through the interface alone, and all nine passed: every run completed without a FAIL. For the seven datasets carried over from 0.32.1, the results are byte-identical to their 0.32.1 runs: the count matrix and differential-expression table of each read-based dataset, and the limma table of each microarray dataset. The two added datasets are recorded for the first time. Significant genes are counted at an adjusted p-value below 0.05 with no fold-change filter.
 
-| Dataset | Route | Genes tested | Significant | 0.32.1 result |
+| Dataset | Route | Genes tested | Significant | 0.33.0 result |
 |---|---|---|---|---|
-| Pasilla paired-end subset (*D. melanogaster*) | Reads, STAR, featureCounts, DESeq2 | 7,532 | 467 | Counts and results table byte-identical to the 0.31.0 run |
-| Yeast rpd3Δ Ume6Δ2-508 subset (*S. cerevisiae*) | Reads, STAR, featureCounts, DESeq2 | 5,967 | 97 | First recorded value |
-| Rice CY1000 salt-stress subset (*O. sativa* Japonica) | Reads, STAR, featureCounts, DESeq2 | 23,935 | 12,171 | Matches the count recorded under 0.9.0 |
-| Arabidopsis hub2-3 vs Col-0, ATH1 microarray | GEO series matrix, limma | 21,323 | 1,401 | First recorded value |
-| Yeast cbc2Δ vs wild type, YG-S98 microarray | GEO series matrix, limma | 5,683 | 486 | First recorded value |
-| *F. graminearum* PH-1 spores vs mycelium | Reads, STAR, featureCounts, DESeq2 | 9,028 | 5,734 | Matches the recorded count and its 2,723 up / 2,478 down split |
-| *F. graminearum* Z-3639 heat shock | Reads, STAR, featureCounts, DESeq2 | 8,280 | 5,836 | Matches the recorded count |
+| Pasilla paired-end subset (*D. melanogaster*) | Reads, STAR, featureCounts, DESeq2 | 7,532 | 467 | Byte-identical to 0.32.1 and 0.31.0 |
+| Yeast rpd3Δ Ume6Δ2-508 subset (*S. cerevisiae*) | Reads, STAR, featureCounts, DESeq2 | 5,967 | 97 | Byte-identical to 0.32.1 |
+| Rice CY1000 salt-stress subset (*O. sativa* Japonica) | Reads, STAR, featureCounts, DESeq2 | 23,935 | 12,171 | Byte-identical to 0.32.1 |
+| Arabidopsis hub2-3 vs Col-0, ATH1 microarray | GEO series matrix, limma | 21,323 | 1,401 | Byte-identical to 0.32.1 |
+| Yeast cbc2Δ vs wild type, YG-S98 microarray | GEO series matrix, limma | 5,683 | 486 | Byte-identical to 0.32.1 |
+| *F. graminearum* PH-1 spores vs mycelium | Reads, STAR, featureCounts, DESeq2 | 9,028 | 5,734 | Byte-identical to 0.32.1; KEGG now 9 ORA and 31 GSEA pathways |
+| *F. graminearum* Z-3639 heat shock | Reads, STAR, featureCounts, DESeq2 | 8,280 | 5,836 | Byte-identical to 0.32.1; KEGG now 0 ORA and 11 GSEA pathways |
+| *M. oryzae* ΔMocreA vs wild type (GSE153084) | Reads, STAR, featureCounts, DESeq2 | 9,777 | 4,778 | First recorded value |
+| Sorghum sulfur deficiency vs control (GSE184725) | Single-end reads, STAR, featureCounts, DESeq2 | 20,591 | 302 | First recorded value |
 
-Every run ends with an overall WARNING or REVIEW_REQUIRED rather than PASS, from advisory checks such as the small-sample Wilcoxon diagnostic and the static network layout. On both *Fusarium* datasets, check 10 is REVIEW_REQUIRED because KEGG and g:Profiler enrichment do not resolve for this organism in 0.32.1 (see the [changelog](CHANGELOG.md)); their differential-expression results are unaffected.
+Every run ends with an overall WARNING or REVIEW_REQUIRED rather than PASS, from advisory checks such as the small-sample Wilcoxon diagnostic and the static network layout. On both *Fusarium* datasets, check 10 is REVIEW_REQUIRED because g:Profiler recognises none of their RefSeq gene identifiers; their GO enrichment comes from annotation transfer instead (check 25), KEGG now resolves for them, and their differential-expression results are unaffected. The organisms without a curated annotation package, *Fusarium*, *M. oryzae*, sorghum and rice, receive annotation-transfer enrichment; rice maps 61.0% of its genes with an adjusted p-value to STRING proteins, so its check 25 reads WARNING.
 
-## Benchmark archive and citation
+## Citation
 
-The checksummed version 0.26.6 benchmark archive is deposited at DOI [10.5281/zenodo.21833538](https://doi.org/10.5281/zenodo.21833538). The concept DOI [10.5281/zenodo.20955660](https://doi.org/10.5281/zenodo.20955660) resolves to the latest deposited version. Cite the exact software version that produced your analysis, not the archive version, when reporting an analysis.
-
-```text
-Birgün, Tuna (2026). BulkSeq Studio: validation benchmark archive. Version 0.26.6. Zenodo.
-https://doi.org/10.5281/zenodo.21833538
-```
+Cite the exact BulkSeq Studio release that produced your analysis, as recorded in the run summary, together with the repository address, https://github.com/tunabirgun/bulkseq-studio.
 
 ## License
 

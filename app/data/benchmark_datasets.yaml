@@ -720,6 +720,17 @@ benchmarks:
         among the up-regulated genes.'
       - The submitters did not record library strandedness; the pipeline infers it from the alignments.
       - Use allow_pending_sra validation until the FASTQ files are downloaded. Download ~10.7 GB.
+    expected:
+      status: first recorded under workflow version 0.33.0 on 2026-09-26, from the installed Windows package
+        through the interface
+      de_genes: 4778
+      de_tested: 9777
+      de_criterion: padj < 0.05, no log2 fold-change filter
+      de_up_abs_log2fc_gt_1: 1436
+      de_down_abs_log2fc_gt_1: 607
+      de_route: STAR + featureCounts + DESeq2
+      strandedness: 0
+      strandedness_basis: auto-inferred as 0 (unstranded) on all six samples in the 0.33.0 run
     samples:
       - sample_id: wild_type_1
         condition: wild_type
@@ -855,6 +866,17 @@ benchmarks:
         enriched among the up-regulated genes.'
       - The submitters did not record library strandedness; the pipeline infers it from the alignments.
       - Use allow_pending_sra validation until the FASTQ files are downloaded. Download ~7.9 GB.
+    expected:
+      status: first recorded under workflow version 0.33.0 on 2026-09-26, from the installed Windows package
+        through the interface
+      de_genes: 302
+      de_tested: 20591
+      de_criterion: padj < 0.05, no log2 fold-change filter
+      de_up_abs_log2fc_gt_1: 60
+      de_down_abs_log2fc_gt_1: 25
+      de_route: STAR + featureCounts + DESeq2
+      strandedness: 2
+      strandedness_basis: auto-inferred as 2 (reverse) on all six samples in the 0.33.0 run
     samples:
       - sample_id: control_1
         condition: control

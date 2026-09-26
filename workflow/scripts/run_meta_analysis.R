@@ -87,9 +87,7 @@ combine_meta <- function(per_study, nrep, alpha = 0.05) {
   # subset. The filter is not independent of the p-values either: a gene with strong opposing
   # per-study effects has both a small combined p-value and a high chance of being discordant, so
   # discordant genes crowd the low tail, raise the cutoff, and admit null genes that then survive
-  # the filter. B19's discordance arm plants only discordant genes and reported 58 meta-DEGs
-  # across five runs, every one a false positive from the null background, at approximately
-  # alpha x (number of discordant rejections) per run.
+  # the filter.
   #
   # Concordance is decided from effect signs alone, without reference to the combined p-value, so
   # restricting the family first is legitimate: the discordant genes are not being tested. They

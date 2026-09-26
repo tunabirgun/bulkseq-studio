@@ -105,8 +105,7 @@ check(is.data.frame(r_empty) && nrow(r_empty) == 0, "all-NA study -> empty resul
 # Benjamini-Hochberg was applied across every gene and the direction filter applied to the result,
 # so the reported set was a rejection set minus a post-hoc subset and the guarantee did not
 # transfer. Discordant genes crowd the low tail -- strong opposing per-study effects give a small
-# combined p -- so they raised the cutoff and admitted null genes that survived the filter. B19's
-# discordance arm reported 58 such genes across five runs, every one a false positive.
+# combined p -- so they raised the cutoff and admitted null genes that survived the filter.
 #
 # Here every gene carrying signal is discordant and the rest are null, so a correct implementation
 # calls nothing: it adjusts within the concordant family, which contains no signal.
