@@ -220,3 +220,83 @@ cat("parsers OK\\n")
     done = subprocess.run([*command, convert(harness)], capture_output=True, text=True, timeout=120, check=False)
     assert done.returncode == 0, done.stdout + done.stderr
     assert "parsers OK" in done.stdout
+
+
+def test_a_protein_with_opposed_genes_leaves_every_set(tmp_path):
+    project = tmp_path / "conflict"
+    _project(project)
+    # G203 is down-regulated and maps to the protein of G003, an up-regulated PLANT gene.
+    with (project / "results/deseq2/deseq2_results.csv").open("a", newline="") as fh:
+        csv.writer(fh).writerow(["G203", "NA", -1.2, -5.0, 0.001, 0.01])
+    with (project / "results/deseq2/downregulated_genes.csv").open("a", newline="") as fh:
+        csv.writer(fh).writerow(["G203", 0.01])
+    cache = project / "results/enrichment/transfer/string_cache"
+    alias_file = cache / f"{TAXON}.protein.aliases.v12.0.txt.gz"
+    with gzip.open(alias_file, "rt", encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+    _gz(alias_file, lines[0], [ln.split("\t") for ln in lines[1:]] + [[f"{TAXON}.P003", "G203", "Ensembl_gene"]])
+    done = _run(tmp_path, project)
+    assert done.returncode == 0, done.stdout + done.stderr
+    provenance = json.loads((project / "results/enrichment/transfer/transfer_provenance.json").read_text(encoding="utf-8"))
+    assert provenance["string"]["direction_conflicts"] == 1
+    assert provenance["string"]["universe_proteins"] == 199
+    rows = list(csv.DictReader((project / "results/enrichment/transfer/transfer_ora.csv").open(encoding="utf-8")))
+    genes = {g for r in rows for g in r["geneID"].split("/")}
+    assert rows and not genes & {"G003", "G203"}
+
+
+def test_kegg_reference_maps_leave_out_disease_and_organismal_groups(tmp_path):
+    command, script, convert = _r_runtime(SCRIPT)
+    code = f'''
+source({script!r})
+leaf <- function(x) list(name = x)
+tree <- list(children = list(
+  list(name = "Metabolism", children = list(list(name = "Carbohydrate", children = list(leaf("00010  Glycolysis"))))),
+  list(name = "Human Diseases", children = list(list(name = "Infectious", children = list(leaf("05171  Coronavirus disease"))))),
+  list(name = "Organismal Systems", children = list(list(name = "Immune", children = list(leaf("04620  Toll-like receptor")))))))
+maps <- kept_reference_maps(tree)
+stopifnot(identical(maps, "map00010"))
+link <- c("ko:K00844" = "path:map00010", "ko:K00844" = "path:map05171", "ko:K00844" = "path:ko00010",
+          "ko:K00001" = "path:map04620")
+names_ <- c("path:map00010" = "Glycolysis", "path:map05171" = "Coronavirus disease")
+sets <- ko_to_pathway_sets(data.frame(ko = c("K00844", "K00001"), gene = c("G1", "G2")), link, names_, maps)
+stopifnot(identical(sets$t2g$term, "map00010"), identical(sets$t2g$gene, "G1"))
+writeLines("kegg map filter OK")
+'''
+    harness = tmp_path / "kegg_maps.R"
+    harness.write_text(code, encoding="utf-8", newline="\n")
+    done = subprocess.run([*command, convert(harness)], capture_output=True, text=True, timeout=120, check=False)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "kegg map filter OK" in done.stdout
+
+
+def test_gprofiler_reports_unrecognised_ids_and_retries_in_one_namespace(tmp_path):
+    command, _, convert = _r_runtime(SCRIPT)
+    enrichment = REPO / "workflow" / "scripts" / "run_enrichment.R"
+    code = f'''
+exprs <- parse(file={convert(enrichment)!r})
+for (expr in exprs) if (is.call(expr) && identical(as.character(expr[[1]]), "<-") &&
+    identical(as.character(expr[[2]]), "query_gprofiler")) eval(expr, envir = .GlobalEnv)
+calls <- list()
+make_gost <- function(hit_when_converted) function(query, organism, sources, custom_bg, significant,
+                                                   user_threshold, correction_method) {{
+  calls[[length(calls) + 1L]] <<- list(query = query, bg = custom_bg)
+  converted <- all(startsWith(query, "CONV_"))
+  list(result = if (hit_when_converted && converted) data.frame(term_id = "GO:1") else NULL)
+}}
+none <- function(query, organism) data.frame(target = character(0))
+some <- function(query, organism) data.frame(target = paste0("CONV_", query))
+r <- query_gprofiler(c("a", "b"), c("a", "b", "c"), "org", 0.05, make_gost(TRUE), none)
+stopifnot(length(calls) == 1L, grepl("recognised 0 of 2 significant ids and 0 of 3 tested ids", r$diagnostic),
+          grepl("not in this g:Profiler namespace", r$diagnostic))
+calls <- list()
+r <- query_gprofiler(c("a", "b"), c("a", "b", "c"), "org", 0.05, make_gost(TRUE), some)
+stopifnot(length(calls) == 2L, identical(calls[[2]]$query, c("CONV_a", "CONV_b")),
+          identical(calls[[2]]$bg, c("CONV_a", "CONV_b", "CONV_c")), nrow(r$result$result) == 1L)
+writeLines("gprofiler retry OK")
+'''
+    harness = tmp_path / "gprofiler.R"
+    harness.write_text(code, encoding="utf-8", newline="\n")
+    done = subprocess.run([*command, convert(harness)], capture_output=True, text=True, timeout=120, check=False)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "gprofiler retry OK" in done.stdout

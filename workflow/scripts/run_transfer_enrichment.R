@@ -261,8 +261,8 @@ propagate_go <- function(pairs) {
 KO_PATHWAY_GROUPS <- c("Metabolism", "Genetic Information Processing",
                        "Environmental Information Processing", "Cellular Processes")
 
-kept_reference_maps <- function() {
-  tree <- jsonlite::fromJSON(KEGGREST::keggGet("br:br08901", option = "json"), simplifyVector = FALSE)
+kept_reference_maps <- function(tree = jsonlite::fromJSON(
+    KEGGREST::keggGet("br:br08901", option = "json"), simplifyVector = FALSE)) {
   maps <- unlist(lapply(tree$children, function(top) {
     if (!top$name %in% KO_PATHWAY_GROUPS) return(NULL)
     unlist(lapply(top$children, function(mid) vapply(mid$children, function(leaf) leaf$name, "")))
@@ -271,13 +271,13 @@ kept_reference_maps <- function() {
 }
 
 # KO to KEGG reference pathways ("map" ids) through the live KEGG REST API, the only
-# access KEGG's licence allows; nothing KEGG-derived is bundled.
-ko_to_pathway_sets <- function(ko_pairs) {
-  link <- KEGGREST::keggLink("pathway", "ko")
+# access KEGG's licence allows; nothing KEGG-derived is bundled. The KEGG tables are
+# arguments so the mapping can be tested offline.
+ko_to_pathway_sets <- function(ko_pairs, link = KEGGREST::keggLink("pathway", "ko"),
+                               names_ = KEGGREST::keggList("pathway"), maps = kept_reference_maps()) {
   link <- data.frame(ko = sub("^ko:", "", names(link)), path = sub("^path:", "", unname(link)),
                      stringsAsFactors = FALSE)
-  link <- link[link$path %in% kept_reference_maps(), , drop = FALSE]
-  names_ <- KEGGREST::keggList("pathway")
+  link <- link[link$path %in% maps, , drop = FALSE]
   t2g <- merge(ko_pairs, link, by = "ko")
   t2g <- unique(data.frame(term = t2g$path, gene = t2g$gene, stringsAsFactors = FALSE))
   map_names <- sub("^path:", "", names(names_))
@@ -379,19 +379,22 @@ main <- function() {
       write.csv(map[!is.na(map$protein) | map$ambiguous, ], out[["id_map"]], row.names = FALSE)
       tested <- map[tested_rows, , drop = FALSE]
       mapped_fraction <- mean(!is.na(tested$protein))
-      universe <- unique(tested$protein[!is.na(tested$protein)])
+      tested_proteins <- unique(tested$protein[!is.na(tested$protein)])
       up_p <- unique(map$protein[map$gene_id %in% up & !is.na(map$protein)])
       down_p <- unique(map$protein[map$gene_id %in% down & !is.na(map$protein)])
+      # A protein carried by genes that changed in opposite directions has no direction;
+      # like the curated route, it leaves every foreground and the universe.
       conflicts <- intersect(up_p, down_p)
+      universe <- setdiff(tested_proteins, conflicts)
       foregrounds <- list(up = setdiff(up_p, conflicts), down = setdiff(down_p, conflicts),
-                          combined = union(up_p, down_p))
+                          combined = setdiff(union(up_p, down_p), conflicts))
       rank <- build_protein_rank(map$protein[rank_rows], rank_stat$values[rank_rows])
       id_to_genes <- split(map$gene_id[!is.na(map$protein)], map$protein[!is.na(map$protein)])
       proteome <- unique(aliases$protein)
       rank_policy <- sprintf("ranked on %s; genes sharing a STRING protein collapsed by median; exact ties by protein id", rank_stat$name)
       map_status <- mapping_status(mapped_fraction)
       checks[[length(checks) + 1L]] <- list(map_status, sprintf(
-        "STRING v%s taxon %s: %d of %d tested genes (%.1f%%) mapped to a STRING protein; %d ambiguous gene ids excluded; %d proteins with discordant genes excluded from directional sets.",
+        "STRING v%s taxon %s: %d of %d tested genes (%.1f%%) mapped to a STRING protein; %d ambiguous gene ids excluded; %d proteins whose genes changed in opposite directions excluded.",
         version, taxon, sum(!is.na(tested$protein)), nrow(tested), 100 * mapped_fraction,
         sum(tested$ambiguous), length(conflicts)))
       summary <- c(summary, sprintf("STRING version %s, taxon %s (orthology-transferred annotation; Szklarczyk et al. 2023, CC BY 4.0).", version, taxon),
@@ -399,7 +402,7 @@ main <- function() {
                            basename(terms_file$path), terms_file$retrieved_utc),
                    sprintf("Tested genes mapped: %d/%d (%.1f%%); keys used: %s.", sum(!is.na(tested$protein)), nrow(tested),
                            100 * mapped_fraction, paste(names(table(tested$key)), table(tested$key), sep = "=", collapse = ", ")),
-                   sprintf("Universe: %d STRING proteins from the tested genes. Foregrounds: up %d, down %d, combined %d; %d proteins carried genes in both directions.",
+                   sprintf("Universe: %d STRING proteins from the tested genes. Foregrounds: up %d, down %d, combined %d; %d proteins carrying genes that changed in opposite directions excluded.",
                            length(universe), length(foregrounds$up), length(foregrounds$down), length(foregrounds$combined), length(conflicts)),
                    sprintf("GSEA: %d ranked proteins (%s); %d proteins with sign-discordant genes excluded.", length(rank$values), rank_policy, rank$conflicts),
                    "GO sets are used as STRING propagated them under its own GO release; they are not re-propagated.")
@@ -463,6 +466,8 @@ main <- function() {
           pairs <- merge(parsed$go, resolved, by = "query")
           prop <- propagate_go(data.frame(term = pairs$value, gene = pairs$gene_id, stringsAsFactors = FALSE))
           for (o in names(prop$sets)) sets[[paste("eggNOG", o)]] <- prop$sets[[o]]
+          summary <- c(summary, sprintf("eggNOG GO terms unknown to GO.db %s and dropped before propagation: %d.",
+                                        as.character(utils::packageVersion("GO.db")), prop$unknown_terms))
         }
         if (!is.null(parsed$ko) && nrow(parsed$ko)) {
           pairs <- merge(parsed$ko, resolved, by = "query")

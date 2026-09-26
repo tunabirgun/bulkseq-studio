@@ -726,6 +726,31 @@ match_kegg_identity_record <- function(records, code, registry_name, expected_na
 KEGG_IDENTITY_RECORDS <- load_kegg_identity_records(
   file.path(snakemake@scriptdir, "kegg_identity_records.tsv"))
 
+# An empty g:Profiler result is either no enriched term or ids g:Profiler does not know.
+# gost and gconvert share one conversion service, so report how many ids it recognised
+# rather than retrying blind, and retry only with the query and the background converted
+# into the same namespace. The two calls are arguments so the logic is testable offline.
+query_gprofiler <- function(query, background, organism, alpha,
+                            gost_fn = gprofiler2::gost, gconvert_fn = gprofiler2::gconvert) {
+  run <- function(q, bg) gost_fn(query = q, organism = organism, sources = c("GO:BP", "KEGG", "REAC"),
+                                 custom_bg = bg, significant = TRUE, user_threshold = alpha,
+                                 correction_method = "g_SCS")
+  gg <- run(query, background)
+  if (!is.null(gg$result) && nrow(gg$result) > 0) return(list(result = gg, diagnostic = NULL))
+  recognised <- function(ids) {
+    conv <- tryCatch(gconvert_fn(query = ids, organism = organism), error = function(e) NULL)
+    if (is.null(conv) || !nrow(conv)) return(character(0))
+    unique(conv$target[!is.na(conv$target) & nzchar(conv$target)])
+  }
+  q2 <- recognised(query)
+  bg2 <- recognised(background)
+  diagnostic <- sprintf("g:Profiler (%s) recognised %d of %d significant ids and %d of %d tested ids.",
+                        organism, length(q2), length(query), length(bg2), length(background))
+  if (length(q2) && length(bg2)) return(list(result = run(q2, bg2), diagnostic = diagnostic))
+  list(result = gg, diagnostic = paste(diagnostic, "These gene ids are not in this g:Profiler",
+                                       "namespace, so GO via g:Profiler is unavailable for this reference."))
+}
+
 load_kegg_registry <- function() {
   # clusterProfiler's current internal species catalog is the authority for the
   # organism-code namespace used by enrichKEGG/gseKEGG. Its legacy kegg_taxa.rds
@@ -1643,44 +1668,14 @@ if (orgdb_ok) {
 
     # gprofiler2 is a Stage-2 env addition and may be absent: wrap the load + gost
     # so a missing package or a network failure degrades to KEGG-only, never crashes.
-    gp_diagnostic <- NULL
-    gp <- tryCatch({
+    gp_run <- tryCatch({
       suppressMessages(library(gprofiler2))
-      query <- all_ids
-      gg <- gost(query = query, organism = gprofiler_org,
-                 sources = c("GO:BP", "KEGG", "REAC"),
-                 custom_bg = tested_genes, significant = TRUE,
-                 user_threshold = alpha, correction_method = "g_SCS")
-      # An empty result is either no enriched term or ids g:Profiler does not know.
-      # gost and gconvert share one conversion service, so report how many ids it
-      # recognised rather than retrying blind; retry only with query and background
-      # converted into the same namespace.
-      if (is.null(gg$result) || nrow(gg$result) == 0) {
-        recognised <- function(ids) {
-          conv <- tryCatch(gconvert(query = ids, organism = gprofiler_org),
-                           error = function(e) NULL)
-          if (is.null(conv) || !nrow(conv)) return(character(0))
-          unique(conv$target[!is.na(conv$target) & nzchar(conv$target)])
-        }
-        q2 <- recognised(query)
-        bg2 <- recognised(tested_genes)
-        gp_diagnostic <- sprintf(
-          "g:Profiler (%s) recognised %d of %d significant ids and %d of %d tested ids.",
-          gprofiler_org, length(q2), length(query), length(bg2), length(tested_genes))
-        if (length(q2) && length(bg2)) {
-          gg <- gost(query = q2, organism = gprofiler_org,
-                     sources = c("GO:BP", "KEGG", "REAC"),
-                     custom_bg = bg2, significant = TRUE,
-                     user_threshold = alpha, correction_method = "g_SCS")
-        } else {
-          gp_diagnostic <- paste(gp_diagnostic, "These gene ids are not in this g:Profiler",
-                                 "namespace, so GO via g:Profiler is unavailable for this reference.")
-        }
-      }
-      gg
+      query_gprofiler(all_ids, tested_genes, gprofiler_org, alpha)
     }, error = function(e) {
-      message("g:Profiler gost unavailable: ", conditionMessage(e)); NULL
+      message("g:Profiler gost unavailable: ", conditionMessage(e)); list(result = NULL, diagnostic = NULL)
     })
+    gp <- gp_run$result
+    gp_diagnostic <- gp_run$diagnostic
 
     gprofiler_table <- if (!is.null(gp) && !is.null(gp$result) && nrow(gp$result) > 0)
                          gp$result else NULL
