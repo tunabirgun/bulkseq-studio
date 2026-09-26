@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _contrast_disclosure import (  # noqa: E402
     IGNORED_LABEL, SINGLE_CONTRAST_SENTENCE, ignored_text)
 from _enrichment_evidence import evidence_lines  # noqa: E402
-from _sample_labels import sample_label_rows  # noqa: E402
+from _sample_labels import retained_sample_ids, sample_label_rows  # noqa: E402
 from _strandedness_text import realized_strandedness_text  # noqa: E402
 
 REPO_URL = "https://github.com/tunabirgun/bulkseq-studio"
@@ -1802,7 +1802,7 @@ def _sample_label_table(project: Path, run: dict) -> str:
         text = tsv.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return ""
-    rows = sample_label_rows(text)
+    rows = sample_label_rows(text, retained_sample_ids(project))
     if not rows:
         return ""
     body = "".join(

@@ -45,11 +45,27 @@ def sample_display_labels(sample_ids, library_names=None) -> list[str]:
             for sid, name in zip(ids, names)]
 
 
-def sample_label_rows(samples_tsv: str) -> list[tuple[str, str, str]]:
+def retained_sample_ids(project_root) -> list[str] | None:
+    """Sample ids the fitted model kept, from results/deseq2/pca_coordinates.csv; None before a
+    model exists. The figures label only these samples, so a repeated library name whose other
+    rows were excluded must not carry a sample-id suffix in the reports either."""
+    from pathlib import Path
+    path = Path(project_root) / "results" / "deseq2" / "pca_coordinates.csv"
+    try:
+        with path.open(newline="", encoding="utf-8-sig") as handle:
+            ids = [row.get(SAMPLE_ID_COLUMN, "") for row in csv.DictReader(handle)]
+    except (OSError, csv.Error):
+        return None
+    ids = [sid.strip(_R_WHITESPACE) for sid in ids if sid and sid.strip(_R_WHITESPACE)]
+    return ids or None
+
+
+def sample_label_rows(samples_tsv: str, retained=None) -> list[tuple[str, str, str]]:
     """(sample id, library name, display label) per row of a sample sheet.
 
-    Returns an empty list when the sheet has no library_name column or records no name at all, so
-    a report that renders these rows adds nothing to a project that does not use the column.
+    With `retained`, only those samples are listed and labelled, matching the figures. Returns an
+    empty list when the sheet has no library_name column or records no name at all, so a report
+    that renders these rows adds nothing to a project that does not use the column.
     """
     text = samples_tsv.lstrip("﻿")
     reader = csv.DictReader(io.StringIO(text), delimiter="\t")
@@ -59,7 +75,7 @@ def sample_label_rows(samples_tsv: str) -> list[tuple[str, str, str]]:
     names: list[str] = []
     for row in reader:
         sid = (row.get(SAMPLE_ID_COLUMN) or "").strip(_R_WHITESPACE)
-        if not sid:
+        if not sid or (retained is not None and sid not in retained):
             continue
         ids.append(sid)
         names.append(_clean_name(row.get(LIBRARY_NAME_COLUMN)))

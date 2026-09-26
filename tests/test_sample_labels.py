@@ -269,3 +269,20 @@ def test_report_sample_table_shows_the_id_beside_the_label(mhr, tmp_path) -> Non
     assert "<th>Sample ID</th>" in table and "<th>Figure label</th>" in table
     assert "<td class='mono'>s1</td><td>Liver</td><td>Liver (s1)</td>" in table
     assert table in mhr._study_design_section(_payload(), tmp_path)
+
+
+def test_reports_label_only_the_samples_the_model_retained(tmp_path, labels, mrs):
+    retained_sample_ids, sample_label_rows = labels.retained_sample_ids, labels.sample_label_rows
+    sheet = "sample_id\tcondition\tlibrary_name\ns1\ta\tL1\ns2\ta\tL1\ns3\tb\tL2\n"
+    # Without the retained set a repeated name carries its sample id, as before.
+    assert [label for _, _, label in sample_label_rows(sheet)] == ["L1 (s1)", "L1 (s2)", "L2"]
+    pca = tmp_path / "results" / "deseq2" / "pca_coordinates.csv"
+    pca.parent.mkdir(parents=True)
+    pca.write_text('"sample_id","PC1","PC2"\n"s1",1,2\n"s3",3,4\n', encoding="utf-8")
+    retained = retained_sample_ids(tmp_path)
+    assert retained == ["s1", "s3"]
+    # s2 was excluded from the model, so s1's name no longer repeats among the drawn samples.
+    assert sample_label_rows(sheet, retained) == [("s1", "L1", "L1"), ("s3", "L2", "L2")]
+    assert retained_sample_ids(tmp_path / "missing") is None
+    study = mrs.render_study_design(_payload(), sheet, None, retained)
+    assert "L1 (s1)" not in study and "s2  " not in study

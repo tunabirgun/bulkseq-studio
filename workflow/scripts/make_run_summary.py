@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _contrast_disclosure import (  # noqa: E402
     ANALYSED_LABEL, IGNORED_LABEL, split_contrasts)
 from _enrichment_evidence import evidence_lines  # noqa: E402
-from _sample_labels import sample_label_rows  # noqa: E402
+from _sample_labels import retained_sample_ids, sample_label_rows  # noqa: E402
 from _strandedness_text import (  # noqa: E402
     STRANDEDNESS_LABELS as _STRANDEDNESS_LABELS, realized_strandedness_text)
 
@@ -1253,7 +1253,8 @@ def main() -> int:
     samples_tsv, samples_label = configured_samples_path(root, payload)
     samples_text = samples_tsv.read_text(encoding="utf-8") if samples_tsv.exists() else ""
     (reports / "study_design.txt").write_text(
-        render_study_design(payload, samples_text, samples_label), encoding="utf-8")
+        render_study_design(payload, samples_text, samples_label, retained_sample_ids(root)),
+        encoding="utf-8")
     return 0
 
 
@@ -1462,7 +1463,8 @@ def render_tools_references(p: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_study_design(p: dict, samples_tsv: str, samples_label: str | None = None) -> str:
+def render_study_design(p: dict, samples_tsv: str, samples_label: str | None = None,
+                        retained: list[str] | None = None) -> str:
     de = p.get("deseq2", {})
     wf = p.get("workflow", {})
     input_type = p.get("input", {}).get("type")
@@ -1509,17 +1511,17 @@ def render_study_design(p: dict, samples_tsv: str, samples_label: str | None = N
         lines += samples_tsv.rstrip("\n").splitlines()
     else:
         lines.append("samples.tsv not found.")
-    lines += figure_label_lines(samples_tsv)
+    lines += figure_label_lines(samples_tsv, retained)
     return "\n".join(lines) + "\n"
 
 
-def figure_label_lines(samples_tsv: str) -> list[str]:
+def figure_label_lines(samples_tsv: str, retained: list[str] | None = None) -> list[str]:
     """Map each sample id to the label the figures draw, or nothing when no library name is set.
 
     The id is kept alongside the label rather than replaced: library_name is descriptive, may
     repeat, and is never the key anything is stored under.
     """
-    rows = sample_label_rows(samples_tsv)
+    rows = sample_label_rows(samples_tsv, retained)
     if not rows:
         return []
     width = max(len(sid) for sid, _name, _label in rows)
