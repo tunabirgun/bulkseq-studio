@@ -271,7 +271,8 @@ wanted <- c("merge_mapping_candidates", "resolve_configured_keytype",
             "mapped_unique", "mapping_fraction", "mapping_percent", "mapping_gate",
             "annotation_resource_gate", "resource_status_to_check",
             "go_annotation_status",
-            "normalize_species_name", "validate_kegg_identity", "assess_kegg_resource",
+            "normalize_species_name", "species_names_share_prefix", "match_kegg_identity_record",
+            "validate_kegg_identity", "assess_kegg_resource",
             "MAPPING_WARNING_FRACTION", "MAPPING_REVIEW_FRACTION",
             "ANNOTATION_WARNING_FRACTION", "KEGG_MIN_GENE_SET_SIZE",
             "KEGG_MAX_GENE_SET_SIZE")
@@ -459,7 +460,7 @@ def test_current_kegg_species_catalog_includes_rice_and_routes_configured_taxon(
     code = f'''
 exprs <- parse(file={script_path!r})
 wanted <- c("load_kegg_registry", "normalize_species_name",
-            "resolve_kegg_taxon", "validate_kegg_identity")
+            "resolve_kegg_taxon", "match_kegg_identity_record", "validate_kegg_identity")
 for (expr in exprs) {{
   if (is.call(expr) && identical(as.character(expr[[1]]), "<-") &&
       as.character(expr[[2]]) %in% wanted) eval(expr, envir=.GlobalEnv)
