@@ -316,11 +316,17 @@ THREAD_EXIT_GRACE_MS = 15000
 def _running_qthreads() -> list:
     import gc
 
-    import shiboken6
     from PySide6.QtCore import QThread
 
-    return [obj for obj in gc.get_objects()
-            if isinstance(obj, QThread) and shiboken6.isValid(obj) and obj.isRunning()]
+    running = []
+    for obj in gc.get_objects():
+        if isinstance(obj, QThread):
+            try:
+                if obj.isRunning():
+                    running.append(obj)
+            except RuntimeError:  # its C++ object is already gone
+                pass
+    return running
 
 
 def _finish_background_threads(code: int) -> int:
