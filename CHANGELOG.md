@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.32.1 — 2026-09-25
+## 0.32.1 — 2026-09-26
 
 Patch release: documentation, the command line, the documentation site, and fixes to the interface, the installer and the space-reclaim script. Nothing under `workflow/` changed, so every analysis output is as 0.32.0 produced it. All seven bundled datasets were rerun from the installed 0.32.1 Windows package through the interface, and every run completed; pasilla, rice and both *Fusarium* datasets reproduced their recorded results (see Validation). The workflow version moves with the application version, so an existing project re-copies an identical workflow on its next run.
 
