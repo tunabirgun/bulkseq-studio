@@ -412,11 +412,13 @@ benchmarks:
         in the study's own overall design.
       - organism_name names the bundled Fusarium graminearum PH-1 reference preset, which is also the sequenced
         strain here (ENA scientific_name Fusarium graminearum PH-1, taxon 229533).
-      - 'No Bioconductor OrgDb exists for F. graminearum: GO comes from g:Profiler (fgraminearum), KEGG
-        uses organism code fgr with locus_tag keys, and STRING uses taxon 229533.'
-      - 'Known issue in 0.32.1: the KEGG identity check compares organism names exactly and rejects fgr
-        (Fusarium graminearum) for the configured Fusarium graminearum PH-1, although both are taxon 5518,
-        and g:Profiler returns no GO terms for these identifiers, so check 10 ends REVIEW_REQUIRED.'
+      - 'No Bioconductor OrgDb exists for F. graminearum: GO, Reactome and InterPro come from annotation-transfer
+        enrichment (STRING 229533, orthology-transferred terms), KEGG uses organism code fgr with locus_tag keys,
+        and g:Profiler (fgraminearum) recognises none of these RefSeq FGSG_ identifiers.'
+      - 'Until 0.32.1 the KEGG identity check compared organism names exactly and rejected fgr (Fusarium
+        graminearum) for the configured Fusarium graminearum PH-1, so KEGG tables were empty. From 0.33.0 a
+        strain suffix is accepted and KEGG runs. Check 10 remains REVIEW_REQUIRED because the curated GO
+        route has no terms for this organism; the annotation-transfer check 25 covers GO.'
       - The library is unstranded; the pipeline auto-detects strandedness, so a detected value other than
         0 means the run, not the catalogue, has drifted.
       - Use allow_pending_sra validation until the FASTQ files are downloaded. Subset download ~5.4 GB.
@@ -562,11 +564,13 @@ benchmarks:
         Reverse-stranded library: the 0.2x-era runs counted it with featureCounts -s 2. The pipeline auto-detects
         strandedness, so a detected value other than 2 is a regression in detection, not a property of the
         data.
-      - 'No Bioconductor OrgDb exists for F. graminearum: GO comes from g:Profiler (fgraminearum), KEGG
-        uses organism code fgr with locus_tag keys, and STRING uses taxon 229533.'
-      - 'Known issue in 0.32.1: the KEGG identity check compares organism names exactly and rejects fgr
-        (Fusarium graminearum) for the configured Fusarium graminearum PH-1, although both are taxon 5518,
-        and g:Profiler returns no GO terms for these identifiers, so check 10 ends REVIEW_REQUIRED.'
+      - 'No Bioconductor OrgDb exists for F. graminearum: GO, Reactome and InterPro come from annotation-transfer
+        enrichment (STRING 229533, orthology-transferred terms), KEGG uses organism code fgr with locus_tag keys,
+        and g:Profiler (fgraminearum) recognises none of these RefSeq FGSG_ identifiers.'
+      - 'Until 0.32.1 the KEGG identity check compared organism names exactly and rejected fgr (Fusarium
+        graminearum) for the configured Fusarium graminearum PH-1, so KEGG tables were empty. From 0.33.0 a
+        strain suffix is accepted and KEGG runs. Check 10 remains REVIEW_REQUIRED because the curated GO
+        route has no terms for this organism; the annotation-transfer check 25 covers GO.'
       - Three biological replicates per temperature, one ENA run each, as stated in the study's own overall
         design.
       - Use allow_pending_sra validation until the FASTQ files are downloaded. Subset download ~9.5 GB.
@@ -671,3 +675,262 @@ benchmarks:
         fastq_1_md5: 78373193d1b0157df7e731306ea49103
         fastq_2_md5: 92e5e7b3a6b0db64becac63fa5e65169
         download_bytes: 2094381103
+  - id: mo_mocrea_mycelium_paired
+    name: Magnaporthe oryzae deltaMocreA vs wild-type mycelium paired-end
+    organism_name: Magnaporthe oryzae
+    reference_preset: Magnaporthe oryzae
+    genome_size_category: fungal
+    contrast:
+      name: mocrea_deletion_vs_wild_type
+      factor: condition
+      numerator: mocrea_deletion
+      denominator: wild_type
+      reference_level: wild_type
+    reference:
+      source: NCBI RefSeq
+      release: RefSeq MG8
+      assembly: MG8
+      annotation_format: gtf
+      genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/002/495/GCF_000002495.2_MG8/GCF_000002495.2_MG8_genomic.fna.gz
+      annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/002/495/GCF_000002495.2_MG8/GCF_000002495.2_MG8_genomic.gtf.gz
+      genome_md5: 0d2e99c795473251bec19d43c4e755f1
+      annotation_md5: 27ba93551b2f8b148a9bd00a0e1065f3
+    source_study: PRJNA641405 (SRP268494)
+    study_title: Carbon catabolite repressor MoCreA is required for the asexual development and pathogenicity
+      of the rice blast fungus
+    geo_series: GSE153084
+    source_publication: Hong et al. (2021) Fungal Genetics and Biology 146:103496, DOI 10.1016/j.fgb.2020.103496
+    description: >-
+      Six-sample paired-end knockout contrast in the rice blast fungus Magnaporthe (Pyricularia) oryzae: three
+      wild-type (Ku80) and three deltaMocreA-2 mycelium samples grown for 5 days in liquid complete medium at
+      26 C, 150 bp mates on an Illumina HiSeq 4000. MoCreA is the CreA-family carbon catabolite repressor, so
+      the deletion derepresses carbon-metabolism genes in glucose-containing medium. A crop pathogen with no
+      Bioconductor OrgDb, it exercises annotation-transfer enrichment (STRING 242507) and the KEGG identity
+      check for code mgr, which KEGG records under the current name Pyricularia oryzae.
+    notes:
+      - One ENA run per biological sample; three biological replicates per genotype, as stated in the GSE153084
+        overall design.
+      - The wild type is the Ku80 gene-replacement strain, not the sequenced 70-15 strain; reads align to the
+        70-15 RefSeq assembly MG8. ENA records the samples at species level (Pyricularia oryzae, taxon 318829).
+      - 'No Bioconductor OrgDb exists for M. oryzae: GO, Reactome and InterPro come from annotation-transfer
+        enrichment (STRING 242507, orthology-transferred terms), KEGG uses code mgr with locus-tag keys and
+        g:Profiler uses moryzae.'
+      - 'Expectation stated before the first run, from Hong et al. (2021): carbon catabolite derepression in the
+        deletion, with carbohydrate and lipid catabolism, carbohydrate-active enzyme and sugar-transporter genes
+        among the up-regulated genes.'
+      - The submitters did not record library strandedness; the pipeline infers it from the alignments.
+      - Use allow_pending_sra validation until the FASTQ files are downloaded. Download ~10.7 GB.
+    samples:
+      - sample_id: wild_type_1
+        condition: wild_type
+        replicate: 1
+        batch: srp268494
+        layout: paired
+        original_accession: SRR12076086
+        geo_accession: GSM4633922
+        experiment_accession: SRX8603468
+        read_count: 11202733
+        base_count: 3360819900
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR120/086/SRR12076086/SRR12076086_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR120/086/SRR12076086/SRR12076086_2.fastq.gz
+        fastq_1_md5: fa9cf9b5c78cd5302701e71cab0fe66a
+        fastq_2_md5: 54c336f911c59072ee31359cfe7db2f8
+        download_bytes: 1938416213
+      - sample_id: wild_type_2
+        condition: wild_type
+        replicate: 2
+        batch: srp268494
+        layout: paired
+        original_accession: SRR12076087
+        geo_accession: GSM4633923
+        experiment_accession: SRX8603469
+        read_count: 9948773
+        base_count: 2984631900
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR120/087/SRR12076087/SRR12076087_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR120/087/SRR12076087/SRR12076087_2.fastq.gz
+        fastq_1_md5: 0d000c97d075d0431f4a7873edcfe516
+        fastq_2_md5: 8f971688c53366a70b33d8dbebe1e61f
+        download_bytes: 1713037323
+      - sample_id: wild_type_3
+        condition: wild_type
+        replicate: 3
+        batch: srp268494
+        layout: paired
+        original_accession: SRR12076088
+        geo_accession: GSM4633924
+        experiment_accession: SRX8603470
+        read_count: 10376614
+        base_count: 3112984200
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR120/088/SRR12076088/SRR12076088_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR120/088/SRR12076088/SRR12076088_2.fastq.gz
+        fastq_1_md5: 2356ebd40e6abe08cfe2699ea34c60fc
+        fastq_2_md5: bf8f4fa2a4e9155c0b77871d17780c7a
+        download_bytes: 1788066527
+      - sample_id: mocrea_deletion_1
+        condition: mocrea_deletion
+        replicate: 1
+        batch: srp268494
+        layout: paired
+        original_accession: SRR12076083
+        geo_accession: GSM4633919
+        experiment_accession: SRX8603465
+        read_count: 9646248
+        base_count: 2893874400
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR120/083/SRR12076083/SRR12076083_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR120/083/SRR12076083/SRR12076083_2.fastq.gz
+        fastq_1_md5: e2681554e828e783b1c7e9a70470e984
+        fastq_2_md5: 946ccfb6efe1c25fe276791a3d028f90
+        download_bytes: 1661562709
+      - sample_id: mocrea_deletion_2
+        condition: mocrea_deletion
+        replicate: 2
+        batch: srp268494
+        layout: paired
+        original_accession: SRR12076084
+        geo_accession: GSM4633920
+        experiment_accession: SRX8603466
+        read_count: 9529313
+        base_count: 2858793900
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR120/084/SRR12076084/SRR12076084_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR120/084/SRR12076084/SRR12076084_2.fastq.gz
+        fastq_1_md5: b24196bbde64510f4a8cb2502ac46035
+        fastq_2_md5: 3aa32e465b8eea48ee767148a1f004b1
+        download_bytes: 1664077317
+      - sample_id: mocrea_deletion_3
+        condition: mocrea_deletion
+        replicate: 3
+        batch: srp268494
+        layout: paired
+        original_accession: SRR12076085
+        geo_accession: GSM4633921
+        experiment_accession: SRX8603467
+        read_count: 11073676
+        base_count: 3322102800
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR120/085/SRR12076085/SRR12076085_1.fastq.gz
+        fastq_2_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR120/085/SRR12076085/SRR12076085_2.fastq.gz
+        fastq_1_md5: c2b0446e58a3ddea63490d661d0b43a8
+        fastq_2_md5: 259a102d2055aafbbf5061cc06293e72
+        download_bytes: 1898857015
+  - id: sorghum_sulfur_single
+    name: Sorghum bicolor BTx623 sulfur deficiency vs control single-end
+    organism_name: Sorghum bicolor
+    reference_preset: Sorghum bicolor
+    genome_size_category: plant
+    contrast:
+      name: sulfur_deficient_vs_control
+      factor: condition
+      numerator: sulfur_deficient
+      denominator: control
+      reference_level: control
+    reference:
+      source: NCBI RefSeq
+      release: RefSeq Sorghum_bicolor_NCBIv3
+      assembly: Sorghum_bicolor_NCBIv3
+      annotation_format: gtf
+      genome_fasta_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/003/195/GCF_000003195.3_Sorghum_bicolor_NCBIv3/GCF_000003195.3_Sorghum_bicolor_NCBIv3_genomic.fna.gz
+      annotation_gtf_url: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/003/195/GCF_000003195.3_Sorghum_bicolor_NCBIv3/GCF_000003195.3_Sorghum_bicolor_NCBIv3_genomic.gtf.gz
+      genome_md5: a2dee4c2235e9deac2cd512eaea24407
+      annotation_md5: 0f0fb2bff02a3db2011d6a7a6bebe65d
+    source_study: PRJNA765951 (SRP338570), RNA-seq runs only
+    study_title: Translational regulation in response to sulfur in Sorghum bicolor
+    geo_series: GSE184725
+    source_publication: Sotta et al. (2022) Plant and Cell Physiology 63(5):592-604, DOI 10.1093/pcp/pcac023
+      (PubMed 35166349)
+    description: >-
+      Six-sample single-end RNA-seq arm of a sorghum transcriptome and translatome study: whole shoots of BTx623
+      seedlings after 8 days on control (500 uM sulfate) or sulfur-deficient (10 uM) nutrient solution, three
+      biological replicates each, 86 bp reads on a NextSeq 500. A crop with no Bioconductor OrgDb and a 0.7 Gb
+      genome, it exercises single-end input, a plant-sized STAR index and annotation-transfer enrichment (STRING
+      4558) on a response whose core biology, sulfate uptake and assimilation, is known.
+    notes:
+      - One ENA run per biological sample. The series also holds six ribosome-profiling runs (library strategy
+        OTHER), which are not part of this benchmark.
+      - The sample titles (S500, S10) and the GEO growth protocol give 500 uM and 10 uM sulfate; the series
+        overall design states 0 uM for the deficient condition. The benchmark follows the sample-level record.
+      - 'No Bioconductor OrgDb exists for sorghum: GO, Reactome and InterPro come from annotation-transfer
+        enrichment (STRING 4558; about 87% of RefSeq GeneIDs map), KEGG uses code sbi with GeneID keys after
+        the LOC strip, and g:Profiler uses sbicolor.'
+      - 'Expectation stated before the first run: sulfur deficiency induces sulfate transporters, sulfate
+        assimilation and sulfur-deficiency response genes, so sulfur compound metabolism terms should be
+        enriched among the up-regulated genes.'
+      - The submitters did not record library strandedness; the pipeline infers it from the alignments.
+      - Use allow_pending_sra validation until the FASTQ files are downloaded. Download ~7.9 GB.
+    samples:
+      - sample_id: control_1
+        condition: control
+        replicate: 1
+        batch: srp338570
+        layout: single
+        original_accession: SRR16039924
+        geo_accession: GSM5596414
+        experiment_accession: SRX12326646
+        read_count: 21456707
+        base_count: 1845276802
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR160/024/SRR16039924/SRR16039924.fastq.gz
+        fastq_1_md5: fcd8aac1ad6875790e0dbea38ee03927
+        download_bytes: 1224781557
+      - sample_id: control_2
+        condition: control
+        replicate: 2
+        batch: srp338570
+        layout: single
+        original_accession: SRR16039925
+        geo_accession: GSM5596415
+        experiment_accession: SRX12326647
+        read_count: 21906994
+        base_count: 1884001484
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR160/025/SRR16039925/SRR16039925.fastq.gz
+        fastq_1_md5: 5ca163410906e16bef005445f6a4a90e
+        download_bytes: 1211314232
+      - sample_id: control_3
+        condition: control
+        replicate: 3
+        batch: srp338570
+        layout: single
+        original_accession: SRR16039926
+        geo_accession: GSM5596416
+        experiment_accession: SRX12326648
+        read_count: 24386716
+        base_count: 2097257576
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR160/026/SRR16039926/SRR16039926.fastq.gz
+        fastq_1_md5: 7bf41bec16ee9484bf7a99bfebaf985a
+        download_bytes: 1388413522
+      - sample_id: sulfur_deficient_1
+        condition: sulfur_deficient
+        replicate: 1
+        batch: srp338570
+        layout: single
+        original_accession: SRR16039927
+        geo_accession: GSM5596417
+        experiment_accession: SRX12326649
+        read_count: 23812867
+        base_count: 2047906562
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR160/027/SRR16039927/SRR16039927.fastq.gz
+        fastq_1_md5: 37d8ee518010b58ab9aa2d1adf291ab1
+        download_bytes: 1363416087
+      - sample_id: sulfur_deficient_2
+        condition: sulfur_deficient
+        replicate: 2
+        batch: srp338570
+        layout: single
+        original_accession: SRR16039928
+        geo_accession: GSM5596418
+        experiment_accession: SRX12326650
+        read_count: 26772174
+        base_count: 2302406964
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR160/028/SRR16039928/SRR16039928.fastq.gz
+        fastq_1_md5: dfeafa0aa82879827f68e69b889e0ae1
+        download_bytes: 1481314945
+      - sample_id: sulfur_deficient_3
+        condition: sulfur_deficient
+        replicate: 3
+        batch: srp338570
+        layout: single
+        original_accession: SRR16039929
+        geo_accession: GSM5596419
+        experiment_accession: SRX12326651
+        read_count: 20813821
+        base_count: 1789988606
+        fastq_1_url: ftp.sra.ebi.ac.uk/vol1/fastq/SRR160/029/SRR16039929/SRR16039929.fastq.gz
+        fastq_1_md5: 89d976ba0dcb2e6ebe14ddcd7479884c
+        download_bytes: 1188170653

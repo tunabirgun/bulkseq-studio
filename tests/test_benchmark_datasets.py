@@ -159,7 +159,10 @@ def test_all_sequence_benchmarks_ship_verifiable_download_metadata(tmp_path: Pat
         samples = load_metadata(root / "config" / "samples.tsv")
         assert {"fastq_1_md5", "fastq_2_md5", "download_bytes"} <= set(samples.columns)
         assert samples["fastq_1_md5"].str.fullmatch(r"[0-9a-f]{32}").all()
-        assert samples["fastq_2_md5"].str.fullmatch(r"[0-9a-f]{32}").all()
+        paired = samples["layout"].str.lower() == "paired"
+        assert samples.loc[paired, "fastq_2_md5"].str.fullmatch(r"[0-9a-f]{32}").all()
+        # A single-end run has no second mate, so its md5 must be empty rather than invented.
+        assert (samples.loc[~paired, "fastq_2_md5"].fillna("") == "").all()
         assert (samples["download_bytes"].astype(int) > 0).all()
 
 
@@ -386,3 +389,58 @@ def test_fusarium_example_scaffolds_match_what_the_scaffolder_writes(tmp_path: P
         readme = (examples / benchmark_id / "README.md").read_text(encoding="utf-8")
         assert benchmark["geo_series"] in readme
         assert str(benchmark["expected"]["de_genes"]) in readme.replace(",", "")
+
+
+# The two non-model benchmarks added in 0.33.0, with the values their primary records give.
+NON_MODEL_BENCHMARKS = {
+    "mo_mocrea_mycelium_paired": {
+        "organism": "Magnaporthe oryzae", "layout": "paired", "mate_length": 150,
+        "conditions": ("mocrea_deletion", "wild_type"), "kegg": "mgr", "string_taxon": 242507,
+        "gprofiler": "moryzae", "category": "fungal", "geo": "GSE153084",
+        "doi": "10.1016/j.fgb.2020.103496"},
+    "sorghum_sulfur_single": {
+        "organism": "Sorghum bicolor", "layout": "single", "mate_length": 86,
+        "conditions": ("sulfur_deficient", "control"), "kegg": "sbi", "string_taxon": 4558,
+        "gprofiler": "sbicolor", "category": "plant", "geo": "GSE184725",
+        "doi": "10.1093/pcp/pcac023"},
+}
+
+
+@pytest.mark.parametrize("benchmark_id", sorted(NON_MODEL_BENCHMARKS))
+def test_non_model_benchmarks_declare_ena_metadata_and_scaffold_onto_the_transfer_route(
+        tmp_path: Path, benchmark_id: str) -> None:
+    spec = NON_MODEL_BENCHMARKS[benchmark_id]
+    benchmark = _benchmark(benchmark_id)
+    assert spec["geo"] == benchmark["geo_series"] and spec["doi"] in benchmark["source_publication"]
+    mates = 2 if spec["layout"] == "paired" else 1
+    for sample in benchmark["samples"]:
+        accession = str(sample["original_accession"])
+        assert sample["layout"] == spec["layout"]
+        for mate in range(1, mates + 1):
+            assert re.fullmatch(r"[0-9a-f]{32}", str(sample[f"fastq_{mate}_md5"])), accession
+            suffix = f"_{mate}.fastq.gz" if mates == 2 else ".fastq.gz"
+            assert str(sample[f"fastq_{mate}_url"]).endswith(f"/{accession}{suffix}")
+        assert "fastq_2_url" in sample if mates == 2 else "fastq_2_url" not in sample
+        # ENA base_count spans every mate; the read length is derived, not declared.
+        assert int(sample["base_count"]) == int(sample["read_count"]) * mates * spec["mate_length"], accession
+    assert f"{spec['mate_length']} bp" in benchmark["description"]
+    for key in ("genome_md5", "annotation_md5"):
+        assert re.fullmatch(r"[0-9a-f]{32}", str(benchmark["reference"][key]))
+
+    root = create_benchmark_project(benchmark_id, tmp_path, f"scaffold-{benchmark_id}")
+    cfg = ProjectManager().load_config(root)
+    samples = load_metadata(root / "config" / "samples.tsv")
+    numerator, denominator = spec["conditions"]
+    assert cfg.input.layout == spec["layout"]
+    assert cfg.reference.organism_name == spec["organism"]
+    assert cfg.reference.genome_size_category == spec["category"]
+    # No OrgDb, a STRING taxon: enrichment.transfer "auto" runs the annotation-transfer route.
+    assert cfg.enrichment.orgdb is None and cfg.enrichment.transfer == "auto"
+    assert cfg.ppi.taxon == spec["string_taxon"]
+    assert cfg.enrichment.kegg_organism == spec["kegg"]
+    assert cfg.enrichment.gprofiler_organism == spec["gprofiler"]
+    c0 = cfg.deseq2.contrasts[0]
+    assert (c0.numerator, c0.denominator) == (numerator, denominator)
+    assert dict(samples["condition"].value_counts()) == {numerator: 3, denominator: 3}
+    messages = validate_metadata(samples, allow_pending_sra=True)
+    assert not any(m["status"] in ("FAIL", "WARNING") for m in messages), messages
