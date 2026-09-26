@@ -1263,10 +1263,6 @@ def test_transfer_enrichment_results_evidence_and_dotplot_render(mhr, tmp_path):
     transfer_panel = rendered[rendered.index("Annotation-transfer over-representation") - 500:]
     _assert_responsive_panel_contract(transfer_panel, "transfer_enrichment_dotplot")
 
-    # Negative gate: a report with no transfer section must fail this contract.
-    with pytest.raises(AssertionError):
-        assert "Annotation-transfer enrichment" in "<section id='enrichment'></section>"
-
 
 def test_transfer_enrichment_empty_tables_render_the_empty_message(mhr, tmp_path):
     enr = tmp_path / "results" / "enrichment" / "transfer"
