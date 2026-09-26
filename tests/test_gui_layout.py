@@ -925,3 +925,48 @@ def test_every_button_accessible_name_contains_its_visible_caption() -> None:
         assert checked > 20, "the walk did not exercise a meaningful number of buttons"
     finally:
         window.close()
+
+
+def _detected_system() -> SystemResources:
+    return SystemResources("Windows", "Test CPU", 20, 28, 64, 48, 500, "C:/tmp", True, False, False, False,
+                           wsl_ram_gb=63, wsl_cpus=24, wsl_physical_cores=12)
+
+
+def test_hand_edited_limits_save_as_the_custom_profile(tmp_path: Path) -> None:
+    window = _window(1366, 768)
+    try:
+        project_root = tmp_path / "manual-limits"
+        (project_root / "config").mkdir(parents=True)
+        window.project_root = project_root
+        window.config = default_config("manual-limits", project_root)
+        window.profile.setCurrentText("balanced")
+        window._on_detect_done((_detected_system(), {"total_threads": 18, "total_memory_gb": 47}))
+        assert window.profile.currentText() == "balanced"
+
+        window.cores.setValue(24)
+        window.ram.setValue(58)
+        window._save_resources()
+
+        persisted = window.manager.load_config(project_root)
+        assert persisted.resources.profile == "custom"
+        assert (persisted.resources.total_threads, persisted.resources.total_memory_gb) == (24, 58)
+    finally:
+        window.close()
+
+
+def test_derived_and_loaded_limits_keep_the_named_profile(tmp_path: Path) -> None:
+    window = _window(1366, 768)
+    try:
+        window._last_system = _detected_system()
+        window.profile.setCurrentText("high")
+        assert window.profile.currentText() == "high"
+        rec = recommend_profile(window._last_system, "high")
+        assert (window.cores.value(), window.ram.value()) == (rec["total_threads"], rec["total_memory_gb"])
+
+        window._on_detect_done((_detected_system(), {"total_threads": 18, "total_memory_gb": 47}))
+        assert window.profile.currentText() == "high"
+
+        window._set_resource_values(4, 8)
+        assert window.profile.currentText() == "high"
+    finally:
+        window.close()

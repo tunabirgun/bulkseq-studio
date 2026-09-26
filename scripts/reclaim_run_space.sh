@@ -32,11 +32,15 @@ if [ ! -f "$PROJECT/config/config.yaml" ]; then
 fi
 
 # Outputs that must exist before anything is removed. If the run did not get this far, its
-# intermediates are still needed.
-REQUIRED=(
-  "results/counts/counts.txt"
-  "results/deseq2/deseq2_results.csv"
-)
+# intermediates are still needed. Like the workflow, a microarray or imported-results run
+# writes no count table, so only read-based routes must have one.
+INPUT_TYPE=$(tr -d '\r' < "$PROJECT/config/config.yaml" \
+  | awk '/^input:/{f=1; next} f && /^[^ #]/{exit} f && /^  type:/{print $2; exit}')
+REQUIRED=("results/deseq2/deseq2_results.csv")
+case "$INPUT_TYPE" in
+  microarray|deseq2_results) ;;
+  *) REQUIRED=("results/counts/counts.txt" "${REQUIRED[@]}") ;;
+esac
 # Regenerable, in rough order of size.
 DISPOSABLE=(
   "references"                 # aligner index: rebuilt from the reference FASTA/GTF

@@ -4,7 +4,7 @@
 
 BulkSeq Studio is a cross-platform desktop application for reproducible bulk RNA-seq and microarray analysis. Its PySide6 interface drives a transparent Snakemake workflow from raw reads or processed inputs through differential expression, enrichment, protein-interaction networks, figures, reports, and route-aware provenance.
 
-> **Release status — 25 September 2026.** Version 0.32.1 is the current public release. It corrects documentation, the command line and clipped empty-state messages in the interface, and every analysis output is as 0.32.0 produced it: the bundled pasilla benchmark, rerun under 0.32.1, reproduced its recorded counts and differential-expression table exactly. Use only the checksummed packages published on GitHub Releases. The separately versioned B1–B20 validation archive remains deposited as version 0.26.6 on Zenodo.
+> **Release status — 25 September 2026.** Version 0.32.1 is the current public release. It corrects documentation, the command line and several interface faults, and every analysis output is as 0.32.0 produced it. All seven bundled datasets were rerun through the installed 0.32.1 interface and completed; pasilla, rice and both *Fusarium* datasets reproduced their recorded results (see [Bundled datasets](#bundled-datasets)). Use only the checksummed packages published on GitHub Releases. The separately versioned B1–B20 validation archive remains deposited as version 0.26.6 on Zenodo.
 
 [Read public v0.32.1 handbook](https://tunabirgun.github.io/bulkseq-studio/) · [Download public v0.32.1](https://github.com/tunabirgun/bulkseq-studio/releases/latest) · [Report an issue](https://github.com/tunabirgun/bulkseq-studio/issues) · [Changelog](CHANGELOG.md)
 
@@ -84,6 +84,22 @@ The `bulkseq` command returns:
 | 130 | Interrupted with Ctrl-C |
 
 `bulkseq run` does not evaluate the checks before it starts, so a script that must not run past a `FAIL` should call `bulkseq check` first and stop on exit 4. Environment setup codes, run-monitor states and public-data lookup messages are listed on [Exit codes and statuses](https://tunabirgun.github.io/bulkseq-studio/codes.html).
+
+## Bundled datasets
+
+**Create Benchmark Project** scaffolds one of seven bundled public datasets with its reference, sample sheet and comparison already set. All seven were rerun under 0.32.1 from the installed Windows package, through the interface alone, and every run completed. Significant genes are counted at an adjusted p-value below 0.05 with no fold-change filter.
+
+| Dataset | Route | Genes tested | Significant | 0.32.1 result |
+|---|---|---|---|---|
+| Pasilla paired-end subset (*D. melanogaster*) | Reads, STAR, featureCounts, DESeq2 | 7,532 | 467 | Counts and results table byte-identical to the 0.31.0 run |
+| Yeast rpd3Δ Ume6Δ2-508 subset (*S. cerevisiae*) | Reads, STAR, featureCounts, DESeq2 | 5,967 | 97 | First recorded value |
+| Rice CY1000 salt-stress subset (*O. sativa* Japonica) | Reads, STAR, featureCounts, DESeq2 | 23,935 | 12,171 | Matches the count recorded under 0.9.0 |
+| Arabidopsis hub2-3 vs Col-0, ATH1 microarray | GEO series matrix, limma | 21,323 | 1,401 | First recorded value |
+| Yeast cbc2Δ vs wild type, YG-S98 microarray | GEO series matrix, limma | 5,683 | 486 | First recorded value |
+| *F. graminearum* PH-1 spores vs mycelium | Reads, STAR, featureCounts, DESeq2 | 9,028 | 5,734 | Matches the recorded count and its 2,723 up / 2,478 down split |
+| *F. graminearum* Z-3639 heat shock | Reads, STAR, featureCounts, DESeq2 | 8,280 | 5,836 | Matches the recorded count |
+
+Every run ends with an overall WARNING or REVIEW_REQUIRED rather than PASS, from advisory checks such as the small-sample Wilcoxon diagnostic and the static network layout. On both *Fusarium* datasets, check 10 is REVIEW_REQUIRED because KEGG and g:Profiler enrichment do not resolve for this organism in 0.32.1 (see the [changelog](CHANGELOG.md)); their differential-expression results are unaffected.
 
 ## Benchmark archive and citation
 

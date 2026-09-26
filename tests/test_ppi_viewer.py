@@ -492,3 +492,93 @@ def test_empty_state_message_is_never_clipped(static_viewer, qapp, message, size
 
     assert label.heightForWidth(label.width()) <= label.height(), (label.width(), label.height())
     assert card.geometry().bottom() <= static_viewer._empty_page.height()
+
+
+def _synthetic_network() -> dict:
+    """A clique, a hub with leaves, a chain and isolated pairs: the shapes STRING returns."""
+    nodes, edges = [], []
+
+    def node(gene_id: str, lfc: float) -> None:
+        nodes.append({"data": {"id": gene_id, "symbol": gene_id, "log2FoldChange": lfc}})
+
+    clique = [f"CLQ{i}" for i in range(10)]
+    for i, gene in enumerate(clique):
+        node(gene, 1.5 if i % 2 else -1.5)
+    edges += [{"data": {"source": a, "target": b, "weight": 0.9}}
+              for i, a in enumerate(clique) for b in clique[i + 1:]]
+    node("HUB", 2.5)
+    for i in range(8):
+        node(f"LEAF{i}", -0.8)
+        edges.append({"data": {"source": "HUB", "target": f"LEAF{i}", "weight": 0.7}})
+    chain = [f"CHN{i}" for i in range(6)]
+    for gene in chain:
+        node(gene, 0.6)
+    edges += [{"data": {"source": a, "target": b, "weight": 0.6}} for a, b in zip(chain, chain[1:])]
+    for i in range(12):
+        node(f"PRA{i}", 1.1)
+        node(f"PRB{i}", -1.1)
+        edges.append({"data": {"source": f"PRA{i}", "target": f"PRB{i}", "weight": 0.5}})
+    degree = Counter(e["data"][end] for e in edges for end in ("source", "target"))
+    for item in nodes:
+        item["data"]["degree"] = degree[item["data"]["id"]]
+    return {"nodes": nodes, "edges": edges}
+
+
+def test_real_viewer_default_layout_keeps_nodes_and_labels_apart(tmp_path):
+    import json
+
+    probe = textwrap.dedent(
+        '''
+        import json, sys
+        from PySide6.QtCore import QEventLoop, QTimer, QUrl
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtWebEngineWidgets import QWebEngineView
+
+        app = QApplication.instance() or QApplication([])
+        view = QWebEngineView()
+        view.resize(918, 604)
+        view.show()
+        loaded = []
+        loop = QEventLoop()
+        view.loadFinished.connect(lambda ok: (loaded.append(bool(ok)), loop.quit()))
+        QTimer.singleShot(30000, loop.quit)
+        view.load(QUrl.fromLocalFile(__VIEWER__))
+        loop.exec()
+        assert loaded == [True], loaded
+
+        def js(expression, wait_ms=15000):
+            values = []
+            done = QEventLoop()
+            view.page().runJavaScript(expression, lambda value: (values.append(value), done.quit()))
+            QTimer.singleShot(wait_ms, done.quit)
+            done.exec()
+            assert values, expression
+            return values[0]
+
+        js("PPI.render(" + json.dumps({"elements": __GRAPH__}) + ")")
+        settle = QEventLoop()
+        QTimer.singleShot(1500, settle.quit)
+        settle.exec()
+        print(js("""JSON.stringify((function () {
+            var boxes = cy.nodes().map(function (n) { return n.boundingBox({ includeLabels: true }); });
+            var overlaps = 0;
+            for (var i = 0; i < boxes.length; i++) for (var j = i + 1; j < boxes.length; j++) {
+              var a = boxes[i], b = boxes[j];
+              if (a.x1 < b.x2 && b.x1 < a.x2 && a.y1 < b.y2 && b.y1 < a.y2) overlaps++;
+            }
+            return { nodes: cy.nodes().length, overlaps: overlaps };
+        })())"""))
+        view.close()
+        app.processEvents()
+        '''
+    ).replace("__VIEWER__", json.dumps(str(ppi_viewer_module.viewer_html_path()))).replace(
+        "__GRAPH__", json.dumps(_synthetic_network()))
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    env["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --no-sandbox"
+    completed = subprocess.run([sys.executable, "-c", probe], cwd=Path(__file__).resolve().parents[1],
+                               env=env, capture_output=True, text=True, timeout=120, check=False)
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert result["nodes"] == len(_synthetic_network()["nodes"])
+    assert result["overlaps"] == 0, result

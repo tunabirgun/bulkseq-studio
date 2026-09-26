@@ -122,11 +122,14 @@ function layoutOpts(name, n) {
   if (name === "concentric") return { name: "concentric", animate: false,
         concentric: function (e) { return e.data("degree") || 1; }, levelWidth: function () { return 2; } };
   if (name === "grid") return { name: "grid", animate: false };
-  // fcose draft (skips the slow spectral init) keeps it sub-second. The seeded RNG
-  // (reset in relayout) reduces run-to-run drift; the canonical reproducible network
-  // figure is the static results/figures/ppi_network.png (igraph, set.seed).
-  return { name: "fcose", quality: "draft", animate: false, randomize: true,
-           nodeRepulsion: 6000, idealEdgeLength: 70, packComponents: true };
+  // Draft quality ignored node and label size, so cliques and paired proteins were drawn on
+  // top of each other. The default quality spaces nodes by their drawn size and labels, at
+  // about a second for the 300-node display budget. The seeded RNG (reset in relayout)
+  // reduces run-to-run drift; the canonical reproducible network figure is the static
+  // results/figures/ppi_network.png (igraph, set.seed).
+  return { name: "fcose", quality: "default", animate: false, randomize: true,
+           nodeDimensionsIncludeLabels: true, nodeSeparation: 150, nodeRepulsion: 40000,
+           idealEdgeLength: 150, packComponents: true, tile: true };
 }
 
 // fcose draws random initial positions from Math.random (some of it asynchronously),

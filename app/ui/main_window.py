@@ -3233,6 +3233,8 @@ class MainWindow(QMainWindow):
         self.cores.setRange(1, 256)
         self.ram = QSpinBox()
         self.ram.setRange(1, 2048)
+        self.cores.valueChanged.connect(self._on_resource_edited)
+        self.ram.valueChanged.connect(self._on_resource_edited)
         manual_form.addRow(
             self._info_label(
                 "CPU workers to use",
@@ -6608,8 +6610,7 @@ class MainWindow(QMainWindow):
         if ref_level:
             self.reference_level.setCurrentText(next(iter(ref_level.values())))
         self.profile.setCurrentText(self.config.resources.profile)
-        self.cores.setValue(self.config.resources.total_threads)
-        self.ram.setValue(self.config.resources.total_memory_gb)
+        self._set_resource_values(self.config.resources.total_threads, self.config.resources.total_memory_gb)
         fig = self.config.figures_style
         self.fig_palette.setCurrentText(fig.palette)
         overrides = getattr(fig, "figure_overrides", {}) or {}
@@ -7079,15 +7080,29 @@ class MainWindow(QMainWindow):
         if system is None or profile == "custom":
             return
         rec = recommend_profile(system, profile)
-        self.cores.setValue(int(rec["total_threads"]))
-        self.ram.setValue(int(rec["total_memory_gb"]))
+        self._set_resource_values(rec["total_threads"], rec["total_memory_gb"])
+
+    def _set_resource_values(self, threads: int, memory_gb: int) -> None:
+        # Values the application derives or loads are not hand edits, so they must not
+        # relabel the profile as custom.
+        for box, value in ((self.cores, threads), (self.ram, memory_gb)):
+            box.blockSignals(True)
+            box.setValue(int(value))
+            box.blockSignals(False)
+
+    def _on_resource_edited(self) -> None:
+        # A limit set by hand is no longer the named profile's recommendation; keep the
+        # saved label honest and stop a later estimate from resetting it.
+        if self.profile.currentText() != "custom":
+            self.profile.blockSignals(True)
+            self.profile.setCurrentText("custom")
+            self.profile.blockSignals(False)
 
     def _on_detect_done(self, result: object) -> None:
         self.resources_busy.setVisible(False)
         system, rec = result
         self._last_system = system
-        self.cores.setValue(int(rec["total_threads"]))
-        self.ram.setValue(int(rec["total_memory_gb"]))
+        self._set_resource_values(rec["total_threads"], rec["total_memory_gb"])
         # For a WSL-native workdir the free space is bounded by the Windows drive that
         # backs the vhdx; name it so the number reads as real, not the vhdx's virtual size.
         disk_note = ""
@@ -7224,8 +7239,7 @@ class MainWindow(QMainWindow):
         # cores/RAM (via _save_resources -> build_snakemake_command). Update the
         # in-memory config and the spinboxes; the disk save happens on run/save.
         if self.profile.currentText() != "custom":
-            self.cores.setValue(int(threads))
-            self.ram.setValue(int(mem))
+            self._set_resource_values(threads, mem)
             if self.config is not None:
                 self.config.resources.total_threads = int(threads)
                 self.config.resources.total_memory_gb = int(mem)

@@ -74,6 +74,7 @@ def _callers(tmp_path: Path):
             "test_per_sample_strandedness",
             "test_sample_labels",
             "test_ppi_mapping_case",
+            "test_reclaim_run_space",
             "test_setup_bootstrap",
             "test_setup_installer",
         )
@@ -99,6 +100,7 @@ def _callers(tmp_path: Path):
          lambda: modules["test_per_sample_strandedness"]._run_read_length_shell([], tmp_path)),
         ("test_de_common", lambda: modules["test_de_common"]._bash_or_skip()),
         ("test_sample_labels", lambda: modules["test_sample_labels"]._bash_or_skip()),
+        ("test_reclaim_run_space", lambda: modules["test_reclaim_run_space"]._bash_or_skip()),
         ("test_setup_bootstrap", lambda: modules["test_setup_bootstrap"]._bash_or_skip()),
         ("test_setup_installer", lambda: modules["test_setup_installer"]._bash_or_skip()),
     ]
@@ -176,7 +178,7 @@ def test_every_r_caller_skips_when_the_packages_are_missing(monkeypatch, tmp_pat
         # skip condition; the no-runtime gate above is what covers them.
         if name.endswith("_wsl_bulkseq_snakemake") or name in {
                 "test_per_sample_strandedness", "test_de_common", "test_sample_labels",
-                "test_setup_bootstrap", "test_setup_installer"}:
+                "test_reclaim_run_space", "test_setup_bootstrap", "test_setup_installer"}:
             continue
         try:
             call()

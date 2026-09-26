@@ -414,6 +414,9 @@ benchmarks:
         strain here (ENA scientific_name Fusarium graminearum PH-1, taxon 229533).
       - 'No Bioconductor OrgDb exists for F. graminearum: GO comes from g:Profiler (fgraminearum), KEGG
         uses organism code fgr with locus_tag keys, and STRING uses taxon 229533.'
+      - 'Known issue in 0.32.1: the KEGG identity check compares organism names exactly and rejects fgr
+        (Fusarium graminearum) for the configured Fusarium graminearum PH-1, although both are taxon 5518,
+        and g:Profiler returns no GO terms for these identifiers, so check 10 ends REVIEW_REQUIRED.'
       - The library is unstranded; the pipeline auto-detects strandedness, so a detected value other than
         0 means the run, not the catalogue, has drifted.
       - Use allow_pending_sra validation until the FASTQ files are downloaded. Subset download ~5.4 GB.
@@ -561,6 +564,9 @@ benchmarks:
         data.
       - 'No Bioconductor OrgDb exists for F. graminearum: GO comes from g:Profiler (fgraminearum), KEGG
         uses organism code fgr with locus_tag keys, and STRING uses taxon 229533.'
+      - 'Known issue in 0.32.1: the KEGG identity check compares organism names exactly and rejects fgr
+        (Fusarium graminearum) for the configured Fusarium graminearum PH-1, although both are taxon 5518,
+        and g:Profiler returns no GO terms for these identifiers, so check 10 ends REVIEW_REQUIRED.'
       - Three biological replicates per temperature, one ENA run each, as stated in the study's own overall
         design.
       - Use allow_pending_sra validation until the FASTQ files are downloaded. Subset download ~9.5 GB.
