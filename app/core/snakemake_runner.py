@@ -596,6 +596,8 @@ def _run_quiet(cmd: list[str], timeout: float = 30.0, cwd: Path | None = None) -
             check=False,
             creationflags=creationflags,
             cwd=cwd,
+            # A native `snakemake --unlock` must not load the frozen bundle's libraries either.
+            env=without_bundle_library_path(dict(os.environ)),
         )
     except (OSError, subprocess.SubprocessError):
         pass

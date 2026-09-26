@@ -7084,7 +7084,7 @@ class MainWindow(QMainWindow):
             is_windows_path = t.startswith("\\\\") or "\\" in t or (len(t) >= 2 and t[1] == ":")
             return windows_to_wsl_path(t) if is_windows_path else t
         # A network share has no WSL-side equivalent; refuse the save (like the other workflow
-        # validation failures above) instead of storing a path the run cannot open. All three are
+        # validation failures above) instead of storing a path the run cannot open. Every path field is
         # translated before any is stored, so a bad second field never half-updates the config.
         try:
             gene_set_paths = [_to_wsl_input(field.text()) for field in

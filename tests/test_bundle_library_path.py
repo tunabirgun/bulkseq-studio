@@ -36,3 +36,13 @@ def test_pipeline_rules_do_not_inherit_the_bundle_path(monkeypatch, use_wsl):
     env = runner._snakemake_child_env(use_wsl)
     assert BUNDLE not in env.get("LD_LIBRARY_PATH", "")
     assert env["LC_NUMERIC"] == "C"
+
+
+def test_unlock_and_cleanup_commands_do_not_inherit_the_bundle_path(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("LD_LIBRARY_PATH", BUNDLE)
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/opt/lib")
+    monkeypatch.setattr(runner.subprocess, "run", lambda cmd, **kw: seen.update(kw))
+    runner._run_quiet(["snakemake", "--unlock"])
+    assert seen["env"]["LD_LIBRARY_PATH"] == "/opt/lib"
