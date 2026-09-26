@@ -16,8 +16,6 @@ local({
 # the curated routes and their outputs are unchanged. Best-effort: a failure writes
 # empty tables and a REVIEW_REQUIRED check, so the run still completes.
 
-source(file.path(snakemake@scriptdir, "enrichment_eligibility.R"))
-
 STRING_CATEGORIES <- c(
   "Biological Process (Gene Ontology)" = "GO BP",
   "Molecular Function (Gene Ontology)" = "GO MF",
@@ -497,6 +495,7 @@ main <- function() {
 `%||%` <- function(a, b) if (is.null(a) || !length(a) || (length(a) == 1L && is.na(a))) b else a
 
 if (exists("snakemake")) {
+  source(file.path(snakemake@scriptdir, "enrichment_eligibility.R"))
   log_con <- file(snakemake@log[[1]], open = "wt")
   sink(log_con, type = "message")
   suppressMessages(library(clusterProfiler))

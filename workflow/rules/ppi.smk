@@ -1,6 +1,6 @@
 # Protein-protein interaction network (STRING) built from the DE / GOI set.
 # Opt-outable via ppi.enabled. STRINGdb contacts string-db.org (no offline mode);
-# build_string_network.R degrades to empty outputs + a PASS check when the network
+# build_string_network.R degrades to empty outputs + a WARNING check when the network
 # or organism is unavailable, so a run never fails because STRING is unreachable.
 _PPI = config.get("ppi", {})
 # The gene list is a real input (like figures.smk's genes_of_interest), so editing it

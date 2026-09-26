@@ -63,6 +63,24 @@ def _multistudy_gates(df: pd.DataFrame, num: str, den: str) -> list[dict[str, st
     return msgs
 
 
+def condition_messages(df: pd.DataFrame) -> list[dict[str, str]]:
+    """Empty or unknown conditions and the two replicate tiers, shared with the interface's
+    validator (app.core.metadata imports this), so the pre-run check and check 01 agree."""
+    if "condition" not in df.columns:
+        return []
+    msgs: list[dict[str, str]] = []
+    condition = df["condition"].fillna("").astype(str).str.strip()
+    empty = int(condition.isin(["", "unknown"]).sum())
+    if empty:
+        msgs.append({"status": "REVIEW_REQUIRED", "message": f"{empty} sample(s) have empty or unknown condition."})
+    for name, count in condition[~condition.isin(["", "unknown"])].value_counts(sort=False).items():
+        if count < 2:
+            msgs.append({"status": "WARNING", "message": f"Condition '{name}' has fewer than two biological replicates."})
+        elif count < 3:
+            msgs.append({"status": "WARNING", "message": f"Condition '{name}' has fewer than the recommended three biological replicates."})
+    return msgs
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--samples", required=True)
@@ -85,14 +103,7 @@ def main() -> int:
     if unsafe:
         messages.append({"status": "FAIL", "message": f"Unsafe sample IDs: {', '.join(unsafe)}"})
 
-    if "condition" in df.columns:
-        counts = df.groupby("condition")["sample_id"].count().to_dict()
-        for condition, count in counts.items():
-            if condition in ("", "unknown"):
-                continue
-            if count < 2:
-                messages.append({"status": "WARNING", "message": f"Condition '{condition}' has fewer than two replicates."})
-
+    messages += condition_messages(df)
     messages += _multistudy_gates(df, args.numerator.strip(), args.denominator.strip())
 
     if not messages:

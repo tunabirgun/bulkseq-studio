@@ -16,6 +16,9 @@ NUMERIC_TOLERANCE = 1e-8
 
 
 def _warning(message: str, *, reason: str, source: str) -> dict:
+    # The qualifier in the text separates "could not assess" from the advisory finding,
+    # which otherwise only the JSON assessment field tells apart.
+    message = message.replace("Sample-structure QC WARNING:", "Sample-structure QC WARNING (not assessable):", 1)
     return {
         "check": "22_sample_structure_qc",
         "status": "WARNING",
@@ -149,7 +152,7 @@ def evaluate(samples: dict[str, str], labels: list[str], values: dict[tuple[str,
             for item in flagged
         )
         message = (
-            f"Sample-structure QC WARNING: expected replicate clustering is weaker than local "
+            f"Sample-structure QC WARNING (advisory finding): expected replicate clustering is weaker than local "
             f"between-condition separation for {summary}; the {threshold_text} advisory threshold was met. "
             "This is descriptive evidence, not an outlier call and not a small-n hypothesis test; interpret "
             "differential-expression and enrichment results cautiously and investigate technical or biological heterogeneity."

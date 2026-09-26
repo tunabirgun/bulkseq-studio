@@ -78,6 +78,7 @@ def _callers(tmp_path: Path):
             "test_reclaim_run_space",
             "test_setup_bootstrap",
             "test_setup_installer",
+            "test_transfer_enrichment",
         )
     }
     return [
@@ -93,6 +94,8 @@ def _callers(tmp_path: Path):
          lambda: modules["test_figure_rendering_contracts"]._r_runtime()),
         ("test_kegg_identity_catalogue",
          lambda: modules["test_kegg_identity_catalogue"]._r_runtime(harness)),
+        ("test_transfer_enrichment",
+         lambda: modules["test_transfer_enrichment"]._r_runtime(harness)),
         ("test_microarray_probe_mapping",
          lambda: modules["test_microarray_probe_mapping"]._r_runtime(harness)),
         ("test_meta_enrichment_threshold",

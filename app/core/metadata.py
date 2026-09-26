@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from app.constants import REQUIRED_METADATA_COLUMNS, SAFE_ID_PATTERN
+from workflow.scripts.validate_metadata import condition_messages
 
 
 def dataframe_from_rows(rows: list[dict[str, str]]) -> pd.DataFrame:
@@ -155,23 +156,13 @@ def validate_metadata(df: pd.DataFrame, allow_pending_sra: bool = False,
         if layout == "paired" and r2 and not allow_pending_sra and not Path(r2).exists():
             messages.append({"status": "FAIL", "message": f"Row {idx + 1}: FASTQ R2 does not exist: {r2}"})
 
-    empty_conditions = df["condition"].astype(str).str.strip().isin(["", "unknown"]).sum()
-    if empty_conditions:
-        messages.append({"status": "REVIEW_REQUIRED", "message": f"{empty_conditions} sample(s) have empty or unknown condition."})
+    # One implementation with the workflow's check 01, so both report the same tiers.
+    messages.extend(condition_messages(df))
 
     if design_variables:
         missing_design = [col for col in design_variables if col not in df.columns]
         if missing_design:
             messages.append({"status": "FAIL", "message": f"Design variables missing from metadata: {', '.join(missing_design)}"})
-
-    counts = df.groupby("condition", dropna=False)["sample_id"].count().to_dict() if "condition" in df.columns else {}
-    for condition, count in counts.items():
-        if condition in ("", "unknown"):
-            continue
-        if count < 2:
-            messages.append({"status": "WARNING", "message": f"Condition '{condition}' has fewer than two biological replicates."})
-        elif count < 3:
-            messages.append({"status": "WARNING", "message": f"Condition '{condition}' has fewer than the recommended three biological replicates."})
 
     messages.extend(detect_batch_condition_confounding(df))
     messages.extend(detect_dataset_confounding(df, contrast))

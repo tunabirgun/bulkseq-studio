@@ -70,3 +70,21 @@ def test_dispersed_replicates_emit_warning_and_renderable_limitation(tmp_path: P
     assert completed.returncode == 0, completed.stderr
     assert "22_sample_structure_qc: WARNING" in report.read_text(encoding="utf-8")
     assert "interpret differential-expression and enrichment results cautiously" in report.read_text(encoding="utf-8")
+
+
+def test_warning_text_says_whether_the_check_assessed_anything(tmp_path: Path) -> None:
+    advisory = json.loads(_run(tmp_path, {
+        "control_1": {"control_1": 1, "control_2": .995, "treatment_1": .994, "treatment_2": .97},
+        "control_2": {"control_1": .995, "control_2": 1, "treatment_1": .993, "treatment_2": .969},
+        "treatment_1": {"control_1": .994, "control_2": .993, "treatment_1": 1, "treatment_2": .97},
+        "treatment_2": {"control_1": .97, "control_2": .969, "treatment_1": .97, "treatment_2": 1},
+    }).read_text(encoding="utf-8"))
+    assert advisory["messages"][0]["message"].startswith("Sample-structure QC WARNING (advisory finding):")
+    mismatch = tmp_path / "mismatch"
+    mismatch.mkdir()
+    not_assessed = json.loads(_run(mismatch, {
+        "other_1": {"other_1": 1, "other_2": .9},
+        "other_2": {"other_1": .9, "other_2": 1},
+    }).read_text(encoding="utf-8"))
+    assert not_assessed["assessment"] == "NOT_ASSESSABLE"
+    assert not_assessed["messages"][0]["message"].startswith("Sample-structure QC WARNING (not assessable):")
