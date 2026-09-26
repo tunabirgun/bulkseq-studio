@@ -744,6 +744,17 @@ def test_transfer_enrichment_fields_round_trip_through_save_and_reload() -> None
     assert w.transfer_enrichment_panel.isVisible()
     assert all(control.isVisible() for control in (
         w.transfer_mode, w.transfer_emapper, w.transfer_ko_table))
+    # Every new control carries both an accessible name and a tooltip, not just one or the other.
+    for control in (w.transfer_mode, w.transfer_emapper, w.transfer_ko_table):
+        assert control.accessibleName()
+        assert control.toolTip()
+    from PySide6.QtWidgets import QPushButton
+    browse_buttons = [
+        b for b in w.transfer_enrichment_panel.findChildren(QPushButton) if b.text() == "Browse"]
+    assert len(browse_buttons) == 2
+    for button in browse_buttons:
+        assert button.accessibleName()
+        assert button.toolTip()
 
     idx = w.transfer_mode.findData("on")
     assert idx >= 0

@@ -3070,6 +3070,7 @@ class MainWindow(QMainWindow):
             le.setAccessibleDescription(tip)
             browse = QPushButton("Browse")
             browse.setAccessibleName(f"Browse for {acc_name}")
+            browse.setToolTip(f"Choose the {acc_name}.")
             browse.clicked.connect(lambda _=False, t=le, f=filt: self._pick_reference_file(t, f))
             holder_row = QHBoxLayout()
             holder_row.addWidget(le)

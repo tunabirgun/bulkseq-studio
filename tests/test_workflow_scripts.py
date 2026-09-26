@@ -656,6 +656,26 @@ def test_transfer_enrichment_evidence_absent_when_it_did_not_run(mrs, tmp_path) 
         assert "Annotation-transfer enrichment" not in report
 
 
+def test_transfer_enrichment_evidence_tolerates_a_malformed_check_file(mrs, tmp_path) -> None:
+    # The check ran (transfer_summary.txt exists) but its JSON is not the {status, messages:
+    # [...]} shape write_check() writes -- read defensively rather than raising KeyError/
+    # AttributeError and aborting the whole run summary.
+    transfer = tmp_path / "results" / "enrichment" / "transfer"
+    transfer.mkdir(parents=True)
+    (transfer / "transfer_summary.txt").write_text(
+        "Annotation-transfer enrichment summary\n", encoding="utf-8")
+    checks = tmp_path / "checks"
+    checks.mkdir(parents=True)
+    (checks / "25_transfer_enrichment_qc.json").write_text("[]", encoding="utf-8")
+    evidence = mrs.transfer_enrichment_evidence(tmp_path)
+    assert evidence == {"ran": True, "check_status": None, "check_message": None}
+    payload = _base_payload(enrichment_transfer=evidence)
+    for report in (mrs.render_text(payload), mrs.render_tools_references(payload)):
+        assert "Ran: yes" in report
+        assert "Check 25 status: not recorded" in report
+        assert "First message: not recorded" in report
+
+
 def test_enrichment_script_has_mixed_id_fallback_na_filter_and_fail_closed_gate() -> None:
     script = (Path(__file__).resolve().parents[1] / "workflow" / "scripts" /
               "run_enrichment.R").read_text(encoding="utf-8")

@@ -924,10 +924,11 @@ def transfer_enrichment_evidence(root: Path) -> dict:
     message = None
     try:
         payload = json.loads(check_path.read_text(encoding="utf-8"))
-        status = payload.get("status")
-        messages = payload.get("messages") or []
-        if messages and isinstance(messages[0], dict):
-            message = messages[0].get("message")
+        if isinstance(payload, dict):
+            status = payload.get("status")
+            messages = payload.get("messages")
+            if isinstance(messages, list) and messages and isinstance(messages[0], dict):
+                message = messages[0].get("message")
     except (OSError, UnicodeError, json.JSONDecodeError):
         pass
     return {"ran": True, "check_status": status, "check_message": message}
