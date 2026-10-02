@@ -59,6 +59,8 @@ Open `results/reports/meta_analysis_report.html` for the executed factor, direct
 | `results/reports/` | Main HTML report, optional cross-study report, run summary, methods and software provenance |
 | `checks/`, `config/`, `logs/` | Validation evidence, saved settings and execution logs needed to interpret or reproduce a result |
 
+For custom gene-set ORA, the supplied background and selected list can be larger than the identifiers represented in the annotation. The summary distinguishes those supplied counts from the effective annotated populations; the report shows each term’s `GeneRatio` and `BgRatio`. This reporting correction does not change the enrichment selection or p-values. Direct Entrez IDs on OrgDb-backed routes also retain their mapping in 0.34.0; rerun an older analysis that failed at this step, because saved results do not update on their own.
+
 An adjusted p-value is not the probability that one gene is false; the BH statement concerns a rejection set under its assumptions. A later raw fold-change screen does not automatically inherit that FDR guarantee. A non-significant gene is not an equivalence result. PCA and heatmaps describe sample structure or transformed expression when a matrix exists; STRING edges are functional associations, not measured physical binding in these samples. Read [what the numbers mean](https://tunabirgun.github.io/bulkseq-studio/interpreting.html) and [outputs and provenance](https://tunabirgun.github.io/bulkseq-studio/outputs.html) before making biological claims.
 
 ## Update a project

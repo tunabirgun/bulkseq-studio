@@ -654,6 +654,35 @@ def test_figure_detail_defaults_to_common_controls_and_reveals_every_advanced_co
         window.close()
 
 
+def test_default_figure_font_label_keeps_empty_family_on_save(tmp_path: Path) -> None:
+    settings = QSettings()
+    theme_before = settings.value("theme_mode")
+    window = _window(1093, 640)
+    try:
+        project_root = tmp_path / "figure-font"
+        (project_root / "config").mkdir(parents=True)
+        window.project_root = project_root
+        window.config = default_config("figure-font", project_root)
+        window._populate_widgets_from_config()
+        assert window.fig_font_family.currentText() == window.FONT_DEFAULT_LABEL
+        assert window._apply_figure_style()
+        assert window.manager.load_config(project_root).figures_style.font_family == ""
+
+        window.fig_font_family.setCurrentText("DejaVu Serif")
+        assert window._apply_figure_style()
+        loaded = window.manager.load_config(project_root)
+        assert loaded.figures_style.font_family == "DejaVu Serif"
+        window.config = loaded
+        window._populate_widgets_from_config()
+        assert window.fig_font_family.currentText() == "DejaVu Serif"
+    finally:
+        window.close()
+        if theme_before is None:
+            settings.remove("theme_mode")
+        else:
+            settings.setValue("theme_mode", theme_before)
+
+
 def test_output_preview_sizes_common_de_headers_without_unbounded_columns(tmp_path) -> None:
     result_path = tmp_path / "differential_expression.tsv"
     extra_headers = [f"supporting_metric_{index}" for index in range(8)]

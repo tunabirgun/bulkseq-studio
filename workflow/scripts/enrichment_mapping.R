@@ -136,7 +136,8 @@ map_ids_with_routing <- function(ids, orgdb, configured_keytype, orgdb_package =
         drop = TRUE)),
       error = function(e) NULL)
     if (!is.null(mapped) && nrow(mapped) > 0 && "ENTREZID" %in% names(mapped)) {
-      if (candidate %in% names(mapped)) names(mapped)[names(mapped) == candidate] <- "input_id"
+      if (!identical(candidate, "ENTREZID") && candidate %in% names(mapped))
+        names(mapped)[names(mapped) == candidate] <- "input_id"
       candidates[[candidate]] <- mapped[, c("input_id", "ENTREZID"), drop = FALSE]
     }
   }

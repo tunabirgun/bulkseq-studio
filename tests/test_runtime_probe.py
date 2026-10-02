@@ -69,11 +69,13 @@ def _callers(tmp_path: Path):
             "test_enrichment_mapping",
             "test_external_results_safety",
             "test_figure_rendering_contracts",
+            "test_gprofiler_transport",
             "test_kegg_identity_catalogue",
             "test_microarray_probe_mapping",
             "test_meta_enrichment_threshold",
             "test_meta_methods_runtime",
             "test_meta_volcano_threshold",
+            "test_orgdb_entrez_mapping",
             "test_per_sample_strandedness",
             "test_sample_labels",
             "test_shared_gate_repairs",
@@ -86,6 +88,8 @@ def _callers(tmp_path: Path):
     }
     return [
         ("test_custom_enrichment", lambda: modules["test_custom_enrichment"]._r_runtime(harness)),
+        ("test_custom_enrichment.custom_ora",
+         lambda: modules["test_custom_enrichment"].test_custom_ora_population_denominators_use_raw_model_evidence(tmp_path)),
         ("test_de_contrasts", lambda: modules["test_de_contrasts"]._r_runtime(harness)),
         ("test_enrichment_eligibility",
          lambda: modules["test_enrichment_eligibility"]._r_runtime(harness)),
@@ -95,6 +99,10 @@ def _callers(tmp_path: Path):
          lambda: modules["test_external_results_safety"]._r_runtime(harness)),
         ("test_figure_rendering_contracts",
          lambda: modules["test_figure_rendering_contracts"]._r_runtime()),
+        ("test_gprofiler_transport",
+         lambda: modules["test_gprofiler_transport"].test_production_gprofiler_client_uses_https_and_preserves_archive_and_payload(tmp_path)),
+        ("test_orgdb_entrez_mapping",
+         lambda: modules["test_orgdb_entrez_mapping"].test_installed_orgdb_keeps_direct_entrez_targets_and_excludes_unknown_ids(tmp_path)),
         ("test_kegg_identity_catalogue",
          lambda: modules["test_kegg_identity_catalogue"]._r_runtime(harness)),
         ("test_transfer_enrichment",
@@ -152,6 +160,9 @@ def test_every_caller_skips_when_no_runtime_is_live(monkeypatch, tmp_path) -> No
     monkeypatch.delenv("BULKSEQ_REQUIRE_R", raising=False)
     monkeypatch.delenv("BULKSEQ_REQUIRE_R_FULL", raising=False)
     monkeypatch.delenv("BULKSEQ_REQUIRE_R_META", raising=False)
+    monkeypatch.delenv("BULKSEQ_REQUIRE_GPROFILER", raising=False)
+    monkeypatch.delenv("BULKSEQ_REQUIRE_ORGDB_MAPPING", raising=False)
+    monkeypatch.delenv("BULKSEQ_REQUIRE_CUSTOM_ORA", raising=False)
 
     def refuse(command, *args, **kwargs):
         return subprocess.CompletedProcess(command, 1, "", "")
@@ -183,6 +194,9 @@ def test_every_r_caller_skips_when_the_packages_are_missing(monkeypatch, tmp_pat
     monkeypatch.delenv("BULKSEQ_REQUIRE_R", raising=False)
     monkeypatch.delenv("BULKSEQ_REQUIRE_R_FULL", raising=False)
     monkeypatch.delenv("BULKSEQ_REQUIRE_R_META", raising=False)
+    monkeypatch.delenv("BULKSEQ_REQUIRE_GPROFILER", raising=False)
+    monkeypatch.delenv("BULKSEQ_REQUIRE_ORGDB_MAPPING", raising=False)
+    monkeypatch.delenv("BULKSEQ_REQUIRE_CUSTOM_ORA", raising=False)
     monkeypatch.setattr(_runtime, "_runs_with", lambda command, packages: False)
     reset_probe_cache()
 
@@ -209,6 +223,19 @@ def test_required_meta_r_callers_fail_when_packages_are_missing(monkeypatch, tmp
         if name in {"test_meta_methods_runtime", "test_meta_volcano_threshold", "test_shared_gate_repairs"}:
             with pytest.raises(pytest.fail.Exception):
                 call()
+
+
+def test_required_service_r_callers_fail_when_packages_are_missing(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("BULKSEQ_REQUIRE_GPROFILER", "1")
+    monkeypatch.setenv("BULKSEQ_REQUIRE_ORGDB_MAPPING", "1")
+    monkeypatch.setenv("BULKSEQ_REQUIRE_CUSTOM_ORA", "1")
+    monkeypatch.setattr(_runtime, "_runs_with", lambda command, packages: False)
+    reset_probe_cache()
+    calls = dict(_callers(tmp_path))
+    for name in ("test_gprofiler_transport", "test_orgdb_entrez_mapping",
+                 "test_custom_enrichment.custom_ora"):
+        with pytest.raises(pytest.fail.Exception):
+            calls[name]()
 
 
 def test_the_caller_list_covers_every_module_built_on_the_probe(tmp_path) -> None:

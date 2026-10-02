@@ -4,6 +4,7 @@ import gc
 import os
 import signal
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -37,7 +38,7 @@ def _abort_gui_teardown(message: str) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_cwd(tmp_path, monkeypatch):
+def _isolate_cwd(tmp_path, monkeypatch, request):
     """Run every test in its own temporary working directory.
 
     Several tests create scratch projects via relative paths (``manual_test_*``).
@@ -46,6 +47,34 @@ def _isolate_cwd(tmp_path, monkeypatch):
     so changing the working directory does not affect it.
     """
     monkeypatch.chdir(tmp_path)
+    qt_core = sys.modules.get("PySide6.QtCore")
+    if qt_core is not None:
+        core_app = qt_core.QCoreApplication
+        settings = qt_core.QSettings
+        prior = (settings.defaultFormat(), core_app.organizationName(),
+                 core_app.organizationDomain(), core_app.applicationName())
+        settings_dir = tmp_path / "qt-settings"
+        (settings_dir / "system").mkdir(parents=True)
+        settings.setPath(settings.Format.IniFormat, settings.Scope.UserScope,
+                         str(settings_dir))
+        settings.setPath(settings.Format.IniFormat, settings.Scope.SystemScope,
+                         str(settings_dir / "system"))
+        settings.setDefaultFormat(settings.Format.IniFormat)
+        core_app.setOrganizationName("BulkSeqLocalTests")
+        core_app.setOrganizationDomain("")
+        core_app.setApplicationName("settings")
+        selected = settings()
+        if (selected.format() != settings.Format.IniFormat or
+                not Path(selected.fileName()).resolve().is_relative_to(settings_dir.resolve())):
+            pytest.fail("GUI settings were not isolated to the test directory")
+
+        def restore_settings() -> None:
+            settings.setDefaultFormat(prior[0])
+            core_app.setOrganizationName(prior[1])
+            core_app.setOrganizationDomain(prior[2])
+            core_app.setApplicationName(prior[3])
+
+        request.addfinalizer(restore_settings)
 
     # Keep ordinary in-process GUI tests on the static PPI surface. Constructing
     # and destroying a Chromium-backed QWebEngineView for every MainWindow made

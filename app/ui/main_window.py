@@ -367,7 +367,7 @@ class _InspectorTabs(QTabWidget):
 
 
 class MainWindow(QMainWindow):
-    FONT_DEFAULT_LABEL = "(ggplot default)"
+    FONT_DEFAULT_LABEL = "(default serif)"
 
     def __init__(self) -> None:
         super().__init__()
@@ -5850,9 +5850,8 @@ class MainWindow(QMainWindow):
         self.fig_base_font = QSpinBox()
         self.fig_base_font.setRange(4, 48)
         self.fig_base_font.setValue(12)
-        # Font family as a dropdown of installed fonts (editable so a font only
-        # present in the WSL R environment can still be typed). The first entry
-        # means "ggplot default" and maps to an empty value.
+        # The default entry keeps an empty stored value; the renderer prefers
+        # Times New Roman and names its installed serif fallback when unavailable.
         self.fig_font_family = QComboBox()
         self.fig_font_family.setEditable(True)
         self.fig_font_family.addItem(self.FONT_DEFAULT_LABEL)
@@ -6019,7 +6018,7 @@ class MainWindow(QMainWindow):
         overrides.addWidget(self._build_figure_override_table(), 1)
         appearance.addRow(self._info_label("Point size", "Dot size in PCA/volcano scatter plots (ggplot2 size units).", self.fig_point_size), self.fig_point_size)
         appearance.addRow(self._info_label("Base font size", "Base text size for all figures (ggplot2 theme base_size, points).", self.fig_base_font), self.fig_base_font)
-        appearance_advanced.addRow(self._info_label("Font family", "Font for figure text. Leave as default unless the font is also available in the WSL R environment.", self.fig_font_family), self.fig_font_family)
+        appearance_advanced.addRow(self._info_label("Font family", "Default prefers Times New Roman; if unavailable, the R renderer logs an installed serif fallback. An explicit family must be available to the renderer.", self.fig_font_family), self.fig_font_family)
         appearance_advanced.addRow(self.fig_label_bold)
         appearance_advanced.addRow(self.fig_title_bold)
         appearance_advanced.addRow(self.fig_gene_italic)

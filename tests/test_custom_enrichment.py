@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from typing import Callable
@@ -21,6 +22,54 @@ def _r_runtime(script: Path) -> tuple[list[str], str, Callable[[Path], str]]:
         pytest.skip("Rscript is not available for the custom-enrichment regression")
     command, convert = runtime
     return command, convert(script), convert
+
+
+def test_custom_ora_population_denominators_use_raw_model_evidence(tmp_path: Path) -> None:
+    runtime = rscript_runtime("clusterProfiler")
+    if runtime is None:
+        if os.environ.get("BULKSEQ_REQUIRE_CUSTOM_ORA") == "1":
+            pytest.fail("Required Rscript with clusterProfiler is unavailable")
+        pytest.skip("Rscript with clusterProfiler is unavailable for the custom ORA model probe")
+    command, convert = runtime
+    code = f'''
+exprs <- parse(file={convert(SCRIPT)!r})
+for (expr in exprs) if (is.call(expr) && identical(as.character(expr[[1]]), "<-") &&
+  identical(as.character(expr[[2]]), "custom_ora_populations")) eval(expr, envir=.GlobalEnv)
+universe <- paste0("g", seq_len(80))
+t2g <- data.frame(term=c(rep("A", 20), rep("B", 25), rep("C", 10)),
+                  gene=c(universe[1:20], universe[21:45], universe[1:10]))
+selected <- c(universe[1:17], universe[80])
+run <- function(cutoff) clusterProfiler::enricher(
+  gene=selected, universe=universe, TERM2GENE=t2g, pvalueCutoff=cutoff,
+  pAdjustMethod="BH", qvalueCutoff=1, minGSSize=10, maxGSSize=500)
+model <- run(1)
+stopifnot(methods::is(model, "enrichResult"), nrow(model@result) >= 2L)
+counts <- custom_ora_populations(model, TRUE)
+stopifnot(identical(counts$model, "present"), counts$selected == 17L,
+          counts$background == 45L)
+filtered <- run(1e-30)
+stopifnot(nrow(filtered@result) >= 2L, nrow(as.data.frame(filtered)) == 0L)
+filtered_counts <- custom_ora_populations(filtered, TRUE)
+stopifnot(filtered_counts$selected == 17L, filtered_counts$background == 45L)
+bad <- model
+bad@result$GeneRatio[[2]] <- "10/18"
+stopifnot(is.na(custom_ora_populations(bad, TRUE)$selected))
+bad <- model
+bad@result$BgRatio[[1]] <- "invalid"
+stopifnot(is.na(custom_ora_populations(bad, TRUE)$background))
+bad <- model
+bad@result$Count[[1]] <- 17.5
+stopifnot(is.na(custom_ora_populations(bad, TRUE)$selected))
+stopifnot(identical(custom_ora_populations(NULL, FALSE)$model, "not run"),
+          identical(custom_ora_populations(NULL, TRUE)$model, "unavailable"))
+cat("custom ORA effective population evidence PASS\\n")
+'''
+    harness = tmp_path / "custom_ora_population.R"
+    harness.write_text(code, encoding="utf-8", newline="\n")
+    completed = subprocess.run([*command, convert(harness)], capture_output=True, text=True,
+                               timeout=120, check=False)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "custom ORA effective population evidence PASS" in completed.stdout
 
 
 def test_custom_gsea_rank_is_deterministic_and_reports_exact_ties(tmp_path: Path) -> None:

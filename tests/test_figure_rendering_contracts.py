@@ -440,6 +440,27 @@ def _assert_svg_labels_do_not_collide(svg: str, expected_labels: set[str]) -> No
             )
 
 
+def _assert_svg_capped_markers_clear_of_key(svg: str, key_rows: set[str]) -> None:
+    root = ET.fromstring(svg)
+    headers = {"".join(node.itertext()).strip() for node in root.iter()
+               if node.tag.rsplit("}", 1)[-1] == "text"} & {"Down key", "Up key"}
+    boxes = _svg_text_boxes(svg, key_rows | headers)
+    for marker in root.iter():
+        if marker.tag.rsplit("}", 1)[-1] != "polygon":
+            continue
+        points = [tuple(map(float, pair.split(",")))
+                  for pair in marker.attrib["points"].split()]
+        left, right = min(x for x, _ in points), max(x for x, _ in points)
+        top, bottom = min(y for _, y in points), max(y for _, y in points)
+        for label, (text_left, text_top, text_right, text_bottom) in boxes.items():
+            if min(bottom, text_bottom) <= max(top, text_top):
+                continue
+            horizontal_gap = max(text_left - right, left - text_right)
+            assert horizontal_gap >= 4, (
+                f"capped marker is only {horizontal_gap:.2f}pt from {label!r}"
+            )
+
+
 def _assert_svg_volcano_key(
     svg: str,
     *,
@@ -451,6 +472,7 @@ def _assert_svg_volcano_key(
     expected_rows = left_rows | right_rows
     assert not left_rows & right_rows
     _assert_svg_labels_do_not_collide(svg, expected_rows)
+    _assert_svg_capped_markers_clear_of_key(svg, expected_rows)
     boxes = _svg_text_boxes(svg, expected_rows)
     root = ET.fromstring(svg)
     view_box = [float(value) for value in root.attrib["viewBox"].split()]
@@ -556,19 +578,20 @@ def _assert_enrichment_placeholder_wrap_contract(source: str) -> None:
     assert "save_gg(p, png_path, svg_path, w = w, h = h)" in source
 
 
-def _assert_sample_distance_smooth_legend_contract(source: str) -> None:
-    assert "smooth_continuous_legend <- function" in source
-    assert 'gtable$layout$name == "legend"' in source
-    assert 'inherits(child, "rect")' in source
-    assert "length(child$gp$fill) > 1L" in source
-    assert "height = sum(source_rect$height)" in source
-    assert "fill_colors <- rep_len(" in source
-    assert "length(source_rect$height)" in source
-    assert "grid::linearGradient(" in source
-    assert "stops = seq(0, 1, length.out = length(fill_colors))" in source
-    assert "ph$gtable <- smooth_continuous_legend(ph$gtable)" in source
-    assert source.count("smooth_continuous_legend <- function") == 1
-    assert source.count("smooth_continuous_legend(") == 1
+def _assert_sample_distance_smooth_legend_contract(core: str, style: str) -> None:
+    assert "smooth_continuous_legend <- function" in style
+    assert 'gtable$layout$name == "legend"' in style
+    assert 'inherits(child, "rect")' in style
+    assert "length(child$gp$fill) > 1L" in style
+    assert "height = sum(source_rect$height)" in style
+    assert "fill_colors <- rep_len(" in style
+    assert "length(source_rect$height)" in style
+    assert "grid::linearGradient(" in style
+    assert "stops = seq(0, 1, length.out = length(fill_colors))" in style
+    assert "gtable <- smooth_continuous_legend(gtable)" in style
+    assert "ph$gtable <- smooth_continuous_legend(ph$gtable)" in core
+    assert style.count("smooth_continuous_legend <- function") == 1
+    assert "smooth_continuous_legend <- function" not in core
 
 
 def _assert_seam_free_continuous_svg(svg: str) -> None:
@@ -722,6 +745,19 @@ def test_svg_volcano_key_gate_rejects_a_clipped_full_row() -> None:
         _assert_svg_volcano_key(
             broken_svg, left_rows={row}, right_rows=set()
         )
+
+
+def test_svg_capped_marker_gate_rejects_contact_with_key_heading() -> None:
+    def fixture(up_x: float) -> str:
+        return f"""<svg xmlns='http://www.w3.org/2000/svg'>
+<polygon points='294.93,70.50 298.36,76.44 291.50,76.44' />
+<text x='20' y='78.07' style='font-size: 11.38px;' textLength='50px'>Down key</text>
+<text x='{up_x}' y='78.07' style='font-size: 11.38px;' textLength='34.45px'>Up key</text>
+</svg>"""
+
+    with pytest.raises(AssertionError, match="capped marker"):
+        _assert_svg_capped_markers_clear_of_key(fixture(298.16), set())
+    _assert_svg_capped_markers_clear_of_key(fixture(310), set())
 
 
 def test_svg_volcano_key_gate_rejects_an_association_leader() -> None:
@@ -896,6 +932,60 @@ volcano_add_ranked_key(p,labels,xm=4,ytop=8,canvas_w=6,canvas_h=1,label_size=4)
     assert capacity.returncode != 0
     assert "require a taller figure canvas" in capacity.stderr
 
+
+def test_volcano_one_sided_key_keeps_capacity_and_marker_clearance(tmp_path: Path) -> None:
+    command, runtime_path = _r_runtime("ggplot2", "svglite", "systemfonts")
+    core = _text("make_figures.R")
+    helper = core[
+        core.index("# ---- Volcano ranked-key geometry"):
+        core.index("# ---- End volcano-label geometry")
+    ]
+    style_path = runtime_path(SCRIPTS / "figure_style.R").replace("'", "\\'")
+    output_paths = [tmp_path / "one-sided-default.svg", tmp_path / "one-sided-serif.svg"]
+    r_paths = [runtime_path(path).replace("'", "\\'") for path in output_paths]
+    script = f"""
+suppressPackageStartupMessages(library(ggplot2))
+source('{style_path}')
+{helper}
+available <- unique(systemfonts::system_fonts()$family)
+serif <- intersect(c('DejaVu Serif', 'Liberation Serif', 'Noto Serif'), available)
+families <- c(resolve_font(''), if (length(serif)) serif[[1]] else resolve_font(''))
+labels <- data.frame(
+  log2FoldChange=c(4,rep(2.2,14)), y_plot=c(14.3,rep(6,14)),
+  capped=c(TRUE,rep(FALSE,14)), direction=rep('Up',15),
+  label=sprintf('gene_%02d',seq_len(15)), padj_rank=seq_len(15)
+)
+outputs <- c('{r_paths[0]}','{r_paths[1]}')
+for (i in seq_along(outputs)) {{
+  p <- ggplot(labels,aes(log2FoldChange,y_plot)) + geom_point() +
+    scale_colour_manual(values=c(Up='#C0392B')) +
+    theme_bw(base_family=families[[i]])
+  p <- volcano_add_ranked_key(
+    p, labels, xm=4, ytop=16, canvas_w=6, canvas_h=5,
+    label_family=families[[i]], label_size=4, marker_size_mm=1.4
+  )
+  width <- attr(p,'volcano_canvas_width',exact=TRUE)
+  stopifnot(is.finite(width),width >= 6)
+  svglite::svglite(outputs[[i]],width=width,height=5,bg='white')
+  print(p)
+  grDevices::dev.off()
+}}
+"""
+    script_path = tmp_path / "one-sided-volcano.R"
+    script_path.write_text(script, encoding="utf-8")
+    result = subprocess.run(
+        [*command, runtime_path(script_path)], capture_output=True, text=True,
+        timeout=120, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    rows = {f"{rank:02d}  gene_{rank:02d}  (+{4 if rank == 1 else 2.2:.2f})"
+            for rank in range(1, 16)}
+    for output in output_paths:
+        svg = output.read_text(encoding="utf-8")
+        _assert_svg_labels_do_not_collide(svg, rows)
+        _assert_svg_capped_markers_clear_of_key(svg, rows)
+
+
 def test_sample_distance_labels_adapt_to_rendered_geometry() -> None:
     _assert_sample_distance_label_contract(_text("make_figures.R"))
 
@@ -996,7 +1086,7 @@ def test_placeholder_wrap_gate_rejects_the_previous_single_line_annotation() -> 
 
 def test_sample_distance_svg_uses_one_continuous_gradient_legend() -> None:
     core = _text("make_figures.R")
-    _assert_sample_distance_smooth_legend_contract(core)
+    _assert_sample_distance_smooth_legend_contract(core, _text("figure_style.R"))
 
 
 def test_sample_distance_legend_contract_rejects_the_seamed_rect_stack() -> None:
@@ -1008,7 +1098,7 @@ def test_sample_distance_legend_contract_rejects_the_seamed_rect_stack() -> None
     )
     assert broken != core
     with pytest.raises(AssertionError):
-        _assert_sample_distance_smooth_legend_contract(broken)
+        _assert_sample_distance_smooth_legend_contract(broken, _text("figure_style.R"))
 
     seamed_svg = "<svg>" + "".join(
         f"<rect x='0' y='{i * 0.59:.2f}' width='10' height='0.59' "
@@ -1021,10 +1111,10 @@ def test_sample_distance_legend_contract_rejects_the_seamed_rect_stack() -> None
 
 def test_sample_distance_legend_transform_renders_one_svg_gradient(tmp_path: Path) -> None:
     command, runtime_path = _r_runtime("svglite")
-    core = _text("make_figures.R")
-    start = core.index("smooth_continuous_legend <- function")
-    end = core.index("# ---- Grouping factor", start)
-    helper = core[start:end]
+    style = _text("figure_style.R")
+    start = style.index("smooth_continuous_legend <- function")
+    end = style.index("# pheatmap uses fixed grid units", start)
+    helper = style[start:end]
     svg_path = tmp_path / "legend.svg"
     r_path = runtime_path(svg_path).replace("'", "\\'")
     script = f"""

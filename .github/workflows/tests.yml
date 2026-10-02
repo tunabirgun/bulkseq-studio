@@ -223,6 +223,8 @@ jobs:
             - r-metafor==5.0_1=r45hc72bb7e_0
             - r-metarnaseq==1.0.8=r45ha770c72_1
             - r-gprofiler2==0.2.4=r45hc72bb7e_0
+            - bioconductor-clusterprofiler==4.18.4=r45hdfd78af_0
+            - bioconductor-org.hs.eg.db==3.22.0=r45hdfd78af_0
           EOF
 
       - uses: mamba-org/setup-micromamba@v2
@@ -262,6 +264,25 @@ jobs:
           set -o pipefail
           python -m pytest -q -rs --tb=short tests/test_gprofiler_transport.py \
             | tee "$RUNNER_TEMP/pytest-gprofiler-transport-bioconductor.txt"
+
+      - name: Run required OrgDb Entrez mapping regression
+        shell: bash -el {0}
+        env:
+          BULKSEQ_REQUIRE_ORGDB_MAPPING: "1"
+        run: |
+          set -o pipefail
+          python -m pytest -q -rs --tb=short tests/test_orgdb_entrez_mapping.py \
+            | tee "$RUNNER_TEMP/pytest-orgdb-entrez-bioconductor.txt"
+
+      - name: Run required custom ORA population regression
+        shell: bash -el {0}
+        env:
+          BULKSEQ_REQUIRE_CUSTOM_ORA: "1"
+        run: |
+          set -o pipefail
+          python -m pytest -q -rs --tb=short \
+            tests/test_custom_enrichment.py::test_custom_ora_population_denominators_use_raw_model_evidence \
+            | tee "$RUNNER_TEMP/pytest-custom-ora-population-bioconductor.txt"
 
       # Same summary as the matrix job: the CRAN-only pass skips the Bioconductor renders,
       # and those skips are the reason the second pass exists.

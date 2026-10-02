@@ -604,6 +604,10 @@ _ORA_COLS = [("Description", ["Description", "term_name"], "desc"),
              ("Fold enrichment", ["FoldEnrichment"], "g3"),
              ("Genes", ["Count", "intersection_size"], "int"),
              ("p.adjust", ["p.adjust", "p_value"], "g2")]
+_CUSTOM_ORA_COLS = _ORA_COLS[:1] + [
+    ("GeneRatio", ["GeneRatio"], "ratio"),
+    ("BgRatio", ["BgRatio"], "ratio"),
+] + _ORA_COLS[1:]
 _GSEA_COLS = [("Description", ["Description", "term_name"], "desc"), ("NES", ["NES"], "g3"),
               ("p.adjust", ["p.adjust", "p_value"], "g2"), ("Set size", ["setSize", "term_size"], "int")]
 
@@ -628,7 +632,7 @@ def _enrich_rows(csv_path: Path, top: int, sort_key=None) -> list[dict]:
 
 def _enrich_block(title: str, csv_path: Path, mode: str, top: int = 10,
                   empty_msg: str = "No terms passed the significance threshold.",
-                  sort_key=None, extra_cols: tuple = ()) -> str:
+                  sort_key=None, extra_cols: tuple = (), columns=None) -> str:
     rows = _enrich_rows(csv_path, top, sort_key=sort_key)
     if not rows:
         # CSV present but with no rows -> the analysis RAN and nothing passed the threshold; say so
@@ -644,7 +648,8 @@ def _enrich_block(title: str, csv_path: Path, mode: str, top: int = 10,
     # extra_cols (e.g. category/foreground on the annotation-transfer route) are resolved the same
     # way and placed first.
     spec = []
-    for header, keys, kind in list(extra_cols) + (_GSEA_COLS if mode == "gsea" else _ORA_COLS):
+    for header, keys, kind in (columns if columns is not None else
+                               list(extra_cols) + (_GSEA_COLS if mode == "gsea" else _ORA_COLS)):
         key = next((k for k in keys if k in rows[0]), None)
         if key is not None:
             if header == "p.adjust":
@@ -657,6 +662,8 @@ def _enrich_block(title: str, csv_path: Path, mode: str, top: int = 10,
     def fmt(kind: str, val: str) -> str:
         if kind == "desc":
             return f"<td class='desc'>{html.escape(val or '')}</td>"
+        if kind == "ratio":
+            return f"<td class='num'>{html.escape(val or '')}</td>"
         try:
             f = float(val)
         except (ValueError, TypeError):
@@ -728,7 +735,8 @@ def _custom_source_evidence(project: Path) -> tuple[bool | None, list[str]]:
 def _custom_enrich_block(title: str, csv_path: Path, mode: str, empty_msg: str) -> str:
     state = _enrich_table_state(csv_path, mode)
     if state == "data":
-        return _enrich_block(title, csv_path, mode)
+        return _enrich_block(title, csv_path, mode,
+                             columns=_CUSTOM_ORA_COLS if mode == "ora" else None)
     if state == "empty":
         msg = empty_msg
     elif state == "missing":
@@ -761,6 +769,9 @@ def _custom_enrichment_section(project: Path) -> str:
     summary_raw = _read(summary_path)
     evidence_prefixes = (
         "Custom gene sets (terms):", "Universe:", "Significant genes (ORA input):",
+        "Supplied ORA universe:", "Supplied selected genes (ORA input):",
+        "Custom ORA model evidence:", "Effective ORA annotated background:",
+        "Effective ORA annotated selected genes:",
         "Custom GSEA additional rank rows:", "Custom GSEA QC exclusion:",
         "Custom GSEA ranking order:", "Custom GSEA exact-score ties:",
         "Custom GSEA duplicate canonical-ID collapse:", "Custom ORA terms:",
@@ -768,6 +779,14 @@ def _custom_enrichment_section(project: Path) -> str:
     )
     summary_lines = [line.strip() for line in summary_raw.splitlines()
                      if line.strip().startswith(evidence_prefixes)]
+    summary_lines = [
+        line.replace("Universe:", "Supplied ORA universe (legacy):", 1)
+        if line.startswith("Universe:") else
+        line.replace("Significant genes (ORA input):",
+                     "Supplied selected genes (ORA input, legacy):", 1)
+        if line.startswith("Significant genes (ORA input):") else line
+        for line in summary_lines
+    ]
     if not summary_path.exists():
         summary_lines.append(
             "Custom enrichment reproducibility summary: unavailable; review "
@@ -782,6 +801,9 @@ def _custom_enrichment_section(project: Path) -> str:
         summary_lines.append(
             "Custom GSEA reproducibility evidence: the ranking, exact-tie, or duplicate-collapse "
             "record is incomplete in custom_enrichment_summary.txt.")
+    if not any(line.startswith("Effective ORA annotated ") for line in summary_lines):
+        summary_lines.append("Effective ORA populations: not recorded in this legacy summary; "
+                             "GeneRatio and BgRatio are shown per term when available.")
     evidence = source_lines + summary_lines
     evidence_html = ""
     if evidence:
@@ -793,10 +815,18 @@ def _custom_enrichment_section(project: Path) -> str:
     figure = _fig(figs, "custom_enrichment_dotplot",
                   "Custom gene-set over-representation (ORA)")
     figure_html = f"<div class='panels'>{figure}</div>" if figure else ""
+    ora_model_present = ("Custom ORA model evidence: present" in summary_lines or
+                         _enrich_table_state(enr / "custom_ora.csv", "ora") == "data")
+    ratio_note = (
+        "<p class='muted small'>GeneRatio is term overlap / effective annotated selected genes; "
+        "BgRatio is term membership / effective annotated background.</p>"
+        if _enrich_table_state(enr / "custom_ora.csv", "ora") == "data" else "")
     ora = _custom_enrich_block(
         "Custom gene sets — over-representation (ORA)", enr / "custom_ora.csv", "ora",
-        "No supplied custom gene set met the adjusted ORA criterion. This result is limited "
-        "to the configured collection and tested-gene universe.",
+        ("No supplied custom gene set met the adjusted ORA criterion. This result is limited "
+         "to the configured collection and supplied universe." if ora_model_present else
+         "Custom ORA model evidence is unavailable or the model was not run; a blank table "
+         "does not establish that no supplied gene set met the criterion."),
     )
     gsea = _custom_enrich_block(
         "Custom gene sets — ranked-list enrichment (GSEA)", enr / "custom_gsea.csv", "gsea",
@@ -807,7 +837,7 @@ def _custom_enrichment_section(project: Path) -> str:
             "<h3 id='custom-enrichment-title'>Custom gene-set enrichment</h3>"
             "<p class='muted small'>These analyses test only the gene sets supplied for this run; "
             "an empty result does not establish biological absence outside that collection.</p>"
-            f"{evidence_html}{figure_html}{ora}{gsea}</section>")
+            f"{evidence_html}{figure_html}{ratio_note}{ora}{gsea}</section>")
 
 
 # Category (+ Foreground, on the ORA table only) resolved the same way as the mode-specific

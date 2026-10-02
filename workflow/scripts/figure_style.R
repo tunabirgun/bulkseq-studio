@@ -101,13 +101,34 @@ contrast_color_map <- function(levels, contrast = NULL, discrete) {
 }
 
 # ---- Font resolver ----------------------------------------------------------
-# Map a requested font family to one actually installed in the pipeline environment.
-# Windows font names (Times New Roman, Arial, Courier New, ...) are not present on a stock
-# Linux/WSL env, so without this a serif request silently renders as a sans default. An exact
-# match is used as-is; known serif/mono names map to an installed serif/mono; anything else is
-# left for systemfonts to substitute. Returns NULL for an empty request (device default).
+# Use the Windows fonts already owned by this WSL host without copying them into the package.
+if (isTRUE(all(file.access(file.path("/mnt/c/Windows/Fonts",
+                                     c("times.ttf", "timesbd.ttf", "timesi.ttf", "timesbi.ttf")),
+                           4) == 0))) {
+  current_config <- Sys.getenv("FONTCONFIG_FILE", unset = "/etc/fonts/fonts.conf")
+  if (!startsWith(basename(current_config), "bulkseq-figure-fonts-") ||
+      !file.exists(current_config)) {
+    if (!file.exists(current_config)) current_config <- "/etc/fonts/fonts.conf"
+    xml_text <- function(x) {
+      x <- gsub("&", "&amp;", x, fixed = TRUE)
+      x <- gsub("<", "&lt;", x, fixed = TRUE)
+      gsub(">", "&gt;", x, fixed = TRUE)
+    }
+    font_config <- tempfile("bulkseq-figure-fonts-", fileext = ".xml")
+    writeLines(c('<?xml version="1.0"?>', '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">',
+                 "<fontconfig>",
+                 paste0('  <include ignore_missing="no">', xml_text(current_config),
+                        "</include>"),
+                 "  <dir>/mnt/c/Windows/Fonts</dir>", "</fontconfig>"),
+               font_config, useBytes = TRUE)
+    Sys.setenv(FONTCONFIG_FILE = font_config)
+  }
+}
+
+# An empty style requests Times New Roman. A native Linux host without that family
+# gets an explicitly named installed serif fallback, never a falsely labelled TNR.
 resolve_font <- function(fam) {
-  if (is.null(fam) || !nzchar(fam)) return(NULL)
+  if (is.null(fam) || !nzchar(fam)) fam <- "Times New Roman"
   installed <- tryCatch(unique(systemfonts::system_fonts()$family), error = function(e) character(0))
   if (fam %in% installed) return(fam)
   key <- tolower(trimws(fam))
@@ -115,7 +136,14 @@ resolve_font <- function(fam) {
              "book antiqua", "palatino", "palatino linotype", "minion pro", "serif")
   mono <- c("courier new", "courier", "consolas", "monaco", "lucida console", "menlo", "monospace")
   pick <- function(cands) { for (c in cands) if (c %in% installed) return(c); NULL }
-  if (key %in% serif) { t <- pick(c("Liberation Serif", "DejaVu Serif", "Noto Serif", "FreeSerif")); if (!is.null(t)) return(t) }
+  if (key %in% serif) {
+    t <- pick(c("Liberation Serif", "DejaVu Serif", "Noto Serif", "FreeSerif"))
+    if (!is.null(t)) {
+      if (key == "times new roman") message("Times New Roman unavailable; using ", t)
+      return(t)
+    }
+    if (key == "times new roman") stop("Times New Roman unavailable and no serif fallback is installed")
+  }
   if (key %in% mono)  { t <- pick(c("DejaVu Sans Mono", "Liberation Mono", "Noto Mono", "FreeMono")); if (!is.null(t)) return(t) }
   fam
 }
@@ -218,13 +246,54 @@ stack_heatmap_legends <- function(gtable, gap_pt = 10) {
   gtable
 }
 
+# Use one vector gradient for the continuous guide. pheatmap's stacked
+# rectangles otherwise acquire visible seams when an SVG is rendered.
+smooth_continuous_legend <- function(gtable) {
+  legend_idx <- which(gtable$layout$name == "legend")
+  if (length(legend_idx) != 1L) return(gtable)
+  legend_grob <- gtable$grobs[[legend_idx]]
+  rect_idx <- which(vapply(legend_grob$children, function(child) {
+    inherits(child, "rect") && length(child$gp$fill) > 1L &&
+      length(child$height) > 1L
+  }, logical(1)))
+  if (length(rect_idx) != 1L) return(gtable)
+
+  source_rect <- legend_grob$children[[rect_idx]]
+  fill_colors <- rep_len(as.character(source_rect$gp$fill), length(source_rect$height))
+  legend_grob$children[[rect_idx]] <- grid::rectGrob(
+    x = source_rect$x[1], y = source_rect$y[1],
+    width = source_rect$width[1], height = sum(source_rect$height),
+    hjust = source_rect$hjust, vjust = source_rect$vjust,
+    name = source_rect$name,
+    gp = grid::gpar(
+      fill = grid::linearGradient(
+        fill_colors, stops = seq(0, 1, length.out = length(fill_colors)),
+        x1 = 0, y1 = 0, x2 = 0, y2 = 1
+      ),
+      col = NA
+    )
+  )
+  gtable$grobs[[legend_idx]] <- legend_grob
+  gtable
+}
+
 # pheatmap uses fixed grid units when cell width/height are supplied. Drawing a
 # gtable wider than its device silently clips both dendrogram strokes and the
 # rightmost annotation legend. Add a real white gutter to the gtable and derive
 # the output size from the rendered object, not an estimate of its contents.
 finalize_heatmap_gtable <- function(gtable, min_w = 6, min_h = 5,
                                     padding_pt = 8) {
+  gtable <- smooth_continuous_legend(gtable)
   gtable <- stack_heatmap_legends(gtable)
+  annotation_name <- which(gtable$layout$name == "col_annotation_names")
+  guide <- which(gtable$layout$name %in% c("legend", "stacked_legends"))
+  if (length(annotation_name) == 1L && length(guide) == 1L &&
+      gtable$layout$r[annotation_name] < gtable$layout$l[guide]) {
+    gtable <- gtable::gtable_add_cols(
+      gtable, grid::unit(as.numeric(padding_pt), "pt"),
+      pos = gtable$layout$r[annotation_name]
+    )
+  }
   padded <- gtable::gtable_add_padding(
     gtable, grid::unit(as.numeric(padding_pt), "pt")
   )
@@ -271,7 +340,11 @@ make_style_theme <- function(base_size = 12, base_family = NULL,
   function(base = theme_bw) {
     t <- if (is.null(base_family)) base(base_size = base_size)
          else base(base_size = base_size, base_family = base_family)
-    extra <- theme(panel.grid.minor = element_blank(),
+    extra <- theme(text = element_text(colour = "black"),
+                   axis.text = element_text(colour = "black"),
+                   legend.text = element_text(colour = "black"),
+                   plot.caption = element_text(colour = "black"),
+                   panel.grid.minor = element_blank(),
                    panel.grid.major = element_line(linewidth = 0.25, colour = "grey92"))
     if (label_bold) extra <- extra + theme(axis.text = element_text(face = "bold"))
     if (title_bold) extra <- extra + theme(axis.title = element_text(face = "bold"))

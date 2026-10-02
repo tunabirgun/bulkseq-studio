@@ -38,6 +38,33 @@ write_check <- function(path, status, message) {
   writeLines(json, path)
 }
 nrows <- function(x) if (is.null(x)) 0 else tryCatch(nrow(as.data.frame(x)), error = function(e) 0)
+custom_ora_populations <- function(eora, attempted) {
+  if (is.null(eora) || !methods::is(eora, "enrichResult"))
+    return(list(model = if (attempted) "unavailable" else "not run",
+                selected = NA_integer_, background = NA_integer_))
+  raw <- tryCatch(as.data.frame(methods::slot(eora, "result")), error = function(e) NULL)
+  denominator <- function(column) {
+    if (is.null(raw) || !nrow(raw) || !column %in% names(raw)) return(NA_integer_)
+    parts <- regmatches(as.character(raw[[column]]),
+                        regexec("^([0-9]+)/([1-9][0-9]*)$", as.character(raw[[column]])))
+    if (!all(lengths(parts) == 3L)) return(NA_integer_)
+    numerators <- as.integer(vapply(parts, `[[`, character(1), 2L))
+    denominators <- as.integer(vapply(parts, `[[`, character(1), 3L))
+    if (anyNA(numerators) || anyNA(denominators) || any(numerators > denominators) ||
+        length(unique(denominators)) != 1L) return(NA_integer_)
+    if (identical(column, "GeneRatio") && "Count" %in% names(raw)) {
+      counts <- suppressWarnings(as.numeric(as.character(raw$Count)))
+      if (any(!is.finite(counts)) || any(counts != floor(counts)) ||
+          any(numerators != counts)) return(NA_integer_)
+    }
+    denominators[[1]]
+  }
+  selected <- denominator("GeneRatio")
+  background <- denominator("BgRatio")
+  if (!is.na(selected) && !is.na(background) && selected > background)
+    selected <- background <- NA_integer_
+  list(model = "present", selected = selected, background = background)
+}
 # Same id normalization as run_enrichment.R, including its keytype gate: the LOC prefix
 # is stripped to the bare NCBI GeneID only off the SYMBOL route, where "LOC101927877" is
 # a legitimate gene symbol rather than a GeneID. The keytype is read from the rule params;
@@ -224,10 +251,14 @@ result <- tryCatch({
   if (nrows(egse) > 0) write.csv(as.data.frame(egse), out[["gsea"]], row.names = FALSE)
 
   saveRDS(list(eora = eora, egse = egse, n_terms = length(unique(t2g$term))), out[["objects"]])
+  ora_populations <- custom_ora_populations(eora, length(all_sig) > 0)
   summary_lines <<- c(summary_lines,
     sprintf("Custom gene sets (terms): %d", length(unique(t2g$term))),
-    sprintf("Universe: %d (%s)", length(universe), if (nzchar(bg)) "background file" else "tested genes"),
-    sprintf("Significant genes (ORA input): %d", length(all_sig)),
+    sprintf("Supplied ORA universe: %d (%s)", length(universe), if (nzchar(bg)) "background file" else "tested genes"),
+    sprintf("Supplied selected genes (ORA input): %d", length(all_sig)),
+    sprintf("Custom ORA model evidence: %s", ora_populations$model),
+    sprintf("Effective ORA annotated background: %s", if (is.na(ora_populations$background)) "unavailable" else ora_populations$background),
+    sprintf("Effective ORA annotated selected genes: %s", if (is.na(ora_populations$selected)) "unavailable" else ora_populations$selected),
     rank_evidence,
     sprintf("Custom ORA terms: %d", nrows(eora)),
     sprintf("Custom GSEA sets: %d", nrows(egse)))

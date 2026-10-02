@@ -50,6 +50,7 @@ def test_clusterprofiler_ora_table_renders(mhr, tmp_path):
     assert "immune response" in html
     for header in ("Description", "Fold enrichment", "Genes", "p.adjust"):
         assert header in html
+    assert "GeneRatio" not in html and "BgRatio" not in html
 
 
 def _assert_responsive_panel_contract(rendered: str, basename: str) -> None:
@@ -1099,7 +1100,11 @@ def test_custom_enrichment_results_evidence_and_dotplot_render(mhr, tmp_path):
     _assert_custom_enrichment_contract(rendered)
     for expected in (
         "immune response", "interferon response", "Custom gene sets (terms): 24",
-        "Universe: 7255 (background file)", "Configured GMT source: config/pathways.gmt",
+        "Supplied ORA universe (legacy): 7255 (background file)",
+        "Supplied selected genes (ORA input, legacy): 146",
+        "Effective ORA populations: not recorded in this legacy summary",
+        "GeneRatio", "BgRatio", "20/200", "150/12000",
+        "Configured GMT source: config/pathways.gmt",
         "Configured ORA background source: config/background.txt", "Custom ORA terms: 1",
         "Custom GSEA sets: 1",
     ):
@@ -1114,7 +1119,7 @@ def test_custom_enrichment_results_evidence_and_dotplot_render(mhr, tmp_path):
             "<section id='enrichment'><h2>Functional enrichment</h2></section>")
 
 
-def test_custom_enrichment_empty_results_are_scoped_to_supplied_collection(mhr, tmp_path):
+def test_custom_enrichment_empty_without_model_evidence_is_unavailable(mhr, tmp_path):
     enr = tmp_path / "results" / "enrichment"
     enr.mkdir(parents=True)
     _write_custom_run_summary(tmp_path)
@@ -1126,11 +1131,55 @@ def test_custom_enrichment_empty_results_are_scoped_to_supplied_collection(mhr, 
     )
 
     rendered = mhr._enrichment_section(tmp_path)
-    assert "No supplied custom gene set met the adjusted ORA criterion" in rendered
-    assert "configured collection and tested-gene universe" in rendered
+    assert "Custom ORA model evidence is unavailable or the model was not run" in rendered
+    assert "No supplied custom gene set met the adjusted ORA criterion" not in rendered
     assert "No supplied custom gene set met the adjusted GSEA criterion" in rendered
     assert "configured collection and ranked genes" in rendered
     assert "does not establish biological absence outside that collection" in rendered
+
+
+def test_custom_ora_distinguishes_supplied_and_effective_populations(mhr, tmp_path):
+    enr = tmp_path / "results" / "enrichment"
+    enr.mkdir(parents=True)
+    _write_custom_run_summary(tmp_path)
+    row = list(_CP_ROWS[0])
+    row[2:4] = ["17/17", "20/45"]
+    row[8] = 17
+    _write_csv(enr / "custom_ora.csv", _CP_COLS, [row])
+    (enr / "custom_gsea.csv").write_text("\n", encoding="utf-8")
+    (enr / "custom_enrichment_summary.txt").write_text(
+        "Custom gene sets (terms): 2\n"
+        "Supplied ORA universe: 80 (tested genes)\n"
+        "Supplied selected genes (ORA input): 18\n"
+        "Custom ORA model evidence: present\n"
+        "Effective ORA annotated background: 45\n"
+        "Effective ORA annotated selected genes: 17\n"
+        "Custom ORA terms: 1\nCustom GSEA sets: 0\n", encoding="utf-8")
+    rendered = mhr._enrichment_section(tmp_path)
+    for text in ("Supplied ORA universe: 80", "Supplied selected genes (ORA input): 18",
+                 "Effective ORA annotated background: 45",
+                 "Effective ORA annotated selected genes: 17", "GeneRatio", "BgRatio",
+                 "17/17", "20/45", "GeneRatio is term overlap / effective annotated selected genes"):
+        assert text in rendered
+    assert "Universe: 80" not in rendered
+
+
+def test_custom_ora_non_significant_result_keeps_model_evidence(mhr, tmp_path):
+    enr = tmp_path / "results" / "enrichment"
+    enr.mkdir(parents=True)
+    _write_custom_run_summary(tmp_path)
+    (enr / "custom_ora.csv").write_text("\n", encoding="utf-8")
+    (enr / "custom_enrichment_summary.txt").write_text(
+        "Supplied ORA universe: 80 (tested genes)\n"
+        "Supplied selected genes (ORA input): 18\n"
+        "Custom ORA model evidence: present\n"
+        "Effective ORA annotated background: 45\n"
+        "Effective ORA annotated selected genes: 17\n"
+        "Custom ORA terms: 0\n", encoding="utf-8")
+    rendered = mhr._enrichment_section(tmp_path)
+    assert "Effective ORA annotated background: 45" in rendered
+    assert "Effective ORA annotated selected genes: 17" in rendered
+    assert "No supplied custom gene set met the adjusted ORA criterion" in rendered
 
 
 def test_custom_enrichment_missing_and_malformed_tables_are_not_reported_as_null(mhr, tmp_path):

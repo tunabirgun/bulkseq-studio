@@ -183,7 +183,8 @@ if [ "$PROFILE" = "full" ]; then
 fi
 
 stage_spec() {
-  local source="$1" staged="$SPEC_STAGE_DIR/$(basename "$1")"
+  local source="$1" staged
+  staged="$SPEC_STAGE_DIR/$(basename "$1")"
   if [ ! -e "$staged" ]; then
     cp -- "$source" "$staged" || return
   fi

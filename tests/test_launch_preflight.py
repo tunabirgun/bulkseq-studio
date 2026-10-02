@@ -131,6 +131,7 @@ def test_launch_fingerprint_keeps_event_loop_responsive_and_continues_once(
     release = threading.Event()
     outcome = PreflightFingerprintValidation(True, "current", "a", "a")
     continued: list[tuple[str, object, Path | None]] = []
+    probe_threads: list[int] = []
 
     def slow_validate(root, *, cancel_requested=None):
         started.set()
@@ -144,6 +145,15 @@ def test_launch_fingerprint_keeps_event_loop_responsive_and_continues_once(
 
     try:
         monkeypatch.setattr(main_window_module, "validate_current_preflight", slow_validate)
+        monkeypatch.setattr(
+            main_window_module, "local_wsl_health",
+            lambda: (probe_threads.append(threading.get_ident()) or
+                     {"status": "PASS", "detail": "Healthy test backend"}),
+        )
+        monkeypatch.setattr(
+            main_window_module.QMessageBox, "warning",
+            lambda *_args: pytest.fail("unexpected launch warning modal"),
+        )
         monkeypatch.setattr(window, "_start_snakemake_impl", record_continue)
 
         window._begin_launch_preflight("run")
@@ -174,6 +184,11 @@ def test_launch_fingerprint_keeps_event_loop_responsive_and_continues_once(
         QApplication.processEvents()
 
         assert continued == [("run", outcome, window.project_root)]
+        if os.name == "nt":
+            assert len(probe_threads) == 1
+            assert probe_threads[0] != threading.get_ident()
+        else:
+            assert probe_threads == []
         assert window._launch_preflight_worker is None
         assert window.progress.maximum() == 100
         assert all(window.tabs.widget(index).isEnabled() for index in range(window.tabs.count()))

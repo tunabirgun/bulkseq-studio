@@ -283,42 +283,6 @@ fit_sample_distance_heatmap <- function(make_heatmap, labels, min_cell_width_pt,
        label_layout = label_layout)
 }
 
-# pheatmap draws a continuous legend as hundreds of abutting rectangles. SVG
-# renderers antialias each rectangle independently, exposing horizontal seams
-# that are absent in the PNG. Replace only that legend bar with one true vector
-# linear gradient; tick labels and all other heatmap grobs remain unchanged.
-smooth_continuous_legend <- function(gtable) {
-  legend_idx <- which(gtable$layout$name == "legend")
-  if (length(legend_idx) != 1L) return(gtable)
-  legend_grob <- gtable$grobs[[legend_idx]]
-  rect_idx <- which(vapply(legend_grob$children, function(child) {
-    inherits(child, "rect") && length(child$gp$fill) > 1L &&
-      length(child$height) > 1L
-  }, logical(1)))
-  if (length(rect_idx) != 1L) return(gtable)
-
-  source_rect <- legend_grob$children[[rect_idx]]
-  fill_colors <- rep_len(
-    as.character(source_rect$gp$fill), length(source_rect$height)
-  )
-  gradient_rect <- grid::rectGrob(
-    x = source_rect$x[1], y = source_rect$y[1],
-    width = source_rect$width[1], height = sum(source_rect$height),
-    hjust = source_rect$hjust, vjust = source_rect$vjust,
-    name = source_rect$name,
-    gp = grid::gpar(
-      fill = grid::linearGradient(
-        fill_colors, stops = seq(0, 1, length.out = length(fill_colors)),
-        x1 = 0, y1 = 0, x2 = 0, y2 = 1
-      ),
-      col = NA
-    )
-  )
-  legend_grob$children[[rect_idx]] <- gradient_rect
-  gtable$grobs[[legend_idx]] <- legend_grob
-  gtable
-}
-
 prepare_sample_distance_gtable <- function(ph) {
   ph$gtable <- smooth_continuous_legend(ph$gtable)
   ph
@@ -359,7 +323,10 @@ volcano_add_ranked_key <- function(plot, labels, xm, ytop, canvas_w, canvas_h,
   labels <- labels[order(labels$key_side, labels$padj_rank,
                          labels$label, method = "radix"), , drop = FALSE]
 
-  gap_in <- 3 / 72
+  # Reserve the larger highlighted marker plus a physical gap beside each key.
+  marker_extent_in <- (marker_size_mm + 0.8 + 0.55) / 25.4
+  key_gap_in <- marker_extent_in + 4 / 72
+  row_gap_in <- 3 / 72
   panel_width_fraction <- 0.84
   minimum_data_fraction <- 0.30
   panel_w_in <- max(1, canvas_w * panel_width_fraction)
@@ -391,7 +358,7 @@ volcano_add_ranked_key <- function(plot, labels, xm, ytop, canvas_w, canvas_h,
     if (length(values)) max(values) else 0
   }, numeric(1))
   names(key_width_in) <- c("left", "right")
-  reserved_key_in <- key_width_in + 2 * gap_in
+  reserved_key_in <- key_width_in + 2 * key_gap_in
   required_panel_w_in <- sum(reserved_key_in) /
     (1 - minimum_data_fraction)
   required_canvas_w_in <- required_panel_w_in / panel_width_fraction
@@ -403,22 +370,22 @@ volcano_add_ranked_key <- function(plot, labels, xm, ytop, canvas_w, canvas_h,
     stop("Volcano ranked keys require a wider figure canvas")
   }
   em_height_in <- font_points / 72
-  row_step_in <- max(c(row_height_in, header_height_in, em_height_in)) + gap_in
+  row_step_in <- max(c(row_height_in, header_height_in, em_height_in)) + row_gap_in
   side_count <- table(factor(labels$key_side, levels = c("left", "right")))
-  required_height_in <- (max(side_count) + 1) * row_step_in + gap_in
+  required_height_in <- (max(side_count) + 1) * row_step_in + row_gap_in
   if (!is.finite(required_height_in) || required_height_in > panel_h_in) {
     stop("Volcano ranked keys require a taller figure canvas")
   }
 
   x_per_in <- 2 * xm / data_panel_in
   y_per_in <- ytop / panel_h_in
-  edge_gap_x <- gap_in * x_per_in
+  edge_gap_x <- key_gap_in * x_per_in
   left_extent <- reserved_key_in[["left"]] * x_per_in
   right_extent <- reserved_key_in[["right"]] * x_per_in
   x_limits <- c(-xm - left_extent, xm + right_extent)
   labels$key_x <- ifelse(
     labels$key_side == "left",
-    x_limits[1] + gap_in * x_per_in,
+    x_limits[1] + key_gap_in * x_per_in,
     xm + edge_gap_x
   )
   labels$key_y <- NA_real_
@@ -464,17 +431,15 @@ volcano_add_ranked_key <- function(plot, labels, xm, ytop, canvas_w, canvas_h,
   }
   row_args <- list(
     data = labels,
-    mapping = ggplot2::aes(x = key_x, y = key_y, label = key_text,
-                           colour = direction),
+    mapping = ggplot2::aes(x = key_x, y = key_y, label = key_text),
     inherit.aes = FALSE, hjust = 0, size = label_size,
-    show.legend = FALSE
+    colour = "black", show.legend = FALSE
   )
   header_args <- list(
     data = headers,
-    mapping = ggplot2::aes(x = x, y = y, label = header,
-                           colour = direction),
+    mapping = ggplot2::aes(x = x, y = y, label = header),
     inherit.aes = FALSE, hjust = 0, size = label_size,
-    fontface = "bold", show.legend = FALSE
+    fontface = "bold", colour = "black", show.legend = FALSE
   )
   if (!is.null(label_family)) {
     row_args$family <- label_family
@@ -568,7 +533,8 @@ p_pca <- ggplot(pca, aes(PC1, PC2, colour = group)) +
   geom_point(size = point_size, alpha = 0.9)
 if (sample_labels) {
   p_pca <- p_pca +
-    geom_text_repel(aes(label = name), family = base_family, size = 3, seed = 1,
+    geom_text_repel(aes(label = name), family = base_family,
+                    colour = "black", size = 3, seed = 1,
                     min.segment.length = 0, box.padding = 0.5,
                     point.padding = pca_point_padding,
                     max.overlaps = Inf, segment.colour = "grey55", show.legend = FALSE)
@@ -980,7 +946,7 @@ if (length(pv) > 0) {
                linewidth = 0.3) +
     annotate("text", x = alpha_thr, y = pval_label_y,
              label = sprintf("raw p = %.3g", alpha_thr),
-             hjust = -0.08, vjust = 1, colour = "grey25",
+             hjust = -0.08, vjust = 1, colour = "black",
              family = if (is.null(base_family)) "" else base_family, size = 3) +
     labs(x = "raw p-value", y = "gene count") +
     style_theme(theme_bw)

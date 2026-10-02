@@ -198,18 +198,29 @@ jobs:
           New-Item -ItemType Directory -Path $priorStage -ErrorAction Stop | Out-Null
           $downloadArgs = @('release', 'download', "v$previousVersion", '--repo',
             $env:GITHUB_REPOSITORY, '--pattern', $priorAsset, '--dir', ('"' + $priorStage + '"'))
-          $download = Start-Process -FilePath 'gh.exe' -ArgumentList $downloadArgs -PassThru -WindowStyle Hidden `
-            -RedirectStandardOutput (Join-Path $priorStage 'download.stdout.log') `
-            -RedirectStandardError (Join-Path $priorStage 'download.stderr.log')
+          $downloadStart = New-Object System.Diagnostics.ProcessStartInfo
+          $downloadStart.FileName = 'gh.exe'
+          $downloadStart.Arguments = $downloadArgs -join ' '
+          $downloadStart.UseShellExecute = $false
+          $downloadStart.CreateNoWindow = $true
+          $downloadStart.RedirectStandardOutput = $true
+          $downloadStart.RedirectStandardError = $true
+          $download = New-Object System.Diagnostics.Process
+          $download.StartInfo = $downloadStart
           try {
+            if (-not $download.Start()) { throw "previous public installer download did not start" }
+            $downloadStdout = $download.StandardOutput.ReadToEndAsync()
+            $downloadStderr = $download.StandardError.ReadToEndAsync()
             if (-not $download.WaitForExit(300000)) {
               try { $download.Kill() } catch {}
               throw "previous public installer download exceeded five minutes"
             }
-            $download.Refresh()
+            $download.WaitForExit()
+            [IO.File]::WriteAllText((Join-Path $priorStage 'download.stdout.log'), $downloadStdout.Result)
+            [IO.File]::WriteAllText((Join-Path $priorStage 'download.stderr.log'), $downloadStderr.Result)
             if ($download.ExitCode -ne 0) {
               Get-Content (Join-Path $priorStage 'download.stderr.log') -ErrorAction SilentlyContinue
-              throw "previous public installer download failed"
+              throw "previous public installer download failed with exit code $($download.ExitCode)"
             }
           } finally {
             $download.Dispose()
