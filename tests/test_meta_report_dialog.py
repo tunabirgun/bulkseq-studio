@@ -51,6 +51,236 @@ def _write_meta_project(project: Path) -> None:
         (figures / f"{name}.svg").write_text(svg, encoding="utf-8")
 
 
+def test_meta_report_distinguishes_adjustment_families_and_legacy_results(tmp_path: Path) -> None:
+    _write_meta_project(tmp_path)
+    meta = tmp_path / "results" / "meta"
+    reports = tmp_path / "results" / "reports"
+    summary = json.loads((reports / "meta_analysis_summary.json").read_text(encoding="utf-8"))
+    summary["alpha"] = 0.05
+    summary["n_meta_sig"] = 1
+    (reports / "meta_analysis_summary.json").write_text(json.dumps(summary), encoding="utf-8")
+    (meta / "meta_analysis_results.csv").write_text(
+        "gene_id,combined_padj,rem_log2FC,combined_pvalue,meta_sig,common_direction,study_A_log2FC,study_B_log2FC\n"
+        "g1,0.02,0.5,0.01,TRUE,up,0.3,0.7\n"
+        "g2,NA,0.2,0.3,FALSE,discordant,-0.1,0.5\n",
+        encoding="utf-8",
+    )
+    (meta / "per_study_A.csv").write_text("gene_id,log2FoldChange\ng1,0.3\n", encoding="utf-8")
+    (meta / "per_study_B.csv").write_text("gene_id,log2FoldChange\ng1,0.7\n", encoding="utf-8")
+    figure_svg = (tmp_path / "results" / "figures" / "meta_volcano.svg").read_text(encoding="utf-8")
+    for name in ("meta_concordance_scatter", "meta_integration_gain"):
+        (tmp_path / "results" / "figures" / f"{name}.svg").write_text(figure_svg, encoding="utf-8")
+    (meta / "meta_convergent_genes.csv").write_text(
+        "gene_id,gene_symbol,n_studies_sig,combined_padj,rem_padj\ng1,G1,0,0.02,0.1\n", encoding="utf-8")
+    ledger = {
+        "method": META.METHOD,
+        "families": {
+            "combined": {"id": "direction_concordant_combined_bh", "size": 1},
+            "pooled": {"id": "all_estimable_pooled_bh", "size": 2},
+        },
+        "execution": {"combined_alpha": 0.05},
+        "genes": {
+            "identifier_intersection": 3, "exclusion_union": 1,
+            "complete_case_retained": 2, "pooled_fit_failures": 0,
+            "direction": {"up": 1, "down": 0, "opposite_sign": 1, "neutral": 0},
+        },
+    }
+    (meta / "meta_eligibility.json").write_text(json.dumps(ledger), encoding="utf-8")
+    rendered = META.build(tmp_path)
+    assert "Combined-p BH: 1 matching-sign test" in rendered
+    assert "Pooled-effect BH: 2 estimable tests across all directions" in rendered
+    assert "Legacy pooled-effect adjustment requires recomputation" not in rendered
+    assert "run FDR &lt; 0.05" in rendered
+    assert "<th scope='col'>rem_padj</th>" in rendered
+    assert "1 of 2 retained rows appear in the bars" in rendered
+    assert "A versus B: 2 plotted points" in rendered
+    assert "../../results/meta/meta_analysis_results.csv" in rendered
+    assert "../../results/meta/per_study_A.csv" in rendered
+
+    (meta / "meta_eligibility.json").unlink()
+    legacy = META.build(tmp_path)
+    assert "Legacy pooled-effect adjustment requires recomputation" in legacy
+    assert "Pooled-effect BH: 2" not in legacy
+    assert "<th scope='col'>rem_padj</th>" not in legacy
+
+
+def test_meta_report_empty_result_uses_recorded_loss_reason(tmp_path: Path) -> None:
+    _write_meta_project(tmp_path)
+    meta = tmp_path / "results" / "meta"
+    reports = tmp_path / "results" / "reports"
+    (reports / "meta_analysis_summary.json").write_text(
+        json.dumps({"n_shared_genes": 0, "n_meta_sig": 0}), encoding="utf-8")
+    (meta / "meta_eligibility.json").write_text(json.dumps({
+        "method": META.METHOD,
+        "genes": {"identifier_intersection": 4, "complete_case_retained": 0},
+    }), encoding="utf-8")
+    rendered = META.build(tmp_path)
+    assert "Shared identifiers exist, but no complete-case" in rendered
+    assert "No shared genes across studies" not in rendered
+
+
+def test_meta_report_leads_with_executed_comparison_and_study_set(tmp_path: Path) -> None:
+    _write_meta_project(tmp_path)
+    meta = tmp_path / "results" / "meta"
+    ledger = {
+        "method": META.METHOD,
+        "families": {
+            "combined": {"id": "direction_concordant_combined_bh", "size": 2},
+            "pooled": {"id": "all_estimable_pooled_bh", "size": 4},
+        },
+        "execution": {"contrast_factor": "treatment", "numerator": "drug", "denominator": "vehicle",
+                      "per_study_formula": "~ treatment", "requested_meta_design_formula": "~ treatment",
+                      "dataset_column": "dataset", "combined_alpha": 0.05},
+        "studies": {
+            "input": [
+                {"study": "A", "numerator_samples": 2, "denominator_samples": 3},
+                {"study": "B", "numerator_samples": 2, "denominator_samples": 2},
+            ],
+            "included": [{"study": "A", "post_filter_rows": 5}],
+            "excluded": [{"study": "B", "reason": "one arm not replicated"}],
+        },
+    }
+    (meta / "meta_eligibility.json").write_text(json.dumps(ledger), encoding="utf-8")
+    rendered = META.build(tmp_path)
+    assert rendered.index("Cross-study analysis: drug versus vehicle (treatment)") < rendered.index("Multi-study meta-analysis")
+    assert "Positive log2 fold change means higher expression in drug than vehicle." in rendered
+    assert "A (2 drug, 3 vehicle; 5 post-filter gene rows)" in rendered
+    assert "B (2 drug, 2 vehicle; one arm not replicated)" in rendered
+    assert "The recorded per-study formula was <code>~ treatment</code>" in rendered
+    assert '<details id=\'field-guide\'><summary>How to read the result fields</summary>' in rendered
+    assert '<details id=\'methods\'><summary>Testing families and retained rows</summary>' in rendered
+    assert "comparison orientation not recorded" not in rendered.lower()
+
+
+def test_recorded_result_alpha_is_not_replaced_by_figure_setting(tmp_path: Path) -> None:
+    _write_meta_project(tmp_path)
+    reports = tmp_path / "results" / "reports"
+    meta = tmp_path / "results" / "meta"
+    summary = json.loads((reports / "meta_analysis_summary.json").read_text(encoding="utf-8"))
+    summary["alpha"] = 0.1
+    (reports / "meta_analysis_summary.json").write_text(json.dumps(summary), encoding="utf-8")
+    (meta / "meta_analysis_results.csv").write_text(
+        "gene_id,meta_sig,study_A_padj,study_B_padj,study_A_log2FC,study_B_log2FC\n"
+        "g1,TRUE,0.08,0.2,0.6,0.7\n", encoding="utf-8")
+    (meta / "meta_convergent_genes.csv").write_text(
+        "gene_id,gene_symbol,n_studies_sig\ng1,G1,0\n", encoding="utf-8")
+    (meta / "meta_eligibility.json").write_text(json.dumps({
+        "method": META.METHOD,
+        "families": {
+            "combined": {"id": "direction_concordant_combined_bh", "size": 1},
+            "pooled": {"id": "all_estimable_pooled_bh", "size": 1},
+        },
+        "execution": {"combined_alpha": 0.05},
+    }), encoding="utf-8")
+    figure_svg = (tmp_path / "results" / "figures" / "meta_volcano.svg").read_text(encoding="utf-8")
+    (tmp_path / "results" / "figures" / "meta_integration_gain.svg").write_text(figure_svg, encoding="utf-8")
+    rendered = META.build(tmp_path)
+    assert "recorded 0.05 threshold" in rendered
+    assert "run FDR &lt; 0.05" in rendered
+    assert "figure-setting alpha 0.1 differs from the recorded result-call alpha 0.05" in rendered
+
+
+@pytest.mark.parametrize("ledger", [
+    [], None, 3, {"families": [1]},
+    {"method": META.METHOD, "families": {"combined": [1], "pooled": {"id": "all_estimable_pooled_bh", "size": 2}}},
+    {"method": META.METHOD, "families": {"combined": {"id": "direction_concordant_combined_bh", "size": 1}, "pooled": None}},
+    {"method": META.METHOD, "families": {"combined": {"id": "direction_concordant_combined_bh", "size": 1},
+                                          "pooled": {"id": "all_estimable_pooled_bh", "size": 1}},
+     "genes": [1]},
+    {"method": META.METHOD, "families": {"combined": {"id": "direction_concordant_combined_bh", "size": 1},
+                                          "pooled": {"id": "all_estimable_pooled_bh", "size": 1}},
+     "studies": [1]},
+])
+def test_malformed_ledger_warns_in_both_reports(tmp_path: Path, ledger) -> None:
+    _write_meta_project(tmp_path)
+    (tmp_path / "results" / "meta" / "meta_eligibility.json").write_text(json.dumps(ledger), encoding="utf-8")
+    dedicated = META.build(tmp_path)
+    main = MAIN._meta_analysis_link(tmp_path)
+    assert "Legacy pooled-effect adjustment requires recomputation" in dedicated
+    assert "Legacy pooled-effect adjustment requires recomputation" in main
+    assert "Comparison orientation not recorded" in dedicated
+
+
+def test_meta_report_main_link_tracks_stored_file_without_rule_dependency(tmp_path: Path) -> None:
+    _write_meta_project(tmp_path)
+    html_without = META.build(tmp_path)
+    assert "href='results_report.html'" not in html_without
+    assert "main results report is unavailable" in html_without
+    (tmp_path / "results" / "reports" / "results_report.html").write_text("<html></html>", encoding="utf-8")
+    assert "href='results_report.html'" in META.build(tmp_path)
+    source = RULES.read_text(encoding="utf-8")
+    rule = source[source.index("rule meta_report:"):]
+    assert '"per_study_manifest": "results/meta/per_study/manifest.json"' in source
+    assert 'results/reports/results_report.html' not in rule
+
+
+@pytest.mark.parametrize("payload", [
+    {"check": "17_meta_analysis_qc", "status": "FAIL",
+     "messages": [{"status": "PASS", "message": "child passed"}]},
+    {"check": "17_meta_analysis_qc", "status": "PASS",
+     "messages": [{"status": "PASS", "message": "first passed"},
+                  {"status": "FAIL", "message": "later failed"}]},
+    {"check": "17_meta_analysis_qc", "status": "PASS", "messages": [1]},
+    {"check": "17_meta_analysis_qc", "status": "PASS", "messages": None},
+])
+def test_meta_report_uses_canonical_check_severity(tmp_path: Path, payload) -> None:
+    _write_meta_project(tmp_path)
+    checks = tmp_path / "checks"
+    checks.mkdir()
+    (checks / "17_meta_analysis_qc.json").write_text(json.dumps(payload), encoding="utf-8")
+    rendered = META.build(tmp_path)
+    hero = rendered[rendered.index("id='findings'"):]
+    assert "badge fail'>FAIL" in hero.split("</section>", 1)[0]
+    assert "badge ok'>PASS" not in hero.split("</section>", 1)[0]
+    if not isinstance(payload["messages"], list) or not all(isinstance(item, dict) for item in payload["messages"]):
+        assert "Meta check evidence is unavailable or malformed" in rendered
+
+
+def test_missing_meta_check_is_reported_as_failed_evidence(tmp_path: Path) -> None:
+    _write_meta_project(tmp_path)
+    rendered = META.build(tmp_path)
+    assert "Meta check evidence is unavailable or malformed" in rendered
+    assert "badge fail'>FAIL" in rendered
+    assert str(tmp_path) not in rendered
+
+
+def test_main_report_sanity_summary_does_not_lower_child_failure() -> None:
+    overall, checks = MAIN._parse_sanity(
+        "Overall: PASS\n17_meta_analysis_qc: PASS\n  - PASS: initial review\n  - FAIL: later failure\n")
+    assert overall == "FAIL" and checks[0]["status"] == "FAIL"
+    assert MAIN._parse_sanity("Overall: FAIL\n17_meta_analysis_qc: PASS\n  - PASS: child\n")[0] == "FAIL"
+    assert MAIN._parse_sanity("Overall: PASS\n")[0] == "FAIL"
+
+
+@pytest.mark.parametrize("mode", ("script", "spec", "package"))
+def test_report_imports_its_sibling_check_contract_in_fresh_process(tmp_path: Path, mode: str) -> None:
+    source = SCRIPTS / "make_html_report.py"
+    if mode == "script":
+        command = [sys.executable, "-I", str(source), "--help"]
+    elif mode == "spec":
+        code = (
+            "import importlib.util\n"
+            f"spec = importlib.util.spec_from_file_location('isolated_html_report', {str(source)!r})\n"
+            "module = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(module)\n"
+            "assert module.read_check and module.PRIORITY['FAIL'] > module.PRIORITY['PASS']\n"
+            "print('IMPORT_OK')\n"
+        )
+        command = [sys.executable, "-I", "-c", code]
+    else:
+        code = (
+            "import importlib, sys\n"
+            f"sys.path.insert(0, {str(ROOT)!r})\n"
+            "module = importlib.import_module('workflow.scripts.make_html_report')\n"
+            "assert module.read_check and module.PRIORITY['FAIL'] > module.PRIORITY['PASS']\n"
+            "print('IMPORT_OK')\n"
+        )
+        command = [sys.executable, "-I", "-c", code]
+    result = subprocess.run(command, cwd=tmp_path, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ("usage:" if mode == "script" else "IMPORT_OK") in result.stdout
+
+
 def test_meta_report_reuses_the_main_native_dialog_component(tmp_path: Path) -> None:
     _write_meta_project(tmp_path)
     main = MAIN.build(tmp_path)
@@ -361,10 +591,10 @@ def test_meta_report_native_dialog_in_the_offscreen_browser(tmp_path: Path) -> N
     result = json.loads(completed.stdout.strip().splitlines()[-1])
     assert result["initial"] == {"open": False, "display": "none"}
     assert result["opened"]["open"]
-    assert result["opened"]["title"].startswith("Meta-volcano")
+    assert result["opened"]["title"].startswith("Combined evidence")
     assert result["opened"]["source"].startswith("data:image/svg+xml;base64,")
     assert result["opened"]["active"] == "bsq-lb-close"
-    assert result["opened"]["documentFits"] and result["opened"]["dialogFits"]
+    assert result["opened"]["documentFits"] and result["opened"]["dialogFits"], result["opened"]
     assert int(result["zoom"]["percent"].rstrip("%")) > 0
     assert result["zoom"]["width"] and result["zoom"]["zoomed"]
     assert int(result["fit"]["percent"].rstrip("%")) < int(result["zoom"]["percent"].rstrip("%"))

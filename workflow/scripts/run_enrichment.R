@@ -730,6 +730,14 @@ KEGG_IDENTITY_RECORDS <- load_kegg_identity_records(
 # gost and gconvert share one conversion service, so report how many ids it recognised
 # rather than retrying blind, and retry only with the query and the background converted
 # into the same namespace. The two calls are arguments so the logic is testable offline.
+ensure_gprofiler_https <- function() {
+  base <- gprofiler2::get_base_url()
+  if (!is.character(base) || length(base) != 1L || !grepl("^https?://", base)) {
+    stop("g:Profiler base URL must use HTTP(S)")
+  }
+  gprofiler2::set_base_url(sub("^http://", "https://", base))
+}
+
 query_gprofiler <- function(query, background, organism, alpha,
                             gost_fn = gprofiler2::gost, gconvert_fn = gprofiler2::gconvert) {
   run <- function(q, bg) gost_fn(query = q, organism = organism, sources = c("GO:BP", "KEGG", "REAC"),
@@ -1670,6 +1678,7 @@ if (orgdb_ok) {
     # so a missing package or a network failure degrades to KEGG-only, never crashes.
     gp_run <- tryCatch({
       suppressMessages(library(gprofiler2))
+      ensure_gprofiler_https()
       query_gprofiler(all_ids, tested_genes, gprofiler_org, alpha)
     }, error = function(e) {
       message("g:Profiler gost unavailable: ", conditionMessage(e)); list(result = NULL, diagnostic = NULL)

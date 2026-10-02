@@ -52,7 +52,7 @@ def _configure_current_project(window: MainWindow, root: Path, status: str) -> N
         {
             "check": "01_input_validation",
             "status": status,
-            "messages": ["Synthetic gate finding"] if status != "PASS" else [],
+            "messages": [{"status": status, "message": "Synthetic gate finding"}],
         },
     )
 
@@ -73,6 +73,19 @@ def test_no_project_and_no_check_states_do_not_offer_orphaned_approval(tmp_path:
         assert not window.sanity_refresh_button.isEnabled()
         assert window.approve_review.isHidden()
         assert "No checks yet" in window.sanity_state_label.text()
+    finally:
+        window.close()
+
+
+def test_malformed_downstream_check_is_visible_as_failure(tmp_path: Path) -> None:
+    window = _window()
+    try:
+        window.project_root = tmp_path
+        checks = tmp_path / "checks"
+        checks.mkdir()
+        (checks / "22_meta_qc.json").write_text("{broken", encoding="utf-8")
+        assert window._phase_check_statuses()["22_meta_qc"] == "FAIL"
+        assert "unavailable or unreadable" in " ".join(window._check_messages("22_meta_qc"))
     finally:
         window.close()
 

@@ -20,10 +20,9 @@ dependencies:
   # produced by this version. A bump is a scientific-output change: it needs the paired-run
   # protocol (re-run the benchmarks, diff against the published DE numbers) before it ships.
   - fastp=1.0.1
-  # SortMeRNA is opt-in (workflow.rrna_filtering defaults to false), so a bump only re-validates
-  # the rRNA benchmark arm — but 4.3.7 has no arm64 conda build at any version, and osx-arm64
-  # gets the upstream 4.4.0 binary pinned by SHA256 in scripts/setup_wsl_bioenv.sh instead. Any
-  # move here is therefore a platform decision as well as a re-validation.
+  # SortMeRNA is opt-in (workflow.rrna_filtering defaults to false), so a bump requires
+  # re-validating the rRNA benchmark arm. The shipped setup script supports Linux, not macOS;
+  # this fallback spec does not establish a working osx-arm64 installation.
   - sortmerna=4.3.7
   - star=2.7.11b
   - hisat2=2.2.2

@@ -25,12 +25,27 @@ lfc_thr <- as.numeric(tryCatch(snakemake@params[["lfc_threshold"]], error = func
 n_forest <- as.integer(tryCatch(snakemake@params[["n_forest"]], error = function(e) 6))
 fig_dpi <- as.integer(getp("dpi", 300))
 base_size <- as.numeric(gp("base_font_size", 12)); font_family <- as.character(gp("font_family", ""))
+if (!nzchar(font_family)) font_family <- "Times New Roman"
 palette_name <- as.character(gp("palette", "Blue-Red"))
 italic_genes <- isTRUE(as.logical(getp("gene_symbol_italic", TRUE)))  # same key as the other figures
 pal_spec <- palette_spec(palette_name)
 base_family <- resolve_font(font_family)
-style_theme <- make_style_theme(base_size = base_size, base_family = base_family)
-save_gg <- make_save_gg(fig_w = as.numeric(gp("width_in", 7)), fig_h = as.numeric(gp("height_in", 6)), fig_dpi = fig_dpi)
+if (!identical(base_family, font_family)) message("Requested figure font ", font_family, " substituted with ", base_family)
+if (!base_family %in% systemfonts::system_fonts()$family)
+  stop("Comparative figure font is unavailable: ", base_family)
+base_style_theme <- make_style_theme(base_size = base_size, base_family = base_family)
+style_theme <- function() base_style_theme() +
+  theme(text = element_text(family = base_family, colour = "black"),
+        axis.text = element_text(colour = "black"))
+base_save_gg <- make_save_gg(fig_w = as.numeric(gp("width_in", 7)), fig_h = as.numeric(gp("height_in", 6)), fig_dpi = fig_dpi)
+save_gg <- function(plot, png_path, svg_path, w = as.numeric(gp("width_in", 7)),
+                    h = as.numeric(gp("height_in", 6))) {
+  base_save_gg(plot, png_path, svg_path, w = w, h = h)
+  svg <- readLines(svg_path, warn = FALSE)
+  svg <- gsub(".svglite", "svg", svg, fixed = TRUE)
+  svg <- gsub(" class='svglite'", "", svg, fixed = TRUE)
+  writeLines(svg, svg_path, useBytes = TRUE)
+}
 # Fixed direction colour map reused across volcano / scatter / heatmap so sign never flips meaning.
 DIR_COL <- c(up = pal_spec$discrete[2], down = pal_spec$discrete[1], discordant = "grey70")
 
@@ -66,6 +81,12 @@ gsym <- function(ids, id_map) {
 # lookup then misses silently (placeholder forest, all-NA study summary, mislabelled heatmap).
 res <- tryCatch(read.csv(snakemake@input[["results"]], stringsAsFactors = FALSE, check.names = FALSE), error = function(e) NULL)
 if (is.null(res)) res <- data.frame()
+ledger <- tryCatch(jsonlite::fromJSON(snakemake@input[["eligibility"]], simplifyVector = FALSE),
+                   error = function(e) NULL)
+recorded_alpha <- tryCatch(ledger$execution$combined_alpha, error = function(e) NULL)
+if (!is.numeric(recorded_alpha) || length(recorded_alpha) != 1L ||
+    !is.finite(recorded_alpha) || recorded_alpha <= 0 || recorded_alpha > 1)
+  recorded_alpha <- NA_real_
 meta_dir <- dirname(snakemake@input[["results"]])
 study_cols <- grep("^study_.*_log2FC$", colnames(res), value = TRUE)
 studies <- sub("^study_(.*)_log2FC$", "\\1", study_cols)
@@ -99,11 +120,11 @@ emit(out[["volcano_png"]], out[["volcano_svg"]], {
   # were the most significant result on the plot. Drop them here and report how many, rather than
   # plotting them wrongly or dropping them silently.
   n_nofdr <- sum(is.na(res$combined_padj))
-  d <- res[!is.na(res$combined_padj), , drop = FALSE]
+  d <- res[!is.na(res$combined_padj) & is.finite(res$rem_log2FC), , drop = FALSE]
   if (!nrow(d)) stop("no meta result with an adjusted p-value (every gene is direction-discordant)")
   d$neglog <- -log10(pmax(d$combined_padj, .Machine$double.xmin))
   d$dir <- factor(d$common_direction, levels = names(DIR_COL))
-  d$x <- ifelse(is.na(d$rem_log2FC), 0, d$rem_log2FC)
+  d$x <- d$rem_log2FC
   if (z_axis) {
     # Stouffer/inverse-normal Z is always finite -- no exact-0 underflow, so no cap/triangles needed.
     d$yq <- abs(d$combined_z)
@@ -111,59 +132,71 @@ emit(out[["volcano_png"]], out[["volcano_svg"]], {
     lab <- sig; lab <- lab[order(lab$combined_padj, -abs(lab$rem_log2FC)), , drop = FALSE]
     lab <- head(lab, as.integer(getp("meta_label_top", 10)))
     lab$yy <- abs(lab$combined_z)
-    lab$x <- ifelse(is.na(lab$rem_log2FC), 0, lab$rem_log2FC); lab$sym <- gsym(lab$gene_id, id_map)
+    lab$x <- lab$rem_log2FC; lab$sym <- gsym(lab$gene_id, id_map)
     ncap <- 0L
     ylab <- "|combined Z| (inverse-normal)"
     hline <- NULL  # no fixed significance line on the Z scale (alpha threshold is FDR-space, not Z-space)
     ysub <- "Stouffer/inverse-normal combined Z (always finite; no off-scale genes)"
+    if (is.na(recorded_alpha)) ysub <- c(ysub, "Combined-FDR threshold not recorded")
   } else {
     # The combined FDR can still reach exact 0 -- a per-study p of exactly 0 saturates the pooled
     # tail even in the stable statistic -> -log10 saturates at ~308 and squashes the informative
     # band. Cap the y-axis just above the largest FINITE (padj>0) value and mark the off-scale genes
     # with a triangle, so the real 0..cap region fills the plot (EnhancedVolcano-style).
     fin <- d$neglog[d$combined_padj > 0 & is.finite(d$neglog)]
-    cap <- if (length(fin)) max(fin) * 1.1 else -log10(alpha) * 3
-    cap <- max(cap, -log10(alpha) * 2)
+    cap <- if (length(fin)) max(fin) * 1.1 else if (is.finite(recorded_alpha))
+      -log10(recorded_alpha) * 3 else max(d$neglog[is.finite(d$neglog)])
+    if (!is.finite(cap) || cap <= 0) cap <- 1
+    if (is.finite(recorded_alpha)) cap <- max(cap, -log10(recorded_alpha) * 2)
     if (fit_all) {
       # #4 fit-all-elements: don't clip finite points to a cap -- still floor padj==0 (which is
       # non-finite on -log10) at the finite ceiling so those genes stay plottable as triangles.
       d$capped <- d$combined_padj <= 0 | !is.finite(d$neglog); d$yy <- ifelse(d$capped, cap, d$neglog)
     } else {
-      d$capped <- d$neglog > cap; d$yy <- pmin(d$neglog, cap)
+      d$capped <- d$combined_padj <= 0 | d$neglog > cap
+      d$yy <- ifelse(d$capped, cap, pmin(d$neglog, cap))
     }
     # Label meta-DEGs: break padj ties by |effect| so labels spread across x, not stacked at the cap.
     lab <- sig; lab <- lab[order(lab$combined_padj, -abs(lab$rem_log2FC)), , drop = FALSE]
     lab <- head(lab, as.integer(getp("meta_label_top", 10)))
     lab_neglog <- -log10(pmax(lab$combined_padj, .Machine$double.xmin))
     lab$yy <- if (fit_all) ifelse(lab$combined_padj <= 0, cap, lab_neglog) else pmin(lab_neglog, cap)
-    lab$x <- ifelse(is.na(lab$rem_log2FC), 0, lab$rem_log2FC); lab$sym <- gsym(lab$gene_id, id_map)
+    lab$x <- lab$rem_log2FC; lab$sym <- gsym(lab$gene_id, id_map)
     ncap <- sum(d$capped, na.rm = TRUE)
     ylab <- "-log10 combined FDR"
-    hline <- geom_hline(yintercept = -log10(alpha), linetype = 2, colour = "grey40")
+    hline <- if (is.finite(recorded_alpha))
+      geom_hline(yintercept = -log10(recorded_alpha), linetype = 2, colour = "grey40") else NULL
     ysub <- if (ncap > 0) sprintf("%d genes off-scale (combined FDR near 0), shown as triangles at the cap", ncap) else NULL
+    ysub <- c(ysub, if (is.finite(recorded_alpha))
+      sprintf("Combined-FDR guide: recorded run alpha %.3g", recorded_alpha) else
+      "Combined-FDR threshold not recorded; no significance guide")
   }
+  label_nudge <- ifelse(lab$x > lfc_thr & lab$x <= lfc_thr + 0.12, 0.15,
+                        ifelse(lab$x < -lfc_thr & lab$x >= -lfc_thr - 0.12, -0.15, 0))
   ggplot(d, aes(x, yy, colour = dir)) +
     geom_point(aes(shape = capped), alpha = 0.6, size = 1.5) +
     hline +
     geom_vline(xintercept = c(-lfc_thr, lfc_thr), linetype = 2, colour = "grey40") +
     (if (nrow(lab)) geom_text_repel(data = lab, aes(x, yy, label = sym), inherit.aes = FALSE,
-        size = 2.8, fontface = if (italic_genes) 3 else 1, max.overlaps = 20, min.segment.length = 0,
-        box.padding = 0.6, point.padding = 0.3, direction = "both", seed = 42) else NULL) +
+        size = 2.8, family = base_family, colour = "black",
+        fontface = if (italic_genes) 3 else 1, max.overlaps = Inf, min.segment.length = 0,
+        box.padding = 0.6, point.padding = 0.3, direction = "both", seed = 42,
+        nudge_x = label_nudge) else NULL) +
     scale_colour_manual(values = DIR_COL, drop = FALSE, name = "cross-study\ndirection") +
     scale_shape_manual(values = c(`FALSE` = 16, `TRUE` = 17), guide = "none") +
     scale_y_continuous(expand = expansion(mult = c(0.02, 0.20))) +
-    labs(x = "pooled log2 fold change (random/fixed-effect)", y = ylab,
+    labs(x = "pooled log2 fold change (DL or common-effect)", y = ylab,
          # Disclose direction-discordant genes omitted from the FDR axis; they are not in the
          # tested family and so have no adjusted p-value to plot.
          subtitle = paste(c(ysub, if (n_nofdr > 0) sprintf(
-           "%d direction-discordant gene%s omitted (no adjusted p: not in the tested family)",
-           n_nofdr, if (n_nofdr == 1) "" else "s")), collapse = "; ")) +
+           "%d matching-sign family exclusion%s (no combined FDR)",
+           n_nofdr, if (n_nofdr == 1) "" else "s")), collapse = "\n")) +
     style_theme()
 }, "Meta-volcano unavailable\n(no shared genes / meta not run)")
 
 # 2. Forest: per-study log2FC +/- 95% CI (square ~ inverse-variance weight) + pooled diamond.
 emit(out[["forest_png"]], out[["forest_svg"]], {
-  if (!has_rows || nrow(sig) == 0) stop("no convergent genes")
+  if (!has_rows || nrow(sig) == 0) stop("no combined-FDR matching-sign genes")
   top <- head(sig[order(sig$combined_padj), , drop = FALSE], n_forest)
   # make.unique: distinct gene_ids can share one symbol; duplicate facet/row labels would collapse two
   # different genes into one panel (forest) or hard-error on duplicate factor levels (heatmap).
@@ -185,7 +218,7 @@ emit(out[["forest_png"]], out[["forest_svg"]], {
   }
   df <- do.call(rbind, rows); if (is.null(df) || !nrow(df)) stop("no per-study SE")
   df$study <- factor(df$study, levels = c("Summary", rev(sort(studies))))
-  pool_note <- if (k >= 3) "random-effect (DL)" else "fixed-effect (k=2)"
+  pool_note <- if (k >= 3) "random effect (DL)" else "common effect (fixed effect, k=2; one effect assumed)"
   studydf <- df[df$kind == "study", , drop = FALSE]; pooldf <- df[df$kind == "pooled", , drop = FALSE]
   ggplot(df, aes(est, study)) +
     geom_vline(xintercept = 0, linetype = 2, colour = "grey50") +
@@ -195,9 +228,10 @@ emit(out[["forest_png"]], out[["forest_svg"]], {
     facet_wrap(~gene, scales = "free_x") +
     scale_size(range = c(1.5, 4.5), guide = "none") +
     labs(x = "log2 fold change (study vs pooled)", y = NULL,
-         caption = paste0("Pooling: ", pool_note, ". Squares sized by inverse-variance weight; diamond = pooled estimate.")) +
-    style_theme() + theme(strip.text = element_text(face = if (italic_genes) 3 else 1))
-}, "Forest plot unavailable\n(no convergent meta-DEGs)")
+         caption = paste0("Pooling: ", pool_note, ".\nSquares: inverse-variance weight; diamond: pooled estimate.")) +
+    style_theme() + theme(strip.text = element_text(face = if (italic_genes) 3 else 1,
+                                              colour = "black"))
+}, "Forest plot unavailable\n(no combined-FDR matching-sign genes)")
 
 # 3. Cross-study concordance scatter (pairwise), quadrant-coloured + Spearman rho.
 emit(out[["scatter_png"]], out[["scatter_svg"]], {
@@ -216,6 +250,8 @@ emit(out[["scatter_png"]], out[["scatter_svg"]], {
   df$conc <- factor(df$conc, levels = names(DIR_COL))
   ann <- aggregate(rho ~ pair, df, function(x) x[1])
   ann$lab <- sprintf("Spearman rho = %.2f", ann$rho)
+  df$pair <- factor(df$pair, levels = ann$pair,
+                    labels = paste(ann$pair, ann$lab, sep = "\n"))
   # k=2: name the two studies on the axes; k>2: generic (the facet strip names the pair).
   xlab <- if (length(pairs) == 1) paste0(pairs[[1]][1], " log2FC") else "per-study log2FC"
   ylab <- if (length(pairs) == 1) paste0(pairs[[1]][2], " log2FC") else "per-study log2FC"
@@ -224,15 +260,15 @@ emit(out[["scatter_png"]], out[["scatter_svg"]], {
     geom_abline(slope = 1, intercept = 0, linetype = 2, colour = "grey50") +
     geom_point(alpha = 0.5, size = 1.3) +
     (if (length(pairs) > 1) facet_wrap(~pair) else NULL) +
-    geom_text(data = ann, aes(x = -Inf, y = Inf, label = lab), inherit.aes = FALSE,
-              hjust = -0.1, vjust = 1.5, size = 3.2) +
     scale_colour_manual(values = DIR_COL, drop = FALSE, name = "direction") +
-    labs(x = xlab, y = ylab) + style_theme()
+    labs(x = xlab, y = ylab,
+         subtitle = if (length(pairs) == 1) ann$lab[[1]] else NULL) + style_theme() +
+    theme(strip.text = element_text(colour = "black"))
 }, "Concordance scatter unavailable\n(need >=2 studies)")
 
 # 4. Convergent-gene heatmap (genes x studies, signed log2FC), winsorized diverging fill.
 emit(out[["heatmap_png"]], out[["heatmap_svg"]], {
-  if (!has_rows || nrow(sig) == 0) stop("no convergent genes")
+  if (!has_rows || nrow(sig) == 0) stop("no combined-FDR matching-sign genes")
   top <- head(sig[order(sig$combined_padj), , drop = FALSE], as.integer(getp("meta_heatmap_top", 50)))
   top <- top[order(top$rem_log2FC), , drop = FALSE]
   mat <- as.matrix(top[, study_cols, drop = FALSE]); rownames(mat) <- make.unique(gsym(top$gene_id, id_map))
@@ -250,21 +286,21 @@ emit(out[["heatmap_png"]], out[["heatmap_svg"]], {
     labs(x = NULL, y = NULL) + style_theme() +
     theme(axis.text.y = element_text(face = if (italic_genes) 3 else 1, size = 7),
           axis.text.x = element_text(angle = 45, hjust = 1))
-}, "Convergent-gene heatmap unavailable\n(no convergent meta-DEGs)",
+}, "Combined-FDR gene heatmap unavailable\n(no matching-sign calls)",
    h = max(4, min(0.18 * nrow(sig) + 1.5, 24)))
 
 # 5. Heterogeneity: |pooled LFC| vs I2 (k>=3 only; NA at k=2 fixed-effect).
 emit(out[["hetero_png"]], out[["hetero_svg"]], {
-  if (!has_rows || k < 3 || all(is.na(res$I2))) stop("heterogeneity not estimable")
+  if (!has_rows || k < 3 || all(is.na(res$I2))) stop("heterogeneity fields not reported")
   d <- res[is.finite(res$I2) & is.finite(res$rem_log2FC), , drop = FALSE]
   d$dir <- factor(d$common_direction, levels = names(DIR_COL))
   ggplot(d, aes(abs(rem_log2FC), I2, colour = dir)) +
-    geom_hline(yintercept = c(25, 50, 75), linetype = 3, colour = "grey70") +
     geom_point(alpha = 0.6, size = 1.5) +
     scale_colour_manual(values = DIR_COL, drop = FALSE, name = "direction") +
-    labs(x = "|pooled log2 fold change|", y = expression(I^2~"(%) between-study heterogeneity")) +
+    scale_y_continuous(limits = c(0, 100)) +
+    labs(x = "|pooled log2 fold change|", y = "I² (%) between-study heterogeneity") +
     style_theme()
-}, "Heterogeneity (I2) not estimable\nwith 2 studies (fixed-effect pooling)")
+}, "Heterogeneity fields not reported\nfor the two-study common-effect fit")
 
 # 6. Combined-p histogram (metaRNASeq inverse-normal diagnostic: ~uniform + spike near 0).
 emit(out[["phist_png"]], out[["phist_svg"]], {
@@ -281,9 +317,9 @@ emit(out[["gain_png"]], out[["gain_svg"]], {
   padj_cols <- padj_cols[padj_cols %in% colnames(res)]
   single_sig <- if (length(padj_cols)) apply(res[, padj_cols, drop = FALSE], 1, function(r) any(r < alpha, na.rm = TRUE)) else rep(FALSE, nrow(res))
   ms <- res$meta_sig %in% TRUE
-  cnt <- c("meta-gained\n(pooling only)" = sum(ms & !single_sig),
-           "shared\n(both)" = sum(ms & single_sig),
-           "single-study\nonly" = sum(!ms & single_sig))
+  cnt <- c("combined only" = sum(ms & !single_sig),
+           "both" = sum(ms & single_sig),
+           "per-study only" = sum(!ms & single_sig))
   df <- data.frame(cat = factor(names(cnt), levels = names(cnt)), n = as.integer(cnt))
   ggplot(df, aes(cat, n, fill = cat)) + geom_col(width = 0.65) +
     geom_text(aes(label = n), vjust = -0.3, size = 3.4, family = base_family) +
@@ -328,12 +364,14 @@ n_disc <- sum(has_rows & res$common_direction == "discordant", na.rm = TRUE)
 conc_rate <- if (has_rows && nrow(res)) round(100 * mean(res$common_direction != "discordant", na.rm = TRUE), 1) else NA
 med_I2 <- if (has_rows && k >= 3 && any(is.finite(res$I2))) round(median(res$I2, na.rm = TRUE), 1) else NA
 esc <- function(s) gsub('"', '\\\\"', as.character(s))
-summ <- sprintf(paste0('{\n  "n_studies": %d,\n  "studies": "%s",\n  "n_shared_genes": %d,\n',
+summ <- sprintf(paste0('{\n  "n_studies": %d,\n  "studies": "%s",\n  "alpha": %s,\n  "per_study_lfc_threshold": %s,\n  "n_shared_genes": %d,\n',
   '  "n_meta_sig": %d,\n  "n_sig_up": %d,\n  "n_sig_down": %d,\n  "n_discordant": %d,\n',
+  '  "n_forest_displayed": %d,\n  "n_heatmap_displayed": %d,\n',
   '  "direction_concordance_pct": %s,\n  "median_I2": %s,\n  "pooling": "%s"\n}'),
-  k, esc(paste(studies, collapse = ", ")), nrow(res), nrow(sig), n_up, n_down, n_disc,
+  k, esc(paste(studies, collapse = ", ")), format(alpha, scientific = FALSE), format(lfc_thr, scientific = FALSE), nrow(res), nrow(sig), n_up, n_down, n_disc,
+  min(nrow(sig), n_forest), min(nrow(sig), as.integer(getp("meta_heatmap_top", 50))),
   ifelse(is.na(conc_rate), "null", conc_rate), ifelse(is.na(med_I2), "null", med_I2),
-  if (k >= 3) "random-effect (DL)" else "fixed-effect (k=2)")
+  if (k >= 3) "random-effect (DL)" else "common-effect (fixed-effect, k=2)")
 writeLines(summ, out[["summary_json"]])
 
 sink(type = "message"); close(log_con)

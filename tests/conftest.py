@@ -1,8 +1,39 @@
 from __future__ import annotations
 
+import gc
+import os
+import signal
 import sys
 
 import pytest
+
+
+WSL_PROBE_MAX_MS = 2 * 15_000  # Two sequential subprocess timeouts in app/core/paths.py.
+
+
+def _gui_thread_wait_ms() -> int:
+    return WSL_PROBE_MAX_MS
+
+
+def _running_gui_threads(qt_core) -> list:
+    from shiboken6 import getCppPointer
+
+    current_thread = getCppPointer(qt_core.QThread.currentThread())
+    threads = []
+    for obj in gc.get_objects():
+        if isinstance(obj, qt_core.QThread):
+            try:
+                if getCppPointer(obj) != current_thread and obj.isRunning():
+                    threads.append(obj)
+            except RuntimeError:
+                pass
+    return threads
+
+
+def _abort_gui_teardown(message: str) -> None:
+    os.write(2, f"GUI teardown: {message}\n".encode("utf-8"))
+    os.kill(os.getpid(), signal.SIGTERM)
+    raise RuntimeError(message)
 
 
 @pytest.fixture(autouse=True)
@@ -57,6 +88,17 @@ def _isolate_cwd(tmp_path, monkeypatch):
         loop = qt_core.QEventLoop()
         qt_core.QTimer.singleShot(15, loop.quit)
         loop.exec()
+        late_threads = []
+        for thread in _running_gui_threads(qt_core):
+            if not thread.wait(_gui_thread_wait_ms()):
+                late_threads.append(thread)
+        for thread in late_threads:
+            if not thread.wait(WSL_PROBE_MAX_MS):
+                _abort_gui_teardown("running QThread exceeded cleanup bound: "
+                                    f"{type(thread).__name__}")
+        if _running_gui_threads(qt_core):
+            _abort_gui_teardown("a QThread started during teardown")
+        app.processEvents()
         for widget in widgets:
             try:
                 widget.deleteLater()
@@ -70,3 +112,6 @@ def _isolate_cwd(tmp_path, monkeypatch):
             qt_core.QEvent.Type.DeferredDelete,
         )
         app.processEvents()
+        if late_threads:
+            pytest.fail("GUI teardown: running QThread exceeded the wait bound: "
+                        + ", ".join(type(thread).__name__ for thread in late_threads))

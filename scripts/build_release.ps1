@@ -1,33 +1,90 @@
-# Build the BulkSeq Studio Windows executable (PyInstaller) and installer (Inno Setup).
-# Prerequisites: a populated .venv (pip install -r requirements.txt -r requirements-build.txt)
-# and Inno Setup 6 (winget install JRSoftware.InnoSetup).
-# Note: PyInstaller/ISCC write progress to stderr; do NOT use -ErrorActionPreference Stop
-# here (PowerShell 5.1 would abort on that benign stderr). Success is checked via $LASTEXITCODE.
+param(
+    [string] $StageRoot = "",
+    [string] $PackageDir = "",
+    [switch] $PlanOnly
+)
+
+# PyInstaller and ISCC can write progress to stderr, so check their exit codes.
 $ErrorActionPreference = "Continue"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
 $py = Join-Path $root ".venv\Scripts\python.exe"
 if (-not (Test-Path $py)) { throw "venv python not found at $py" }
+$versionMatch = Select-String -Path "app\constants.py" -Pattern 'APP_VERSION\s*=\s*"([^"]+)"'
+if (-not $versionMatch) { throw "APP_VERSION was not found" }
+$version = $versionMatch.Matches[0].Groups[1].Value
+$releaseRoot = [IO.Path]::GetFullPath((Join-Path $root "tmp\release-$version"))
+if (-not $StageRoot) { $StageRoot = Join-Path $releaseRoot "windows-build" }
+if (-not [IO.Path]::IsPathRooted($StageRoot)) { $StageRoot = Join-Path $root $StageRoot }
+$stage = [IO.Path]::GetFullPath($StageRoot)
+if (-not $stage.StartsWith($releaseRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "StageRoot must be a child of $releaseRoot"
+}
+if (-not $PackageDir) { $PackageDir = Join-Path $stage "packages" }
+if (-not [IO.Path]::IsPathRooted($PackageDir)) { $PackageDir = Join-Path $root $PackageDir }
+$packageOut = [IO.Path]::GetFullPath($PackageDir)
+$installerExe = Join-Path $packageOut "BulkSeqStudio-Setup-$version.exe"
+$portableZip = Join-Path $packageOut "BulkSeqStudio-Portable-$version.zip"
+if (Test-Path -LiteralPath $stage) { throw "Stage already exists; choose a new StageRoot: $stage" }
+foreach ($path in @($installerExe, $portableZip)) {
+    if (Test-Path -LiteralPath $path) { throw "Package already exists; preserving it: $path" }
+}
 
-Write-Host "[1/5] Building executable with PyInstaller..."
-# Pre-clean build/ and dist/ ourselves (PyInstaller --clean can hit locked
-# localpycs dirs from an interrupted run); retry once to dodge transient locks.
-foreach ($d in @("build", "dist")) {
-    if (Test-Path $d) {
-        try { Remove-Item $d -Recurse -Force -ErrorAction Stop }
-        catch { Start-Sleep -Seconds 2; Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue }
+$iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+if (-not $iscc) {
+    foreach ($candidate in @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+                            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+        if (Test-Path -LiteralPath $candidate) { $iscc = $candidate; break }
     }
 }
-& $py -m PyInstaller packaging\BulkSeqStudio.spec --noconfirm
-if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
+if (-not $iscc) { throw "ISCC.exe (Inno Setup 6) not found" }
+& $py -m PyInstaller --version | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "PyInstaller is unavailable in .venv" }
+if ($PlanOnly) {
+    Write-Host "Version: $version"
+    Write-Host "Stage: $stage"
+    Write-Host "Packages: $packageOut"
+    Write-Host "Inno: $iscc"
+    return
+}
 
-$version = ((Select-String -Path "app\constants.py" -Pattern 'APP_VERSION\s*=\s*"([^"]+)"').Matches.Groups[1].Value)
+New-Item -ItemType Directory -Path $stage -ErrorAction Stop | Out-Null
+New-Item -ItemType Directory -Path $packageOut -Force -ErrorAction Stop | Out-Null
+$distPath = Join-Path $stage "dist"
+$workPath = Join-Path $stage "build"
+Write-Host "[1/4] Building executable in isolated staging..."
+$basePython = (& $py -c 'import sys; print(sys.base_prefix)').Trim()
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $basePython)) { throw "Python base prefix is unavailable" }
+$buildPath = (@((Split-Path -Parent $py), $basePython, "$env:SystemRoot\System32",
+                $env:SystemRoot, "$env:SystemRoot\System32\Wbem") |
+              Where-Object { Test-Path -LiteralPath $_ }) -join ';'
+$priorPath = $env:PATH
+try {
+    # Keep unrelated native toolchains on the host PATH out of the frozen DLL search.
+    $env:PATH = $buildPath
+    Push-Location $stage
+    & $py -m PyInstaller --distpath $distPath --workpath $workPath (Join-Path $root "packaging\BulkSeqStudio.spec") --noconfirm
+    if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
+} finally {
+    if ((Get-Location).Path -eq $stage) { Pop-Location }
+    $env:PATH = $priorPath
+}
 
-Write-Host "[2/5] Running the frozen QtWebEngine self-test..."
-$frozenExe = Join-Path $root "dist\BulkSeq Studio\BulkSeqStudio.exe"
-$selftestOut = Join-Path ([System.IO.Path]::GetTempPath()) "bulkseq-selftest-$PID.json"
-if (Test-Path $selftestOut) { Remove-Item -LiteralPath $selftestOut -Force }
+Write-Host "[2/4] Running the frozen QtWebEngine self-test..."
+$onedir = Join-Path $distPath "BulkSeq Studio"
+$bundleCheck = Join-Path $root "packaging\verify_bundle.py"
+& $py $bundleCheck $onedir
+if ($LASTEXITCODE -ne 0) { throw "Bundled runtime script inventory is invalid" }
+$frozenExe = Join-Path $onedir "BulkSeqStudio.exe"
+if (-not (Test-Path -LiteralPath $frozenExe)) { throw "Frozen executable is missing: $frozenExe" }
+$selftestOut = Join-Path $stage "selftest.json"
+$vendorMatch = Select-String -Path "app\assets\web\ppi\VENDORED.md" -Pattern '^\| cytoscape\.min\.js \| cytoscape \| ([0-9.]+) \|$'
+if (-not $vendorMatch) { throw "Vendored Cytoscape version was not found" }
+$vendorVersion = $vendorMatch.Matches[0].Groups[1].Value
+$priorSelfTest = $env:BULKSEQ_SELFTEST
+$priorSkipDialog = $env:BULKSEQ_SKIP_READINESS_DIALOG
+$priorSelfTestOut = $env:BULKSEQ_SELFTEST_OUT
 $env:BULKSEQ_SELFTEST = "1"
 $env:BULKSEQ_SKIP_READINESS_DIALOG = "1"
 $env:BULKSEQ_SELFTEST_OUT = $selftestOut
@@ -41,70 +98,40 @@ try {
     if ($selftest.ExitCode -ne 0) { throw "Frozen self-test exited $($selftest.ExitCode)" }
     if (-not (Test-Path $selftestOut)) { throw "Frozen self-test did not write $selftestOut" }
     $selftestResult = Get-Content -Raw -LiteralPath $selftestOut | ConvertFrom-Json
-    if (-not $selftestResult.pass -or -not $selftestResult.webengine -or $selftestResult.nodes -ne 3) {
+    if (-not $selftestResult.pass -or -not $selftestResult.webengine -or $selftestResult.nodes -ne 3 -or
+        $selftestResult.version -ne $vendorVersion) {
         throw "Frozen self-test failed: $(Get-Content -Raw -LiteralPath $selftestOut)"
     }
 } finally {
-    $env:BULKSEQ_SELFTEST = $null
-    $env:BULKSEQ_SKIP_READINESS_DIALOG = $null
-    $env:BULKSEQ_SELFTEST_OUT = $null
-    if (Test-Path $selftestOut) { Remove-Item -LiteralPath $selftestOut -Force }
+    $env:BULKSEQ_SELFTEST = $priorSelfTest
+    $env:BULKSEQ_SKIP_READINESS_DIALOG = $priorSkipDialog
+    $env:BULKSEQ_SELFTEST_OUT = $priorSelfTestOut
 }
 
-Write-Host "[3/5] Building installer with Inno Setup (version $version)..."
-$iscc = "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
-if (-not (Test-Path $iscc)) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
-if (-not (Test-Path $iscc)) { throw "ISCC.exe (Inno Setup) not found" }
-# Pass the version so the installer name tracks APP_VERSION (installer.iss has an
-# #ifndef fallback for manual compiles).
-& $iscc "/DMyAppVersion=$version" packaging\installer.iss
+Write-Host "[3/4] Building installer with Inno Setup..."
+& $iscc "/DMyAppVersion=$version" "/DBuildSource=$onedir" "/DPackageDir=$packageOut" packaging\installer.iss
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup compile failed" }
-$installerExe = Join-Path $root "installer_output\BulkSeqStudio-Setup-$version.exe"
-if (-not (Test-Path $installerExe)) { throw "Installer not produced at $installerExe" }
+if (-not (Test-Path -LiteralPath $installerExe)) { throw "Installer not produced at $installerExe" }
 
-Write-Host "[4/5] Creating portable (click-and-run) ZIP..."
-# Zip the onedir folder so a user can unzip and double-click BulkSeqStudio.exe
-# with no install. dist/ is pre-cleaned each build, so the ZIP is always current.
-$installerOut = Join-Path $root "installer_output"
-if (-not (Test-Path $installerOut)) { New-Item -ItemType Directory -Path $installerOut -Force | Out-Null }
-$onedir = Join-Path $root (Join-Path "dist" "BulkSeq Studio")
-$portableZip = Join-Path $installerOut "BulkSeqStudio-Portable-$version.zip"
-if (Test-Path $portableZip) { Remove-Item $portableZip -Force }
-# A freshly-built dist/ stays locked by the AV/search indexer for a while, so let
-# it settle, then retry generously.
+Write-Host "[4/4] Creating portable ZIP..."
 Start-Sleep -Seconds 8
 $zipped = $false
 foreach ($attempt in 1..8) {
+    $candidate = Join-Path $stage "portable-attempt-$attempt.zip"
     try {
-        Compress-Archive -Path $onedir -DestinationPath $portableZip -CompressionLevel Optimal -ErrorAction Stop
+        Compress-Archive -Path $onedir -DestinationPath $candidate -CompressionLevel Optimal -ErrorAction Stop
+        Move-Item -LiteralPath $candidate -Destination $portableZip -ErrorAction Stop
         $zipped = $true
         break
     } catch {
-        if (Test-Path $portableZip) { Remove-Item $portableZip -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $portableZip) { throw "Portable ZIP already exists; review it before retrying" }
         Start-Sleep -Seconds 10
     }
 }
 if (-not $zipped) { throw "Portable ZIP creation failed after retries (a dist/ file stayed locked)." }
 
-Write-Host "[5/5] Refreshing the repo-root launch copy so it is always the latest build..."
-# Keep BulkSeqStudio.exe + _internal at the repo root in sync with this build, so
-# the click-to-run copy there (e.g. a Desktop shortcut target) is never stale.
-# Best-effort: if the root exe is currently running it is locked, so warn instead
-# of failing the whole build.
-$rootExe = Join-Path $root "BulkSeqStudio.exe"
-$rootInternal = Join-Path $root "_internal"
-try {
-    if (Test-Path $rootExe) { Remove-Item $rootExe -Force -ErrorAction Stop }
-    if (Test-Path $rootInternal) { Remove-Item $rootInternal -Recurse -Force -ErrorAction Stop }
-    Copy-Item (Join-Path $onedir "BulkSeqStudio.exe") $rootExe -Force -ErrorAction Stop
-    Copy-Item (Join-Path $onedir "_internal") $rootInternal -Recurse -Force -ErrorAction Stop
-    Write-Host "  Repo-root copy refreshed to this build."
-} catch {
-    Write-Warning "Could not refresh the repo-root copy (is BulkSeqStudio.exe running? close it and rebuild): $_"
-}
-
 Write-Host ""
 Write-Host "Done."
-Write-Host "  Executable:   dist\BulkSeq Studio\BulkSeqStudio.exe"
-Write-Host "  Installer:    installer_output\BulkSeqStudio-Setup-$version.exe"
-Write-Host "  Portable ZIP: installer_output\BulkSeqStudio-Portable-$version.zip"
+Write-Host "  Executable:   $frozenExe"
+Write-Host "  Installer:    $installerExe"
+Write-Host "  Portable ZIP: $portableZip"

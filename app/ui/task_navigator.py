@@ -172,7 +172,7 @@ class TaskNavigator(QWidget):
         header_layout.setContentsMargins(12, 6, 8, 8)
         header_layout.setSpacing(8)
 
-        self._compact_stage_label = QLabel("Area", self._header)
+        self._compact_stage_label = QLabel("Stage 1 of 4", self._header)
         self._compact_stage_label.setObjectName("taskNavigatorCompactStageLabel")
         self._compact_stage_label.setProperty("taskNavigatorSelectorLabel", True)
         self._compact_stage_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
@@ -187,7 +187,7 @@ class TaskNavigator(QWidget):
         self._compact_stage_label.setBuddy(self._compact_stage_selector)
         self._compact_stage_selector.currentIndexChanged.connect(self._on_compact_stage_changed)
 
-        self._compact_page_label = QLabel("View", self._header)
+        self._compact_page_label = QLabel("Page", self._header)
         self._compact_page_label.setObjectName("taskNavigatorCompactLabel")
         self._compact_page_label.setProperty("taskNavigatorSelectorLabel", True)
         self._compact_page_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
@@ -443,6 +443,8 @@ class TaskNavigator(QWidget):
 
     def _set_compact_stage(self, stage: str) -> None:
         stage_index = self._stage_index(stage)
+        self._compact_stage_label.setText(
+            f"Stage {stage_index + 1} of {len(self.STAGE_ORDER)}")
         if self._compact_stage_selector.currentIndex() != stage_index:
             self._compact_stage_selector.blockSignals(True)
             self._compact_stage_selector.setCurrentIndex(stage_index)

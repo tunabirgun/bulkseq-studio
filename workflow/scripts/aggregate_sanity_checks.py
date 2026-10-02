@@ -1,61 +1,26 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
-
-PRIORITY = {"FAIL": 4, "REVIEW_REQUIRED": 3, "WARNING": 2, "PASS": 1}
-
-
-def overall_status(messages: list[dict], explicit: str | None) -> str:
-    if explicit:
-        return explicit
-    statuses = [m.get("status", "PASS") for m in messages] or ["PASS"]
-    return max(statuses, key=lambda s: PRIORITY.get(s, 0))
-
+from check_contract import render_summary, summarize_checks
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checks", nargs="+", required=True, help="explicit list of check JSON files")
     parser.add_argument("--out", required=True)
+    parser.add_argument("--strict", action="store_true", help="exit nonzero unless every expected check passes")
+    parser.add_argument("--expected", action="store_true", help="checks list is the complete expected set")
     args = parser.parse_args()
-
-    title = "BulkSeq Studio validation checks"
-    lines = [title, "=" * len(title), ""]
-    worst = "PASS"
-    for path in sorted(Path(p) for p in args.checks):
-        if not path.exists():
-            lines.append(f"{path.stem}: MISSING")
-            lines.append("")
-            continue
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            # An unreadable check is a FAIL to report, not a crash that takes the
-            # whole sanity rule (and the run) down with it.
-            payload = {"check": path.stem, "status": "FAIL",
-                       "messages": [{"status": "FAIL", "message": f"unreadable check file: {exc}"}]}
-        if not isinstance(payload, dict):
-            payload = {"check": path.stem, "status": "FAIL",
-                       "messages": [{"status": "FAIL", "message": "check file is not a JSON object"}]}
-        messages = [m for m in payload.get("messages", []) if isinstance(m, dict)]
-        status = overall_status(messages, payload.get("status"))
-        if PRIORITY.get(status, 0) > PRIORITY.get(worst, 0):
-            worst = status
-        lines.append(f"{payload.get('check', path.stem)}: {status}")
-        for message in messages:
-            lines.append(f"  - {message.get('status')}: {message.get('message')}")
-        lines.append("")
-    lines.insert(2, f"Overall: {worst}")
-
+    summary = summarize_checks(sorted(Path(p) for p in args.checks),
+                               expected=args.expected or args.strict)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("\n".join(lines), encoding="utf-8")
+    out.write_text(render_summary(summary), encoding="utf-8")
     report = Path("results/reports/sanity_checks.txt")
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(out.read_text(encoding="utf-8"), encoding="utf-8")
-    return 0
+    return int(args.strict and (not summary["complete"] or summary["status"] != "PASS"))
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ from app.core.config_models import (
 )
 from app.core.de_results import validate_recorded_project_copy
 from app.core.metadata import validate_metadata
+from workflow.scripts.meta_readiness import assess_meta_readiness
 
 # Input routes that align raw reads, mirroring the Snakefile's
 # `not (COUNT_MATRIX_MODE or MICROARRAY_MODE or DE_RESULTS_MODE)` guard on the
@@ -28,7 +29,7 @@ PENDING_INPUT_ROUTES = ("sra", "count_matrix", "microarray", "deseq2_results")
 def design_variables(config: AppConfig, formula: str | None = None) -> list[str]:
     """Metadata columns a design formula references, plus every contrast factor."""
     text = str(formula if formula is not None else config.deseq2.design_formula).split("~", 1)[-1]
-    variables = [t.strip() for t in re.split(r"[+*:]", text) if t.strip()]
+    variables = [t.strip() for t in re.split(r"[+*:]", text) if t.strip() and t.strip() not in {"0", "1"}]
     for contrast in config.deseq2.contrasts:
         if contrast.factor and contrast.factor not in variables:
             variables.append(contrast.factor)
@@ -140,9 +141,27 @@ def input_validation_messages(config: AppConfig, project_root: Path, samples: pd
     """Every finding the Start gate records in check 01, in its order."""
     if config.input.type == "deseq2_results":
         messages = deseq2_results_preflight_messages(config, project_root)
+        if config.workflow.meta_analysis:
+            selected = config.deseq2.contrasts[0] if config.deseq2.contrasts else None
+            assessment = assess_meta_readiness(
+                samples, enabled=True, input_type=config.input.type,
+                contrast_factor=selected.factor if selected else "condition",
+                numerator=numerator if numerator is not None else (selected.numerator if selected else ""),
+                denominator=denominator if denominator is not None else (selected.denominator if selected else ""),
+                design_formula=formula if formula is not None else config.deseq2.design_formula,
+            )
+            messages.extend(assessment["messages"])
     else:
+        selected = config.deseq2.contrasts[0] if config.deseq2.contrasts else None
         messages = validate_metadata(
             samples, allow_pending_sra=config.input.type in PENDING_INPUT_ROUTES,
             design_variables=design_variables(config, formula),
-            contrast=active_contrast(config, numerator, denominator))
+            contrast=active_contrast(config, numerator, denominator),
+            contrast_factor=selected.factor if selected else "condition",
+            meta_enabled=config.workflow.meta_analysis, input_type=config.input.type,
+            design_formula=formula if formula is not None else config.deseq2.design_formula,
+            meta_contrast_labels=(
+                numerator if numerator is not None else (selected.numerator if selected else ""),
+                denominator if denominator is not None else (selected.denominator if selected else ""),
+            ))
     return list(messages) + route_preflight_messages(config, project_root) + enrichment_config_messages(config)

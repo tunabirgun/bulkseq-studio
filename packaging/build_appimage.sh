@@ -23,6 +23,14 @@ TOOL="${APPIMAGETOOL:-$(command -v appimagetool || echo "$HOME/bench_work/appima
 [ -x "$ONEDIR/BulkSeqStudio" ] || { echo "no BulkSeqStudio binary in $ONEDIR" >&2; exit 1; }
 [ -e "$ICON" ] || { echo "icon not found: $ICON" >&2; exit 1; }
 [ -x "$TOOL" ] || { echo "appimagetool not found (set APPIMAGETOOL): $TOOL" >&2; exit 1; }
+TOOL="$(realpath "$TOOL")"
+mkdir -p "$OUTDIR"
+OUTDIR="$(cd "$OUTDIR" && pwd -P)"
+OUT="$OUTDIR/BulkSeqStudio-${VERSION}-x86_64.AppImage"
+PORTABLE="$OUTDIR/BulkSeqStudio-Portable-${VERSION}-linux-x86_64.tar.gz"
+for path in "$OUT" "$OUT.zsync" "$PORTABLE"; do
+    [ ! -e "$path" ] || { echo "preserving existing package: $path" >&2; exit 1; }
+done
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/bsq_appimage.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
@@ -58,18 +66,16 @@ EOF
 cp "$ICON" "$APPDIR/bulkseqstudio.png"
 cp "$APPDIR/bulkseqstudio.png" "$APPDIR/.DirIcon"
 
-mkdir -p "$OUTDIR"
-OUT="$OUTDIR/BulkSeqStudio-${VERSION}-x86_64.AppImage"
 # Embed zsync update information so `AppImageUpdate <file>` upgrades in place from the latest
 # GitHub release. This also makes appimagetool write the companion <OUT>.zsync next to the
 # AppImage; publish both as release assets. Override UPDATE_INFO to point elsewhere.
 UPDATE_INFO="${UPDATE_INFO:-gh-releases-zsync|tunabirgun|bulkseq-studio|latest|BulkSeqStudio-*-x86_64.AppImage.zsync}"
-ARCH=x86_64 "$TOOL" --appimage-extract-and-run --no-appstream -u "$UPDATE_INFO" "$APPDIR" "$OUT"
+(cd "$WORK" && ARCH=x86_64 "$TOOL" --appimage-extract-and-run --no-appstream -u "$UPDATE_INFO" "$APPDIR" "$OUT")
 chmod +x "$OUT"
 # appimagetool writes the companion .zsync into the CWD, not next to $OUT; move it
 # beside the AppImage so both are in $OUTDIR ready to publish.
-if [ ! -f "$OUT.zsync" ] && [ -f "$(basename "$OUT").zsync" ]; then
-    mv -f "$(basename "$OUT").zsync" "$OUT.zsync"
+if [ ! -f "$OUT.zsync" ] && [ -f "$WORK/$(basename "$OUT").zsync" ]; then
+    mv "$WORK/$(basename "$OUT").zsync" "$OUT.zsync"
 fi
 echo "APPIMAGE=$OUT"
 ls -lh "$OUT"
@@ -79,8 +85,7 @@ ls -lh "$OUT.zsync"
 
 # Also provide the intact PyInstaller onedir as a conventional portable archive
 # for systems where AppImage/FUSE is unavailable.
-PORTABLE="$OUTDIR/BulkSeqStudio-Portable-${VERSION}-linux-x86_64.tar.gz"
-tar -C "$(dirname "$ONEDIR")" -czf "$PORTABLE" "$(basename "$ONEDIR")"
+tar --numeric-owner --owner=0 --group=0 -C "$(dirname "$ONEDIR")" -czf "$PORTABLE" "$(basename "$ONEDIR")"
 tar -tzf "$PORTABLE" >/dev/null
 echo "PORTABLE=$PORTABLE"
 ls -lh "$PORTABLE"

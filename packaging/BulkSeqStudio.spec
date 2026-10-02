@@ -24,8 +24,17 @@ def collect(directory):
 
 
 datas = []
-for d in ("app/data", "app/assets", "workflow", "scripts", "examples"):
+for d in ("app/data", "app/assets", "workflow", "examples"):
     datas += collect(d)
+for name in ("setup_windows_wsl_admin.ps1", "launch_wsl_setup_admin.bat", "setup_wsl_bioenv.sh"):
+    source = os.path.join(ROOT, "scripts", name)
+    if not os.path.isfile(source):
+        raise FileNotFoundError(source)
+    datas.append((source, "scripts"))
+license_file = os.path.join(ROOT, "LICENSE")
+if not os.path.isfile(license_file):
+    raise FileNotFoundError(license_file)
+datas.append((license_file, "."))
 
 ICON = os.path.join(ROOT, "app", "assets", "icons", "bulkseq.ico")
 

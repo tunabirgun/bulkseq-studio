@@ -13,6 +13,8 @@ A <- mk(c(0.001, 0.20, 0.80, 1e-30, 0.50), c(2.0, 1.0, -0.5, 3.0,  0.2))
 B <- mk(c(0.002, 0.30, 0.90, 1e-20, 0.60), c(2.1, 1.1, -0.4, 3.2, -0.3))  # g5 sign-discordant
 res <- combine_meta(list(A = A, B = B), c(A = 3, B = 3), alpha = 0.05)
 rownames(res) <- res$gene_id
+if ("--inject-failure" %in% commandArgs(trailingOnly = TRUE))
+  res["g1", "combined_pvalue"] <- res["g1", "combined_pvalue"] + 0.1
 check(abs(res["g1", "combined_pvalue"] - 0.000012) < 1e-5, "g1 combined p ~ 1.2e-5 (golden)")
 check(abs(res["g3", "combined_pvalue"] - 0.933362) < 1e-4, "g3 combined p ~ 0.933 (golden)")
 check(res["g5", "common_direction"] == "discordant", "g5 flagged discordant (not dropped)")
@@ -141,8 +143,8 @@ local({
 
 # ---- rem_pvalue carries its own correction ----------------------------------------------------
 # The pooled effect-size test is a different hypothesis from the combined p-value, so it was
-# exported raw and could be read as if it were adjusted. Its family is the concordant genes whose
-# pooled effect metafor could estimate.
+# exported raw and could be read as if it were adjusted. Its family includes every gene whose
+# pooled effect metafor could estimate, including discordant genes.
 local({
   set.seed(3)
   n <- 500L
@@ -153,14 +155,15 @@ local({
   r <- combine_meta(list(A = mkr(runif(n), l1), B = mkr(runif(n), l2)), c(A = 5L, B = 5L))
   check("rem_padj" %in% colnames(r), "rem_padj is exported next to rem_pvalue")
   disc <- r$common_direction == "discordant"
-  check(all(is.na(r$rem_padj[disc])), "rem_padj: discordant genes are outside the tested family")
-  tested <- !disc & is.finite(r$rem_pvalue)
+  check(all(is.finite(r$rem_padj[disc])), "rem_padj: estimable discordant genes are tested")
+  tested <- is.finite(r$rem_pvalue)
   check(any(tested), "rem_padj: the tested family is non-empty in this fixture")
   check(all(r$rem_padj[tested] >= r$rem_pvalue[tested] - 1e-12),
         "rem_padj: adjustment never reports a value below its raw p")
   check(isTRUE(all.equal(r$rem_padj[tested],
                          p.adjust(r$rem_pvalue[tested], method = "BH"), tolerance = 1e-12)),
-        "rem_padj: BH computed over the tested family only (not the whole table)")
+        "rem_padj: BH computed over every estimable pooled effect")
 })
 
 cat(if (ok) "ALL_META_TESTS_PASS\n" else "META_TESTS_FAILED\n")
+if (!ok) quit(status = 1L)

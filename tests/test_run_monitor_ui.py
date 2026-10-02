@@ -68,6 +68,7 @@ def test_ready_project_has_compact_sections_and_one_primary_action(
     assert not window.run_options_panel.isVisible()
     assert window.open_project_folder_button.isEnabled()
     assert not window.open_results_report_button.isEnabled()
+    assert not window.open_meta_report_button.isEnabled()
     assert not window.open_multiqc_button.isEnabled()
     results_report = tmp_path / "results" / "reports" / "results_report.html"
     multiqc_report = tmp_path / "results" / "qc" / "multiqc" / "multiqc_report.html"
@@ -77,7 +78,17 @@ def test_ready_project_has_compact_sections_and_one_primary_action(
     multiqc_report.write_text("<html>synthetic QC</html>", encoding="utf-8")
     window._refresh_export_buttons()
     assert window.open_results_report_button.isEnabled()
+    assert not window.open_meta_report_button.isEnabled()
     assert window.open_multiqc_button.isEnabled()
+    meta_report = results_report.with_name("meta_analysis_report.html")
+    meta_report.write_text("<html>synthetic cross-study results</html>", encoding="utf-8")
+    window.meta_analysis.setChecked(False)
+    window._refresh_export_buttons()
+    assert window.open_meta_report_button.isEnabled()
+    meta_report.unlink()
+    window._refresh_export_buttons()
+    assert not window.open_meta_report_button.isEnabled()
+    assert window.open_results_report_button.isEnabled()
 
     visible_primary = [
         button.text()
@@ -175,6 +186,7 @@ def test_action_hierarchy_order_and_running_state(
     post_run_actions = (
         window.open_results_report_button,
         window.open_multiqc_button,
+        window.open_meta_report_button,
         window.export_design_button,
         window.export_toolsref_button,
         window.open_project_folder_button,
@@ -183,7 +195,7 @@ def test_action_hierarchy_order_and_running_state(
     assert [button.geometry().left() for button in post_run_actions] == sorted(
         button.geometry().left() for button in post_run_actions)
     assert [button.accessibleName() for button in post_run_actions] == [
-        "Open results report", "Open MultiQC report", "Export study design",
+        "Open main report", "Open MultiQC report", "Open cross-study report", "Export study design",
         "Export tools and references", "Open project folder",
     ]
     assert window.open_project_folder_button.property("buttonRole") is None

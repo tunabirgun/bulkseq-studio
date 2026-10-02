@@ -23,9 +23,12 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS_ROOT = ROOT / "docs"
 DOCS_SRC = ROOT / "docs_src"
 README_PATH = ROOT / "README.md"
-# Deliberately not derived from application values: the application and the public
-# handbook must advance together, and this records the release they both describe.
-PUBLIC_VERSION = "0.33.0"
+CHANGELOG_TEXT = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+RELEASE_HEADING = re.search(r"^## (\d+\.\d+\.\d+) — \d{4}-\d{2}-\d{2}(?:\s|$)",
+                            CHANGELOG_TEXT, re.MULTILINE)
+assert RELEASE_HEADING, "CHANGELOG.md has no dated release section"
+# The dated release record is independent of application and site declarations.
+PUBLIC_VERSION = RELEASE_HEADING.group(1)
 CANONICAL_RELEASE_LINK = "https://github.com/tunabirgun/bulkseq-studio/releases/latest"
 RELEASE_TAG_LINK = "https://github.com/tunabirgun/bulkseq-studio/releases/tag/v"
 SITE_BASE = "https://tunabirgun.github.io/bulkseq-studio/"
@@ -93,7 +96,6 @@ def _latest_scientific_version(public_version: str, changelog: str) -> str | Non
     return None
 
 
-CHANGELOG_TEXT = _read(ROOT / "CHANGELOG.md")
 LATEST_SCIENTIFIC_VERSION = _latest_scientific_version(PUBLIC_VERSION, CHANGELOG_TEXT)
 # One label for every page; tests/test_docs_site.py separately binds the same label to the
 # application's own APP_VERSION, so between them the published claim, the build input and the
@@ -214,14 +216,14 @@ def _readme_errors(readme: str, pages: dict[str, str]) -> list[str]:
     status_lines = [line for line in readme.splitlines() if "release status" in line.lower()]
     if not status_lines:
         errors.append("README.md: no release-status line")
-    elif not any(f"Version {PUBLIC_VERSION} is the current public release" in line for line in status_lines):
-        errors.append(f"README.md: release-status line does not name the public release {PUBLIC_VERSION}")
-    if f"Download public v{PUBLIC_VERSION}" not in readme:
-        errors.append(f"README.md: public-download boundary does not name {PUBLIC_VERSION}")
+    elif not any(f"describes version {PUBLIC_VERSION}" in line for line in status_lines):
+        errors.append(f"README.md: release-status line does not name documented version {PUBLIC_VERSION}")
+    if "Download from official releases" not in readme:
+        errors.append("README.md: missing official-download route")
     if CANONICAL_RELEASE_LINK not in readme:
         errors.append("README.md: missing canonical public-release link")
-    if "unreleased" in lowered or "development source" in lowered:
-        errors.append("README.md: published release is still presented as unpublished development source")
+    if f"version {PUBLIC_VERSION} is the current public release" in lowered:
+        errors.append("README.md: claims publication before the release record is verified")
 
     # Every link into the published site must land on a page the site actually builds; the
     # page list is read from docs/ so a renamed or dropped chapter fails here.
@@ -242,7 +244,7 @@ def _readme_errors(readme: str, pages: dict[str, str]) -> list[str]:
         if len(lines) <= 1:
             continue
         first = lines[0].lstrip()
-        if first.startswith(("#", "- ", "* ", ">", "|", "```")):
+        if first.startswith(("#", "- ", "* ", ">", "|", "```")) or re.match(r"\d+\.\s", first):
             continue
         errors.append("README.md: published paragraph is not one physical line")
     return errors
@@ -396,9 +398,9 @@ def _replace_once(source: str, old: str, new: str) -> str:
         ("faq.html", '>Common problems<a class="heading-link"', '>Benchmarks<a class="heading-link"', "retired benchmark section remains"),
         ("faq.html", f"<strong>{LATEST_SCIENTIFIC_VERSION}:</strong>", "<strong>Latest:</strong>", "missing notice for scientific output changes"),
         ("faq.html", f"{RELEASE_TAG_LINK}{LATEST_SCIENTIFIC_VERSION}", f"{RELEASE_TAG_LINK}0.0.1", "does not link to the"),
-        ("README.md", f"Version {PUBLIC_VERSION} is the current public release.", f"Version {PUBLIC_VERSION} is the unreleased development source.", "published release is still presented"),
-        ("README.md", f"Version {PUBLIC_VERSION} is the current public release.", "Version 0.31.0 is the current public release.", "release-status line does not name"),
-        ("README.md", f"Download public v{PUBLIC_VERSION}", "Download the latest release", "public-download boundary"),
+        ("README.md", f"describes version {PUBLIC_VERSION}", f"version {PUBLIC_VERSION} is the current public release", "claims publication"),
+        ("README.md", f"describes version {PUBLIC_VERSION}", "describes version 0.31.0", "release-status line does not name"),
+        ("README.md", "Download from official releases", "Download from a mirror", "missing official-download route"),
         ("README.md", CANONICAL_RELEASE_LINK, "https://github.com/tunabirgun/bulkseq-studio/releases", "canonical public-release link"),
         ("README.md", "BulkSeq Studio is a desktop application for Windows and Linux ", "BulkSeq Studio is a desktop\napplication for Windows and Linux ", "one physical line"),
         ("README.md", f"({SITE_BASE}guide.html)", f"({SITE_BASE}guide-notes.html)", "link into the site does not resolve"),
@@ -413,9 +415,9 @@ def _replace_once(source: str, old: str, new: str) -> str:
         "retired-benchmark-section",
         "missing-scientific-notice",
         "notice-without-a-release-link",
-        "unpublished-release-status",
+        "unverified-public-release-claim",
         "stale-release-status-line",
-        "missing-download-boundary",
+        "missing-official-download-route",
         "missing-canonical-release-link",
         "hard-wrapped-readme-prose",
         "broken-site-link",
@@ -446,7 +448,7 @@ BADGE_SOURCES = {
     "python": lambda: re.search(
         r'requires-python\s*=\s*"\s*>=\s*([0-9.]+)"', _read(ROOT / "pyproject.toml")).group(1) + "+",
     "snakemake": lambda: re.search(
-        r"^\s*-\s*snakemake-minimal=([0-9][^=\s]*)",
+        r"^\s*-\s*snakemake-minimal==([0-9][^=\s]*)",
         _read(ROOT / "workflow" / "envs" / "bulkseq.lock.yaml"), re.MULTILINE).group(1),
     "license": lambda: re.search(
         r'license\s*=\s*\{\s*text\s*=\s*"([^"]+)"', _read(ROOT / "pyproject.toml")).group(1),

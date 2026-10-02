@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from app.cli import EXIT_GATE, EXIT_INVALID, EXIT_OK, main
+from app.cli import EXIT_GATE, EXIT_INVALID, EXIT_OK, build_parser, main
 from app.cli_banner import banner_text, should_show_banner
 from app.constants import APP_VERSION, WORKFLOW_VERSION
 from app.core.project import ProjectManager
@@ -52,6 +52,74 @@ def _pending_reads_sheet(*sample_ids: str) -> str:
         for index, sample_id in enumerate(sample_ids)
     )
     return "\n".join(rows) + "\n"
+
+
+def test_project_option_keeps_its_value_before_and_after_nested_commands(project, capsys) -> None:
+    forms = (
+        ["-C", str(project), "project", "info"],
+        ["project", "-C", str(project), "info"],
+        ["project", "info", "-C", str(project)],
+    )
+    for form in forms:
+        assert build_parser().parse_args(form).project == str(project)
+        assert main([*form, "--json"]) == EXIT_OK
+        assert json.loads(capsys.readouterr().out)["project_root"] == str(project.resolve())
+
+
+def test_project_option_before_check_does_not_fall_back_to_cwd(project, tmp_path,
+                                                              monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    before = ["-C", str(project), "check"]
+    after = ["check", "-C", str(project)]
+    assert build_parser().parse_args(before).project == str(project)
+    assert build_parser().parse_args(after).project == str(project)
+    assert main(before) == main(after) == EXIT_OK
+    output = capsys.readouterr()
+    assert output.out.count("Overall: PASS") == 2
+    assert "Not a BulkSeq Studio project" not in output.err
+
+    legacy = build_parser()
+    subparsers = next(action for action in legacy._actions if action.dest == "command")
+    project_option = next(action for action in subparsers.choices["check"]._actions
+                          if action.dest == "project")
+    project_option.default = None
+    assert legacy.parse_args(before).project is None
+
+
+def test_output_options_keep_their_values_before_and_after_version(capsys) -> None:
+    for form in (["--json", "version"], ["version", "--json"]):
+        assert build_parser().parse_args(form).json is True
+        assert main(form) == EXIT_OK
+        assert json.loads(capsys.readouterr().out) == {"version": APP_VERSION}
+    for form in (["--quiet", "version"], ["version", "--quiet"]):
+        assert build_parser().parse_args(form).quiet is True
+        assert main(form) == EXIT_OK
+        assert capsys.readouterr().out.strip() == f"BulkSeq Studio {APP_VERSION}"
+
+
+def test_output_options_keep_their_values_through_nested_parsers(project, capsys) -> None:
+    for flag in ("--json", "--quiet"):
+        forms = ([flag, "-C", str(project), "project", "info"],
+                 ["-C", str(project), "project", flag, "info"],
+                 ["-C", str(project), "project", "info", flag])
+        for form in forms:
+            assert getattr(build_parser().parse_args(form), flag[2:]) is True
+            assert main(form) == EXIT_OK
+            output = capsys.readouterr().out
+            if flag == "--json":
+                assert json.loads(output)["project_root"] == str(project.resolve())
+            else:
+                assert str(project.resolve()) in output
+
+
+def test_injected_implicit_subparser_defaults_reproduce_lost_output_options() -> None:
+    legacy = build_parser()
+    subparsers = next(action for action in legacy._actions if action.dest == "command")
+    version = subparsers.choices["version"]
+    for name in ("json", "quiet"):
+        next(action for action in version._actions if action.dest == name).default = False
+    assert legacy.parse_args(["--json", "version"]).json is False
+    assert legacy.parse_args(["--quiet", "version"]).quiet is False
 
 
 # ---- the banner ---------------------------------------------------------------

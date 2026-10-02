@@ -13,8 +13,10 @@ if META_MODE:
         input:
             counts="results/counts/counts.txt",
             samples=config["input"]["samples"],
+            input_gate="checks/meta_input_gate.ok",
         output:
             results="results/meta/meta_analysis_results.csv",
+            eligibility="results/meta/meta_eligibility.json",
             meta_check="checks/17_meta_analysis_qc.json",
         params:
             contrast_factor=_META_CONTRAST.get("factor", "condition"),
@@ -22,6 +24,7 @@ if META_MODE:
             denominator=_META_CONTRAST.get("denominator", ""),
             alpha=_META_DE.get("alpha", 0.05),
             dataset_column="dataset",
+            design=_META_DE.get("design_formula", "~ condition"),
         benchmark:
             "benchmarks/meta_analysis.tsv"
         log:
@@ -34,6 +37,7 @@ if META_MODE:
     rule meta_figures:
         input:
             results="results/meta/meta_analysis_results.csv",
+            eligibility="results/meta/meta_eligibility.json",
         output:
             volcano_png="results/figures/meta_volcano.png",
             volcano_svg="results/figures/meta_volcano.svg",
@@ -121,6 +125,7 @@ if META_MODE:
             output:
                 dotplot_png="results/figures/meta_enrichment_dotplot.png",
                 dotplot_svg="results/figures/meta_enrichment_dotplot.svg",
+                plotted_data="results/meta/meta_enrichment_plotted.csv",
             params:
                 style=config.get("figures_style", {}),
             benchmark:

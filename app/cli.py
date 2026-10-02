@@ -93,7 +93,8 @@ def _emit(payload, args) -> None:
 
 
 def _resolve_project(args) -> Path | None:
-    root = Path(args.project).expanduser().resolve() if args.project else Path.cwd()
+    selected = getattr(args, "project", None)
+    root = Path(selected).expanduser().resolve() if selected else Path.cwd()
     if not is_project_root(root):
         _err(f"Not a BulkSeq Studio project (no config/config.yaml): {root}\n"
              f"Create one with:  bulkseq project create --name NAME --workdir DIR")
@@ -395,10 +396,12 @@ def cmd_run(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("-C", "--project", metavar="PATH",
+                        default=argparse.SUPPRESS,
                         help="project root (default: current directory)")
-    common.add_argument("--json", action="store_true",
+    common.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
                         help="machine-readable output on stdout; implies --quiet")
-    common.add_argument("--quiet", action="store_true", help="suppress the banner")
+    common.add_argument("--quiet", action="store_true", default=argparse.SUPPRESS,
+                        help="suppress the banner")
 
     parser = argparse.ArgumentParser(
         prog="bulkseq",
@@ -467,8 +470,9 @@ def main(argv: list[str] | None = None) -> int:
     _configure_streams()
     parser = build_parser()
     args = parser.parse_args(argv)
-
-    if getattr(args, "json", False):
+    args.json = getattr(args, "json", False)
+    args.quiet = getattr(args, "quiet", False)
+    if args.json:
         args.quiet = True
 
     if not getattr(args, "func", None):

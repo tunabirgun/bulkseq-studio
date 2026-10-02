@@ -135,6 +135,9 @@ from app.core.snakemake_runner import (
     build_snakemake_command,
     snakemake_run_state,
 )
+from app.core.readiness import local_wsl_health, native_tool_path
+from workflow.scripts.meta_readiness import assess_meta_readiness
+from workflow.scripts.check_contract import read_check
 from app.core.timing import write_timing_summary
 from app.core.paths import (
     data_path,
@@ -1379,7 +1382,7 @@ class MainWindow(QMainWindow):
             # Count-based routes only (needs a per-study count matrix); microarray / results-upload
             # cannot run the per-study DESeq2 fan-out. The workflow additionally requires a 'dataset'
             # column with >1 study (MULTI_DATASET) — the Snakefile is the source of truth there.
-            self.meta_analysis.setEnabled(mode in ("fastq", "sra", "mixed", "count_matrix"))
+            self.meta_analysis.setEnabled(True)
         self._sync_meta_controls()
         if hasattr(self, "trim_poly_g"):
             self._sync_trimmer_controls()
@@ -1391,11 +1394,14 @@ class MainWindow(QMainWindow):
         """Grey the meta-analysis dependants unless meta-analysis is both available and on."""
         if getattr(self, "meta_analysis", None) is None:
             return
-        active = self.meta_analysis.isEnabled() and self.meta_analysis.isChecked()
+        active = (self.meta_analysis.isChecked() and self.config is not None
+                  and self.config.input.type in ("fastq", "sra", "mixed", "count_matrix"))
         for control in (getattr(self, "per_study_enrichment", None),
                         getattr(self, "meta_go_ontology", None)):
             if control is not None:
                 control.setEnabled(active)
+        if hasattr(self, "meta_preview"):
+            self._refresh_meta_preview()
 
     def _update_workflow_section_height(self, *_args) -> None:
         """Fit the active settings section before resorting to inner scrolling."""
@@ -1522,6 +1528,8 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         if hasattr(self, "workflow_section_tabs"):
             self._schedule_workflow_section_height_update()
+        if hasattr(self, "_outputs_results_splitter"):
+            QTimer.singleShot(0, self._update_results_inspector)
 
     def _import_deseq2_results(self) -> None:
         if not self._require_project() or self.config is None:
@@ -2056,6 +2064,18 @@ class MainWindow(QMainWindow):
         common_row.addStretch(1)
         layout.addWidget(common_box)
 
+        study_row = QHBoxLayout()
+        study_note = QLabel(
+            "For cross-study analysis, assign each sample its study of origin in a dataset column. "
+            "Use one consistent study ID per source; review assignments before running.")
+        study_note.setWordWrap(True)
+        study_row.addWidget(study_note, 1)
+        add_study = QPushButton("Add/review study column")
+        add_study.setAccessibleDescription("Add or focus the dataset study-of-origin column")
+        add_study.clicked.connect(self._add_study_column)
+        study_row.addWidget(add_study)
+        layout.addLayout(study_row)
+
         more_toggle = QToolButton()
         more_toggle.setText("More table tools")
         more_toggle.setCheckable(True)
@@ -2139,6 +2159,15 @@ class MainWindow(QMainWindow):
         layout.addLayout(commit_row)
 
         self.metadata_table = MetadataTable()
+        self._meta_preview_timer = QTimer(self)
+        self._meta_preview_timer.setSingleShot(True)
+        self._meta_preview_timer.timeout.connect(self._refresh_meta_preview)
+        self.metadata_table.itemChanged.connect(lambda _item: self._meta_preview_timer.start(150))
+        self.metadata_table.model().rowsInserted.connect(lambda *_: self._meta_preview_timer.start(150))
+        self.metadata_table.model().rowsRemoved.connect(lambda *_: self._meta_preview_timer.start(150))
+        self.metadata_table.model().columnsInserted.connect(lambda *_: self._meta_preview_timer.start(150))
+        self.metadata_table.model().columnsRemoved.connect(lambda *_: self._meta_preview_timer.start(150))
+        self.metadata_table.model().headerDataChanged.connect(lambda *_: self._meta_preview_timer.start(150))
         layout.addWidget(self.metadata_table, 1)
         self.metadata_message_heading = QLabel("Validation messages")
         self.metadata_message_frame = QFrame()
@@ -2427,6 +2456,10 @@ class MainWindow(QMainWindow):
                 f"BH FDR < {self.alpha.value():g} and |log2FC| ≥ {self.lfc_threshold.value():g}"
             )
         self.workflow_summary.setText(f"Current plan: {plan} · {threshold}.")
+        if hasattr(self, "meta_analysis") and self.meta_analysis.isChecked():
+            self.workflow_summary.setText(
+                self.workflow_summary.text()
+                + " · Cross-study meta-analysis requested; review metadata eligibility below.")
 
     def _build_workflow_tab(self) -> None:
         page = QWidget()
@@ -2524,8 +2557,9 @@ class MainWindow(QMainWindow):
             "column with more than one study, run a per-study DESeq2 -> metaRNASeq inverse-normal "
             "p-combination + metafor effect-size pooling, with a dedicated cross-study comparative "
             "report (convergent/discordant genes, forest, concordance, shared-vs-distinct "
-            "enrichment). Runs alongside the joint DESeq2. Ignored for single-study, microarray and "
-            "results-upload runs.")
+            "enrichment). Runs alongside the joint DESeq2. Unsupported input routes and "
+            "ineligible study assignments block a requested cross-study run; turn this option off "
+            "to keep the joint model.")
         self.per_study_enrichment = QCheckBox()
         self.per_study_enrichment.setToolTip(
             "Opt-in and slow: run the full GO/KEGG enrichment for every study in the "
@@ -2944,7 +2978,7 @@ class MainWindow(QMainWindow):
         optional_grid.addWidget(option_row(
             self.meta_analysis,
             "Multi-study meta-analysis",
-            "Combine two or more studies with per-study DESeq2, inverse-normal p-value combination and effect-size pooling. Ignored for single-study, microarray and external-results routes."), 1, 0)
+            "Combine two or more eligible studies with per-study DESeq2, inverse-normal p-value combination and effect-size pooling. Unsupported routes and designs must be corrected or this option turned off."), 1, 0)
         optional_grid.addWidget(option_row(
             self.per_study_enrichment,
             "Per-study enrichment",
@@ -2952,11 +2986,32 @@ class MainWindow(QMainWindow):
         optional_grid.setColumnStretch(0, 1)
         optional_grid.setColumnStretch(1, 1)
         out_layout.addLayout(optional_grid)
+        meta_explainer = QLabel(
+            "Cross-study analysis fits the selected comparison separately within each eligible study, "
+            "then combines evidence and estimates pooled effects. It needs a dataset study-of-origin "
+            "column and at least two eligible studies. Independent studies and comparable designs "
+            "still require scientific review.")
+        meta_explainer.setWordWrap(True)
+        out_layout.addWidget(meta_explainer)
+        self.meta_preview = QLabel("Metadata eligibility will update from the current sample table.")
+        self.meta_preview.setWordWrap(True)
+        out_layout.addWidget(self.meta_preview)
+        self.meta_preview_details_toggle, self.meta_preview_details = self._disclosure(
+            "Study eligibility details", expanded=False)
+        self.meta_preview_detail_text = QLabel()
+        self.meta_preview_detail_text.setWordWrap(True)
+        QVBoxLayout(self.meta_preview_details).addWidget(self.meta_preview_detail_text)
+        out_layout.addWidget(self.meta_preview_details_toggle)
+        out_layout.addWidget(self.meta_preview_details)
+        go_metadata = QPushButton("Review study assignments")
+        go_metadata.clicked.connect(lambda: self.tabs.setCurrentIndex(self.metadata_tab_index))
+        out_layout.addWidget(go_metadata)
         meta_ont_row = QHBoxLayout()
         meta_ont_row.setContentsMargins(0, 0, 0, 0)
         meta_ont_row.setSpacing(8)
         meta_ont_row.addWidget(self._info_label(
-            "Meta-analysis GO ontology", self.meta_go_ontology.toolTip()))
+            "Meta-analysis GO ontology", self.meta_go_ontology.toolTip(),
+            self.meta_go_ontology))
         meta_ont_row.addWidget(self.meta_go_ontology)
         meta_ont_row.addStretch(1)
         out_layout.addLayout(meta_ont_row)
@@ -3150,8 +3205,18 @@ class MainWindow(QMainWindow):
             self.lfc_threshold.valueChanged,
         ):
             signal.connect(self._update_workflow_summary)
+        for signal in (
+            self.meta_analysis.toggled,
+            self.contrast_factor.textChanged,
+            self.numerator.currentTextChanged,
+            self.denominator.currentTextChanged,
+            self.design.textChanged,
+        ):
+            signal.connect(self._refresh_meta_preview)
+        self.meta_analysis.toggled.connect(self._update_workflow_summary)
         self._sync_trimmer_controls()
         self._update_workflow_summary()
+        self._refresh_meta_preview()
         self._schedule_workflow_section_height_update()
 
     def _design_covariate_candidates(self) -> list[str]:
@@ -3694,12 +3759,15 @@ class MainWindow(QMainWindow):
             "Open the aggregated MultiQC quality-control report (read QC, alignment/quantification "
             "metrics) in your browser. Produced when a run finishes.")
         open_report.clicked.connect(self._open_report)
-        open_html = QPushButton("Results")
-        open_html.setAccessibleName("Open results report")
+        open_html = QPushButton("Main report")
+        open_html.setAccessibleName("Open main report")
         open_html.setToolTip(
-            "Open the self-contained HTML results report (figures, top genes, enrichment, and "
-            "provenance in one file) in your browser. Produced when a run finishes.")
+            "Open the saved main results report. It contains the joint analysis for count-based "
+            "runs or the imported-route analysis; cross-study results have a separate report.")
         open_html.clicked.connect(self._open_results_report)
+        open_meta = QPushButton("Cross-study report")
+        open_meta.setAccessibleName("Open cross-study report")
+        open_meta.clicked.connect(self._open_meta_report)
         self.export_toolsref_button = QPushButton("References")
         self.export_toolsref_button.setAccessibleName("Export tools and references")
         self.export_toolsref_button.setToolTip(
@@ -3715,7 +3783,8 @@ class MainWindow(QMainWindow):
         self.open_project_folder_button = open_folder
         self.open_multiqc_button = open_report
         self.open_results_report_button = open_html
-        self.run_project_buttons = [open_folder, open_report, open_html]
+        self.open_meta_report_button = open_meta
+        self.run_project_buttons = [open_folder, open_report, open_html, open_meta]
         for button in self.run_project_buttons:
             button.setEnabled(False)
 
@@ -3725,6 +3794,7 @@ class MainWindow(QMainWindow):
         after_actions.setSpacing(8)
         after_actions.addWidget(open_html)
         after_actions.addWidget(open_report)
+        after_actions.addWidget(open_meta)
         after_actions.addWidget(self.export_design_button)
         after_actions.addWidget(self.export_toolsref_button)
         after_actions.addWidget(open_folder)
@@ -4268,6 +4338,15 @@ class MainWindow(QMainWindow):
         else:
             self.log_text.append(f"Results report not found yet: {report}")
 
+    def _open_meta_report(self) -> None:
+        if self.project_root is None:
+            return
+        report = self.project_root / "results" / "reports" / "meta_analysis_report.html"
+        if report.exists():
+            open_path(report)
+        else:
+            self.log_text.append(f"Cross-study report not found yet: {report}")
+
     def _refresh_export_buttons(self) -> None:
         # Enable the Run-Monitor provenance exports once a run has produced the files.
         root = getattr(self, "project_root", None)
@@ -4306,10 +4385,24 @@ class MainWindow(QMainWindow):
         if hasattr(self, "open_results_report_button"):
             self.open_results_report_button.setEnabled(bool(
                 root and (root / "results" / "reports" / "results_report.html").exists()))
+        if hasattr(self, "open_meta_report_button"):
+            self.open_meta_report_button.setEnabled(bool(
+                root and (root / "results" / "reports" / "meta_analysis_report.html").exists()))
         if hasattr(self, "save_resources_button"):
             self.save_resources_button.setEnabled(root is not None)
         for button in getattr(self, "report_project_buttons", []):
-            button.setEnabled(root is not None)
+            required = button.property("requiredReport")
+            button.setEnabled(bool(root and (not required or (root / str(required)).exists())))
+        if hasattr(self, "report_generate_button"):
+            primary = next((button for button in (
+                self.report_open_results_button,
+                self.report_open_meta_button,
+                self.report_open_multiqc_button,
+            ) if button.isEnabled()), self.report_generate_button)
+            for button in self.report_project_buttons:
+                button.setProperty("primary", button is primary)
+                button.style().unpolish(button)
+                button.style().polish(button)
         if hasattr(self, "report_no_project_panel"):
             self.report_no_project_panel.setVisible(root is None)
         if hasattr(self, "report_operational_panel"):
@@ -4323,7 +4416,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_outputs_main_splitter"):
             self._outputs_main_splitter.setVisible(root is not None)
         if hasattr(self, "results_inspector"):
-            self.results_inspector.setVisible(root is not None)
+            self._update_results_inspector()
         if hasattr(self, "ppi_load_button"):
             self.ppi_load_button.setEnabled(root is not None)
         for control in getattr(self, "ppi_construction_controls", []):
@@ -4393,15 +4486,26 @@ class MainWindow(QMainWindow):
         operational_layout.setContentsMargins(0, 0, 0, 0)
         operational_layout.setSpacing(10)
         generate = QPushButton("Generate Reports")
-        generate.setProperty("primary", True)
         generate.clicked.connect(self._generate_reports)
-        open_results = QPushButton("Open Results Report")
+        open_results = QPushButton("Open main results report")
+        open_results.setToolTip(
+            "Open the saved main analysis report. A cross-study report, when present, is separate.")
         open_results.clicked.connect(self._open_results_report)
+        open_results.setProperty("requiredReport", "results/reports/results_report.html")
         open_multiqc = QPushButton("Open MultiQC Report")
         open_multiqc.clicked.connect(self._open_report)
+        open_multiqc.setProperty("requiredReport", "results/qc/multiqc/multiqc_report.html")
+        open_meta = QPushButton("Open cross-study report")
+        open_meta.setProperty("requiredReport", "results/reports/meta_analysis_report.html")
+        open_meta.clicked.connect(self._open_meta_report)
         open_folder = QPushButton("Open reports folder")
         open_folder.clicked.connect(lambda: self._open_subpath("results/reports"))
-        self.report_project_buttons = [generate, open_results, open_multiqc, open_folder]
+        open_folder.setProperty("requiredReport", "results/reports")
+        self.report_generate_button = generate
+        self.report_open_results_button = open_results
+        self.report_open_multiqc_button = open_multiqc
+        self.report_open_meta_button = open_meta
+        self.report_project_buttons = [open_results, open_meta, open_multiqc, generate, open_folder]
         for button in self.report_project_buttons:
             button.setEnabled(False)
         result_group = QGroupBox("Report status")
@@ -4509,7 +4613,7 @@ class MainWindow(QMainWindow):
         figure_layout = QVBoxLayout(figure_panel)
         figure_layout.setContentsMargins(8, 6, 8, 8)
         figure_layout.setSpacing(6)
-        figure_header = QLabel("Figures — scroll to zoom, drag to pan")
+        figure_header = QLabel("Figures — scroll or +/- to zoom, drag or use arrows to pan")
         figure_header.setWordWrap(True)
         figure_header.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.output_figure_heading = figure_header
@@ -4534,6 +4638,12 @@ class MainWindow(QMainWindow):
         fit_btn.clicked.connect(lambda: self.figure_viewer.fit())
         actual_btn = QPushButton("100%")
         actual_btn.clicked.connect(lambda: self.figure_viewer.actual_size())
+        zoom_out = QPushButton("−")
+        zoom_out.setAccessibleName("Zoom figure out")
+        zoom_out.clicked.connect(lambda: self.figure_viewer.zoom_out())
+        zoom_in = QPushButton("+")
+        zoom_in.setAccessibleName("Zoom figure in")
+        zoom_in.clicked.connect(lambda: self.figure_viewer.zoom_in())
         self.svg_toggle = QCheckBox("Vector (SVG)")
         self.svg_toggle.setToolTip("Show the vector SVG of the selected figure — crisp at any zoom. "
                                    "PNG is faster for very complex figures.")
@@ -4555,6 +4665,14 @@ class MainWindow(QMainWindow):
         render_actions.addWidget(QLabel("View"))
         render_actions.addWidget(fit_btn)
         render_actions.addWidget(actual_btn)
+        render_actions.addWidget(zoom_out)
+        render_actions.addWidget(zoom_in)
+        customize = QPushButton("Customize figure")
+        customize.setCheckable(True)
+        customize.setAccessibleDescription("Show or hide the results editing inspector")
+        customize.toggled.connect(self._set_results_inspector_choice)
+        render_actions.addWidget(customize)
+        self.customize_figure_button = customize
         figure_layout.addLayout(render_actions)
         self.regenerate_figures_button = regen_figs
         figure_canvas = QWidget()
@@ -4564,12 +4682,12 @@ class MainWindow(QMainWindow):
         self.figure_viewer = ImageViewer()
         self.figure_viewer.setAccessibleName("Figure preview")
         self.figure_viewer.setAccessibleDescription(
-            "Preview of the selected figure. Scroll to zoom and drag to pan."
+            "Preview of the selected figure. Use plus, equals or minus to zoom; arrows to pan."
         )
         self.figure_viewer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         # Keep the figure scientifically inspectable even when a saved splitter
         # state from a larger screen is restored at the compact desktop size.
-        self.figure_viewer.setMinimumSize(300, 280)
+        self.figure_viewer.setMinimumSize(300, 100)
         self.figure_viewer.update_theme(IMAGEVIEWER_BG.get(self._current_theme_mode(), IMAGEVIEWER_BG["light"]))
         figure_canvas_layout.addWidget(self.figure_viewer)
         (self.output_empty_state_panel,
@@ -4587,6 +4705,14 @@ class MainWindow(QMainWindow):
         self.output_figure_stack = figure_canvas_layout
         self.output_figure_canvas = figure_canvas
         figure_layout.addWidget(figure_canvas, 1)
+        self.figure_description = QLabel("Select a figure for its description and source table.")
+        self.figure_description.setWordWrap(True)
+        self.figure_description.setAccessibleName("Selected figure description")
+        figure_layout.addWidget(self.figure_description)
+        self.figure_data_button = QPushButton("Open figure data")
+        self.figure_data_button.setEnabled(False)
+        self.figure_data_button.clicked.connect(self._open_figure_data)
+        figure_layout.addWidget(self.figure_data_button)
 
         # --- Progressive inspector (right of the horizontal splitter) ---
         control_panel = _InspectorTabs()
@@ -4608,7 +4734,7 @@ class MainWindow(QMainWindow):
         self.results_inspector = control_panel
         self.output_project_controls = [
             self.output_table_pick, load, open_results, regen_figs, refresh_figs,
-            fit_btn, actual_btn, self.svg_toggle, control_panel,
+            fit_btn, actual_btn, zoom_out, zoom_in, customize, self.svg_toggle, control_panel,
         ]
         for control in self.output_project_controls:
             control.setEnabled(False)
@@ -4623,6 +4749,7 @@ class MainWindow(QMainWindow):
         inspector_layout.setContentsMargins(8, 6, 0, 8)
         inspector_layout.addWidget(control_panel)
         self._outputs_inspector_host = inspector_host
+        self._inspector_user_choice = None
 
         results_splitter = QSplitter(Qt.Orientation.Horizontal)
         results_splitter.setChildrenCollapsible(False)
@@ -4658,6 +4785,25 @@ class MainWindow(QMainWindow):
                 sp.restoreState(st)
 
         self.tabs.addTab(page, "Outputs")
+        QTimer.singleShot(0, self._update_results_inspector)
+
+    def _set_results_inspector_choice(self, shown: bool) -> None:
+        self._inspector_user_choice = shown
+        self._update_results_inspector()
+
+    def _update_results_inspector(self) -> None:
+        if not hasattr(self, "_outputs_results_splitter"):
+            return
+        shown = (self._inspector_user_choice if self._inspector_user_choice is not None
+                 else not self.tabs.isCompact())
+        shown = bool(shown and self.project_root is not None)
+        self._outputs_inspector_host.setVisible(shown)
+        self.results_inspector.setVisible(shown)
+        self.customize_figure_button.blockSignals(True)
+        self.customize_figure_button.setChecked(shown)
+        self.customize_figure_button.blockSignals(False)
+        if self.figure_viewer._has_image and not self.figure_viewer._user_zoomed:
+            QTimer.singleShot(0, self.figure_viewer.fit)
 
     def _build_ppi_tab(self) -> None:
         # A dedicated, interactive STRING PPI network (cytoscape.js in a web view),
@@ -5534,6 +5680,10 @@ class MainWindow(QMainWindow):
         label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         if buddy is not None:
             label.setBuddy(buddy)
+            if not buddy.accessibleName():
+                buddy.setAccessibleName(text)
+            if not buddy.accessibleDescription():
+                buddy.setAccessibleDescription(help_text)
         row.addWidget(label)
         info = QToolButton()
         info.setObjectName("infoLabelButton")
@@ -5621,6 +5771,9 @@ class MainWindow(QMainWindow):
                 column = index % 2
                 field_label = QLabel(label)
                 field_label.setBuddy(w)
+                w.setAccessibleName(f"{glabel}: {label}")
+                w.setAccessibleDescription(
+                    f"Override {label.lower()} for {glabel}; inherit uses the global figure style.")
                 grid.addWidget(field_label, row, column)
                 grid.addWidget(w, row + 1, column)
                 grid.setColumnStretch(column, 1)
@@ -5857,48 +6010,48 @@ class MainWindow(QMainWindow):
 
         save_style = QPushButton("Save style")
         save_style.clicked.connect(self._save_figure_style)
-        appearance.addRow(self._info_label("Palette", "Colour scheme for all figures. Blue-Red is diverging; Viridis is colour-blind friendly; Greyscale prints well in mono."), self.fig_palette)
+        appearance.addRow(self._info_label("Palette", "Colour scheme for all figures. Blue-Red is diverging; Viridis is colour-blind friendly; Greyscale prints well in mono.", self.fig_palette), self.fig_palette)
         _ov_note = QLabel(
             "Choose a figure group and set only values that differ; everything else inherits the global style.")
         _ov_note.setWordWrap(True)
         _ov_note.setProperty("hint", True)
         overrides.addWidget(_ov_note)
         overrides.addWidget(self._build_figure_override_table(), 1)
-        appearance.addRow(self._info_label("Point size", "Dot size in PCA/volcano scatter plots (ggplot2 size units)."), self.fig_point_size)
-        appearance.addRow(self._info_label("Base font size", "Base text size for all figures (ggplot2 theme base_size, points)."), self.fig_base_font)
-        appearance_advanced.addRow(self._info_label("Font family", "Font for figure text. Leave as default unless the font is also available in the WSL R environment."), self.fig_font_family)
+        appearance.addRow(self._info_label("Point size", "Dot size in PCA/volcano scatter plots (ggplot2 size units).", self.fig_point_size), self.fig_point_size)
+        appearance.addRow(self._info_label("Base font size", "Base text size for all figures (ggplot2 theme base_size, points).", self.fig_base_font), self.fig_base_font)
+        appearance_advanced.addRow(self._info_label("Font family", "Font for figure text. Leave as default unless the font is also available in the WSL R environment.", self.fig_font_family), self.fig_font_family)
         appearance_advanced.addRow(self.fig_label_bold)
         appearance_advanced.addRow(self.fig_title_bold)
         appearance_advanced.addRow(self.fig_gene_italic)
-        detail_common.addRow(self._info_label("Volcano top-N labels", "Display heuristic: how many significant genes are labelled. 0 = none; the DE table is unchanged."), self.fig_volcano_top)
-        detail_common.addRow(self._info_label("Heatmap top-N genes", "Display heuristic: number of top genes shown; the DE table is unchanged."), self.fig_heatmap_top)
+        detail_common.addRow(self._info_label("Volcano top-N labels", "Display heuristic: how many significant genes are labelled. 0 = none; the DE table is unchanged.", self.fig_volcano_top), self.fig_volcano_top)
+        detail_common.addRow(self._info_label("Heatmap top-N genes", "Display heuristic: number of top genes shown; the DE table is unchanged.", self.fig_heatmap_top), self.fig_heatmap_top)
         detail_common.addRow(self.fig_sample_labels)
-        dimensions.addRow(self._info_label("Size units", "Units for width and height. Pixels are converted using the DPI."), self.fig_dim_unit)
-        dimensions.addRow(self._info_label("Width", "Saved figure width for PNG and SVG."), self.fig_width)
-        dimensions.addRow(self._info_label("Height", "Saved figure height for PNG and SVG."), self.fig_height)
-        dimensions.addRow(self._info_label("DPI (PNG)", "Raster resolution. SVG remains vector; 300 DPI is publication quality."), self.fig_dpi)
-        detail_advanced.addRow(self._info_label("PCA n-top genes", "Number of most-variable genes used for the displayed PCA. Protocol default 500."), self.fig_pca_ntop)
-        detail_advanced.addRow(self._info_label("Volcano y-axis", "Visual scale only: cap with off-scale markers, show true full height, or compress the tail using sqrt."), self.fig_volcano_yscale)
-        detail_advanced.addRow(self._info_label("Volcano y cap", "Visual upper limit in cap mode. Auto uses the 99.5th percentile and marks off-scale points."), self.fig_volcano_ycap)
-        detail_advanced.addRow(self._info_label("Volcano point alpha", "Opacity of significant points. Lower values reveal density in the dense core."), self.fig_volcano_alpha)
+        dimensions.addRow(self._info_label("Size units", "Units for width and height. Pixels are converted using the DPI.", self.fig_dim_unit), self.fig_dim_unit)
+        dimensions.addRow(self._info_label("Width", "Saved figure width for PNG and SVG.", self.fig_width), self.fig_width)
+        dimensions.addRow(self._info_label("Height", "Saved figure height for PNG and SVG.", self.fig_height), self.fig_height)
+        dimensions.addRow(self._info_label("DPI (PNG)", "Raster resolution. SVG remains vector; 300 DPI is publication quality.", self.fig_dpi), self.fig_dpi)
+        detail_advanced.addRow(self._info_label("PCA n-top genes", "Number of most-variable genes used for the displayed PCA. Protocol default 500.", self.fig_pca_ntop), self.fig_pca_ntop)
+        detail_advanced.addRow(self._info_label("Volcano y-axis", "Visual scale only: cap with off-scale markers, show true full height, or compress the tail using sqrt.", self.fig_volcano_yscale), self.fig_volcano_yscale)
+        detail_advanced.addRow(self._info_label("Volcano y cap", "Visual upper limit in cap mode. Auto uses the 99.5th percentile and marks off-scale points.", self.fig_volcano_ycap), self.fig_volcano_ycap)
+        detail_advanced.addRow(self._info_label("Volcano point alpha", "Opacity of significant points. Lower values reveal density in the dense core.", self.fig_volcano_alpha), self.fig_volcano_alpha)
         detail_advanced.addRow(self.fig_pca_fixed_aspect)
-        detail_advanced.addRow(self._info_label("Heatmap z limit", "Symmetric visual cap on heatmap row z-scores."), self.fig_heatmap_zlim)
-        detail_advanced.addRow(self._info_label("Enrichment categories shown", "Display heuristic: number of terms shown; enrichment tables are unchanged."), self.fig_enrich_show)
+        detail_advanced.addRow(self._info_label("Heatmap z limit", "Symmetric visual cap on heatmap row z-scores.", self.fig_heatmap_zlim), self.fig_heatmap_zlim)
+        detail_advanced.addRow(self._info_label("Enrichment categories shown", "Display heuristic: number of terms shown; enrichment tables are unchanged.", self.fig_enrich_show), self.fig_enrich_show)
         detail_advanced.addRow(self._info_label(
             "Meta-analysis: genes labelled on the volcano",
             "Applies to the multi-study meta-analysis figures only. How many genes are named on the "
             "cross-study volcano plot. Lower it when the labels crowd each other; the result tables "
-            "are unchanged. Ignored when meta-analysis is off."), self.fig_meta_label_top)
+            "are unchanged. Ignored when meta-analysis is off.", self.fig_meta_label_top), self.fig_meta_label_top)
         detail_advanced.addRow(self._info_label(
             "Meta-analysis: genes in the effect-size heatmap",
             "Applies to the multi-study meta-analysis figures only. How many genes are drawn in the "
             "cross-study effect-size heatmap, taken from the top of the combined-significance "
-            "ranking. Ignored when meta-analysis is off."), self.fig_meta_heatmap_top)
+            "ranking. Ignored when meta-analysis is off.", self.fig_meta_heatmap_top), self.fig_meta_heatmap_top)
         detail_advanced.addRow(self._info_label(
             "Meta-analysis: enrichment terms shown",
             "Applies to the multi-study meta-analysis figures only. How many terms appear in the "
             "cross-study enrichment dot plot. Display heuristic; the enrichment tables are "
-            "unchanged. Ignored when meta-analysis is off."), self.fig_meta_enrich_show)
+            "unchanged. Ignored when meta-analysis is off.", self.fig_meta_enrich_show), self.fig_meta_enrich_show)
         self.figure_detail_common_controls = (
             self.fig_volcano_top,
             self.fig_heatmap_top,
@@ -6205,6 +6358,9 @@ class MainWindow(QMainWindow):
             self.figure_pick.setEnabled(False)
             self.figure_pick.blockSignals(False)
             self.figure_viewer.clear()
+            self._selected_figure_data = None
+            self.figure_data_button.setEnabled(False)
+            self.figure_description.setText("Select a figure for its description and source table.")
             self.figure_viewer.setAccessibleDescription(
                 "Figure preview is unavailable until a result figure is selected."
             )
@@ -6215,8 +6371,61 @@ class MainWindow(QMainWindow):
     def _show_selected_figure(self, name: str) -> None:
         if not name or name.startswith("(no figures") or self.project_root is None:
             return
+        source = None
+        required_columns: set[str] = set()
+        image_path = Path(self.figure_pick.currentData() or name)
+        stem = image_path.stem.lower()
+        if self.figure_pick.currentData():
+            study = image_path.parent.parent.name
+            description = f"Study {study} {stem.replace('_', ' ')}."
+            if image_path.parent.name == "figures" and stem in {"volcano", "ma_plot", "pval_hist"}:
+                source = f"results/meta/per_study_{study}.csv"
+                required_columns = {"gene_id", "log2FoldChange", "pvalue", "padj"}
+            elif stem in {"pca", "heatmap_topdeg"}:
+                description += " Drawn from the study-specific transformed count matrix."
+        elif stem == "meta_enrichment_dotplot":
+            description = "Cross-study GO enrichment: plotted term-by-set rows, gene ratios and adjusted p-values."
+            source = "results/meta/meta_enrichment_plotted.csv"
+            required_columns = {"Cluster", "Description", "GeneRatio", "p.adjust", "Count"}
+        elif stem in {"meta_volcano", "meta_heterogeneity", "meta_combined_p_hist"}:
+            description = {
+                "meta_volcano": "Cross-study pooled effect and combined-p evidence.",
+                "meta_heterogeneity": "Reported heterogeneity and pooled effects.",
+                "meta_combined_p_hist": "Distribution of combined p-values.",
+            }[stem]
+            source = "results/meta/meta_analysis_results.csv"
+            required_columns = {
+                "meta_volcano": {"gene_id", "rem_log2FC", "combined_padj"},
+                "meta_heterogeneity": {"gene_id", "rem_log2FC", "I2"},
+                "meta_combined_p_hist": {"gene_id", "combined_pvalue"},
+            }[stem]
+        elif stem in {"volcano", "ma_plot", "pvalue_histogram"}:
+            description = f"{stem.replace('_', ' ').capitalize()} from the main differential-expression results."
+            source = "results/deseq2/deseq2_results.csv"
+            required_columns = {
+                "volcano": {"gene_id", "log2FoldChange", "padj"},
+                "ma_plot": {"gene_id", "baseMean", "log2FoldChange"},
+                "pvalue_histogram": {"gene_id", "pvalue"},
+            }[stem]
+        elif stem in {"pca", "sample_distance", "top_deg_heatmap",
+                      "top_upregulated_heatmap", "top_downregulated_heatmap"}:
+            description = f"{stem.replace('_', ' ').capitalize()} drawn from the transformed count matrix."
+        else:
+            description = f"{name}: inspect the plot labels and legend for its measures."
+        available = False
+        if source and (self.project_root / source).exists():
+            try:
+                columns = set(pd.read_csv(self.project_root / source, nrows=0).columns)
+                available = required_columns <= columns
+            except (OSError, ValueError, UnicodeError):
+                pass
+        self._selected_figure_data = source if available else None
+        self.figure_description.setText(
+            description + (f" Source table: {source}." if available else
+                           " No directly matching tabular source is available in this project."))
+        self.figure_data_button.setEnabled(available)
         self.figure_viewer.setAccessibleDescription(
-            f"Preview of selected figure: {name}. Scroll to zoom and drag to pan."
+            f"Preview of selected figure: {name}. {description} Use plus, equals or minus to zoom; arrows to pan."
         )
         # Per-study figures carry their full path as userData; regular figures have
         # None and are reconstructed under results/figures from the bare filename.
@@ -6231,6 +6440,10 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f"No SVG for {name}; showing the PNG.", 3000)
         if path.exists():
             self.figure_viewer.set_image(path)
+
+    def _open_figure_data(self) -> None:
+        if getattr(self, "_selected_figure_data", None):
+            self._register_output_table(self._selected_figure_data)
 
     def _browse_workdir(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "Working directory", self.workdir.text())
@@ -6882,6 +7095,62 @@ class MainWindow(QMainWindow):
                 return
             self.metadata_table.add_column(name.strip())
 
+    def _add_study_column(self) -> None:
+        names = self.metadata_table.column_names()
+        if "dataset" not in names:
+            self.metadata_table.add_column("dataset")
+            names = self.metadata_table.column_names()
+        column = names.index("dataset")
+        self.metadata_table.setCurrentCell(0, column) if self.metadata_table.rowCount() else None
+        self.metadata_table.setFocus(Qt.FocusReason.OtherFocusReason)
+        self._meta_preview_timer.start(0)
+
+    def _refresh_meta_preview(self) -> None:
+        if not hasattr(self, "meta_preview"):
+            return
+        enabled = self.meta_analysis.isChecked()
+        if not enabled:
+            self.meta_preview.setText(
+                "Current-editor preview: Cross-study analysis is off. "
+                "The joint model keeps its selected design. Run validation checks saved inputs.")
+            self.meta_preview_detail_text.clear()
+            return
+        contrast = self._active_contrast() or ("", "")
+        result = assess_meta_readiness(
+            self.metadata_table.to_dataframe(), enabled=True,
+            input_type=self.config.input.type if self.config else "",
+            contrast_factor=self.contrast_factor.text().strip(),
+            numerator=contrast[0], denominator=contrast[1],
+            design_formula=self.design.text(),
+        )
+        eligible = result.get("eligible_studies") or []
+        excluded = result.get("excluded_studies") or []
+        title = "Metadata eligible" if result.get("runnable") else "Metadata needs changes"
+        if not result.get("applicable"):
+            title = "Cross-study analysis unavailable for this input route"
+        self.meta_preview.setText(
+            f"Current-editor preview — {title}: "
+            f"{len(eligible)} eligible {'study' if len(eligible) == 1 else 'studies'}; "
+            f"{len(excluded)} excluded. "
+            "This checks assignments, replicate counts and supported design terms, "
+            "not study independence or biological comparability. "
+            "Authoritative run validation checks saved inputs.")
+        lines = ["Assessment: metadata eligible" if result.get("runnable")
+                 else "Assessment: action needed"]
+        if result.get("unsupported_design_terms"):
+            lines.append("Terms in unsupported design: " + ", ".join(result["unsupported_design_terms"]))
+        for study, counts in (result.get("study_counts") or {}).items():
+            if isinstance(counts, dict):
+                lines.append(f"{study}: {counts.get('numerator', 0)} numerator, "
+                             f"{counts.get('denominator', 0)} denominator; "
+                             f"{counts.get('reason') or 'eligible'}")
+        for entry in result.get("messages") or []:
+            if isinstance(entry, dict):
+                lines.append(str(entry.get("message", "")))
+            elif entry:
+                lines.append(str(entry))
+        self.meta_preview_detail_text.setText("\n".join(lines))
+
     def _rename_column(self) -> None:
         col = self.metadata_table.currentColumn()
         if col < 0:
@@ -7466,20 +7735,8 @@ class MainWindow(QMainWindow):
         statuses: dict[str, str] = {}
         if self.project_root is None:
             return statuses
-        import json
-
         for path in sorted((self.project_root / "checks").glob("*.json")):
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            raw_status = payload.get("status", "FAIL") if isinstance(payload, dict) else "FAIL"
-            statuses[path.stem] = (
-                raw_status
-                if isinstance(raw_status, str)
-                and raw_status in {"PASS", "WARNING", "REVIEW_REQUIRED", "FAIL", "STALE"}
-                else "FAIL"
-            )
+            statuses[path.stem] = read_check(path)["status"]
         if "01_input_validation" in statuses and (
             preflight is None or not preflight.valid
         ):
@@ -7493,11 +7750,9 @@ class MainWindow(QMainWindow):
         if self.project_root is None:
             return []
         path = self.project_root / "checks" / f"{name}.json"
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        if not path.exists():
             return []
-        entries = payload.get("messages") if isinstance(payload, dict) else None
+        entries = read_check(path)["messages"]
         lines = []
         for entry in entries or []:
             if isinstance(entry, dict):
@@ -7792,15 +8047,8 @@ class MainWindow(QMainWindow):
             if self._prompt_for_pre_run_validation():
                 self._open_pre_run_validation()
             return False
-        import json
-
         check_path = self.project_root / "checks" / "01_input_validation.json"
-        try:
-            payload = json.loads(check_path.read_text(encoding="utf-8"))
-            raw_status = payload.get("status", "FAIL")
-            status = raw_status if isinstance(raw_status, str) else "FAIL"
-        except (OSError, json.JSONDecodeError):
-            status = "FAIL"
+        status = read_check(check_path)["status"]
         statuses = {"01_input_validation": status}
         self._update_sanity_state(statuses)
         if status not in {"PASS", "WARNING", "REVIEW_REQUIRED"}:
@@ -7910,12 +8158,15 @@ class MainWindow(QMainWindow):
         assert self.config is not None
         root = self.project_root
         config_snapshot = self.config.model_dump_json()
+        use_wsl = sys.platform.startswith("win") and self.use_wsl.isChecked()
 
         def validate_for_launch():
-            return validate_current_preflight(
+            preflight = validate_current_preflight(
                 root,
                 cancel_requested=worker.isInterruptionRequested,
             )
+            health = local_wsl_health() if use_wsl and preflight.valid else None
+            return preflight, health
 
         worker = BackgroundWorker(validate_for_launch)
         worker.done.connect(
@@ -7957,6 +8208,15 @@ class MainWindow(QMainWindow):
                 self._open_pre_run_validation()
             self._refresh_resume_banner()
             return
+        if isinstance(outcome, tuple):
+            outcome, health = outcome
+            if health is not None and health.get("status") != "PASS":
+                self._pending_recover = False
+                self._refresh_resume_banner()
+                QMessageBox.warning(
+                    self, APP_NAME,
+                    "WSL is not ready for this local run. " + str(health.get("detail", "Check the WSL distribution.")))
+                return
         try:
             self._start_snakemake_impl(
                 mode,
@@ -8087,7 +8347,7 @@ class MainWindow(QMainWindow):
             run_tag=run_tag,
         )
         self.command_text.setText(command.display)
-        if not self.use_wsl.isChecked() and shutil.which("snakemake") is None:
+        if not self.use_wsl.isChecked() and native_tool_path("snakemake") is None:
             self.log_text.append("Snakemake is not available on PATH. Command was constructed but not started.")
             self.log_text.append(command.display)
             self._pending_recover = False  # no runner will start, so don't strand the recover flag
@@ -8202,6 +8462,7 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def _refresh_report_status(self) -> None:
+        self._refresh_export_buttons()
         # The Reports page must describe what is on disk: a run that already produced
         # reports (this session or an earlier one) is shown, not "No reports yet".
         if self.project_root is not None and (self.project_root / "results" / "reports" / "run_summary.txt").exists():

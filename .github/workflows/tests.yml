@@ -170,7 +170,8 @@ jobs:
       - name: Install pytest
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -c constraints.txt "pytest>=8.2" "PyYAML>=6.0"
+          python -m pip install -c constraints.txt "pytest>=8.2" "PyYAML>=6.0" \
+            "numpy>=1.26" "pandas>=2.2" "pydantic>=2.7"
 
       - name: Run the CRAN R contracts with R mandatory
         shell: bash
@@ -203,21 +204,25 @@ jobs:
             - bioconda
             - conda-forge
           dependencies:
-            - r-base=4.5.2=h835929b_3
-            - bioconductor-deseq2=1.50.2=r45ha27e39d_0
-            - bioconductor-edger=4.8.2=r45h01b2380_0
-            - bioconductor-limma=3.66.0=r45h01b2380_0
-            - r-ggplot2=4.0.3=r45h785f33e_0
-            - r-ggrepel=0.9.8=r45h3697838_0
-            - r-pheatmap=1.0.13=r45hc72bb7e_1
-            - r-svglite=2.2.2=r45h8ff94db_0
-            - r-ggnewscale=0.5.2=r45hc72bb7e_1
-            - r-jsonlite=2.0.0=r45h54b55ab_1
-            - r-rcolorbrewer=1.1_3=r45h785f33e_4
-            - r-scales=1.4.0=r45hc72bb7e_1
+            - r-base==4.5.2=h835929b_3
+            - bioconductor-deseq2==1.50.2=r45ha27e39d_0
+            - bioconductor-edger==4.8.2=r45h01b2380_0
+            - bioconductor-limma==3.66.0=r45h01b2380_0
+            - r-ggplot2==4.0.3=r45h785f33e_0
+            - r-ggrepel==0.9.8=r45h3697838_0
+            - r-pheatmap==1.0.13=r45hc72bb7e_1
+            - r-svglite==2.2.2=r45h8ff94db_0
+            - r-ggnewscale==0.5.2=r45hc72bb7e_1
+            - r-jsonlite==2.0.0=r45h54b55ab_1
+            - r-rcolorbrewer==1.1_3=r45h785f33e_4
+            - r-scales==1.4.0=r45hc72bb7e_1
             # densCols in make_figures.R needs the Recommended package KernSmooth, which
             # conda's r-base does not bundle (the full lock carries it through r-recommended).
-            - r-kernsmooth=2.23_26=r45ha0a88a1_1
+            - r-kernsmooth==2.23_26=r45ha0a88a1_1
+            - bioconductor-htsfilter==1.50.0=r45hdfd78af_0
+            - r-metafor==5.0_1=r45hc72bb7e_0
+            - r-metarnaseq==1.0.8=r45ha770c72_1
+            - r-gprofiler2==0.2.4=r45hc72bb7e_0
           EOF
 
       - uses: mamba-org/setup-micromamba@v2
@@ -237,6 +242,26 @@ jobs:
           python -m pytest -q -rs --tb=short tests/test_figure_rendering_contracts.py \
             tests/test_de_contrasts.py \
             | tee "$RUNNER_TEMP/pytest-figure-contracts-bioconductor.txt"
+
+      - name: Run required meta-analysis R contracts
+        shell: bash -el {0}
+        env:
+          BULKSEQ_REQUIRE_R_META: "1"
+        run: |
+          set -o pipefail
+          python -m pytest -q -rs --tb=short tests/test_meta_methods_runtime.py \
+            tests/test_meta_volcano_threshold.py \
+            tests/test_shared_gate_repairs.py::test_raw_factor_whitespace_matches_production_r_subset \
+            | tee "$RUNNER_TEMP/pytest-meta-methods-bioconductor.txt"
+
+      - name: Run required g:Profiler transport regression
+        shell: bash -el {0}
+        env:
+          BULKSEQ_REQUIRE_GPROFILER: "1"
+        run: |
+          set -o pipefail
+          python -m pytest -q -rs --tb=short tests/test_gprofiler_transport.py \
+            | tee "$RUNNER_TEMP/pytest-gprofiler-transport-bioconductor.txt"
 
       # Same summary as the matrix job: the CRAN-only pass skips the Bioconductor renders,
       # and those skips are the reason the second pass exists.

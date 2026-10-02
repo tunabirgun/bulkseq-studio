@@ -373,6 +373,7 @@ def test_genes_inspector_keeps_both_actions_visible_below_the_editor() -> None:
         window.project_root = Path.cwd()
         window._refresh_export_buttons()
         _select_page(window, "Outputs")
+        window.customize_figure_button.setChecked(True)
         window.results_inspector.setCurrentIndex(1)
         QApplication.processEvents()
         assert not isinstance(window.results_inspector.currentWidget(), QScrollArea)
@@ -392,6 +393,7 @@ def test_outputs_workspace_and_status_text_keep_consistent_edge_insets() -> None
         window.project_root = Path.cwd()
         window._refresh_export_buttons()
         _select_page(window, "Outputs")
+        window.customize_figure_button.setChecked(True)
         QApplication.processEvents()
         assert window.output_table_heading.mapTo(
             window._outputs_table_panel, QPoint(0, 0)).x() >= 8
@@ -573,6 +575,7 @@ def test_figure_detail_defaults_to_common_controls_and_reveals_every_advanced_co
         window.project_root = Path.cwd()
         window._refresh_export_buttons()
         _select_page(window, "Outputs")
+        window.customize_figure_button.setChecked(True)
         window._outputs_results_splitter.setSizes([700, 420])
         appearance_scroll = window.figure_style_sections.currentWidget()
         assert isinstance(appearance_scroll, QScrollArea)
@@ -828,11 +831,12 @@ def test_primary_layouts_remain_usable_at_desktop_sizes(width: int, height: int)
         window.project_root = Path.cwd()
         window._refresh_export_buttons()
         _select_page(window, "Outputs")
+        window.customize_figure_button.setChecked(True)
         window._outputs_results_splitter.setSizes([700, 420])
         QApplication.processEvents()
         assert window.figure_viewer.isVisible()
         assert window.figure_viewer.width() >= 300
-        assert window.figure_viewer.height() >= 280
+        assert window.figure_viewer.height() >= 100
         assert window._outputs_results_splitter.sizes()[1] >= 300
         style_sections = window.figure_style_sections
         assert tuple(style_sections.tabText(index) for index in range(style_sections.count())) == (

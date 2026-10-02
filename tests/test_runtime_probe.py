@@ -72,8 +72,11 @@ def _callers(tmp_path: Path):
             "test_kegg_identity_catalogue",
             "test_microarray_probe_mapping",
             "test_meta_enrichment_threshold",
+            "test_meta_methods_runtime",
+            "test_meta_volcano_threshold",
             "test_per_sample_strandedness",
             "test_sample_labels",
+            "test_shared_gate_repairs",
             "test_ppi_mapping_case",
             "test_reclaim_run_space",
             "test_setup_bootstrap",
@@ -100,6 +103,9 @@ def _callers(tmp_path: Path):
          lambda: modules["test_microarray_probe_mapping"]._r_runtime(harness)),
         ("test_meta_enrichment_threshold",
          lambda: modules["test_meta_enrichment_threshold"]._r_runtime(harness)),
+        ("test_meta_methods_runtime", lambda: modules["test_meta_methods_runtime"]._runtime()),
+        ("test_meta_volcano_threshold", lambda: modules["test_meta_volcano_threshold"]._runtime()),
+        ("test_shared_gate_repairs", lambda: modules["test_shared_gate_repairs"]._meta_runtime()),
         ("test_external_results_safety._wsl_bulkseq_snakemake",
          lambda: modules["test_external_results_safety"]._wsl_bulkseq_snakemake(tmp_path)),
         ("test_per_sample_strandedness",
@@ -145,6 +151,7 @@ def test_every_caller_skips_when_no_runtime_is_live(monkeypatch, tmp_path) -> No
     """A Windows host with wsl.exe but no distribution, and no native tool either."""
     monkeypatch.delenv("BULKSEQ_REQUIRE_R", raising=False)
     monkeypatch.delenv("BULKSEQ_REQUIRE_R_FULL", raising=False)
+    monkeypatch.delenv("BULKSEQ_REQUIRE_R_META", raising=False)
 
     def refuse(command, *args, **kwargs):
         return subprocess.CompletedProcess(command, 1, "", "")
@@ -175,6 +182,7 @@ def test_every_r_caller_skips_when_the_packages_are_missing(monkeypatch, tmp_pat
     """R starts but loads none of the packages asked for: still a skip, never an error."""
     monkeypatch.delenv("BULKSEQ_REQUIRE_R", raising=False)
     monkeypatch.delenv("BULKSEQ_REQUIRE_R_FULL", raising=False)
+    monkeypatch.delenv("BULKSEQ_REQUIRE_R_META", raising=False)
     monkeypatch.setattr(_runtime, "_runs_with", lambda command, packages: False)
     reset_probe_cache()
 
@@ -191,6 +199,16 @@ def test_every_r_caller_skips_when_the_packages_are_missing(monkeypatch, tmp_pat
         except pytest.skip.Exception:
             continue
         pytest.fail(f"{name} did not skip without the R packages it needs")
+
+
+def test_required_meta_r_callers_fail_when_packages_are_missing(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("BULKSEQ_REQUIRE_R_META", "1")
+    monkeypatch.setattr(_runtime, "_runs_with", lambda command, packages: False)
+    reset_probe_cache()
+    for name, call in _callers(tmp_path):
+        if name in {"test_meta_methods_runtime", "test_meta_volcano_threshold", "test_shared_gate_repairs"}:
+            with pytest.raises(pytest.fail.Exception):
+                call()
 
 
 def test_the_caller_list_covers_every_module_built_on_the_probe(tmp_path) -> None:

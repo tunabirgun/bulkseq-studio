@@ -438,6 +438,9 @@ def final_targets():
         # The DESeq2-specific TOST equivalence output is not produced by voom / edgeR.
         if not ALT_DE_MODE:
             targets.append("results/deseq2/unchanged_genes.csv")
+    # An enabled but ineligible meta branch must fail even if META_MODE cannot be entered.
+    if WF.get("meta_analysis"):
+        targets.append("checks/meta_input_gate.ok")
     # Multi-study meta-analysis outputs (added alongside the joint DESeq2 targets).
     if META_MODE:
         targets += ["results/meta/meta_analysis_results.csv", "checks/17_meta_analysis_qc.json",

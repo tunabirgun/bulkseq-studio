@@ -17,7 +17,7 @@ Rebuild whenever content, the documented version or the build script changes, an
 
 ## Edit the manual
 
-The product homepage is rendered by `docs_src/home.mjs` from the documented version and input routes. `docs/assets/home.js` adds keyboard-operated input-route tabs, section navigation and entrance transitions. Selecting a route opens the detailed walkthrough with that route selected. Downloads are versioned from `site-config.mjs`; check their filenames against the published release when updating the documented version.
+The product homepage is rendered by `docs_src/home.mjs` from the documented version and input routes. `docs/assets/home.js` adds keyboard-operated input-route tabs, section navigation and entrance transitions. Selecting a route opens the detailed walkthrough with that route selected. Downloads are versioned from `site-config.mjs`; they must be checked against the published release assets before the site is published. The Set up navigation includes an upgrade guide that preserves prior project results and identifies the 0.34.0 meta-analysis recomputation boundary.
 
 The homepage contains nine ordered lessons: design, low-count filtering, normalization, PCA, model fitting and shrinkage, volcano selection, heatmaps, enrichment and protein-association networks. `docs_src/learning.mjs` embeds the saved example data and `docs_src/learning-core.cjs` renders both the static default views and interactive states. `docs/assets/learning.js` handles controls, inspection and transitions; `docs/assets/learning.css` defines their layout. All default lessons remain readable without JavaScript.
 

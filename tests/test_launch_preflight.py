@@ -222,6 +222,38 @@ def test_invalid_background_preflight_blocks_command_construction(
         window.close()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="WSL applies to the Windows local profile")
+def test_unhealthy_wsl_probe_blocks_local_launch_off_ui_thread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = _window_with_project(tmp_path)
+    main_thread = threading.get_ident()
+    probe_threads: list[int] = []
+    notices: list[str] = []
+    continued: list[str] = []
+    try:
+        window.use_wsl.setChecked(True)
+        monkeypatch.setattr(main_window_module, "validate_current_preflight",
+                            lambda root, *, cancel_requested=None:
+                            PreflightFingerprintValidation(True, "current", "a", "a"))
+        monkeypatch.setattr(main_window_module, "local_wsl_health",
+                            lambda: (probe_threads.append(threading.get_ident()) or
+                                     {"status": "REVIEW_REQUIRED", "detail": "No usable distribution"}))
+        monkeypatch.setattr(main_window_module.QMessageBox, "warning",
+                            lambda _parent, _title, message: notices.append(message))
+        monkeypatch.setattr(window, "_start_snakemake_impl",
+                            lambda mode, **kwargs: continued.append(mode))
+        window._begin_launch_preflight("run")
+        worker = window._launch_preflight_worker
+        assert worker is not None and worker.wait(3000)
+        QApplication.processEvents()
+        assert probe_threads and probe_threads[0] != main_thread
+        assert continued == []
+        assert "No usable distribution" in notices[0]
+    finally:
+        window.close()
+
+
 def test_closing_cancels_launch_preflight_worker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

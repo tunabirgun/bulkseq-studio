@@ -107,6 +107,7 @@ rule final_reports:
 rule html_report:
     input:
         generator="workflow/scripts/make_html_report.py",
+        check_contract="workflow/scripts/check_contract.py",
         run_txt="results/reports/run_summary.txt",
         results="results/deseq2/deseq2_results.csv",
         # Order the report AFTER the figures rule: the report embeds results/figures/*.png read off
@@ -135,16 +136,21 @@ if META_MODE:
     # are only required when enrichment is on.
     _meta_report_inputs = {
         "summary": "results/reports/meta_analysis_summary.json",
+        "eligibility": "results/meta/meta_eligibility.json",
+        "results": "results/meta/meta_analysis_results.csv",
+        "per_study_manifest": "results/meta/per_study/manifest.json",
         "convergent": "results/meta/meta_convergent_genes.csv",
         "volcano": "results/figures/meta_volcano.png",
     }
     if WF.get("enrichment", True):
         _meta_report_inputs["dotplot"] = "results/figures/meta_enrichment_dotplot.png"
+        _meta_report_inputs["enrichment_plotted"] = "results/meta/meta_enrichment_plotted.csv"
 
     rule meta_report:
         input:
             generator="workflow/scripts/make_meta_report.py",
             shared_dialog_generator="workflow/scripts/make_html_report.py",
+            check_contract="workflow/scripts/check_contract.py",
             **_meta_report_inputs,
         output:
             html="results/reports/meta_analysis_report.html",

@@ -24,10 +24,6 @@ suppressMessages({
   library(HTSFilter)
 })
 
-# Reproducibility: seed any stochastic step (HTSFilter subsampling, etc.).
-set.seed(42)
-
-
 # --- Pure combination core (unit-tested against the metaRNASeq vignette) ------------------------
 # per_study: named list of per-study data.frames, rownames = gene_id, with numeric columns
 #   log2FoldChange (UNSHRUNKEN), lfcSE, pvalue, padj.  nrep: NAMED integer vector, per-study
@@ -108,14 +104,11 @@ combine_meta <- function(per_study, nrep, alpha = 0.05) {
     setNames(c(as.numeric(m$beta)[1], m$ci.lb[1], m$ci.ub[1], m$pval[1], m$tau2[1], m$I2[1], m$QEp[1]), rc)
   }, setNames(numeric(7L), rc)))
   if (!is.matrix(rem)) rem <- matrix(rem, ncol = 7L, dimnames = list(NULL, rc))
-  if (k < 3) rem[, c("tau2", "I2", "QEp")] <- NA_real_   # heterogeneity not estimable at k=2
+  if (k < 3) rem[, c("tau2", "I2", "QEp")] <- NA_real_   # policy: too little information at k=2
   # rem_pvalue is a per-gene test of the POOLED EFFECT SIZE, a different hypothesis from the
-  # combined p-value above, so it needs its own correction; reported raw it invited reading an
-  # uncorrected p as significant. Its family is the concordant genes whose pooled effect is
-  # estimable -- a subset of combined_padj's family, not the same one, because rma.uni returns
-  # NA for genes it cannot fit. Restricting before p.adjust also avoids counting those NA rows
-  # in the number of hypotheses.
-  rem_tested <- conc & is.finite(rem[, "pval"])
+  # combined p-value above. Adjust every estimable pooled-effect test before interpreting
+  # direction: selecting by observed signs first makes this test's null p-values nonuniform.
+  rem_tested <- is.finite(rem[, "pval"])
   rem_adj <- rep(NA_real_, length(common))
   if (any(rem_tested)) rem_adj[rem_tested] <- stats::p.adjust(rem[rem_tested, "pval"], method = "BH")
 
@@ -155,7 +148,20 @@ combine_meta <- function(per_study, nrep, alpha = 0.05) {
 # contrast arms, filters each study's own dds with HTSFilter (independent filtering OFF in
 # results() to avoid double filtering), and returns per-study unshrunken results + nrep + the list
 # of studies dropped (single-arm or < min_reps) with the reason.
-per_study_deseq <- function(cts, samples, dataset_col, contrast_factor, num, den, min_reps = 2L) {
+supported_meta_design <- function(design, contrast_factor, dataset_col = "dataset") {
+  parsed <- tryCatch(stats::terms(stats::as.formula(design)), error = function(e) NULL)
+  if (is.null(parsed) || attr(parsed, "intercept") != 1L) return(FALSE)
+  labels <- attr(parsed, "term.labels")
+  length(labels) %in% 1:2 && contrast_factor %in% labels &&
+    all(labels %in% c(contrast_factor, dataset_col)) &&
+    !anyDuplicated(labels) && all(attr(parsed, "order") == 1L)
+}
+
+per_study_deseq <- function(cts, samples, dataset_col, contrast_factor, num, den,
+                            min_reps = 2L, design = paste("~", contrast_factor)) {
+  if (!supported_meta_design(design, contrast_factor, dataset_col))
+    stop(sprintf("Unsupported per-study meta design '%s'; use an intercept and %s, optionally additive %s.",
+                 design, contrast_factor, dataset_col))
   rownames(samples) <- samples$sample_id
   samples[[dataset_col]] <- trimws(as.character(samples[[dataset_col]]))  # match the Python gates
   studies <- unique(samples[[dataset_col]])
@@ -175,6 +181,7 @@ per_study_deseq <- function(cts, samples, dataset_col, contrast_factor, num, den
     cd[[contrast_factor]] <- factor(as.character(cd[[contrast_factor]]), levels = c(den, num))  # den = reference
     dds <- DESeqDataSetFromMatrix(sub, cd, design = as.formula(paste0("~ ", contrast_factor)))
     dds <- DESeq(dds, quiet = TRUE)
+    set.seed(42)
     dds <- tryCatch(HTSFilter::HTSFilter(dds, plot = FALSE)$filteredData, error = function(e) dds)
     r <- results(dds, contrast = c(contrast_factor, num, den), independentFiltering = FALSE)
     per_study[[ds]] <- as.data.frame(r)[, c("baseMean", "log2FoldChange", "lfcSE", "pvalue", "padj")]
@@ -188,6 +195,61 @@ per_study_deseq <- function(cts, samples, dataset_col, contrast_factor, num, den
   list(per_study = per_study, nrep = nrep, excluded = excluded, vsd = vsd_list)
 }
 
+meta_eligibility <- function(samples, dataset_col, contrast_factor, num, den, fanout,
+                             meta = NULL, design_supported = TRUE, input_count_rows = NULL) {
+  study_ids <- unique(trimws(as.character(samples[[dataset_col]])))
+  study_ids <- study_ids[!is.na(study_ids) & nzchar(study_ids)]
+  input <- lapply(study_ids, function(s) {
+    ss <- samples[!is.na(samples[[dataset_col]]) &
+                    trimws(as.character(samples[[dataset_col]])) == s, , drop = FALSE]
+    factor_values <- as.character(ss[[contrast_factor]])
+    list(study = s, input_samples = nrow(ss),
+         contrast_samples = sum(factor_values %in% c(num, den)),
+         numerator_samples = sum(factor_values == num, na.rm = TRUE),
+         denominator_samples = sum(factor_values == den, na.rm = TRUE))
+  })
+  included <- lapply(names(fanout$per_study), function(s)
+    list(study = s, post_filter_rows = nrow(fanout$per_study[[s]]),
+         replicates = unname(as.integer(fanout$nrep[[s]]))))
+  excluded <- lapply(names(fanout$excluded), function(s)
+    list(study = s, reason = unname(fanout$excluded[[s]])))
+  tables <- fanout$per_study
+  common <- if (length(tables) >= 2L) Reduce(intersect, lapply(tables, rownames)) else character()
+  missing_p <- missing_effect <- missing_se <- rep(FALSE, length(common))
+  if (length(common)) for (d in tables) {
+    missing_p <- missing_p | is.na(d[common, "pvalue"])
+    missing_effect <- missing_effect | is.na(d[common, "log2FoldChange"])
+    missing_se <- missing_se | is.na(d[common, "lfcSE"])
+  }
+  retained <- common[!(missing_p | missing_effect | missing_se)]
+  direction <- list(up = 0L, down = 0L, opposite_sign = 0L, neutral = 0L)
+  if (length(retained)) {
+    signs <- vapply(tables, function(d) sign(d[retained, "log2FoldChange"]),
+                    numeric(length(retained)))
+    if (is.null(dim(signs))) signs <- matrix(signs, nrow = length(retained))
+    direction$neutral <- sum(rowSums(signs == 0) > 0)
+    direction$up <- sum(rowSums(signs > 0) == ncol(signs))
+    direction$down <- sum(rowSums(signs < 0) == ncol(signs))
+    direction$opposite_sign <- length(retained) - direction$up - direction$down - direction$neutral
+  }
+  pooled_size <- if (is.null(meta)) 0L else sum(is.finite(meta$rem_pvalue))
+  list(schema_version = 1L, method = "combined_concordance_and_pooled_full_family_bh_v1",
+       design_supported = design_supported,
+       families = list(
+         combined = list(id = "direction_concordant_combined_bh",
+                         size = if (is.null(meta)) 0L else sum(meta$common_direction != "discordant")),
+         pooled = list(id = "all_estimable_pooled_bh", size = pooled_size)),
+       studies = list(input = input, included = included, excluded = excluded),
+       genes = list(original_count_rows = input_count_rows,
+                    identifier_intersection = length(common),
+                    missing_pvalue = sum(missing_p), missing_effect = sum(missing_effect),
+                    missing_se = sum(missing_se), missing_reasons_overlap = TRUE,
+                    exclusion_union = sum(missing_p | missing_effect | missing_se),
+                    complete_case_retained = length(retained),
+                    pooled_fit_failures = length(retained) - pooled_size,
+                    direction = direction))
+}
+
 
 # --- Snakemake driver (runs only under Snakemake) ----------------------------------------------
 if (exists("snakemake")) {
@@ -197,7 +259,12 @@ if (exists("snakemake")) {
   con_factor <- snakemake@params[["contrast_factor"]]
   num <- snakemake@params[["numerator"]]; den <- snakemake@params[["denominator"]]
   ds_col <- tryCatch(snakemake@params[["dataset_column"]], error = function(e) "dataset")
+  design <- snakemake@params[["design"]]
   alpha <- as.numeric(snakemake@params[["alpha"]])
+  execution <- list(contrast_factor = con_factor, numerator = num, denominator = den,
+                    per_study_formula = paste0("~ ", con_factor),
+                    requested_meta_design_formula = design, dataset_column = ds_col,
+                    combined_alpha = alpha)
 
   fc_tab <- read.delim(counts_file, comment.char = "#", check.names = FALSE)
   rownames(fc_tab) <- fc_tab$Geneid
@@ -205,9 +272,28 @@ if (exists("snakemake")) {
   colnames(cts) <- sub("_Aligned.sortedByCoord.out.bam$", "", basename(colnames(cts)))
   samples <- read.delim(samples_file, stringsAsFactors = FALSE)
 
-  fanout <- per_study_deseq(cts, samples, ds_col, con_factor, num, den)
-  # write per-study tables + the excluded report
   meta_dir <- dirname(snakemake@output[["results"]])
+  if (!supported_meta_design(design, con_factor, ds_col)) {
+    empty <- list(per_study = list(), nrep = integer(), excluded = character())
+    ledger <- meta_eligibility(samples, ds_col, con_factor, num, den, empty,
+                               design_supported = FALSE, input_count_rows = nrow(cts))
+    ledger$execution <- execution
+    jsonlite::write_json(ledger, snakemake@output[["eligibility"]],
+                         auto_unbox = TRUE, pretty = TRUE, null = "null")
+    msg <- sprintf("Meta-analysis refused: design '%s' is unsupported for per-study fitting; use an intercept plus %s, optionally additive %s.",
+                   design, con_factor, ds_col)
+    jsonlite::write_json(list(check = "17_meta_analysis_qc", status = "FAIL",
+                              messages = list(list(status = "FAIL", message = msg))),
+                         snakemake@output[["meta_check"]], auto_unbox = TRUE, pretty = TRUE)
+    write.csv(data.frame(gene_id = character(), combined_pvalue = numeric(),
+                         combined_padj = numeric(), common_direction = character(),
+                         meta_sig = logical()), snakemake@output[["results"]], row.names = FALSE)
+    sink(type = "message"); close(log_con)
+    stop(msg)
+  }
+
+  fanout <- per_study_deseq(cts, samples, ds_col, con_factor, num, den, design = design)
+  # write per-study tables + the excluded report
   # Clear stale per-study side-effect files first: these are undeclared outputs, so Snakemake never
   # removes them. Without this, dropping/renaming a study leaves its old per_study_<S>.csv / _vsd.rds
   # on disk, and the on-disk-discovery meta_per_study + per-study-enrichment steps would resurrect it.
@@ -223,6 +309,7 @@ if (exists("snakemake")) {
              file.path(dirname(snakemake@output[["results"]]), "excluded_studies.txt"))
 
   n_datasets <- length(unique(as.character(samples[[ds_col]])))
+  meta <- NULL
   if (length(fanout$per_study) < 2) {
     # Fewer than 2 studies contain both contrast arms -> groups are confounded with study and no
     # meta-analysis can separate them. Emit an empty result + an explanatory FAIL check instead of
@@ -245,11 +332,16 @@ if (exists("snakemake")) {
             else if (nrow(meta) < 0.5 * min_genes)
               sprintf(" Only %d of ~%d genes are shared -- a low overlap can signal mismatched gene-id namespaces or annotations.", nrow(meta), min_genes)
             else ""
-    msg <- sprintf("Meta-analysis over %d of %d studies (%s): %d shared genes; %d meta-DEGs at FDR<%.3g; %d study(ies) excluded.%s Each study is fit as ~ %s (the main run's other covariates are not applied per study).",
+    msg <- sprintf("Meta-analysis over %d of %d studies (%s): %d shared genes; %d meta-DEGs at FDR<%.3g; %d study(ies) excluded.%s Each study is fit as ~ %s; only the optional additive study term is omitted within studies.",
                    length(fanout$per_study), n_datasets, paste(names(fanout$per_study), collapse = ", "),
                    nrow(meta), n_sig, alpha, length(fanout$excluded), warn, con_factor)
     status <- if (nrow(meta) == 0) "FAIL" else if (n_sig > 0) "PASS" else "REVIEW_REQUIRED"
   }
+  ledger <- meta_eligibility(samples, ds_col, con_factor, num, den, fanout, meta,
+                             input_count_rows = nrow(cts))
+  ledger$execution <- execution
+  jsonlite::write_json(ledger, snakemake@output[["eligibility"]], auto_unbox = TRUE,
+                       pretty = TRUE, null = "null")
   esc <- function(s) gsub('"', '\\\\"', s)
   writeLines(sprintf('{\n  "check": "17_meta_analysis_qc",\n  "status": "%s",\n  "messages": [\n    {"status": "%s", "message": "%s"}\n  ]\n}',
                      status, status, esc(msg)), snakemake@output[["meta_check"]])

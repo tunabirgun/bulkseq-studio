@@ -126,11 +126,27 @@ rule input_check:
         # correct also protects legacy projects that retain irrelevant sample rows.)
         num=_INPUT_CHECK_DIRECTION.get("numerator", ""),
         den=_INPUT_CHECK_DIRECTION.get("denominator", ""),
+        factor=_INPUT_CHECK_DIRECTION.get("factor", "condition"),
+        design=_DESIGN,
+        meta_flag="--meta-analysis" if WF.get("meta_analysis") else "",
+        input_type=INPUT.get("type", "fastq"),
     benchmark:
         "benchmarks/01_input_validation.tsv"
     shell:
         "python workflow/scripts/validate_metadata.py --samples {input.samples} "
-        "--numerator {params.num:q} --denominator {params.den:q} --out {output}"
+        "--numerator {params.num:q} --denominator {params.den:q} "
+        "--contrast-factor {params.factor:q} --design-formula {params.design:q} "
+        "--input-type {params.input_type:q} {params.meta_flag} --out {output}"
+
+
+if WF.get("meta_analysis"):
+    rule meta_input_gate:
+        input:
+            "checks/01_input_validation.json",
+        output:
+            "checks/meta_input_gate.ok",
+        shell:
+            "python workflow/scripts/require_check.py --check {input} --out {output}"
 
 
 # Contrast-orientation QC: config-only, so it depends on the config alone (plus an ordering
@@ -248,4 +264,4 @@ rule aggregate_sanity_checks:
     benchmark:
         "benchmarks/sanity_checks.tsv"
     shell:
-        "python workflow/scripts/aggregate_sanity_checks.py --checks {input} --out {output}"
+        "python workflow/scripts/aggregate_sanity_checks.py --checks {input} --out {output} --expected"

@@ -76,11 +76,11 @@ jobs:
 
       - name: Install Inno Setup
         shell: powershell
-        run: choco install innosetup --no-progress -y
+        run: choco install innosetup --version=6.7.1 --no-progress -y
 
       - name: Build installer + portable ZIP
         shell: powershell
-        run: .\scripts\build_release.ps1
+        run: .\scripts\build_release.ps1 -PackageDir installer_output
 
       # Runs the installer on the CI runner itself, not a clean machine: it proves the
       # installer's silent switches, registry key and update/uninstall branches work on a
@@ -88,13 +88,30 @@ jobs:
       # nothing preinstalled can run it end to end.
       - name: Install silently and verify
         shell: powershell
+        timeout-minutes: 20
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
           $version = (Select-String -Path app\constants.py -Pattern 'APP_VERSION\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          $mutexName = & .venv\Scripts\python.exe -c 'from app.constants import APP_MUTEX_NAME; print(APP_MUTEX_NAME)'
+          if ($LASTEXITCODE -ne 0 -or -not $mutexName) { throw "application mutex name could not be resolved" }
+          $mutexName = $mutexName.Trim()
           $setup = "installer_output\BulkSeqStudio-Setup-$version.exe"
           $exe = "$env:LOCALAPPDATA\Programs\BulkSeq Studio\BulkSeqStudio.exe"
           $uninstKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{B7E4B2A1-6F1C-4E1A-9C2A-BULKSEQSTUDIO}}_is1"
           $sentinel = "$env:RUNNER_TEMP\bulkseq-install-selftest.json"
+
+          function Get-Sha256Hex([string] $path) {
+            $algorithm = [System.Security.Cryptography.SHA256]::Create()
+            $stream = [System.IO.File]::OpenRead($path)
+            try {
+              return ([System.BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+            } finally {
+              $stream.Dispose()
+              $algorithm.Dispose()
+            }
+          }
 
           function Assert-SelfTest {
             param($Sentinel)
@@ -103,25 +120,43 @@ jobs:
             $env:BULKSEQ_SKIP_READINESS_DIALOG = "1"
             $env:BULKSEQ_SELFTEST = "1"
             $env:BULKSEQ_SELFTEST_OUT = $Sentinel
-            # The known frozen-teardown crash (0xC0000409) can follow a passing self-test,
-            # so the sentinel's pass:true is the gate, not the process exit code.
-            $p = Start-Process -FilePath $exe -PassThru
+            $p = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
             if (-not $p.WaitForExit(90000)) {
               try { $p.Kill() } catch {}
               throw "self-test process did not exit within 90s"
             }
             if (-not (Test-Path $Sentinel)) { throw "self-test sentinel was not written" }
+            $p.Refresh()
+            if ($p.ExitCode -ne 0) { throw "self-test exited with code $($p.ExitCode)" }
             $result = Get-Content $Sentinel -Raw | ConvertFrom-Json
-            if ($result.pass -ne $true) { throw "self-test reported failure: $($result | ConvertTo-Json)" }
+            $vendor = (Select-String -Path app\assets\web\ppi\VENDORED.md -Pattern '^\| cytoscape\.min\.js \| cytoscape \| ([0-9.]+) \|$').Matches[0].Groups[1].Value
+            if ($result.pass -ne $true -or $result.webengine -ne $true -or
+                $result.nodes -ne 3 -or $result.version -ne $vendor) {
+              throw "self-test reported failure: $($result | ConvertTo-Json)"
+            }
           }
 
           function Run-Installer {
             param($Exe, $Log)
-            $p = Start-Process -FilePath $Exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$Log" -Wait -PassThru
+            $p = Start-Process -FilePath $Exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$Log" -Wait -PassThru -WindowStyle Hidden
             if ($p.ExitCode -ne 0) {
               Get-Content $Log -ErrorAction SilentlyContinue
               throw "installer exited with code $($p.ExitCode)"
             }
+          }
+
+          function Assert-Uninstalled {
+            param($Log)
+            $waited = 0
+            while (((Test-Path $uninstKey) -or (Test-Path $exe)) -and $waited -lt 30000) {
+              Start-Sleep -Milliseconds 500
+              $waited += 500
+            }
+            if (Test-Path $uninstKey) {
+              Get-Content $Log -ErrorAction SilentlyContinue
+              throw "uninstall registry key still present after uninstall"
+            }
+            if (Test-Path $exe) { throw "installed executable still present after uninstall" }
           }
 
           Run-Installer $setup "$env:RUNNER_TEMP\install-1.log"
@@ -129,28 +164,148 @@ jobs:
           if (-not (Test-Path $exe)) { throw "installed executable missing: $exe" }
           Assert-SelfTest $sentinel
 
-          # Second install exercises the update branch (InitializeSetup detects the
-          # existing install and uninstalls it before reinstalling).
+          $preserved = Join-Path (Split-Path -Parent $exe) "update-preservation-probe.txt"
+          [IO.File]::WriteAllText($preserved, "keep during update")
+
+          # Same-AppId update must preserve unrelated files in the install directory.
           Run-Installer $setup "$env:RUNNER_TEMP\install-2.log"
           if (-not (Test-Path $uninstKey)) { throw "uninstall registry key missing after update install" }
           if (-not (Test-Path $exe)) { throw "installed executable missing after update install: $exe" }
+          if (([IO.File]::ReadAllText($preserved)) -ne "keep during update") { throw "update removed an unrelated file" }
           Assert-SelfTest $sentinel
+
+          $freshUninstaller = (Get-ItemProperty $uninstKey).UninstallString -replace '"', ''
+          Run-Installer $freshUninstaller "$env:RUNNER_TEMP\uninstall-fresh.log"
+          Assert-Uninstalled "$env:RUNNER_TEMP\uninstall-fresh.log"
+          if (-not (Test-Path $preserved) -or
+              ([IO.File]::ReadAllText($preserved)) -ne "keep during update") {
+            throw "fresh uninstall removed an unrelated file"
+          }
+
+          $releases = @(Select-String -Path CHANGELOG.md -Pattern '^## ([0-9]+\.[0-9]+\.[0-9]+)\b' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value })
+          if ($releases.Count -lt 2 -or $releases[0] -ne $version) {
+            throw "changelog does not identify the version preceding $version"
+          }
+          $previousVersion = $releases[1]
+          $priorAsset = "BulkSeqStudio-Setup-$previousVersion.exe"
+          if ($env:GITHUB_REPOSITORY -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
+            throw "GitHub repository identity is unavailable"
+          }
+          $priorStage = Join-Path $env:RUNNER_TEMP ("bulkseq-prior-{0}-{1}-{2}" -f
+            $previousVersion, $env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT)
+          if (Test-Path $priorStage) { throw "prior installer stage already exists" }
+          New-Item -ItemType Directory -Path $priorStage -ErrorAction Stop | Out-Null
+          $downloadArgs = @('release', 'download', "v$previousVersion", '--repo',
+            $env:GITHUB_REPOSITORY, '--pattern', $priorAsset, '--dir', ('"' + $priorStage + '"'))
+          $download = Start-Process -FilePath 'gh.exe' -ArgumentList $downloadArgs -PassThru -WindowStyle Hidden `
+            -RedirectStandardOutput (Join-Path $priorStage 'download.stdout.log') `
+            -RedirectStandardError (Join-Path $priorStage 'download.stderr.log')
+          try {
+            if (-not $download.WaitForExit(300000)) {
+              try { $download.Kill() } catch {}
+              throw "previous public installer download exceeded five minutes"
+            }
+            $download.Refresh()
+            if ($download.ExitCode -ne 0) {
+              Get-Content (Join-Path $priorStage 'download.stderr.log') -ErrorAction SilentlyContinue
+              throw "previous public installer download failed"
+            }
+          } finally {
+            $download.Dispose()
+          }
+          $priorSetup = Join-Path $priorStage $priorAsset
+          $downloaded = @(Get-ChildItem -LiteralPath $priorStage -File -Filter '*.exe')
+          if ($downloaded.Count -ne 1 -or $downloaded[0].Name -ne $priorAsset -or
+              $downloaded[0].Length -le 0) { throw "previous public installer asset is missing or ambiguous" }
+          if ((Get-Item $priorSetup).VersionInfo.FileVersion.Trim() -ne $previousVersion) {
+            throw "downloaded installer PE version differs from preceding release"
+          }
+          @{tag="v$previousVersion"; asset=$priorAsset; bytes=$downloaded[0].Length;
+            sha256=(Get-Sha256Hex $priorSetup)} |
+            ConvertTo-Json -Compress | Set-Content (Join-Path $priorStage 'asset-identity.json')
+
+          Run-Installer $priorSetup "$env:RUNNER_TEMP\install-prior.log"
+          if (-not (Test-Path $uninstKey) -or -not (Test-Path $exe)) {
+            throw "previous public installer did not register the application"
+          }
+          if ((Get-ItemProperty $uninstKey).DisplayVersion -ne $previousVersion -or
+              (Get-Item $exe).VersionInfo.FileVersion.Trim() -ne $previousVersion) {
+            throw "previous public installation has the wrong registered or PE version"
+          }
+          $priorExeHash = Get-Sha256Hex $exe
+          $upgradeSentinel = Join-Path (Split-Path -Parent $exe) 'public-upgrade-preservation-probe.txt'
+          [IO.File]::WriteAllText($upgradeSentinel, 'keep during public upgrade')
+          Run-Installer $setup "$env:RUNNER_TEMP\install-upgrade.log"
+          if (-not (Test-Path $uninstKey) -or -not (Test-Path $exe)) {
+            throw "candidate upgrade removed the registered application"
+          }
+          $candidateExe = Join-Path "tmp\release-$version\windows-build\dist\BulkSeq Studio" 'BulkSeqStudio.exe'
+          if (-not (Test-Path $candidateExe) -or
+              (Get-ItemProperty $uninstKey).DisplayVersion -ne $version -or
+              (Get-Item $exe).VersionInfo.FileVersion.Trim() -ne $version) {
+            throw "candidate upgrade has the wrong registered or PE version"
+          }
+          $upgradedHash = Get-Sha256Hex $exe
+          if ($upgradedHash -eq $priorExeHash -or
+              $upgradedHash -ne (Get-Sha256Hex $candidateExe)) {
+            throw "candidate upgrade did not install the built executable"
+          }
+          if (-not (Test-Path $preserved) -or
+              ([IO.File]::ReadAllText($preserved)) -ne 'keep during update' -or
+              -not (Test-Path $upgradeSentinel) -or
+              ([IO.File]::ReadAllText($upgradeSentinel)) -ne 'keep during public upgrade') {
+            throw "candidate upgrade removed an unrelated file"
+          }
+          Assert-SelfTest $sentinel
+
+          # A running application must stop Setup before it can replace the installed copy.
+          $installedHash = Get-Sha256Hex $exe
+          $installedVersion = (Get-ItemProperty $uninstKey).DisplayVersion
+          if ($installedVersion -ne $version) { throw "registered version differs from the built version" }
+          $createdNew = $false
+          $mutex = [System.Threading.Mutex]::new($true, $mutexName, [ref]$createdNew)
+          if (-not $createdNew) { $mutex.Dispose(); throw "application mutex was already held" }
+          $blocked = $null
+          try {
+            $blocked = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$env:RUNNER_TEMP\install-blocked.log" -PassThru -WindowStyle Hidden
+            if (-not $blocked.WaitForExit(30000)) {
+              try { $blocked.Kill() } catch {}
+              throw "installer did not refuse the running-app mutex within 30s"
+            }
+            $blocked.Refresh()
+            if ($blocked.ExitCode -eq 0) { throw "installer succeeded while the application mutex was held" }
+            if (-not (Test-Path $uninstKey) -or -not (Test-Path $exe)) {
+              throw "blocked installer removed the registered application"
+            }
+            if ((Get-Sha256Hex $exe) -ne $installedHash -or
+                (Get-ItemProperty $uninstKey).DisplayVersion -ne $installedVersion -or
+                -not (Test-Path $preserved) -or
+                ([IO.File]::ReadAllText($preserved)) -ne "keep during update") {
+              throw "blocked installer changed the installed application or unrelated file"
+            }
+          } finally {
+            if ($blocked) { $blocked.Dispose() }
+            $mutex.ReleaseMutex()
+            $mutex.Dispose()
+          }
 
           $uninstString = (Get-ItemProperty $uninstKey).UninstallString
           $uninstString = $uninstString -replace '"', ''
-          Run-Installer $uninstString "$env:RUNNER_TEMP\uninstall.log"
-          $waited = 0
-          while ((Test-Path $uninstKey) -and $waited -lt 30000) { Start-Sleep -Milliseconds 500; $waited += 500 }
-          if (Test-Path $uninstKey) {
-            Get-Content "$env:RUNNER_TEMP\uninstall.log" -ErrorAction SilentlyContinue
-            throw "uninstall registry key still present after uninstall"
+          Run-Installer $uninstString "$env:RUNNER_TEMP\uninstall-final.log"
+          Assert-Uninstalled "$env:RUNNER_TEMP\uninstall-final.log"
+          if (-not (Test-Path $preserved) -or
+              ([IO.File]::ReadAllText($preserved)) -ne "keep during update" -or
+              -not (Test-Path $upgradeSentinel) -or
+              ([IO.File]::ReadAllText($upgradeSentinel)) -ne "keep during public upgrade") {
+            throw "final uninstall removed an unrelated file"
           }
 
       - name: Print installer logs on failure
         if: failure()
         shell: powershell
         run: |
-          Get-ChildItem "$env:RUNNER_TEMP\install-*.log", "$env:RUNNER_TEMP\uninstall.log" -ErrorAction SilentlyContinue |
+          Get-ChildItem "$env:RUNNER_TEMP\install-*.log", "$env:RUNNER_TEMP\uninstall-*.log", "$env:RUNNER_TEMP\bulkseq-prior-*\download.stderr.log" -ErrorAction SilentlyContinue |
             ForEach-Object { Write-Host "----- $($_.Name) -----"; Get-Content $_.FullName }
 
       - uses: actions/upload-artifact@v4
@@ -218,6 +373,9 @@ jobs:
 
       - name: Build onedir with PyInstaller
         run: .venv/bin/python -m PyInstaller packaging/BulkSeqStudio.spec --noconfirm
+
+      - name: Verify bundled root scripts
+        run: .venv/bin/python packaging/verify_bundle.py "dist/BulkSeq Studio"
 
       - name: Verify frozen onedir
         run: |

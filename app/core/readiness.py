@@ -170,6 +170,22 @@ def _which_in_env(command: str) -> str | None:
     return shutil.which(command, path=_env_search_path())
 
 
+def native_tool_path(command: str) -> str | None:
+    """Resolve a native launcher tool with the same PATH as its child process."""
+    return _which_in_env(command)
+
+
+def local_wsl_health(timeout: int = 8, distro: str | None = None) -> dict[str, str]:
+    """Bounded read-only local WSL probe; call from a worker, never the GUI thread."""
+    if not sys.platform.startswith("win"):
+        return {"status": "PASS", "detail": "Native execution does not need WSL."}
+    if shutil.which("wsl") is None:
+        return {"status": "REVIEW_REQUIRED", "detail": "wsl.exe is unavailable."}
+    if wsl_has_working_distro(timeout=timeout, distro=distro):
+        return {"status": "PASS", "detail": "The selected WSL distribution starts."}
+    return {"status": "REVIEW_REQUIRED", "detail": "The selected WSL distribution did not start."}
+
+
 def _native_env_prefix() -> Path:
     """The micromamba prefix a native run uses, mirroring snakemake_runner.native_path_prefix."""
     root = Path(os.environ.get("MAMBA_ROOT_PREFIX") or (Path.home() / "micromamba"))

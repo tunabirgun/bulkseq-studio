@@ -1,8 +1,7 @@
-# Publish the verified Windows and Linux packages.
-# The packages are downloaded from the Build packages run for this commit; this script
-# neither builds them nor accepts a local build.
+# Publish only the verified CI packages. Local checksums stay in ignored staging.
 # The tag/version is read from app\constants.py (APP_VERSION).
 # Requires the GitHub CLI (gh) authenticated: gh auth login.
+param([string] $DownloadRoot = "")
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
@@ -20,14 +19,6 @@ function Get-Sha256Hex([string] $path) {
 
 $version = ((Select-String -Path "app\constants.py" -Pattern 'APP_VERSION\s*=\s*"([^"]+)"').Matches.Groups[1].Value)
 $tag = "v$version"
-$outputDir = Join-Path $root "installer_output"
-$installer = Join-Path $outputDir "BulkSeqStudio-Setup-$version.exe"
-$portable  = Join-Path $outputDir "BulkSeqStudio-Portable-$version.zip"
-$appImage = Join-Path $outputDir "BulkSeqStudio-$version-x86_64.AppImage"
-$zsync = "$appImage.zsync"
-$linuxPortable = Join-Path $outputDir "BulkSeqStudio-Portable-$version-linux-x86_64.tar.gz"
-$packageAssets = @($installer, $portable, $appImage, $zsync, $linuxPortable)
-$checksumManifest = Join-Path $outputDir "SHA256SUMS.txt"
 
 # Locate gh (PATH, or the default winget install location).
 $gh = (Get-Command gh -ErrorAction SilentlyContinue).Source
@@ -52,7 +43,7 @@ if ($head -ne $upstream) {
 }
 
 # Verify CI workflows are successful before creating/updating the release.
-Write-Host "Checking GitHub Actions workflows for $head ..."
+Write-Host "Checking GitHub Actions workflows for the current commit..."
 $runListJson = & $gh run list --commit $head --json workflowName,status,conclusion,databaseId --limit 20
 if ($LASTEXITCODE -ne 0) { throw "gh run list failed" }
 
@@ -105,15 +96,42 @@ if ($LASTEXITCODE -ne 0) {
     }
 }
 
-# Take the packages from the run that was just verified. A local build of the same version
-# is indistinguishable from the CI one by name, so remove the prior products first: a stale
-# file left in place would pass every check below and ship unbuilt bytes.
-foreach ($f in ($packageAssets + @($checksumManifest))) {
-    Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+# Refuse an existing tag or release; never edit notes or clobber assets in place.
+$tagRefs = & git ls-remote --tags origin "refs/tags/$tag"
+if ($LASTEXITCODE -ne 0) { throw "Could not verify the remote tag state" }
+if ($tagRefs) { throw "Tag $tag already exists; refusing to replace it" }
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    $releaseProbe = & $gh release view $tag --json tagName 2>&1
+    $releaseViewExit = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $previousErrorActionPreference
 }
-New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+if ($releaseViewExit -eq 0) { throw "Release $tag already exists; refusing to replace it" }
+if (($releaseProbe -join " ") -notmatch '(?i)(release not found|not found)') {
+    throw "Release lookup failed for a reason other than absence"
+}
+
+$releaseRoot = [IO.Path]::GetFullPath((Join-Path $root "tmp\release-$version"))
+if (-not $DownloadRoot) { $DownloadRoot = Join-Path $releaseRoot "ci-run-$($buildRun.databaseId)" }
+if (-not [IO.Path]::IsPathRooted($DownloadRoot)) { $DownloadRoot = Join-Path $root $DownloadRoot }
+$outputDir = [IO.Path]::GetFullPath($DownloadRoot)
+if (-not $outputDir.StartsWith($releaseRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "DownloadRoot must be a child of $releaseRoot"
+}
+if (Test-Path -LiteralPath $outputDir) { throw "Download stage already exists; preserving it: $outputDir" }
+New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $outputDir -ErrorAction Stop | Out-Null
+$installer = Join-Path $outputDir "BulkSeqStudio-Setup-$version.exe"
+$portable = Join-Path $outputDir "BulkSeqStudio-Portable-$version.zip"
+$appImage = Join-Path $outputDir "BulkSeqStudio-$version-x86_64.AppImage"
+$zsync = "$appImage.zsync"
+$linuxPortable = Join-Path $outputDir "BulkSeqStudio-Portable-$version-linux-x86_64.tar.gz"
+$packageAssets = @($installer, $portable, $appImage, $zsync, $linuxPortable)
+$checksumManifest = Join-Path $outputDir "SHA256SUMS.txt"
 foreach ($artifact in @("BulkSeqStudio-windows", "BulkSeqStudio-linux")) {
-    Write-Host "Downloading $artifact from run $($buildRun.databaseId) ..."
+    Write-Host "Downloading verified $artifact CI artifact..."
     & $gh run download $buildRun.databaseId -n $artifact -D $outputDir
     if ($LASTEXITCODE -ne 0) { throw "gh run download failed for artifact $artifact" }
 }
@@ -142,17 +160,9 @@ foreach ($f in $packageAssets) {
     $actual = Get-Sha256Hex $f
     if ($actual -ne $expected) { throw "Checksum mismatch for $name" }
 }
-$assets = @($packageAssets) + @($checksumManifest)
+$assets = @($packageAssets)
 
-Write-Host "Publishing $tag from $head ..."
-$previousErrorActionPreference = $ErrorActionPreference
-$ErrorActionPreference = "SilentlyContinue"
-try {
-    & $gh release view $tag *> $null
-    $releaseViewExit = $LASTEXITCODE
-} finally {
-    $ErrorActionPreference = $previousErrorActionPreference
-}
+Write-Host "Publishing verified CI packages for $tag..."
 # The release page is where people download from, so it carries this version's own changelog
 # entry rather than a line pointing at a file they would have to go and find. A release that
 # changes scientific output has to say so at the point of download. The entry is read from
@@ -170,24 +180,14 @@ for ($i = $startIndex + 1; $i -lt $changelogLines.Count; $i++) {
 }
 $entry = ($changelogLines[($startIndex + 1)..($endIndex - 1)] -join "`n").Trim()
 if (-not $entry) { throw "CHANGELOG.md's '## $version' entry is empty; write it before releasing." }
-$notesPath = Join-Path ([System.IO.Path]::GetTempPath()) "bulkseq-release-notes-$version.md"
-$notesBody = "$entry`n`nEvery asset below is listed in SHA256SUMS.txt; verify a download against it before use."
+$notesPath = Join-Path $outputDir "release-notes.md"
+$notesBody = $entry
 [System.IO.File]::WriteAllText($notesPath, $notesBody, (New-Object System.Text.UTF8Encoding($false)))
 
-if ($releaseViewExit -ne 0) {
-    # New release: tag the verified commit (not the remote default-branch head) and attach
-    # every supported package.
-    & $gh release create $tag @assets `
-        --target $head `
-        --title "BulkSeq Studio $tag" `
-        --notes-file $notesPath
-} else {
-    # Release exists: replace the attached assets with the fresh build, and refresh the notes
-    # so a re-publish cannot leave the page describing an earlier attempt.
-    & $gh release edit $tag --notes-file $notesPath
-    if ($LASTEXITCODE -ne 0) { throw "gh release edit failed" }
-    & $gh release upload $tag @assets --clobber
-}
+& $gh release create $tag @assets `
+    --target $head `
+    --title "BulkSeq Studio $tag" `
+    --notes-file $notesPath
 if ($LASTEXITCODE -ne 0) { throw "gh release failed" }
 
 # Read the published release back. A green upload is not evidence the release is healthy:
@@ -196,31 +196,32 @@ $viewJson = & $gh release view $tag --json assets,tagName,targetCommitish
 if ($LASTEXITCODE -ne 0) { throw "gh release view failed; the release could not be verified." }
 $release = $viewJson | ConvertFrom-Json
 if ($release.tagName -ne $tag) { throw "Published tag is $($release.tagName), expected $tag" }
-$commitish = [string] $release.targetCommitish
-if ($commitish) {
-    $resolved = & git rev-parse --verify --quiet "$commitish^{commit}"
-    if ($LASTEXITCODE -eq 0 -and $resolved) {
-        if ($resolved.Trim() -ne $head) {
-            throw "Release $tag points at $($resolved.Trim()), not the published commit $head"
-        }
-    } else {
-        Write-Host "Note: release target '$commitish' is not resolvable locally; not compared."
-    }
+$remoteTag = @()
+foreach ($attempt in 1..5) {
+    $remoteTag = @(& git ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}")
+    if ($LASTEXITCODE -ne 0) { throw "Could not verify the published remote tag" }
+    if ($remoteTag.Count) { break }
+    Start-Sleep -Seconds 2
 }
+$peeled = @($remoteTag | Where-Object { $_ -match '\^\{\}$' })
+$direct = @($remoteTag | Where-Object { $_ -match "refs/tags/$([regex]::Escape($tag))$" })
+$target = if ($peeled.Count -eq 1) { ($peeled[0] -split '\s+')[0] }
+          elseif ($direct.Count -eq 1) { ($direct[0] -split '\s+')[0] }
+          else { "" }
+if (-not $target -or $target -ne $head) { throw "Published tag does not resolve to the verified commit" }
 
-# Every name in SHA256SUMS.txt must be attached, at the byte size of the file whose digest
-# the manifest recorded. The manifest is the authority here, so a file that never made it
-# into it cannot pass this check either.
+# The local manifest was verified before upload. Public assets are the five packages only.
 $localByName = @{}
 foreach ($f in $assets) { $localByName[(Split-Path -Leaf $f)] = (Get-Item -LiteralPath $f).Length }
 $publishedByName = @{}
 foreach ($a in $release.assets) { $publishedByName[$a.name] = [int64] $a.size }
-$manifestNames = @($recorded | ForEach-Object { ($_ -split "  ", 2)[1] }) + @(Split-Path -Leaf $checksumManifest)
-foreach ($name in $manifestNames) {
+$assetNames = @($assets | ForEach-Object { Split-Path -Leaf $_ })
+if (@($release.assets).Count -ne $assetNames.Count) { throw "Published asset inventory differs from the approved package list" }
+foreach ($name in $assetNames) {
     if (-not $publishedByName.ContainsKey($name)) { throw "Release $tag is missing asset $name" }
     if ($publishedByName[$name] -ne $localByName[$name]) {
         throw "Asset $name is $($publishedByName[$name]) bytes on the release, $($localByName[$name]) locally"
     }
 }
-Write-Host "Verified $($manifestNames.Count) assets on $tag at commit $head."
+Write-Host "Verified $($assetNames.Count) package assets on $tag."
 Write-Host "Done. Release: https://github.com/tunabirgun/bulkseq-studio/releases/tag/$tag"

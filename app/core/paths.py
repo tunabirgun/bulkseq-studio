@@ -175,7 +175,7 @@ def wsl_home(distro: str | None = None) -> str | None:
     return home if home.startswith("/") else None
 
 
-def wsl_has_working_distro(timeout: int = 45) -> bool:
+def wsl_has_working_distro(timeout: int = 45, distro: str | None = None) -> bool:
     """True only if a WSL distribution is installed AND actually starts.
 
     `shutil.which("wsl")` (wsl.exe present) and `wsl -l -q` (a distro registered) both pass on a
@@ -189,7 +189,7 @@ def wsl_has_working_distro(timeout: int = 45) -> bool:
         return False
     try:
         proc = subprocess.run(
-            ["wsl", "--", "bash", "-lc", "echo BULKSEQ_WSL_OK"],
+            ["wsl", *(["-d", distro] if distro else []), "--", "bash", "-lc", "echo BULKSEQ_WSL_OK"],
             capture_output=True,
             timeout=timeout,
             creationflags=_wsl_quiet_flags(),

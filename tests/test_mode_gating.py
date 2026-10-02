@@ -54,7 +54,12 @@ def test_workflow_controls_greyed_by_input_mode() -> None:
     assert w.figures.isEnabled()
     assert w.numerator.isEnabled()
     assert w.design.isEnabled()
-    assert not w.meta_analysis.isEnabled()  # microarray has no per-study count fan-out
+    assert w.meta_analysis.isEnabled()  # usable to turn off an unsupported saved request
+    w.meta_analysis.setChecked(True)
+    w._refresh_meta_preview()
+    assert "unavailable for this input route" in w.meta_preview.text()
+    assert "Meta-analysis is unavailable for microarray input" in w.meta_preview_detail_text.text()
+    w.meta_analysis.setChecked(False)
     # Nothing in Advanced parameters applies: no reads to trim or align, and limma-trend
     # reads neither the DESeq2 count filter nor its shrinkage estimator.
     assert not w.adv_group.isEnabled()
@@ -92,7 +97,16 @@ def test_workflow_controls_greyed_by_input_mode() -> None:
     assert w.de_engine.isHidden()
     assert not w.gsva.isEnabled()
     assert w.enrichment.isEnabled()
-    assert not w.meta_analysis.isEnabled()  # a results table has no per-study counts
+    assert w.meta_analysis.isEnabled()  # recovery from an unsupported saved request remains possible
+    w.meta_analysis.setChecked(True)
+    w._refresh_meta_preview()
+    assert "unavailable for this input route" in w.meta_preview.text()
+    assert "Meta-analysis is unavailable for deseq2_results input" in w.meta_preview_detail_text.text()
+    w.config.workflow.meta_analysis = True  # saved unsupported request reaches the launch check
+    assert any("unavailable for deseq2_results input" in m["message"]
+               for m in w._input_validation_messages())
+    w.config.workflow.meta_analysis = False
+    w.meta_analysis.setChecked(False)
     assert w.workflow_comparison_factor_row.isHidden()
     assert w.numerator.isHidden()
     assert w.denominator.isHidden()

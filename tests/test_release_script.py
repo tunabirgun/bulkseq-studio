@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import tempfile
 import subprocess
 import sys
 from pathlib import Path
@@ -27,7 +26,7 @@ _FAKE_GH = (
     'if "%1 %2"=="run list" goto :runlist\r\n'
     'if "%1 %2"=="run download" goto :download\r\n'
     'if "%1 %2"=="release view" goto :releaseview\r\n'
-    'if "%1 %2"=="release create" exit /b 0\r\n'
+    'if "%1 %2"=="release create" goto :releasecreate\r\n'
     "exit /b 2\r\n"
     "\r\n"
     ":envlist\r\n"
@@ -62,15 +61,34 @@ _FAKE_GH = (
     "1>&2 echo artifact not found\r\n"
     "exit /b 1\r\n"
     "\r\n"
+    ":releasecreate\r\n"
+    'if "%RELEASE_BREAK%"=="wrong-tag" goto :wrongtag\r\n'
+    'git -C "%FAKE_GH_REPO%" push origin HEAD:refs/tags/v0.28.0 >nul 2>&1\r\n'
+    'if errorlevel 1 exit /b 1\r\n'
+    'echo created>"%FAKE_GH_STATE%"\r\n'
+    'exit /b 0\r\n'
+    "\r\n"
+    ":wrongtag\r\n"
+    'git -C "%FAKE_GH_REPO%" push origin HEAD~1:refs/tags/v0.28.0 >nul 2>&1\r\n'
+    'if errorlevel 1 exit /b 1\r\n'
+    'echo created>"%FAKE_GH_STATE%"\r\n'
+    'exit /b 0\r\n'
+    "\r\n"
     ":releaseview\r\n"
+    'if "%RELEASE_BREAK%"=="release-existing" goto :releaseexists\r\n'
+    'if not exist "%FAKE_GH_STATE%" goto :releasemissing\r\n'
     'if not "%4"=="--json" goto :releasemissing\r\n'
     "powershell -NoProfile -Command \"$a=Get-ChildItem $env:RELEASE_OUTPUT -File | "
+    "Where-Object {$_.Name -ne 'SHA256SUMS.txt' -and $_.Name -ne 'release-notes.md'} | "
     "ForEach-Object { [pscustomobject]@{name=$_.Name; size=$(if ($env:RELEASE_BREAK -eq 'size' "
     "-and $_.Name -like '*.AppImage') {1} else {$_.Length})} } | Where-Object { -not "
     "($env:RELEASE_BREAK -eq 'drop' -and $_.name -like '*.zsync') }; [pscustomobject]"
     "@{assets=@($a); tagName='v0.28.0'; targetCommitish=$env:RELEASE_HEAD} "
     '| ConvertTo-Json -Depth 4"\r\n'
     "exit /b 0\r\n"
+    ":releaseexists\r\n"
+    'echo {"tagName":"v0.28.0"}\r\n'
+    'exit /b 0\r\n'
     ":releasemissing\r\n"
     "1>&2 echo release not found\r\n"
     "exit /b 1\r\n"
@@ -91,6 +109,10 @@ CI_ARTIFACTS = {
     ),
 }
 DOWNLOADED_NAMES = tuple(name for names in CI_ARTIFACTS.values() for name in names)
+
+
+def _download_stage(root: Path) -> Path:
+    return root / "tmp" / "release-0.28.0" / "ci-run-4242"
 
 
 def _artifact_payload(name: str) -> bytes:
@@ -129,7 +151,7 @@ def _release_fixture(tmp_path: Path, *, dirty: bool = False, unpushed: bool = Fa
     output.mkdir()
     shutil.copy2(REPO_ROOT / "scripts" / "release.ps1", root / "scripts" / "release.ps1")
     (root / "app" / "constants.py").write_text('APP_VERSION = "0.28.0"\n', encoding="utf-8")
-    (root / ".gitignore").write_text("installer_output/\n", encoding="utf-8")
+    (root / ".gitignore").write_text("installer_output/\ntmp/\n", encoding="utf-8")
     if changelog is not None:
         (root / "CHANGELOG.md").write_text(changelog, encoding="utf-8")
 
@@ -168,10 +190,12 @@ def _run_release(tmp_path: Path, root: Path, output: Path, break_mode: str = "")
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
     env["FAKE_GH_LOG"] = str(log)
-    env["RELEASE_OUTPUT"] = str(output)
+    env["RELEASE_OUTPUT"] = str(_download_stage(root))
     env["RELEASE_ARTIFACTS"] = str(tmp_path / "ci-artifacts")
     env["RELEASE_HEAD"] = _git("rev-parse", "HEAD", cwd=root)
     env["RELEASE_BREAK"] = break_mode
+    env["FAKE_GH_REPO"] = str(root)
+    env["FAKE_GH_STATE"] = str(tmp_path / "release-created.txt")
     completed = subprocess.run(
         ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
          str(root / "scripts" / "release.ps1")],
@@ -189,7 +213,9 @@ def test_release_script_creates_release_after_expected_missing_release_probe(tmp
     # The tag must name the verified commit, and the release must be read back afterwards.
     assert f'--target {_git("rev-parse", "HEAD", cwd=root)}' in calls
     assert "--json assets,tagName,targetCommitish" in calls
-    assert f"Verified {len(DOWNLOADED_NAMES) + 1} assets" in completed.stdout
+    assert f"Verified {len(DOWNLOADED_NAMES)} package assets" in completed.stdout
+    assert "SHA256SUMS.txt" not in calls
+    assert (_download_stage(root) / "SHA256SUMS.txt").is_file()
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
@@ -203,7 +229,47 @@ def test_release_refuses_a_tree_that_does_not_match_the_remote(tmp_path: Path, s
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
-@pytest.mark.parametrize("break_mode,message", [("drop", "missing asset"),
+@pytest.mark.parametrize("existing", ["tag", "release"])
+def test_release_refuses_existing_public_identity_without_download_or_clobber(tmp_path: Path, existing) -> None:
+    root, output = _release_fixture(tmp_path)
+    if existing == "tag":
+        _git("tag", "v0.28.0", cwd=root)
+        _git("push", "origin", "v0.28.0", cwd=root)
+    completed, calls = _run_release(tmp_path, root, output,
+                                    "release-existing" if existing == "release" else "")
+    assert completed.returncode != 0
+    assert "already exists" in completed.stdout + completed.stderr
+    assert "release create" not in calls and "release upload" not in calls
+    assert "run download" not in calls
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
+def test_release_refuses_reused_ci_stage_without_touching_it(tmp_path: Path) -> None:
+    root, output = _release_fixture(tmp_path)
+    stage = _download_stage(root)
+    stage.mkdir(parents=True)
+    marker = stage / "keep.txt"
+    marker.write_text("previous evidence", encoding="utf-8")
+    completed, calls = _run_release(tmp_path, root, output)
+    assert completed.returncode != 0
+    assert "Stage" in completed.stdout + completed.stderr or "stage" in completed.stdout + completed.stderr
+    assert marker.read_text(encoding="utf-8") == "previous evidence"
+    assert "run download" not in calls and "release create" not in calls
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
+def test_release_refuses_a_remote_tag_pointing_at_another_commit(tmp_path: Path) -> None:
+    root, output = _release_fixture(tmp_path)
+    _git("commit", "--allow-empty", "-m", "second", cwd=root)
+    _git("push", cwd=root)
+    completed, calls = _run_release(tmp_path, root, output, "wrong-tag")
+    assert completed.returncode != 0
+    assert "does not resolve to the verified commit" in completed.stdout + completed.stderr
+    assert "release create" in calls
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
+@pytest.mark.parametrize("break_mode,message", [("drop", "asset inventory"),
                                                 ("size", "bytes on the release")])
 def test_release_verification_fails_on_a_bad_published_asset(tmp_path: Path, break_mode, message) -> None:
     root, output = _release_fixture(tmp_path)
@@ -268,29 +334,29 @@ def test_release_publishes_the_artifacts_of_the_verified_build_run(tmp_path: Pat
     for artifact in CI_ARTIFACTS:
         assert f"run download 4242 -n {artifact}" in calls
     for name in DOWNLOADED_NAMES:
-        assert (output / name).read_bytes() == _artifact_payload(name)
+        assert (_download_stage(root) / name).read_bytes() == _artifact_payload(name)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
 def test_release_stops_when_an_artifact_cannot_be_downloaded(tmp_path: Path) -> None:
-    """A failed download must leave nothing behind: the prior local build is cleared first,
-    so there is no same-named file left for a later step to mistake for the CI package."""
+    """A failed CI download must preserve prior local packages and never publish them."""
     root, output = _release_fixture(tmp_path, stale=True)
     completed, calls = _run_release(tmp_path, root, output, "download-fail")
     assert completed.returncode != 0
     assert "run download failed" in completed.stdout + completed.stderr
     assert "release create" not in calls
-    assert not any((output / name).exists() for name in DOWNLOADED_NAMES)
+    assert all((output / name).read_bytes() == b"stale local build" for name in DOWNLOADED_NAMES)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
-def test_release_replaces_a_stale_local_build_with_the_downloaded_one(tmp_path: Path) -> None:
-    """A local build of the same version has the same names and would pass every check."""
+def test_release_uses_fresh_ci_stage_and_preserves_a_stale_local_build(tmp_path: Path) -> None:
+    """A local build of the same version must not be mistaken for the CI artifact."""
     root, output = _release_fixture(tmp_path, stale=True)
     completed, _ = _run_release(tmp_path, root, output)
     assert completed.returncode == 0, completed.stdout + completed.stderr
     for name in DOWNLOADED_NAMES:
-        assert (output / name).read_bytes() == _artifact_payload(name)
+        assert (_download_stage(root) / name).read_bytes() == _artifact_payload(name)
+        assert (output / name).read_bytes() == b"stale local build"
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="PowerShell release probe is Windows-specific")
@@ -337,11 +403,12 @@ def test_the_release_body_is_this_versions_changelog_entry(tmp_path: Path) -> No
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "--notes-file" in calls, "the release body must come from a file, not an inline string"
 
-    notes = Path(tempfile.gettempdir()) / "bulkseq-release-notes-0.28.0.md"
+    notes = _download_stage(root) / "release-notes.md"
     assert notes.exists(), f"{notes} was not written"
     body = notes.read_text(encoding="utf-8")
     assert "Scientific output changes" in body, "the scientific notice must reach the release page"
     assert "A described change." in body
     assert "0.27.0" not in body, "the body ran past this version's entry into an older one"
     assert "## 0.28.0" not in body, "the heading is the release title; it should not repeat in the body"
-    assert "SHA256SUMS.txt" in body, "the body must tell a reader how to verify a download"
+    assert "SHA256SUMS.txt" not in body
+    assert "SHA256SUMS.txt" not in calls

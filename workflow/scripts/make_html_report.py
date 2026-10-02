@@ -20,6 +20,7 @@ from pathlib import Path
 # script directory on sys.path; the tests import it by file path, which does not. Every sibling
 # imported here is stdlib-only, so the report keeps running in every environment.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from check_contract import PRIORITY, read_check  # noqa: E402
 from _contrast_disclosure import (  # noqa: E402
     IGNORED_LABEL, SINGLE_CONTRAST_SENTENCE, ignored_text)
 from _enrichment_evidence import evidence_lines  # noqa: E402
@@ -1034,7 +1035,7 @@ def _parse_sanity(text: str) -> tuple[str, list[dict]]:
         line = raw.rstrip()
         m_overall = re.match(r"^Overall:\s+(\w+)", line)
         if m_overall:
-            overall = m_overall.group(1)
+            overall = m_overall.group(1) if m_overall.group(1) in PRIORITY else "FAIL"
             continue
         m = head_re.match(line.strip())
         if m:
@@ -1044,8 +1045,17 @@ def _parse_sanity(text: str) -> tuple[str, list[dict]]:
         stripped = line.strip()
         if stripped.startswith("- ") and current is not None:
             msg = stripped[2:].strip()
-            msg = re.sub(r"^(PASS|WARNING|FAIL|REVIEW_REQUIRED):\s*", "", msg)
+            severity = re.match(r"^(PASS|WARNING|FAIL|REVIEW_REQUIRED):\s*", msg)
+            if severity:
+                if PRIORITY[severity.group(1)] > PRIORITY[current["status"]]:
+                    current["status"] = severity.group(1)
+                msg = msg[severity.end():]
             current["messages"].append(msg)
+    if overall and not checks:
+        return "FAIL", checks
+    if checks:
+        overall = max([overall if overall in PRIORITY else "PASS", *(check["status"] for check in checks)],
+                      key=PRIORITY.__getitem__)
     return overall, checks
 
 
@@ -1069,9 +1079,9 @@ def _sanity_section(text: str) -> str:
         rows += (f"<tr><td class='chk-status'>{_badge(c['status'])}</td>"
                  f"<td><div class='chk-name'>{html.escape(pretty)}</div>"
                  f"<ul class='chk-msgs'>{msgs}</ul></td></tr>")
-    note = ("<p class='muted small'>A <b>WARNING</b> is advisory — the run completed and the "
-            "outputs are usable; it flags something to keep in mind (for example a small-replicate "
-            "diagnostic). Only a <b>FAIL</b> blocks a run.</p>")
+    note = ("<p class='muted small'>A <b>WARNING</b> is advisory and still needs review. "
+            "A <b>FAIL</b> blocks a valid run. On the meta-analysis route, a check 01 "
+            "<b>REVIEW_REQUIRED</b> or missing or malformed input evidence also stops per-study fitting.</p>")
     return (f"<section id='sanity'><div class='sec-head'><h2>Sanity checks</h2>"
             f"{_badge(overall) if overall else ''}</div>{note}"
             f"<div class='tablewrap'><table class='checks'>{rows}</table></div></section>")
@@ -1401,16 +1411,37 @@ def _meta_cards(run: dict, project: Path) -> str:
     return f"<div class='cards'>{inner}</div>"
 
 
+def _mapping(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _corrected_meta_ledger(value) -> bool:
+    ledger = _mapping(value)
+    families = _mapping(ledger.get("families"))
+    combined = _mapping(families.get("combined"))
+    pooled = _mapping(families.get("pooled"))
+    return (ledger.get("method") == "combined_concordance_and_pooled_full_family_bh_v1" and
+            combined.get("id") == "direction_concordant_combined_bh" and
+            pooled.get("id") == "all_estimable_pooled_bh" and
+            all(isinstance(ledger.get(key), dict) for key in ("genes", "studies") if key in ledger) and
+            ("genes" not in ledger or isinstance(ledger["genes"].get("direction"), dict)
+             or "direction" not in ledger["genes"]) and
+            all(type(family.get("size")) is int and family["size"] >= 0
+                for family in (combined, pooled)))
+
+
 def _meta_analysis_link(project: Path) -> str:
     """Additive multi-study block for the MAIN report: a compact card row + a link to the dedicated
     cross-study report. Returns "" (no effect) on single-study / non-meta runs."""
     summary = _load_json(project / "results" / "reports" / "meta_analysis_summary.json")
     if not summary or summary.get("n_meta_sig") is None:
         return ""
+    ledger = _load_json(project / "results" / "meta" / "meta_eligibility.json")
+    legacy = not _corrected_meta_ledger(ledger)
     conc = summary.get("direction_concordance_pct")
     cards = [
         ("Studies combined", summary.get("n_studies", "—")),
-        ("Convergent meta-DEGs", f"{summary.get('n_sig_up', 0)} up · {summary.get('n_sig_down', 0)} down"),
+        ("Combined FDR + matching sign", f"{summary.get('n_sig_up', '—')} up · {summary.get('n_sig_down', '—')} down"),
         ("Direction concordance", f"{conc}%" if conc is not None else "—"),
         ("Pooling", str(summary.get("pooling", "—"))),
     ]
@@ -1420,10 +1451,17 @@ def _meta_analysis_link(project: Path) -> str:
     has_report = (project / "results" / "reports" / "meta_analysis_report.html").exists()
     link = ("<p><a class='xlink' href='meta_analysis_report.html'>Open the cross-study "
             "meta-analysis report →</a></p>") if has_report else ""
-    body = (f"<p class='muted'>This run combined multiple studies. The per-study DESeq2 results below "
-            f"are the joint fit; the cross-study meta-analysis (per-study DESeq2 → inverse-normal "
-            f"p-combination + effect-size pooling) is summarised here.</p>"
-            f"<div class='cards'>{inner}</div>{link}")
+    engine = _engine_name(_load_json(project / "results" / "reports" / "run_summary.json"))
+    design = (_load_json(project / "results" / "reports" / "run_summary.json").get("deseq2") or {}).get("design_formula")
+    joint = f"{engine} with recorded design {design}" if design else f"{engine} with the recorded design"
+    warning = ("<p role='alert'><strong>Legacy pooled-effect adjustment requires recomputation.</strong> "
+               "The recognized corrected method marker was not recorded; do not interpret rem_padj as corrected.</p>"
+               if legacy else "")
+    body = (f"<p class='muted'>This run combined multiple studies. The main differential-expression "
+            f"results use the joint fit ({html.escape(joint)}). The cross-study result uses separate "
+            "per-study DESeq2 fits, inverse-normal p-value combination and effect-size pooling. "
+            "The combined-FDR, matching-sign call does not require individual study significance.</p>"
+            f"{warning}<div class='cards'>{inner}</div>{link}")
     return section("Multi-study meta-analysis", body, sid="meta")
 
 
@@ -1455,7 +1493,7 @@ header.top::before{content:"";display:block;height:3px;background:var(--spectrum
 .chipnav{display:flex;gap:6px;flex-wrap:wrap;max-width:1080px;margin:0 auto;padding:0 clamp(16px,5vw,40px) 10px}
 .chipnav a{font-family:var(--sans);font-size:.74rem;color:var(--muted);border:1px solid var(--border);
   border-radius:var(--pill);padding:.2rem .6rem;background:var(--surface)}
-.chipnav a:hover{color:var(--brand-blue);border-color:var(--brand-blue);text-decoration:none}
+.chipnav a:hover{color:var(--text);border-color:var(--brand-blue);text-decoration:none}
 .brand .logo{width:38px;height:38px;flex:0 0 38px;filter:drop-shadow(0 1px 2px rgba(17,24,39,.12))}
 .brand .wordmark{font-family:var(--sans);font-weight:600;font-size:1.15rem;letter-spacing:-.01em}
 .brand .ver{font-family:var(--mono);font-size:.66rem;color:var(--accent-2);background:var(--accent-tint);

@@ -35,7 +35,7 @@ class ImageViewer(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setRenderHints(QPainter.RenderHint.SmoothPixmapTransform | QPainter.RenderHint.Antialiasing)
-        self.setMinimumHeight(360)
+        self.setMinimumHeight(100)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._has_image = False
         # Tracks whether the user has zoomed/panned manually; once True we stop
@@ -92,6 +92,26 @@ class ImageViewer(QGraphicsView):
             # A deliberate 100% zoom should not snap back on the next resize.
             self._user_zoomed = True
 
+    def zoom_in(self) -> None:
+        if self._has_image:
+            self._user_zoomed = True
+            self.scale(1.25, 1.25)
+
+    def zoom_out(self) -> None:
+        if self._has_image:
+            self._user_zoomed = True
+            self.scale(0.8, 0.8)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
+            self.zoom_in()
+            event.accept()
+        elif event.key() == Qt.Key.Key_Minus:
+            self.zoom_out()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         if self._has_image and not self._user_zoomed:
@@ -105,6 +125,7 @@ class ImageViewer(QGraphicsView):
     def wheelEvent(self, event) -> None:
         if not self._has_image:
             return
-        self._user_zoomed = True
-        factor = 1.25 if event.angleDelta().y() > 0 else 0.8
-        self.scale(factor, factor)
+        if event.angleDelta().y() > 0:
+            self.zoom_in()
+        elif event.angleDelta().y() < 0:
+            self.zoom_out()

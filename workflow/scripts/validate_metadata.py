@@ -7,13 +7,18 @@ from collections import Counter
 from pathlib import Path
 
 import pandas as pd
+try:
+    from .meta_readiness import assess_meta_readiness
+except ImportError:  # invoked as a workflow script
+    from meta_readiness import assess_meta_readiness
 
 
 REQUIRED = ["sample_id", "condition", "layout", "fastq_1"]
 PRIORITY = {"FAIL": 4, "REVIEW_REQUIRED": 3, "WARNING": 2, "PASS": 1}
 
 
-def _multistudy_gates(df: pd.DataFrame, num: str, den: str) -> list[dict[str, str]]:
+def _multistudy_gates(df: pd.DataFrame, num: str, den: str,
+                      factor: str = "condition") -> list[dict[str, str]]:
     """Standalone mirror of app.core.metadata's multi-study gates (the pipeline runs in WSL where
     the app package is not importable). Fires only when a 'dataset' column has >1 study."""
     msgs: list[dict[str, str]] = []
@@ -40,8 +45,8 @@ def _multistudy_gates(df: pd.DataFrame, num: str, den: str) -> list[dict[str, st
                 "A multi-study analysis must combine studies of the SAME organism with a shared "
                 "gene-id namespace.")})
     # Confounding + admissibility: only assess when the contrast arms are actually present.
-    if "condition" in df.columns and num and den:
-        cond = df["condition"].astype(str).str.strip()
+    if factor in df.columns and num and den:
+        cond = df[factor].astype(str).str.strip()
         present = {c for c in cond if c and c != "unknown"}
         if num in present and den in present:
             levels = [set(cond[ds == d]) for d in ds[ds != ""].unique()]
@@ -63,21 +68,21 @@ def _multistudy_gates(df: pd.DataFrame, num: str, den: str) -> list[dict[str, st
     return msgs
 
 
-def condition_messages(df: pd.DataFrame) -> list[dict[str, str]]:
+def condition_messages(df: pd.DataFrame, factor: str = "condition") -> list[dict[str, str]]:
     """Empty or unknown conditions and the two replicate tiers, shared with the interface's
     validator (app.core.metadata imports this), so the pre-run check and check 01 agree."""
-    if "condition" not in df.columns:
+    if factor not in df.columns:
         return []
     msgs: list[dict[str, str]] = []
-    condition = df["condition"].fillna("").astype(str).str.strip()
+    condition = df[factor].fillna("").astype(str).str.strip()
     empty = int(condition.isin(["", "unknown"]).sum())
     if empty:
-        msgs.append({"status": "REVIEW_REQUIRED", "message": f"{empty} sample(s) have empty or unknown condition."})
+        msgs.append({"status": "REVIEW_REQUIRED", "message": f"{empty} sample(s) have empty or unknown {factor}."})
     for name, count in condition[~condition.isin(["", "unknown"])].value_counts(sort=False).items():
         if count < 2:
-            msgs.append({"status": "WARNING", "message": f"Condition '{name}' has fewer than two biological replicates."})
+            msgs.append({"status": "WARNING", "message": f"{factor.capitalize()} '{name}' has fewer than two biological replicates."})
         elif count < 3:
-            msgs.append({"status": "WARNING", "message": f"Condition '{name}' has fewer than the recommended three biological replicates."})
+            msgs.append({"status": "WARNING", "message": f"{factor.capitalize()} '{name}' has fewer than the recommended three biological replicates."})
     return msgs
 
 
@@ -87,6 +92,10 @@ def main() -> int:
     parser.add_argument("--out", required=True)
     parser.add_argument("--numerator", default="")
     parser.add_argument("--denominator", default="")
+    parser.add_argument("--contrast-factor", default="condition")
+    parser.add_argument("--design-formula", default="~ condition")
+    parser.add_argument("--meta-analysis", action="store_true")
+    parser.add_argument("--input-type", default="fastq")
     args = parser.parse_args()
     df = pd.read_csv(args.samples, sep="\t", dtype=str).fillna("")
     messages: list[dict[str, str]] = []
@@ -103,8 +112,15 @@ def main() -> int:
     if unsafe:
         messages.append({"status": "FAIL", "message": f"Unsafe sample IDs: {', '.join(unsafe)}"})
 
-    messages += condition_messages(df)
-    messages += _multistudy_gates(df, args.numerator.strip(), args.denominator.strip())
+    messages += condition_messages(df, args.contrast_factor)
+    messages += _multistudy_gates(df, args.numerator.strip(), args.denominator.strip(), args.contrast_factor)
+    if args.meta_analysis:
+        assessment = assess_meta_readiness(df, enabled=True, input_type=args.input_type,
+                                           contrast_factor=args.contrast_factor,
+                                           numerator=args.numerator, denominator=args.denominator,
+                                           design_formula=args.design_formula)
+        if not assessment["runnable"]:
+            messages += assessment["messages"]
 
     if not messages:
         messages.append({"status": "PASS", "message": "Metadata passed input validation."})

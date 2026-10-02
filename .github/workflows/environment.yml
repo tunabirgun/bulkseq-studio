@@ -53,11 +53,9 @@ jobs:
       - name: Print the recorded spec marker
         run: cat "$HOME/micromamba/envs/bulkseq/.bulkseq_spec"
 
-  # macOS is not reachable from the Windows/Linux development boxes, and a macos runner
-  # cannot answer a dependency question any faster than a solver can. CONDA_OVERRIDE_OSX
-  # lets an ubuntu runner solve for osx-arm64, so the split-prefix decision (the alignment
-  # tools pin libdeflate <1.23, r-base 4.5.2 pins >=1.24) and the list of packages with no
-  # osx-arm64 build are both re-checked on every change to the environment files.
+  # This Linux-hosted dry solve tracks osx-arm64 package availability only. The shipped
+  # installer currently refuses macOS; solver success does not verify a Mac backend,
+  # split-prefix provisioning or native execution.
   osx-arm64-solve:
     name: osx-arm64 solve (dry run)
     runs-on: ubuntu-latest
@@ -164,8 +162,7 @@ jobs:
             return "$status"
           }
           failed=0
-          # The unfiltered specs are what the filter exists for: if they solve, the
-          # filtering (and the split prefix it feeds) is no longer describing reality.
+          # The unfiltered specs show whether this availability filter is still needed.
           for spec in tools_unfiltered full_unfiltered; do
             if solve "$spec"; then
               echo "::error::$spec solved for osx-arm64; the documented unavailability is stale"

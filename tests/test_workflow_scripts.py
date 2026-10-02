@@ -923,8 +923,12 @@ def test_unreadable_check_file_is_reported_as_fail_not_a_crash(tmp_path, monkeyp
     text = out.read_text(encoding="utf-8")
     assert "Overall: FAIL" in text
     assert "16_ppi_network: FAIL" in text
-    assert "unreadable check file:" in text
+    assert "Check evidence unavailable or unreadable:" in text
+    assert "control character" in text.lower()
     assert "01_input_validation: PASS" in text
+    monkeypatch.setattr("sys.argv", ["aggregate", "--checks", str(broken), str(good),
+                                    "--out", str(out), "--strict"])
+    assert mod.main() != 0
 
 
 def test_missing_ppi_sidecar_is_explicitly_not_recorded(mrs, tmp_path) -> None:

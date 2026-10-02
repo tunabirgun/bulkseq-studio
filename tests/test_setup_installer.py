@@ -380,7 +380,9 @@ def test_verification_repair_is_bounded_exact_spec_and_non_destructive() -> None
     stage3 = wsl_bioenv_script().read_text(encoding="utf-8").split(
         'echo "Stage 3/3: Verifying the $PROFILE environment"', 1
     )[1]
-    assert '--force-reinstall -n "$ENV_NAME" -f "$INSTALLED_ENV_FILE"' in repair
+    assert 'repair_file="$INSTALLED_ENV_FILE"' in repair
+    assert 'repair_file="$(stage_spec "$INSTALLED_ENV_FILE")"' in repair
+    assert '--force-reinstall -n "$ENV_NAME" -f "$repair_file"' in repair
     assert 'if [ "$repair_attempted" -ne 0 ]' in repair
     assert 'repair_attempted=1' in repair
     assert "post-link steps may download data again" in repair
@@ -408,7 +410,7 @@ def test_force_reinstall_repairs_what_update_only_leaves_missing(tmp_path: Path)
     fixture = tmp_path / "repair-fixture.sh"
     fixture.write_text(
         '#!/usr/bin/env bash\nset -euo pipefail\n'
-        'MICROMAMBA="$1"\nENV_NAME=bulkseq\nINSTALLED_ENV_FILE="$2"\n'
+        'MICROMAMBA="$1"\nENV_NAME=bulkseq\nINSTALLED_ENV_FILE="$2"\nSPEC_STAGE_DIR=""\n'
         'REPAIR_TARGET="$3"\nCALLS="$4"\nexport REPAIR_TARGET CALLS\n'
         + _repair_function()
         + '\n"$MICROMAMBA" env update --yes -n "$ENV_NAME" -f "$INSTALLED_ENV_FILE"\n'
@@ -425,6 +427,44 @@ def test_force_reinstall_repairs_what_update_only_leaves_missing(tmp_path: Path)
     invoked = calls.read_text(encoding="utf-8")
     assert "env update" in invoked
     assert invoked.count("--force-reinstall") == 1
+
+
+def test_writable_spec_stage_preserves_bytes_and_only_cleans_its_own_directory(tmp_path: Path) -> None:
+    runtime, convert = _bash_or_skip()
+    source = tmp_path / "bulkseq.lock.yaml"
+    source.write_bytes(b"name: bulkseq\ndependencies:\n  - pip:\n    - lxml==6.0.2\n")
+    outside = tmp_path / "unrelated"
+    outside.mkdir()
+    (outside / "sentinel").write_text("retain", encoding="utf-8")
+    text = wsl_bioenv_script().read_text(encoding="utf-8")
+
+    def function(name: str) -> str:
+        start = text.index(f"{name}() {{")
+        return text[start:text.index("\n}\n", start) + 3]
+
+    fixture = tmp_path / "stage-fixture.sh"
+    fixture.write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\n"
+        'MAMBA_ROOT="$1"\nLOCK_DIR="$MAMBA_ROOT/.bulkseq_setup.lock"\n'
+        'mkdir -p "$LOCK_DIR"\n'
+        'SPEC_STAGE_DIR="$(mktemp -d "$MAMBA_ROOT/.bulkseq-spec.XXXXXXXX")"\n'
+        + function("release_lock") + function("stage_spec")
+        + 'staged="$(stage_spec "$2")"\ncmp "$2" "$staged"\n'
+        + 'printf "changed" >> "$2"\n'
+        + 'if stage_spec "$2" >/dev/null 2>&1; then exit 41; fi\n'
+        + 'owned="$SPEC_STAGE_DIR"\nrelease_lock\n'
+        + '[ ! -e "$owned" ] && [ ! -e "$LOCK_DIR" ] || exit 42\n'
+        + 'SPEC_STAGE_DIR="$3"\nmkdir "$LOCK_DIR"\nrelease_lock\n'
+        + '[ -f "$3/sentinel" ] || exit 43\n',
+        encoding="utf-8", newline="\n",
+    )
+    root = tmp_path / "mamba"
+    root.mkdir()
+    result = subprocess.run([*runtime, convert(fixture), convert(root), convert(source),
+                             convert(outside)], capture_output=True, text=True,
+                            timeout=30, check=False)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert (outside / "sentinel").read_text(encoding="utf-8") == "retain"
 
 
 @pytest.mark.parametrize("repair_succeeds", [False, True])

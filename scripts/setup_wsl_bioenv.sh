@@ -4,6 +4,10 @@ set -euo pipefail
 ENV_NAME="${1:-bulkseq}"
 PROFILE="${2:-core}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ "$ENV_NAME" == *"/"* || "$ENV_NAME" == "." || "$ENV_NAME" == ".." ]]; then
+  echo "Invalid environment name: $ENV_NAME" >&2
+  exit 2
+fi
 
 # ---------------------------------------------------------------------------
 # Host platform. The same script serves WSL2 on Windows and native Linux, and the
@@ -137,7 +141,15 @@ echo "Log file: $LOG_FILE"
 # ---------------------------------------------------------------------------
 mkdir -p "$MAMBA_ROOT"
 LOCK_DIR="$MAMBA_ROOT/.bulkseq_setup.lock"
-release_lock() { rm -rf "$LOCK_DIR" 2>/dev/null || true; }
+SPEC_STAGE_DIR=""
+release_lock() {
+  if [ -n "$SPEC_STAGE_DIR" ] && [ ! -L "$SPEC_STAGE_DIR" ]; then
+    case "$SPEC_STAGE_DIR" in
+      "$MAMBA_ROOT"/.bulkseq-spec.*) rm -rf -- "$SPEC_STAGE_DIR" 2>/dev/null || true ;;
+    esac
+  fi
+  rm -rf "$LOCK_DIR" 2>/dev/null || true
+}
 acquire_lock() {
   local waited=0 announced=0
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do
@@ -166,6 +178,21 @@ acquire_lock() {
   trap release_lock EXIT
 }
 acquire_lock
+if [ "$PROFILE" = "full" ]; then
+  SPEC_STAGE_DIR="$(mktemp -d "$MAMBA_ROOT/.bulkseq-spec.XXXXXXXX")"
+fi
+
+stage_spec() {
+  local source="$1" staged="$SPEC_STAGE_DIR/$(basename "$1")"
+  if [ ! -e "$staged" ]; then
+    cp -- "$source" "$staged" || return
+  fi
+  if ! cmp -s -- "$source" "$staged"; then
+    echo "Writable environment spec differs from packaged source: $source" >&2
+    return 1
+  fi
+  printf '%s\n' "$staged"
+}
 
 mkdir -p "$HOME/.local/bin"
 
@@ -321,13 +348,16 @@ remove_env() {
 
 # Create the env from $1 if absent, otherwise update it in place. Returns micromamba's exit code.
 create_or_update() {
-  local env_file="$1"
+  local env_file="$1" install_file="$1"
+  if [ -n "$SPEC_STAGE_DIR" ]; then
+    install_file="$(stage_spec "$env_file")" || return
+  fi
   if env_exists; then
     echo "Updating environment '$ENV_NAME' from $(basename "$env_file")"
-    "$MICROMAMBA" env update --yes -n "$ENV_NAME" -f "$env_file"
+    "$MICROMAMBA" env update --yes -n "$ENV_NAME" -f "$install_file"
   else
     echo "Creating environment '$ENV_NAME' from $(basename "$env_file")"
-    "$MICROMAMBA" create --yes -n "$ENV_NAME" -f "$env_file"
+    "$MICROMAMBA" create --yes -n "$ENV_NAME" -f "$install_file"
   fi
 }
 
@@ -368,6 +398,9 @@ r_stack_loads() {
 
 # Stage 2a: install/repair from the lock (or core.yaml). Fall back to the floating spec only
 # for what the lock cannot satisfy (a GC'd build or a non-linux-64 host).
+ENV_PREFIX="$MAMBA_ROOT/envs/$ENV_NAME"
+# An interrupted update or failed verification must not leave an old lock-success marker.
+rm -f -- "$ENV_PREFIX/.bulkseq_spec" "$ENV_PREFIX/.bulkseq_lock_inventory"
 if [ "$REBUILD" = "1" ] && env_exists; then
   remove_env
 fi
@@ -399,7 +432,11 @@ repair_installed_spec_once() {
   echo "Verification found a damaged or unloadable component."
   echo "Repairing '$ENV_NAME' once from $(basename "$INSTALLED_ENV_FILE") without removing it."
   echo "Cached conda packages are reused, but package post-link steps may download data again."
-  "$MICROMAMBA" install --yes --force-reinstall -n "$ENV_NAME" -f "$INSTALLED_ENV_FILE"
+  local repair_file="$INSTALLED_ENV_FILE"
+  if [ -n "$SPEC_STAGE_DIR" ]; then
+    repair_file="$(stage_spec "$INSTALLED_ENV_FILE")" || return
+  fi
+  "$MICROMAMBA" install --yes --force-reinstall -n "$ENV_NAME" -f "$repair_file"
 }
 
 echo ""
@@ -492,6 +529,7 @@ probe_tool() {
 
 verify_environment() {
   verification_failed=0
+  LOCK_INVENTORY_RESULT=""
   local tool python_path python_versions
   for tool in "${PROBE_TOOLS[@]}"; do
     probe_tool "$tool"
@@ -518,6 +556,23 @@ verify_environment() {
       verification_failed=1
     fi
   fi
+  if [ "$PROFILE" = "full" ] && [ "$INSTALLED_ENV_FILE" = "$FIXED_LOCK_ENV_FILE" ]; then
+    printf '  %-22s' "Lock inventory"
+    local inventory_out="" inventory_marker="" inventory_rc=0
+    inventory_out="$("$ENV_PREFIX/bin/python" -I \
+        "$REPO_DIR/workflow/scripts/verify_locked_environment.py" \
+        "$INSTALLED_ENV_FILE" "$ENV_PREFIX" 2>&1)" || inventory_rc=$?
+    inventory_marker="${inventory_out%%$'\n'*}"
+    if [ "$inventory_rc" -eq 0 ] &&
+        [[ "$inventory_marker" =~ ^LOCK_INVENTORY_PASS:[0-9]+:[0-9]+:[0-9]+$ ]]; then
+      LOCK_INVENTORY_RESULT="$inventory_out"
+      echo "$inventory_out"
+    else
+      echo "mismatch"
+      [ -n "$inventory_out" ] && printf '    %s\n' "$inventory_out"
+      verification_failed=1
+    fi
+  fi
   [ "$verification_failed" -eq 0 ]
 }
 
@@ -537,11 +592,21 @@ if ! verify_environment; then
   fi
 fi
 
+# Keep the verification scope and any retained extras beside the canonical-source marker.
+if [ "$PROFILE" = "full" ] && [ "$INSTALLED_ENV_FILE" = "$FIXED_LOCK_ENV_FILE" ]; then
+  if [ -z "$LOCK_INVENTORY_RESULT" ]; then
+    echo "ERROR: exact-lock inventory has no success record." >&2
+    exit 1
+  fi
+  printf 'source=%s\nscope=declared-conda-and-pip-pins\n%s\n' \
+    "$(basename "$FIXED_LOCK_ENV_FILE")" "$LOCK_INVENTORY_RESULT" \
+    > "$ENV_PREFIX/.bulkseq_lock_inventory"
+fi
+
 # Record which profile this environment was installed with. app/core/readiness.py reads the
 # marker so a correct core-only environment is not reported broken for the full-only tools
 # (Rscript, ribodetector_cpu) it was never meant to contain. Written only after verification
 # passed, so the marker never claims a profile that did not install.
-ENV_PREFIX="$MAMBA_ROOT/envs/$ENV_NAME"
 if [ -d "$ENV_PREFIX" ]; then
   printf '%s\n' "$PROFILE" > "$ENV_PREFIX/.bulkseq_profile"
   echo "Recorded environment profile '$PROFILE' in $ENV_PREFIX/.bulkseq_profile"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -34,11 +35,11 @@ def test_python_distribution_includes_the_application_and_shared_workflow_helper
 
 
 def test_release_version_declarations_are_synchronised() -> None:
+    from app.constants import APP_VERSION, WORKFLOW_VERSION
+
     repo = Path(__file__).resolve().parents[1]
-    expected = "0.33.0"
-    constants = (repo / "app" / "constants.py").read_text(encoding="utf-8")
-    assert f'APP_VERSION = "{expected}"' in constants
-    assert f'WORKFLOW_VERSION = "{expected}"' in constants
+    expected = APP_VERSION
+    assert WORKFLOW_VERSION == expected
     with (repo / "pyproject.toml").open("rb") as handle:
         assert tomllib.load(handle)["project"]["version"] == expected
     installer = (repo / "packaging" / "installer.iss").read_text(encoding="utf-8")
@@ -168,8 +169,64 @@ def test_windows_package_build_is_gated_by_the_frozen_webengine_probe() -> None:
     assert "-not $selftestResult.pass" in script
     assert "-not $selftestResult.webengine" in script
     assert "$selftestResult.nodes -ne 3" in script
-    assert "if WizardSilent then" in installer
-    assert "choice := IDYES" in installer
+    assert "$selftestResult.version -ne $vendorVersion" in script
+    assert "UsePreviousAppDir=yes" in installer
+    assert "DelTree(instLoc" not in installer
+    assert "Exec(uninst" not in installer
+
+
+def test_windows_build_uses_new_staging_and_keeps_existing_artifacts() -> None:
+    repo = Path(__file__).resolve().parents[1]
+    script = (repo / "scripts" / "build_release.ps1").read_text(encoding="utf-8")
+    installer = (repo / "packaging" / "installer.iss").read_text(encoding="utf-8")
+    workflow = (repo / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
+    assert "Stage already exists" in script
+    assert "Package already exists" in script
+    assert "--distpath $distPath --workpath $workPath" in script
+    assert "$env:PATH = $buildPath" in script
+    assert "$env:PATH = $priorPath" in script
+    assert "Push-Location $stage" in script
+    assert '"/DBuildSource=$onedir"' in script and '"/DPackageDir=$packageOut"' in script
+    assert "Remove-Item $d -Recurse" not in script
+    assert "Remove-Item $rootExe" not in script
+    assert "Copy-Item (Join-Path $onedir" not in script
+    assert "OutputDir={#PackageDir}" in installer
+    assert 'Source: "{#BuildSource}\\*"' in installer
+    assert "#error BuildSource must name the verified frozen onedir" in installer
+    assert "#error PackageDir must name a new package output directory" in installer
+    assert ".\\scripts\\build_release.ps1 -PackageDir installer_output" in workflow
+    assert "if ($p.ExitCode -ne 0)" in workflow
+    assert "update-preservation-probe.txt" in workflow
+
+
+def test_bundle_inventory_matches_app_script_references_and_rejects_extra(tmp_path: Path) -> None:
+    repo = Path(__file__).resolve().parents[1]
+    source = (repo / "app" / "core" / "setup_installer.py").read_text(encoding="utf-8")
+    referenced = set(re.findall(r'"([^"/\\]+\.(?:ps1|bat|sh))"', source))
+    assert referenced
+    spec = (repo / "packaging" / "BulkSeqStudio.spec").read_text(encoding="utf-8")
+    assert '"scripts", "examples"' not in spec
+    assert 'datas.append((license_file, "."))' in spec
+    for name in referenced:
+        assert f'"{name}"' in spec
+    scripts = tmp_path / "_internal" / "scripts"
+    scripts.mkdir(parents=True)
+    for name in referenced:
+        (scripts / name).write_text("synthetic", encoding="utf-8")
+    bundled_license = tmp_path / "_internal" / "LICENSE"
+    bundled_license.write_bytes((repo / "LICENSE").read_bytes())
+    command = [sys.executable, str(repo / "packaging" / "verify_bundle.py"), str(tmp_path)]
+    assert subprocess.run(command, capture_output=True).returncode == 0
+    bundled_license.unlink()
+    missing_license = subprocess.run(command, capture_output=True, text=True)
+    assert missing_license.returncode != 0 and "LICENSE" in missing_license.stderr
+    bundled_license.write_bytes(b"altered fixture")
+    altered_license = subprocess.run(command, capture_output=True, text=True)
+    assert altered_license.returncode != 0 and "LICENSE" in altered_license.stderr
+    bundled_license.write_bytes((repo / "LICENSE").read_bytes())
+    (scripts / "capture_gui_matrix.py").write_text("synthetic", encoding="utf-8")
+    failed = subprocess.run(command, capture_output=True, text=True)
+    assert failed.returncode != 0 and "capture_gui_matrix.py" in failed.stderr
 
 
 def test_linux_package_build_requires_all_three_verified_artifacts() -> None:
@@ -201,6 +258,8 @@ def test_linux_package_build_requires_all_three_verified_artifacts() -> None:
     assert "$hash = Get-Sha256Hex $f" in release
     assert "$actual = Get-Sha256Hex $f" in release
     assert "$recorded.Count -ne $packageAssets.Count" in release
+    assert "$assets = @($packageAssets)" in release
+    assert "--clobber" not in release
 
 
 def test_installer_refuses_to_run_while_the_application_holds_its_mutex() -> None:
@@ -213,9 +272,9 @@ def test_installer_refuses_to_run_while_the_application_holds_its_mutex() -> Non
     installer = (repo / "packaging" / "installer.iss").read_text(encoding="utf-8")
     assert f"AppMutex={APP_MUTEX_NAME}" in installer
     assert "CloseApplications=force" in installer
-    # Pre-mutex builds are guarded by the window title before InitializeSetup removes anything.
+    # Pre-mutex builds are guarded by the window title before Setup writes anything.
     assert "FindWindowByWindowName('{#MyAppName}')" in installer
-    assert installer.index("FindWindowByWindowName") < installer.index("instLoc := InstalledLocation()")
+    assert "DelTree(" not in installer
     if not sys.platform.startswith("win"):
         return
     import ctypes
@@ -231,15 +290,16 @@ def test_installer_refuses_to_run_while_the_application_holds_its_mutex() -> Non
     kernel32.CloseHandle(handle)
 
 
-def test_update_removes_the_old_folder_with_retries_and_offers_it_again() -> None:
-    import re
-
+def test_installer_requires_the_qt_supported_windows_floor() -> None:
     installer = (Path(__file__).resolve().parents[1] / "packaging" / "installer.iss").read_text(encoding="utf-8")
-    # One DelTree pass left a briefly locked folder behind; the removal must sit in a bounded retry loop.
-    loop = re.search(r"while DirExists\(instLoc\) and \(waited <= (\d+)\) do\s+begin\s+DelTree\(instLoc", installer)
-    assert loop is not None and 5000 <= int(loop.group(1)) <= 60000
-    # The uninstaller erases the recorded location, so the update must offer the remembered folder.
-    assert "PreviousInstallDir := RemoveBackslashUnlessRoot(instLoc);" in installer
-    assert installer.index("PreviousInstallDir := RemoveBackslashUnlessRoot(instLoc)") > installer.index("instLoc := InstalledLocation()")
-    assert re.search(r"procedure InitializeWizard\(\);\s+begin\s+if PreviousInstallDir <> '' then\s+"
-                     r"WizardForm\.DirEdit\.Text := PreviousInstallDir;", installer)
+    assert "MinVersion=10.0.17763" in installer
+    assert "ArchitecturesAllowed=x64compatible" in installer
+
+
+def test_update_preserves_existing_install_until_inno_updates_in_place() -> None:
+    installer = (Path(__file__).resolve().parents[1] / "packaging" / "installer.iss").read_text(encoding="utf-8")
+    assert "UsePreviousAppDir=yes" in installer
+    assert "AppMutex=BulkSeqStudioRunning" in installer
+    assert "FindWindowByWindowName('{#MyAppName}')" in installer
+    assert "DelTree(" not in installer
+    assert "Exec(uninst" not in installer

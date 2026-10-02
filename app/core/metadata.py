@@ -8,6 +8,7 @@ import pandas as pd
 
 from app.constants import REQUIRED_METADATA_COLUMNS, SAFE_ID_PATTERN
 from workflow.scripts.validate_metadata import condition_messages
+from workflow.scripts.meta_readiness import assess_meta_readiness
 
 
 def dataframe_from_rows(rows: list[dict[str, str]]) -> pd.DataFrame:
@@ -110,7 +111,10 @@ def read_user_table(path: Path, **kwargs: object) -> pd.DataFrame:
 
 def validate_metadata(df: pd.DataFrame, allow_pending_sra: bool = False,
                       design_variables: list[str] | None = None,
-                      contrast: tuple[str, str] | None = None) -> list[dict[str, str]]:
+                      contrast: tuple[str, str] | None = None,
+                      contrast_factor: str = "condition", meta_enabled: bool = False,
+                      input_type: str = "fastq", design_formula: str = "~ condition",
+                      meta_contrast_labels: tuple[str, str] | None = None) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = []
     missing = [col for col in REQUIRED_METADATA_COLUMNS if col not in df.columns]
     if missing:
@@ -157,36 +161,45 @@ def validate_metadata(df: pd.DataFrame, allow_pending_sra: bool = False,
             messages.append({"status": "FAIL", "message": f"Row {idx + 1}: FASTQ R2 does not exist: {r2}"})
 
     # One implementation with the workflow's check 01, so both report the same tiers.
-    messages.extend(condition_messages(df))
+    messages.extend(condition_messages(df, contrast_factor))
 
     if design_variables:
         missing_design = [col for col in design_variables if col not in df.columns]
         if missing_design:
             messages.append({"status": "FAIL", "message": f"Design variables missing from metadata: {', '.join(missing_design)}"})
 
-    messages.extend(detect_batch_condition_confounding(df))
-    messages.extend(detect_dataset_confounding(df, contrast))
+    messages.extend(detect_batch_condition_confounding(df, contrast_factor))
+    messages.extend(detect_dataset_confounding(df, contrast, contrast_factor))
     messages.extend(detect_multistudy_organism_mismatch(df))
     messages.extend(detect_unsafe_dataset_names(df))
-    messages.extend(detect_multistudy_admissibility(df, contrast))
+    if meta_enabled:
+        raw_labels = meta_contrast_labels if meta_contrast_labels is not None else contrast
+        assessment = assess_meta_readiness(df, enabled=True, input_type=input_type,
+                                           contrast_factor=contrast_factor,
+                                           numerator=raw_labels[0] if raw_labels else "",
+                                           denominator=raw_labels[1] if raw_labels else "",
+                                           design_formula=design_formula)
+        messages.extend(assessment["messages"] if not assessment["runnable"] else [])
+    else:
+        messages.extend(detect_multistudy_admissibility(df, contrast, factor=contrast_factor))
     if not messages:
         messages.append({"status": "PASS", "message": "Metadata passed validation."})
     return messages
 
 
-def detect_batch_condition_confounding(df: pd.DataFrame) -> list[dict[str, str]]:
-    if "batch" not in df.columns or "condition" not in df.columns:
+def detect_batch_condition_confounding(df: pd.DataFrame, factor: str = "condition") -> list[dict[str, str]]:
+    if "batch" not in df.columns or factor not in df.columns:
         return []
     batches: dict[str, set[str]] = defaultdict(set)
     conditions: dict[str, set[str]] = defaultdict(set)
     for _, row in df.iterrows():
         batch = str(row.get("batch", ""))
-        condition = str(row.get("condition", ""))
+        condition = str(row.get(factor, ""))
         if batch and batch != "unknown" and condition and condition != "unknown":
             batches[batch].add(condition)
             conditions[condition].add(batch)
     if batches and all(len(v) == 1 for v in batches.values()) and all(len(v) == 1 for v in conditions.values()):
-        return [{"status": "REVIEW_REQUIRED", "message": "Batch and condition appear confounded; design matrix may not be full rank."}]
+        return [{"status": "REVIEW_REQUIRED", "message": f"Batch and {factor} appear confounded; design matrix may not be full rank."}]
     return []
 
 
@@ -194,11 +207,11 @@ def _dataset_levels(df: pd.DataFrame) -> pd.Series:
     return df["dataset"].astype(str).str.strip()
 
 
-def dataset_condition_crosstab(df: pd.DataFrame):
+def dataset_condition_crosstab(df: pd.DataFrame, factor: str = "condition"):
     """samples-per (study-of-origin × condition) table, or None when there is no dataset column."""
-    if "dataset" not in df.columns or "condition" not in df.columns:
+    if "dataset" not in df.columns or factor not in df.columns:
         return None
-    return pd.crosstab(_dataset_levels(df), df["condition"].astype(str).str.strip())
+    return pd.crosstab(_dataset_levels(df), df[factor].astype(str).str.strip())
 
 
 def detect_multistudy_organism_mismatch(df: pd.DataFrame) -> list[dict[str, str]]:
@@ -227,7 +240,8 @@ def detect_multistudy_organism_mismatch(df: pd.DataFrame) -> list[dict[str, str]
 
 
 def detect_dataset_confounding(df: pd.DataFrame,
-                               contrast: tuple[str, str] | None = None) -> list[dict[str, str]]:
+                               contrast: tuple[str, str] | None = None,
+                               factor: str = "condition") -> list[dict[str, str]]:
     """Hard gate for a multi-study merge: the contrast is estimable only if at least ONE dataset
     contains BOTH compared conditions.
 
@@ -238,12 +252,12 @@ def detect_dataset_confounding(df: pd.DataFrame,
     is NOT a generalization of the batch len==1 test, which has a false-negative for designs like
     D1={A}, D2={B}, D3={A}.
     """
-    if "dataset" not in df.columns or "condition" not in df.columns:
+    if "dataset" not in df.columns or factor not in df.columns:
         return []
     datasets = _dataset_levels(df)
     if datasets.replace("", pd.NA).nunique(dropna=True) <= 1:
         return []  # a single study cannot be cross-study-confounded
-    conds = df["condition"].astype(str).str.strip()
+    conds = df[factor].astype(str).str.strip()
     if contrast and contrast[0] and contrast[1]:
         num, den = str(contrast[0]).strip(), str(contrast[1]).strip()
         # A contrast whose arms are not (yet) present in the sample sheet cannot be assessed — e.g.
@@ -295,17 +309,18 @@ def detect_unsafe_dataset_names(df: pd.DataFrame) -> list[dict[str, str]]:
 
 def detect_multistudy_admissibility(df: pd.DataFrame,
                                     contrast: tuple[str, str] | None = None,
-                                    min_reps: int = 2) -> list[dict[str, str]]:
+                                    min_reps: int = 2,
+                                    factor: str = "condition") -> list[dict[str, str]]:
     """Fail-fast for a multi-study meta-analysis: it needs at least TWO studies that each contain
     BOTH contrast arms with >= min_reps replicates. Warns (not a hard block — the joint DESeq2 may
     still run) when fewer than two studies are admissible, so the user is not surprised by an empty
     meta-analysis after a full run."""
-    if "dataset" not in df.columns or "condition" not in df.columns:
+    if "dataset" not in df.columns or factor not in df.columns:
         return []
     datasets = _dataset_levels(df)
     if datasets.replace("", pd.NA).nunique(dropna=True) <= 1:
         return []
-    conds = df["condition"].astype(str).str.strip()
+    conds = df[factor].astype(str).str.strip()
     if contrast and contrast[0] and contrast[1]:
         num, den = str(contrast[0]).strip(), str(contrast[1]).strip()
         present = {c for c in conds if c and c != "unknown"}

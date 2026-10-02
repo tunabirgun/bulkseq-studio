@@ -158,8 +158,8 @@ def test_compact_stage_and_page_selectors_are_scoped_and_reach_every_page_in_two
     stage_label = navigator.findChild(QLabel, "taskNavigatorCompactStageLabel")
     page_label = navigator.findChild(QLabel, "taskNavigatorCompactLabel")
     assert stage_label is not None and page_label is not None
-    assert stage_label.text() == "Area"
-    assert page_label.text() == "View"
+    assert stage_label.text() == "Stage 1 of 4"
+    assert page_label.text() == "Page"
     assert stage_label.mapTo(navigator, stage_label.rect().topLeft()).x() >= 10
     assert stage_label.mapTo(navigator, stage_label.rect().topLeft()).y() >= 4
     assert stage_selector.geometry().left() - stage_label.geometry().right() <= 12
