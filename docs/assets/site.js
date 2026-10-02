@@ -10,6 +10,7 @@ document.querySelectorAll('dialog').forEach(dialog => {
 });
 document.querySelectorAll('[data-open-search]').forEach(button => button.addEventListener('click', () => { openDialog(searchDialog, button); $('#search-input').focus(); }));
 $('[data-open-menu]').addEventListener('click', event => openDialog(menuDialog, event.currentTarget));
+menuDialog.addEventListener('click', event => { if (event.target.closest('a[href]')) menuDialog.close(); });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') { const dialog = document.querySelector('dialog[open]'); if (dialog) { event.preventDefault(); dialog.close(); } return; }
   const editing = /INPUT|TEXTAREA|SELECT/.test(event.target.tagName) || event.target.isContentEditable;
@@ -36,7 +37,7 @@ function hideTerm() { tooltip.hidden = true; if (activeTerm) { activeTerm.remove
 function showTerm(term) {
   clearTimeout(hideTimer); activeTerm?.removeAttribute('aria-describedby'); activeTerm = term;
   const key = term.dataset.term, definition = window.manualGlossary?.[key] || Object.entries(window.manualGlossary || {}).find(([name]) => name.toLowerCase() === key.toLowerCase())?.[1];
-  if (!definition) return;
+  if (!definition) { hideTerm(); return; }
   tooltip.textContent = typeof definition === 'string' ? definition : definition.definition || definition.description || '';
   tooltip.hidden = false; term.setAttribute('aria-describedby', 'term-tooltip');
   const rect = term.getBoundingClientRect(), box = tooltip.getBoundingClientRect();
@@ -47,7 +48,6 @@ document.querySelectorAll('[data-term]').forEach(term => {
   term.addEventListener('mouseenter', () => showTerm(term)); term.addEventListener('focus', () => showTerm(term));
   term.addEventListener('mouseleave', () => { hideTimer = setTimeout(hideTerm,180); });
   term.addEventListener('blur', hideTerm);
-  term.addEventListener('click', event => { event.preventDefault(); if (activeTerm === term && !tooltip.hidden && term.dataset.open === 'yes') { hideTerm(); term.dataset.open = ''; } else { showTerm(term); term.dataset.open = 'yes'; } });
 });
 tooltip.addEventListener('mouseenter', () => clearTimeout(hideTimer)); tooltip.addEventListener('mouseleave', hideTerm);
 document.addEventListener('keydown', event => { if (event.key === 'Escape') hideTerm(); });
@@ -94,8 +94,11 @@ document.querySelectorAll('.threshold-example').forEach(container => {
 document.querySelectorAll('.walkthrough').forEach(container => {
   const routes = window.walkthroughRoutes || []; if (!routes.length) return;
   container.innerHTML = '<div class="route-picker"><label for="walkthrough-route">What are you starting with?</label><select id="walkthrough-route"></select><p class="route-summary"></p><p class="route-skipped"></p></div><div class="walkthrough-layout"><nav aria-label="Analysis steps"><p class="flow-hint">Scroll steps horizontally, or use Next step below →</p><ol class="flow-steps"></ol></nav><section class="step-detail" aria-labelledby="step-title" tabindex="-1"><p class="step-progress" role="status"></p><h2 id="step-title"></h2><div class="step-body"></div><div class="step-actions"><button data-step="previous">Previous step</button><button data-step="next">Next step</button></div></section></div>';
-  const select = container.querySelector('select'), list = container.querySelector('.flow-steps'); let route = routes[0], current = 0;
+  const select = container.querySelector('select'), list = container.querySelector('.flow-steps');
+  const requestedRoute = new URLSearchParams(location.search).get('route');
+  let route = routes.find(item => item.id === requestedRoute) || routes[0], current = 0;
   for (const item of routes) { const option = document.createElement('option'); option.value = item.id; option.textContent = item.label; select.append(option); }
+  select.value = route.id;
   function renderStep(focus = false) {
     const step = route.steps[current];
     container.querySelector('.step-progress').textContent = `Step ${current+1} of ${route.steps.length}`;

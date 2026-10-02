@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../docs/', import.meta.url));
 const port = Number(process.env.PORT || 4173);
 const prefix = `/${(process.env.BASE_PATH || '').replace(/^\/+|\/+$/g,'')}`.replace(/\/$/,'');
-const mime = {'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.webp':'image/webp'};
+const mime = {'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.webp':'image/webp','.woff2':'font/woff2','.txt':'text/plain; charset=utf-8'};
 createServer(async (req,res) => {
   try {
     let path = decodeURIComponent(new URL(req.url,'http://localhost').pathname);

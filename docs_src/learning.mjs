@@ -1,0 +1,13 @@
+import { readFileSync } from 'node:fs';
+import core from './learning-core.cjs';
+import { renderSignal } from './signal.mjs';
+
+const data = JSON.parse(readFileSync(new URL('./learning-examples.json', import.meta.url), 'utf8'));
+export function renderLearning() {
+  return `<section class="learning-explorer" data-learning-data="${core.esc(JSON.stringify(data))}" aria-label="Ordered analysis lessons">
+    <nav class="learning-nav js-only" aria-label="Learning sequence"><label for="lesson-picker">Explore a step<select id="lesson-picker" disabled>${core.lessons.map((lesson,i)=>`<option value="${lesson.id}">${i+1}. ${lesson.title}</option>`).join('')}</select></label><div class="lesson-pagination"><button type="button" data-lesson-previous disabled aria-label="Previous lesson">←</button><span data-lesson-progress role="status">1 / ${core.lessons.length}</span><button type="button" data-lesson-next disabled aria-label="Next lesson">→</button></div></nav>
+    ${core.lessons.map(lesson=>lesson.id==='volcano'?`<section class="lesson-panel" id="lesson-volcano" data-lesson="volcano" aria-label="Volcano plot">${renderSignal()}</section>`:core.renderPanel(lesson.id,data)).join('')}
+    <noscript><p>JavaScript is disabled. The default examples are shown in analysis order; controls require JavaScript.</p></noscript>
+    <details class="learning-methods"><summary>About these examples</summary><p>These examples use simulated counts and controlled synthetic examples, not a biological study. DESeq2, edgeR, limma-voom and apeglm results were computed in advance with the installed analysis packages. They are not fitted in your browser.</p><p>Heatmaps and PCA use the saved ${core.esc(data.transformation)} sample matrix; the transformation is recorded with the fitted example. Heatmaps use within-gene sample-standard-deviation z-scores, symmetric clipping before Euclidean/Ward clustering, and trees recalculated for each displayed state; PCA centres the selected genes without variance-scaling them. Results-only imports cannot recreate these sample-level figures.</p><p>Network scores and gene sets are synthetic teaching examples. The edge scores illustrate combined association confidence, not interaction strength or a probability of direct binding. A STRING association can reflect physical, functional or regulatory relationships, and network layout is not a biological distance. <a href="https://string-db.org/help/getting_started/">STRING interpretation</a> · <a href="https://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html">DESeq2 methods</a></p></details>
+  </section>`;
+}

@@ -20,37 +20,66 @@ const { readFileSync } = require('node:fs');
 const vm = require('node:vm');
 const mediaListeners = [], windowListeners = {};
 const media = { matches: process.argv[3] === 'dark', addEventListener: (_, fn) => mediaListeners.push(fn) };
-const name = { textContent: '' }, hint = { textContent: '' };
-const button = { title: '', querySelector: sel => (sel === '.theme-name' ? name : hint), addEventListener() {} };
+const makeButton = id => {
+  const name = { textContent: '' }, hint = { textContent: '' }, listeners = {};
+  return {
+    id, title: '', name, hint,
+    querySelector: sel => (sel === '.theme-name' ? name : hint),
+    addEventListener: (type, fn) => { (listeners[type] ||= []).push(fn); },
+    click: () => (listeners.click || []).forEach(fn => fn()),
+  };
+};
+const buttons = [makeButton('theme-trigger'), makeButton('theme-trigger-sidebar')];
 let ready = false;
-const document = { documentElement: { dataset: {} }, getElementById: id => (id === 'theme-trigger' && ready ? button : null) };
+const document = {
+  documentElement: { dataset: {} },
+  getElementById: id => (ready ? buttons.find(button => button.id === id) || null : null),
+  querySelectorAll: () => (ready ? buttons : []),
+};
+let saved = null;
 const window = { matchMedia: () => media, addEventListener: (type, fn) => { (windowListeners[type] ||= []).push(fn); } };
-vm.runInNewContext(readFileSync(process.argv[2], 'utf8'), { window, document, localStorage: { getItem: () => null, setItem() {} } });
+vm.runInNewContext(readFileSync(process.argv[2], 'utf8'), { window, document, localStorage: { getItem: () => null, setItem: (_, value) => { saved = value; } } });
 ready = true;
 (windowListeners.DOMContentLoaded || []).forEach(fn => fn());
-const start = { theme: document.documentElement.dataset.theme, label: name.textContent };
+const labels = () => buttons.map(button => button.name.textContent);
+const start = { theme: document.documentElement.dataset.theme, label: buttons[0].name.textContent, labels: labels() };
 media.matches = !media.matches;
 mediaListeners.forEach(fn => fn());
-console.log(JSON.stringify({ start, end: { theme: document.documentElement.dataset.theme, label: name.textContent, title: button.title } }));
+const end = { theme: document.documentElement.dataset.theme, label: buttons[0].name.textContent, labels: labels(), titles: buttons.map(button => button.title) };
+if (process.argv[4] === 'click') buttons[1].click();
+console.log(JSON.stringify({ start, end, afterClick: { theme: document.documentElement.dataset.theme, labels: labels(), saved } }));
 """
 
 
-def _follow_system_switch(tmp_path: Path, script: Path, starting: str) -> dict:
+def _follow_system_switch(tmp_path: Path, script: Path, starting: str, click: bool = False) -> dict:
     if shutil.which("node") is None:
         pytest.skip("node is not installed, so the theme script cannot be exercised here")
     harness = tmp_path / "harness.cjs"
     harness.write_text(HARNESS, encoding="utf-8")
-    out = subprocess.run(["node", str(harness), str(script), starting], capture_output=True, text=True, check=True)
+    args = ["node", str(harness), str(script), starting]
+    if click:
+        args.append("click")
+    out = subprocess.run(args, capture_output=True, text=True, check=True)
     return json.loads(out.stdout)
 
 
 @pytest.mark.parametrize(("starting", "ending"), [("dark", "light"), ("light", "dark")])
 def test_button_follows_an_operating_system_theme_switch(tmp_path, starting, ending) -> None:
     result = _follow_system_switch(tmp_path, THEME_JS, starting)
-    assert result["start"] == {"theme": starting, "label": f"{starting.title()} theme"}
+    assert result["start"] == {"theme": starting, "label": f"{starting.title()} theme", "labels": [f"{starting.title()} theme"] * 2}
     assert result["end"]["theme"] == ending
     assert result["end"]["label"] == f"{ending.title()} theme"
-    assert result["end"]["title"] == f"Switch to the {starting} theme"
+    assert result["end"]["labels"] == [f"{ending.title()} theme"] * 2
+    assert result["end"]["titles"] == [f"Switch to the {starting} theme"] * 2
+
+
+def test_sidebar_click_synchronizes_both_controls_and_persists_the_choice(tmp_path) -> None:
+    result = _follow_system_switch(tmp_path, THEME_JS, "light", click=True)
+    assert result["afterClick"] == {
+        "theme": "light",
+        "labels": ["Light theme", "Light theme"],
+        "saved": "light",
+    }
 
 
 def test_harness_catches_a_button_that_ignores_the_switch(tmp_path) -> None:

@@ -106,13 +106,34 @@ class _PageParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.ids: list[str] = []
         self.heading_levels: list[int] = []
+        self.header_versions: list[str] = []
+        self._masthead = False
+        self._version_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = {key: value or "" for key, value in attrs}
+        if tag == "header" and "masthead" in values.get("class", "").split():
+            self._masthead = True
+        if tag == "span":
+            if self._version_depth:
+                self._version_depth += 1
+            elif self._masthead and "brand-meta" in values.get("class", "").split():
+                self.header_versions.append("")
+                self._version_depth = 1
         if values.get("id"):
             self.ids.append(values["id"])
         if re.fullmatch(r"h[1-6]", tag):
             self.heading_levels.append(int(tag[1]))
+
+    def handle_data(self, data: str) -> None:
+        if self._version_depth:
+            self.header_versions[-1] += data
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "span" and self._version_depth:
+            self._version_depth -= 1
+        if tag == "header":
+            self._masthead = False
 
 
 def _page_sources(overrides: dict[str, str] | None = None) -> dict[str, str]:
@@ -142,7 +163,7 @@ def _page_errors(pages: dict[str, str]) -> list[str]:
         parser = _parser_for(source)
         if not source.lstrip().lower().startswith("<!doctype html>"):
             errors.append(f"{name}: missing HTML doctype")
-        if source.count(HEADER_LABEL) != 1:
+        if parser.header_versions != [HEADER_LABEL]:
             errors.append(f"{name}: header does not carry exactly one {HEADER_LABEL!r}")
         if "benchmarks.html" in source:
             errors.append(f"{name}: retired benchmark page remains linked")
@@ -347,6 +368,18 @@ def test_documentation_gate_passes_current_tree() -> None:
     assert _validation_errors() == []
 
 
+@pytest.mark.parametrize("defect", ["missing", "duplicate", "outside-header"])
+def test_version_gate_requires_one_label_inside_the_header(defect: str) -> None:
+    source = _read(DOCS_ROOT / "index.html")
+    label = f'<span class="brand-meta">{HEADER_LABEL}</span>'
+    assert source.count(label) == 1
+    replacement = label * 2 if defect == "duplicate" else ""
+    changed = source.replace(label, replacement, 1)
+    if defect == "outside-header":
+        changed = changed.replace("<article>", "<article>" + label, 1)
+    assert any("header does not carry" in error for error in _page_errors({"index.html": changed}))
+
+
 def _replace_once(source: str, old: str, new: str) -> str:
     assert source.count(old) >= 1, f"negative-control fixture drifted; missing {old!r}"
     return source.replace(old, new, 1)
@@ -357,7 +390,7 @@ def _replace_once(source: str, old: str, new: str) -> str:
     [
         ("index.html", HEADER_LABEL, HEADER_LABEL.replace(PUBLIC_VERSION, "0.0.1"), "header does not carry"),
         ("index.html", "<article>", '<article id="main">', "duplicate element ids"),
-        ("index.html", '<p class="lead">', '<p class="lead">\n', "one physical line"),
+        ("index.html", '<p class="hero-summary">', '<p class="hero-summary">\n', "one physical line"),
         ("index.html", 'href="faq.html"', 'href="benchmarks.html"', "retired benchmark page"),
         ("faq.html", '<h2 id="troubleshooting">', '<h3 id="troubleshooting">', "heading hierarchy skips"),
         ("faq.html", '>Common problems<a class="heading-link"', '>Benchmarks<a class="heading-link"', "retired benchmark section remains"),
