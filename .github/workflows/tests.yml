@@ -234,14 +234,77 @@ jobs:
           cache-environment: true
           init-shell: bash
 
+      # The earlier setup-r library must not shadow packages in the pinned Conda R.
+      - name: Verify Bioconductor R library origin
+        shell: bash -el {0}
+        env:
+          R_LIBS: ""
+          R_LIBS_USER: "NULL"
+          R_LIBS_SITE: "NULL"
+        run: |
+          probe="$(mktemp "$RUNNER_TEMP/r-origin.XXXXXXXX")"
+          cat > "$probe" <<'RS'
+          args <- commandArgs(trailingOnly = TRUE)
+          if (length(args) > 1L || (length(args) == 1L && args[[1]] != "--outside")) {
+            stop("invalid R-origin probe mode")
+          }
+          prefix <- Sys.getenv("CONDA_PREFIX")
+          if (!nzchar(prefix) || !dir.exists(prefix)) stop("selected Conda prefix is missing")
+          prefix <- normalizePath(prefix, mustWork = TRUE)
+          inside <- function(path) {
+            path <- normalizePath(path, mustWork = TRUE)
+            identical(path, prefix) || startsWith(path, paste0(prefix, "/"))
+          }
+          check_origin <- function() {
+            libraries <- .libPaths()
+            if (!length(libraries)) stop("R has no library search paths")
+            packages <- vapply(c("DESeq2", "ggplot2"), find.package, character(1))
+            if (!all(vapply(c(R.home(), libraries, packages), inside, logical(1)))) {
+              stop("R runtime or package resolved outside selected Conda prefix")
+            }
+            invisible(TRUE)
+          }
+          if (length(args)) {
+            outside <- Sys.getenv("RUNNER_TEMP")
+            if (!nzchar(outside) || !dir.exists(outside) || inside(outside)) {
+              stop("outside-library negative fixture is unavailable")
+            }
+            outside <- normalizePath(outside, mustWork = TRUE)
+            .libPaths(c(outside, .libPaths()))
+            if (!identical(.libPaths()[[1]], outside)) {
+              stop("outside-library injection did not take effect")
+            }
+            cat("outside-library injection active\n")
+          }
+          check_origin()
+          cat("Conda R library origin passed\n")
+          RS
+          negative_stdout="$(mktemp "$RUNNER_TEMP/r-origin-negative-stdout.XXXXXXXX")"
+          negative_stderr="$(mktemp "$RUNNER_TEMP/r-origin-negative-stderr.XXXXXXXX")"
+          set +e
+          Rscript --vanilla "$probe" --outside > "$negative_stdout" 2> "$negative_stderr"
+          negative_status=$?
+          set -e
+          if [ "$negative_status" -eq 0 ] ||
+             ! grep -Fxq 'outside-library injection active' "$negative_stdout" ||
+             ! grep -Fq 'R runtime or package resolved outside selected Conda prefix' "$negative_stderr"; then
+            echo 'R-origin negative process did not fail for the injected outside library' >&2
+            exit 1
+          fi
+          printf 'outside-library negative process exited %s as required\n' "$negative_status"
+          Rscript --vanilla "$probe"
+
       - name: Run the Bioconductor-dependent figure contracts
         shell: bash -el {0}
         env:
           BULKSEQ_REQUIRE_R: "1"
           BULKSEQ_REQUIRE_R_FULL: "1"
+          R_LIBS: ""
+          R_LIBS_USER: "NULL"
+          R_LIBS_SITE: "NULL"
         run: |
           set -o pipefail
-          python -m pytest -q -rs --tb=short tests/test_figure_rendering_contracts.py \
+          "${pythonLocation:?}/bin/python" -m pytest -q -rs --tb=short tests/test_figure_rendering_contracts.py \
             tests/test_de_contrasts.py \
             | tee "$RUNNER_TEMP/pytest-figure-contracts-bioconductor.txt"
 
@@ -249,9 +312,12 @@ jobs:
         shell: bash -el {0}
         env:
           BULKSEQ_REQUIRE_R_META: "1"
+          R_LIBS: ""
+          R_LIBS_USER: "NULL"
+          R_LIBS_SITE: "NULL"
         run: |
           set -o pipefail
-          python -m pytest -q -rs --tb=short tests/test_meta_methods_runtime.py \
+          "${pythonLocation:?}/bin/python" -m pytest -q -rs --tb=short tests/test_meta_methods_runtime.py \
             tests/test_meta_volcano_threshold.py \
             tests/test_shared_gate_repairs.py::test_raw_factor_whitespace_matches_production_r_subset \
             | tee "$RUNNER_TEMP/pytest-meta-methods-bioconductor.txt"
@@ -260,27 +326,36 @@ jobs:
         shell: bash -el {0}
         env:
           BULKSEQ_REQUIRE_GPROFILER: "1"
+          R_LIBS: ""
+          R_LIBS_USER: "NULL"
+          R_LIBS_SITE: "NULL"
         run: |
           set -o pipefail
-          python -m pytest -q -rs --tb=short tests/test_gprofiler_transport.py \
+          "${pythonLocation:?}/bin/python" -m pytest -q -rs --tb=short tests/test_gprofiler_transport.py \
             | tee "$RUNNER_TEMP/pytest-gprofiler-transport-bioconductor.txt"
 
       - name: Run required OrgDb Entrez mapping regression
         shell: bash -el {0}
         env:
           BULKSEQ_REQUIRE_ORGDB_MAPPING: "1"
+          R_LIBS: ""
+          R_LIBS_USER: "NULL"
+          R_LIBS_SITE: "NULL"
         run: |
           set -o pipefail
-          python -m pytest -q -rs --tb=short tests/test_orgdb_entrez_mapping.py \
+          "${pythonLocation:?}/bin/python" -m pytest -q -rs --tb=short tests/test_orgdb_entrez_mapping.py \
             | tee "$RUNNER_TEMP/pytest-orgdb-entrez-bioconductor.txt"
 
       - name: Run required custom ORA population regression
         shell: bash -el {0}
         env:
           BULKSEQ_REQUIRE_CUSTOM_ORA: "1"
+          R_LIBS: ""
+          R_LIBS_USER: "NULL"
+          R_LIBS_SITE: "NULL"
         run: |
           set -o pipefail
-          python -m pytest -q -rs --tb=short \
+          "${pythonLocation:?}/bin/python" -m pytest -q -rs --tb=short \
             tests/test_custom_enrichment.py::test_custom_ora_population_denominators_use_raw_model_evidence \
             | tee "$RUNNER_TEMP/pytest-custom-ora-population-bioconductor.txt"
 
