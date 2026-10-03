@@ -117,6 +117,9 @@ config.reference.organism_name = "Synthetic organism"
 config.reference.genome_fasta = "inputs/genome.fa"
 config.reference.annotation_file = "inputs/annotation.gtf"
 config.reference.annotation_format = "gtf"
+config.deseq2.design_formula = "~ 1"
+config.deseq2.reference_level = {}
+config.deseq2.contrasts = []
 config.resources.total_threads = 1
 config.resources.total_memory_gb = 8
 manager.save_config(salmon, config)
