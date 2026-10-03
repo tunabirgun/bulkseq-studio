@@ -209,8 +209,8 @@ for name in ("main", "meta", "custom_new", "ppi"):
         preview = (out / name / "vector-previews" /
                    vector.relative_to(projects / name / "results").with_suffix(".png"))
         preview.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["magick", "-density", "150", "-background", "white",
-                        str(saved_svg), str(preview)],
+        subprocess.run(["rsvg-convert", "--dpi-x=150", "--dpi-y=150",
+                        "--background-color=white", f"--output={preview}", str(saved_svg)],
                        check=True, timeout=60, stdout=subprocess.DEVNULL)
         with Image.open(preview) as image:
             image.load()
