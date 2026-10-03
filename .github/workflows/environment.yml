@@ -23,6 +23,12 @@ on:
   schedule:
     - cron: "0 6 * * 1"
   workflow_dispatch:
+    inputs:
+      full_smoke:
+        description: Run bounded synthetic backend functions and retain figures for review
+        type: boolean
+        required: true
+        default: false
 
 concurrency:
   group: environment-${{ github.ref }}
@@ -46,12 +52,129 @@ jobs:
   install-full:
     name: install full profile (live)
     runs-on: ubuntu-latest
+    env:
+      BULKSEQ_SMOKE_ROOT: ${{ runner.temp }}/backend-smoke
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
     steps:
       - uses: actions/checkout@v4
       - name: Run the installer (full profile)
         run: bash scripts/setup_wsl_bioenv.sh bulkseq full
       - name: Print the recorded spec marker
         run: cat "$HOME/micromamba/envs/bulkseq/.bulkseq_spec"
+      - name: Select the installed full environment for manual smoke
+        if: github.event_name == 'workflow_dispatch' && inputs.full_smoke
+        run: echo "$HOME/micromamba/envs/bulkseq/bin" >> "$GITHUB_PATH"
+      - name: Prepare fixed synthetic inputs and projects
+        if: github.event_name == 'workflow_dispatch' && inputs.full_smoke
+        run: |
+          test "$(command -v python)" = "$HOME/micromamba/envs/bulkseq/bin/python"
+          test "$(command -v Rscript)" = "$HOME/micromamba/envs/bulkseq/bin/Rscript"
+          python tests/backend_smoke/00_profile.py "$BULKSEQ_SMOKE_ROOT" prepare
+          python tests/backend_smoke/01_prepare.py
+          python tests/backend_smoke/06_legacy_reporting.py
+          python tests/backend_smoke/00_receipt.py prepare
+      - name: Salmon to tximport gene counts
+        if: github.event_name == 'workflow_dispatch' && inputs.full_smoke
+        run: |
+          python tests/backend_smoke/00_profile.py "$BULKSEQ_SMOKE_ROOT" salmon
+          timeout 1200s /usr/bin/time -v bash tests/backend_smoke/02_salmon.sh
+          python tests/backend_smoke/02_check_salmon.py
+          bash tests/backend_smoke/00_negative.sh 02_check_salmon.py --negative-count 'gene counts differ from independent lengthScaledTPM'
+          python tests/backend_smoke/00_receipt.py salmon
+      - name: Packaged RiboDetector classification
+        if: github.event_name == 'workflow_dispatch' && inputs.full_smoke
+        run: |
+          python tests/backend_smoke/00_profile.py "$BULKSEQ_SMOKE_ROOT" ribodetector
+          python tests/backend_smoke/03_packaged_model.py
+          timeout 600s /usr/bin/time -v bash tests/backend_smoke/03_ribodetector.sh
+          python tests/backend_smoke/03_check_ribodetector.py
+          bash tests/backend_smoke/00_negative.sh 03_check_ribodetector.py --negative-sequence 'RiboDetector changed read identities'
+          python tests/backend_smoke/00_receipt.py ribodetector
+      - name: Differential expression and main figures
+        if: github.event_name == 'workflow_dispatch' && inputs.full_smoke
+        run: |
+          python tests/backend_smoke/00_profile.py "$BULKSEQ_SMOKE_ROOT" main
+          timeout 1200s /usr/bin/time -v bash tests/backend_smoke/04_main.sh
+          python tests/backend_smoke/04_check_main.py
+          bash tests/backend_smoke/00_negative.sh 04_check_main.py --negative-bh 'Main DESeq2 BH family disagrees'
+          bash tests/backend_smoke/00_negative.sh 04_check_main.py --negative-effect 'Main model lost a planted effect direction'
+          python tests/backend_smoke/00_receipt.py main
+      - name: Two-study meta-analysis and full-family BH
+        if: github.event_name == 'workflow_dispatch' && inputs.full_smoke
+        run: |
+          python tests/backend_smoke/00_profile.py "$BULKSEQ_SMOKE_ROOT" meta
+          timeout 1200s /usr/bin/time -v bash tests/backend_smoke/05_meta.sh
+          python tests/backend_smoke/05_check_meta.py
+          bash tests/backend_smoke/00_negative.sh 05_check_meta.py --negative-fdr 'Pooled-effect BH family disagrees'
+          python tests/backend_smoke/00_receipt.py meta
+      - name: Custom enrichment with reviewed legacy reporting
+        if: github.event_name == 'workflow_dispatch' && inputs.full_smoke
+        run: |
+          python tests/backend_smoke/00_profile.py "$BULKSEQ_SMOKE_ROOT" custom_old
+          timeout 1200s /usr/bin/time -v bash tests/backend_smoke/06_custom_old.sh
+          python tests/backend_smoke/00_receipt.py custom_old
+      - name: Custom enrichment with current reporting
+        if: github.event_name == 'workflow_dispatch' && inputs.full_smoke
+        run: |
+          python tests/backend_smoke/00_profile.py "$BULKSEQ_SMOKE_ROOT" custom_new
+          timeout 1200s /usr/bin/time -v bash tests/backend_smoke/07_custom_new.sh
+          python tests/backend_smoke/07_check_custom.py
+          bash tests/backend_smoke/00_negative.sh 07_check_custom.py --negative-padj 'Custom-enrichment scientific output changed'
+          python tests/backend_smoke/00_receipt.py custom_new
+      - name: Gene-set variation scores
+        if: github.event_name == 'workflow_dispatch' && inputs.full_smoke
+        run: |
+          python tests/backend_smoke/00_profile.py "$BULKSEQ_SMOKE_ROOT" gsva
+          timeout 1200s /usr/bin/time -v bash tests/backend_smoke/08_gsva.sh
+          python tests/backend_smoke/08_check_gsva.py
+          bash tests/backend_smoke/00_negative.sh 08_check_gsva.py --negative-nan 'GSVA scores are incomplete or non-finite'
+          python tests/backend_smoke/00_receipt.py gsva
+      - name: Final custom enrichment report
+        if: github.event_name == 'workflow_dispatch' && inputs.full_smoke
+        run: |
+          python tests/backend_smoke/00_profile.py "$BULKSEQ_SMOKE_ROOT" custom_report
+          timeout 1200s /usr/bin/time -v bash tests/backend_smoke/09_custom_report.sh
+          python tests/backend_smoke/09_check_custom_report.py
+          bash tests/backend_smoke/00_negative.sh 09_check_custom_report.py --negative-population 'Final custom ORA report omitted'
+          python tests/backend_smoke/00_receipt.py custom_report
+      - name: Fetch bounded official yeast STRING cache
+        if: github.event_name == 'workflow_dispatch' && inputs.full_smoke
+        run: |
+          python tests/backend_smoke/00_profile.py "$BULKSEQ_SMOKE_ROOT" string
+          bash tests/backend_smoke/00_negative.sh 10_string_cache.py --negative-cap 'STRING advertised transfer exceeds cap'
+          bash tests/backend_smoke/00_negative.sh 10_string_cache.py --negative-redirect 'Redirect refused'
+          timeout 300s python tests/backend_smoke/10_string_cache.py
+          python tests/backend_smoke/00_receipt.py string
+      - name: Sparse public-seed STRING graph
+        if: github.event_name == 'workflow_dispatch' && inputs.full_smoke
+        run: |
+          python tests/backend_smoke/00_profile.py "$BULKSEQ_SMOKE_ROOT" ppi
+          timeout 660s /usr/bin/time -v bash tests/backend_smoke/11_sparse_ppi.sh
+          python tests/backend_smoke/11_check_ppi.py
+          bash tests/backend_smoke/00_negative.sh 11_check_ppi.py --negative-score 'Sparse STRING edge identity or score is invalid'
+          bash tests/backend_smoke/00_negative.sh 11_check_ppi.py --negative-edge 'Sparse STRING edges disagree with official cached links'
+          python tests/backend_smoke/00_receipt.py ppi
+      - name: Retain bounded synthetic outputs for independent review
+        if: github.event_name == 'workflow_dispatch' && inputs.full_smoke
+        run: |
+          python tests/backend_smoke/12_artifact.py --test-derivative
+          python tests/backend_smoke/12_artifact.py --test-dpi-roundtrip
+          bash tests/backend_smoke/00_negative.sh 12_artifact.py --negative-path 'Artifact path is not relative and portable'
+          bash tests/backend_smoke/00_negative.sh 12_artifact.py --negative-pixel 'PNG pixel content changed'
+          bash tests/backend_smoke/00_negative.sh 12_artifact.py --negative-identifier 'Optional identifier or machine path remains'
+          bash tests/backend_smoke/00_negative.sh 12_artifact.py --negative-link 'Retained HTML link escapes'
+          bash tests/backend_smoke/00_negative.sh 12_artifact.py --negative-missing-link 'Retained HTML link lacks its source target'
+          bash tests/backend_smoke/00_negative.sh 12_artifact.py --negative-receipt 'Missing successful phase receipt'
+          python tests/backend_smoke/12_artifact.py
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && inputs.full_smoke
+        with:
+          name: backend-synthetic-smoke
+          path: ${{ runner.temp }}/backend-smoke/artifact/
+          if-no-files-found: error
+          retention-days: 7
 
   # This Linux-hosted dry solve tracks osx-arm64 package availability only. The shipped
   # installer currently refuses macOS; solver success does not verify a Mac backend,
