@@ -9,5 +9,5 @@ test ! -e "$project/results/networks/string_ppi_edges.csv"
 cd "$project"
 ulimit -v 2097152
 timeout --signal=TERM --kill-after=10s 600s snakemake \
-    --snakefile workflow/Snakefile --cores 1 --allowed-rules network_string \
+    --snakefile workflow/Snakefile --cores 1 \
     results/networks/string_ppi_edges.csv --resources mem_mb=2048
