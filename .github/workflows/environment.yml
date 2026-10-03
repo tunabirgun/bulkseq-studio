@@ -53,7 +53,6 @@ jobs:
     name: install full profile (live)
     runs-on: ubuntu-latest
     env:
-      BULKSEQ_SMOKE_ROOT: ${{ runner.temp }}/backend-smoke
       OPENBLAS_NUM_THREADS: "1"
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
@@ -65,7 +64,9 @@ jobs:
         run: cat "$HOME/micromamba/envs/bulkseq/.bulkseq_spec"
       - name: Select the installed full environment for manual smoke
         if: github.event_name == 'workflow_dispatch' && inputs.full_smoke
-        run: echo "$HOME/micromamba/envs/bulkseq/bin" >> "$GITHUB_PATH"
+        run: |
+          echo "$HOME/micromamba/envs/bulkseq/bin" >> "$GITHUB_PATH"
+          echo "BULKSEQ_SMOKE_ROOT=$RUNNER_TEMP/backend-smoke" >> "$GITHUB_ENV"
       - name: Prepare fixed synthetic inputs and projects
         if: github.event_name == 'workflow_dispatch' && inputs.full_smoke
         run: |
