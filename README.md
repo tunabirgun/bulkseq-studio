@@ -4,7 +4,7 @@
 
 BulkSeq Studio is a desktop application for Windows and Linux that manages bulk RNA-seq and microarray analyses. Its PySide6 interface runs a recorded Snakemake workflow from raw reads or processed inputs through differential expression, optional enrichment and networks, figures, checks and reports.
 
-> **Release status — 3 October 2026.** This documentation describes version 0.34.0. It corrects the Benjamini–Hochberg family for pooled-effect meta-analysis adjusted p-values; affected older meta results require recomputation. Synthetic and independent numerical checks support the correction, but the nine bundled biological datasets have not been rerun under 0.34.0. The counts below are the measured 0.33.0 baseline. Check the [official release record](https://github.com/tunabirgun/bulkseq-studio/releases) for available packages before installing.
+> **Release status — 3 October 2026.** This documentation describes version 0.34.0. It corrects the Benjamini–Hochberg family for pooled-effect meta-analysis adjusted p-values; affected older meta results require recomputation. Synthetic and independent numerical checks support the correction, but the nine bundled biological datasets have not been rerun under 0.34.0. Check the [official release record](https://github.com/tunabirgun/bulkseq-studio/releases) for available packages before installing.
 
 [Read the handbook](https://tunabirgun.github.io/bulkseq-studio/) · [Download from official releases](https://github.com/tunabirgun/bulkseq-studio/releases/latest) · [Changelog](CHANGELOG.md) · [Report an issue](https://github.com/tunabirgun/bulkseq-studio/issues)
 
@@ -68,24 +68,6 @@ An adjusted p-value is not the probability that one gene is false; the BH statem
 ## Update a project
 
 Close the application before installing a newer package. Preserve the original project and its `config/`, `checks/`, `logs/` and results before rerunning it. A newer bundled workflow is copied into an existing project when its version or verified content changes; a locally edited project workflow is protected rather than overwritten. The run summary records the application and workflow that actually executed. Revalidate the saved inputs and compare the [upgrade guide](https://tunabirgun.github.io/bulkseq-studio/upgrade.html) and [version notices](https://tunabirgun.github.io/bulkseq-studio/faq.html#version-notices) with your route. For pre-0.34.0 meta-analysis output, recompute before relying on pooled-effect adjusted values. Historical results do not acquire a new method merely because the application was upgraded.
-
-## Historical bundled-dataset baseline
-
-**Create Benchmark Project** offers nine public datasets. All nine were run from the installed **0.33.0 Windows package**; each completed without a FAIL. Seven carried-over datasets reproduced their 0.32.1 count and DE tables, or microarray limma table, byte for byte. These are historical measured results, not a 0.34.0 biological validation. Significant genes below are counted at adjusted p-value < 0.05 without a fold-change filter.
-
-| Dataset | Route | Genes tested | Significant | 0.33.0 record |
-| --- | --- | ---: | ---: | --- |
-| Pasilla paired-end subset (*D. melanogaster*) | Reads, STAR, featureCounts, DESeq2 | 7,532 | 467 | Byte-identical to 0.32.1 and 0.31.0 |
-| Yeast rpd3Δ Ume6Δ2-508 subset (*S. cerevisiae*) | Reads, STAR, featureCounts, DESeq2 | 5,967 | 97 | Byte-identical to 0.32.1 |
-| Rice CY1000 salt-stress subset (*O. sativa* Japonica) | Reads, STAR, featureCounts, DESeq2 | 23,935 | 12,171 | Byte-identical to 0.32.1 |
-| Arabidopsis hub2-3 vs Col-0, ATH1 microarray | GEO series matrix, limma | 21,323 | 1,401 | Byte-identical to 0.32.1 |
-| Yeast cbc2Δ vs wild type, YG-S98 microarray | GEO series matrix, limma | 5,683 | 486 | Byte-identical to 0.32.1 |
-| *F. graminearum* PH-1 spores vs mycelium | Reads, STAR, featureCounts, DESeq2 | 9,028 | 5,734 | Byte-identical to 0.32.1; 9 KEGG ORA and 31 GSEA pathways in 0.33.0 |
-| *F. graminearum* Z-3639 heat shock | Reads, STAR, featureCounts, DESeq2 | 8,280 | 5,836 | Byte-identical to 0.32.1; 0 KEGG ORA and 11 GSEA pathways in 0.33.0 |
-| *M. oryzae* ΔMocreA vs wild type (GSE153084) | Reads, STAR, featureCounts, DESeq2 | 9,777 | 4,778 | First recorded in 0.33.0 |
-| Sorghum sulfur deficiency vs control (GSE184725) | Single-end reads, STAR, featureCounts, DESeq2 | 20,591 | 302 | First recorded in 0.33.0 |
-
-Every historical run ended with `WARNING` or `REVIEW_REQUIRED` advisory findings rather than an overall `PASS`. The [tutorial](https://tunabirgun.github.io/bulkseq-studio/tutorial.html#other-datasets) gives their route-specific context.
 
 ## Citation and license
 
