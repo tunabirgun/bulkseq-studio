@@ -87,15 +87,20 @@ def test_learning_gate_rejects_corruption(examples, defect):
         validate_examples(model, data)
 
 
-def test_page_embeds_the_verified_fixture(examples):
+def test_home_embeds_only_the_verified_volcano(examples):
     class FixtureParser(HTMLParser):
-        fixture = None
+        points = []
 
         def handle_starttag(self, tag, attrs):
-            value = dict(attrs).get("data-learning-data")
-            if value:
-                self.fixture = json.loads(value)
+            values = dict(attrs)
+            if "data-parameter-point" in values:
+                self.points.append((values["data-id"], float(values["data-log2fc"]), float(values["data-padj"])))
 
     parser = FixtureParser()
-    parser.feed((ROOT / "docs/index.html").read_text(encoding="utf-8"))
-    assert parser.fixture == examples[1]
+    source = (ROOT / "docs/index.html").read_text(encoding="utf-8")
+    parser.feed(source)
+    expected = [(r["id"], r["log2fc"], r["padj"]) for r in examples[0]["models"]["deseq2"] if r["padj"] is not None and r["padj"] > 0 and r["log2fc"] is not None]
+    assert parser.points == expected
+    assert "data-learning-data" not in source
+    assert "lesson-picker" not in source
+    assert 'src="assets/learning.js"' not in source

@@ -45,7 +45,7 @@
     const comparisonInput = root.querySelector('#comparison-view');
     const reset = root.querySelector('#parameter-reset');
     const pointElements = [...root.querySelectorAll('[data-parameter-point]')];
-    if (!svg || !alphaInput || !cutoffInput || !comparisonInput || !pointElements.length) return;
+    if (!svg || !alphaInput || !cutoffInput || !pointElements.length) return;
 
     const domainX = Number(svg.dataset.domainX);
     const domainY = Number(svg.dataset.domainY);
@@ -89,7 +89,7 @@
       scroller.classList.toggle('is-compact', compact);
       sizeToggle.textContent = enlarged ? 'Fit figure' : 'Enlarge figure';
       get('[data-volcano-size-note]').textContent = enlarged ? 'Swipe horizontally to explore. Tap a point to inspect values.' : 'Full figure shown. Tap a point to inspect values.';
-      xAxisLabel.textContent = `${compact?'log2FC':'LOG2 FOLD CHANGE'} (${state.comparison === 'b-a' ? 'B vs A' : 'A vs B'})`;
+      xAxisLabel.textContent = `${compact?'log2FC':'Log2 fold change'} (${state.comparison === 'b-a' ? 'B vs A' : 'A vs B'})`;
       xAxisLabel.setAttribute('y',compact?'490':'450');
       get('[data-y-axis-label]').style.display=compact?'none':'';
       svg.setAttribute('viewBox',`0 0 720 ${compact?520:480}`);
@@ -108,8 +108,8 @@
       const moving = Boolean(mirrorFrame || guideFrame);
       svg.setAttribute('aria-busy', String(moving));
       status.textContent = moving
-        ? 'Transitioning to the selected setting. Counts and controls show the destination; point inspection resumes when movement ends.'
-        : `${summary.filter(row => row.belowP).length} examples are below the adjusted p-value cutoff; ${summary.filter(row => row.selected).length} pass both screens, with ${summary.filter(row => row.higher).length} higher and ${summary.filter(row => row.lower).length} lower in ${state.comparison === 'b-a' ? 'B versus A' : 'A versus B'}. Tap a point or focus the figure and use arrow keys to inspect values.`;
+        ? 'Updating selection…'
+        : 'Select a point for gene details, or use the arrow keys on the plot.';
       if(moving)hideTooltip();
     }
 
@@ -273,7 +273,7 @@
       announceState();
     }
 
-    [alphaInput, cutoffInput, comparisonInput, reset].forEach(control => { control.disabled = false; });
+    [alphaInput, cutoffInput, reset].forEach(control => { control.disabled = false; });
     sizeToggle.disabled=false;
     sizeToggle.addEventListener('click', () => {sizeToggle.setAttribute('aria-pressed',String(sizeToggle.getAttribute('aria-pressed')!=='true'));sizeFigure();});
     phone.addEventListener('change',sizeFigure);
@@ -285,7 +285,7 @@
       state.cutoff = Number(cutoffInput.value);
       update({ animateGuides: true });
     });
-    comparisonInput.addEventListener('change', () => {
+    comparisonInput?.addEventListener('change', () => {
       state.comparison = comparisonInput.value;
       update({ mirror: true });
     });
@@ -294,7 +294,7 @@
       state = { ...DEFAULTS };
       alphaInput.value = String(DEFAULTS.alpha);
       cutoffInput.value = String(DEFAULTS.cutoff);
-      comparisonInput.value = DEFAULTS.comparison;
+      if (comparisonInput) comparisonInput.value = DEFAULTS.comparison;
       update({ mirror });
     });
     svg.addEventListener('pointermove', event => {

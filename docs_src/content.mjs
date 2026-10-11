@@ -1,5 +1,7 @@
 import { documentedVersion } from './site-config.mjs';
 import { renderHome } from './home.mjs';
+import { applySections } from './sections.mjs';
+import { sciencePage } from './science.mjs';
 // Callout kinds, by what happens to a reader who ignores the sentence:
 // warning - a silently invalid result, lost data or a false belief, with nothing to stop it;
 // caution - a recoverable problem the reader or the software will notice;
@@ -209,6 +211,16 @@ pages.push({slug:'codes',title:'Exit codes and statuses',group:'Reference',summa
 ['Could not reach the ENA Portal API for …','There is no connection to ENA.','Check the network or proxy, then retry.']])}`});
 
 // The hub: four labelled entry points, one for each kind of documentation.
+Object.assign(glossary, {
+  'Meta-analysis': 'An analysis combining information from multiple studies. BulkSeq fits eligible count-based studies separately and reports combined-p evidence and pooled effects.',
+  'Heterogeneity': 'Variation in underlying effects between studies. Missing heterogeneity statistics are not estimates of zero variation.',
+  'FDR': 'False discovery rate: the expected false-discovery proportion in a defined called set under the method assumptions. It is not a single gene’s error probability.',
+  'Concordance': 'Matching, nonzero effect directions across the included studies. This does not require every study to be individually significant.',
+  'Pooled effect': 'An effect estimate combining study-level estimates with model-based weights. Inspect the study estimates and uncertainty alongside it.'
+});
+applySections(pages);
+pages.push(sciencePage);
+pages.splice(pages.findIndex(page=>page.slug==='glossary'),1);
 const hubPage = pages.find(page => page.slug === 'index');
 hubPage.title = 'BulkSeq Studio — Bulk expression analysis';
 hubPage.summary = 'Reproducible bulk RNA-seq and microarray analysis, from raw reads or processed inputs to a reviewable result.';
@@ -217,11 +229,15 @@ hubPage.body = renderHome({ version: documentedVersion, routes: walkthroughRoute
 // Diátaxis layout. Order here is the order of the rails, the site map and the previous/next links.
 const layout = [
   ['index', 'Home', ''],
+  ['inputs', 'Explore', ''],
+  ['science', 'Explore', ''],
+  ['outputs', 'Explore', ''],
+  ['export', 'Explore', ''],
+  ['understanding', 'Explore', ''],
   ['tutorial', 'Tutorial', ''],
   ['guide', 'How-to guides', 'Set up'],
   ['upgrade', 'How-to guides', 'Set up'],
   ['walkthrough', 'How-to guides', 'Set up'],
-  ['inputs', 'How-to guides', 'Project and data'],
   ['project', 'How-to guides', 'Project and data'],
   ['microarray', 'How-to guides', 'Project and data'],
   ['imported-results', 'How-to guides', 'Project and data'],
@@ -233,11 +249,9 @@ const layout = [
   ['run', 'How-to guides', 'Run and automate'],
   ['cli', 'How-to guides', 'Run and automate'],
   ['checks', 'Reference', 'Checks'],
-  ['outputs', 'Reference', 'Outputs'],
   ['enrichment', 'Reference', 'Outputs'],
   ['codes', 'Reference', 'Look-ups'],
   ['faq', 'Reference', 'Look-ups'],
-  ['glossary', 'Reference', 'Look-ups'],
   ['safeguards', 'Explanation', ''],
   ['engines', 'Explanation', ''],
   ['interpreting', 'Explanation', ''],

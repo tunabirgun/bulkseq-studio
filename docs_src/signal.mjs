@@ -75,11 +75,10 @@ export function renderSignal() {
     return `<circle class="${classes.join(' ')}" data-parameter-point data-id="${row.id}" data-log2fc="${row.log2fc}" data-padj="${row.padj}" cx="${xAt(row.log2fc, domain).toFixed(2)}" cy="${yAt(row.padj, domain).toFixed(2)}" r="${state.selected ? 3.2 : 2}" fill="${fill}"/>`;
   }).join('');
   return `<section class="parameter-lab" data-parameter-lab aria-labelledby="parameter-title">
-    <header class="parameter-header"><p class="eyebrow">Precomputed synthetic DESeq2 run</p><h2 id="parameter-title">Volcano plot</h2></header>
+    <header class="parameter-header"><h2 id="parameter-title">Volcano plot</h2><p>Explore how log2 fold change and adjusted p-value cutoffs affect selection.</p></header>
     <div class="parameter-controls" aria-label="Selection controls">
       <label class="parameter-control" for="p-cutoff"><span>Adjusted p-value cutoff</span><output data-alpha-output>0.05</output><input id="p-cutoff" type="range" min="0.001" max="0.1" step="0.001" value="0.05" disabled></label>
       <label class="parameter-control" for="fc-cutoff"><span>Minimum |log2 fold change|</span><output data-fc-output>1.00</output><input id="fc-cutoff" type="range" min="0" max="3" step="0.25" value="1" disabled></label>
-      <label class="parameter-control" for="comparison-view"><span>Comparison view</span><select id="comparison-view" disabled><option value="b-a">B vs A</option><option value="a-b">A vs B</option></select></label>
       <button type="button" id="parameter-reset" disabled>Reset</button>
     </div>
     <div class="figure-view-controls"><button type="button" data-volcano-size aria-pressed="false" aria-controls="volcano-figure" disabled>Enlarge figure</button><p data-volcano-size-note>Full figure shown. Tap a point to inspect values.</p></div>
@@ -96,11 +95,11 @@ export function renderSignal() {
         <g class="parameter-axis-labels" aria-hidden="true"><text x="${(PLOT.left + PLOT.right) / 2}" y="450" text-anchor="middle" data-x-axis-label>LOG2 FOLD CHANGE (B VS A)</text><text data-y-axis-label transform="translate(38 ${(PLOT.top + PLOT.bottom) / 2}) rotate(-90)" text-anchor="middle">−log₁₀(adjusted p)</text></g>
       </svg>
       </div>
-      <p class="parameter-note">Cutoffs change selection; the model is not rerun.</p>
+      <p class="parameter-note">Simulated data. Cutoffs change selection, not the fitted results.</p>
     </div>
-    <dl class="parameter-stats" aria-live="polite"><div><dt>Below adjusted p cutoff</dt><dd data-below-count>${summary.below}</dd><small data-below-rule>padj &lt; 0.05</small></div><div><dt>Passing both</dt><dd data-selected-count>${summary.selected}</dd><small data-fc-rule>|log2FC| ≥ 1.00</small></div><div><dt>Higher / lower</dt><dd><span data-higher-count>${summary.higher}</span> / <span data-lower-count>${summary.lower}</span></dd><small>in the displayed direction</small></div></dl>
+    <div class="parameter-result" aria-live="polite"><p><strong data-selected-count>${summary.selected}</strong> of ${rows.length} genes selected</p><p><span data-higher-count>${summary.higher}</span> higher / <span data-lower-count>${summary.lower}</span> lower</p></div><div class="sr-only"><span data-below-count>${summary.below}</span><span data-below-rule>padj &lt; 0.05</span><span data-fc-rule>|log2FC| ≥ 1.00</span></div>
     <div class="parameter-legend"><span><i class="parameter-swatch parameter-swatch--higher"></i>Higher after both screens</span><span><i class="parameter-swatch parameter-swatch--lower"></i>Lower after both screens</span><span><i class="parameter-swatch"></i>Not selected</span></div>
     <p class="sr-only" id="parameter-keyboard-help">Focus the plot, then use arrow keys to inspect synthetic examples one at a time. Home and End jump to the first and last examples.</p><p class="lesson-readout" data-parameter-status role="status" aria-live="polite">Focus the figure and use arrow keys, or tap a point, to inspect values.</p>
-    <details class="parameter-details"><summary>What this explains</summary><p>Adjusted p-values account for multiple testing; they are not per-feature false probabilities.</p><p>Changing <a href="design.html#thresholds">DESeq2’s alpha setting</a> can reoptimize independent filtering during a run. This fixed example does not reproduce that process. Its fold-change slider is a post hoc screen, not a DESeq2 hypothesis test using <code>lfcThreshold</code>.</p><p>The comparison switch mirrors only this synthetic example. BulkSeq Studio preserves the <a href="imported-results.html#direction">comparison direction recorded in imported results</a>.</p></details>
+    <details class="parameter-details"><summary>How to read this plot</summary><p>Adjusted p-values account for multiple testing; they are not per-feature false probabilities.</p><p>Changing <a href="design.html#thresholds">DESeq2’s alpha setting</a> can reoptimize independent filtering during a run. This fixed example does not reproduce that process. Its fold-change slider is a post hoc screen, not a DESeq2 hypothesis test using <code>lfcThreshold</code>.</p><p>The horizontal axis shows log2 fold change (B vs A); the vertical axis shows −log10 of the adjusted p-value. Gene positions stay fixed when you change the cutoffs.</p></details>
   </section>`;
 }

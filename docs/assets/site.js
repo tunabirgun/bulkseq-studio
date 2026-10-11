@@ -32,6 +32,23 @@ $('#search-input').addEventListener('input', event => {
     li.append(link, summary); list.append(li);
   }
 });
+const termAliases = {'Count matrix':['count matrices','count-matrix','counts matrix'],'Adjusted p-value':['adjusted p-values','adjusted p value','adjusted p'],'log2 fold change':['log2FC'],'Covariate':['covariates'],'Gene identifier':['gene identifiers'],'Biological replicate':['biological replicates'],'Concordance':['concordant'],'Pooled effect':['pooled effects','pooled-effect']};
+const termNames = new Map();
+Object.keys(window.manualGlossary || {}).forEach(key=>[key,...(termAliases[key] || [])].forEach(name=>termNames.set(name.toLowerCase(),key)));
+const termPattern = new RegExp('\\b('+[...termNames.keys()].sort((a,b)=>b.length-a.length).map(name=>name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|')+')\\b','gi');
+const termSeen = new Set();
+const termWalker = document.createTreeWalker($('#main'),NodeFilter.SHOW_TEXT,{acceptNode:node=>node.parentElement.closest('a,button,label,select,option,code,pre,svg,script,style,nav,summary,math')?NodeFilter.FILTER_REJECT:NodeFilter.FILTER_ACCEPT});
+const termNodes=[];while(termWalker.nextNode())termNodes.push(termWalker.currentNode);
+termNodes.forEach(node=>{
+  const fragment=document.createDocumentFragment();let end=0,changed=false;
+  for(const match of node.textContent.matchAll(termPattern)){
+    const key=termNames.get(match[0].toLowerCase());if(termSeen.has(key))continue;
+    fragment.append(node.textContent.slice(end,match.index));
+    const term=document.createElement('button');term.type='button';term.className='inline-term';term.dataset.term=key;term.textContent=match[0];term.setAttribute('aria-label',match[0]+': definition');fragment.append(term);
+    end=match.index+match[0].length;termSeen.add(key);changed=true;
+  }
+  if(changed){fragment.append(node.textContent.slice(end));node.replaceWith(fragment)}
+});
 const tooltip = $('#term-tooltip'); let activeTerm, hideTimer;
 function hideTerm() { tooltip.hidden = true; if (activeTerm) { activeTerm.removeAttribute('aria-describedby'); activeTerm.dataset.open = ''; } activeTerm = null; }
 function showTerm(term) {
@@ -48,6 +65,7 @@ document.querySelectorAll('[data-term]').forEach(term => {
   term.addEventListener('mouseenter', () => showTerm(term)); term.addEventListener('focus', () => showTerm(term));
   term.addEventListener('mouseleave', () => { hideTimer = setTimeout(hideTerm,180); });
   term.addEventListener('blur', hideTerm);
+  term.addEventListener('click', () => { if(activeTerm===term && term.dataset.open==='yes'){hideTerm()}else{showTerm(term);term.dataset.open='yes'} });
 });
 tooltip.addEventListener('mouseenter', () => clearTimeout(hideTimer)); tooltip.addEventListener('mouseleave', hideTerm);
 document.addEventListener('keydown', event => { if (event.key === 'Escape') hideTerm(); });

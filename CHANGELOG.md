@@ -1,5 +1,9 @@
 # Changelog
 
+## Website presentation — 2026-10-11
+
+- Simplify the website to one interactive volcano example and five capability pages: Input, Science, Output, Export and Understanding. Add release-pinned tool versions, practical parameter guidance and detailed meta-analysis interpretation. Use inline first-occurrence definitions, unframed navigation, monochrome light and dark appearances and a single author/research-use footer; replace the icon toggle with text-only Light / Dark choices that follow the device until selected, and remove the standalone glossary.
+
 ## 0.34.0 — 2026-10-03
 
 > **Scientific output changes.** The pooled-effect `rem_padj` values now use Benjamini–Hochberg adjustment across every estimable pooled test, including opposite-sign and neutral genes. Recompute meta-analysis results produced before 0.34.0 before interpreting `rem_padj`. The matching-sign combined-p FDR calls, `meta_sig`, raw pooled estimates and enrichment selection retain their prior definitions. Synthetic regressions establish these corrected contracts, with independent numerical checks; the nine bundled biological datasets have not been rerun under 0.34.0. Their published counts remain the measured 0.33.0 baseline.
