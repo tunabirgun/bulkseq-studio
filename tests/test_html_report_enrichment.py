@@ -414,7 +414,7 @@ def test_real_browser_compact_geometry_focus_and_zoom(mhr, tmp_path) -> None:
             js("""(() => {
                 const trigger = document.querySelectorAll('.figbtn')[1];
                 bsqZoom(trigger);
-                document.getElementById('bsq-lb-img').click();
+                document.getElementById('bsq-lb-actual').click();
                 return true;
             })()""")
             QTest.qWait(60)
@@ -426,9 +426,13 @@ def test_real_browser_compact_geometry_focus_and_zoom(mhr, tmp_path) -> None:
                 const ir = image.getBoundingClientRect();
                 const maxX = stage.scrollWidth - stage.clientWidth;
                 const maxY = stage.scrollHeight - stage.clientHeight;
+                const imageWidth = image.style.width;
+                image.click();
                 return {
                     open: dialog.open,
                     zoomed: image.classList.contains('zoomed'),
+                    imagePassive: image.style.width === imageWidth,
+                    imageTabIndex: image.tabIndex,
                     startAligned: getComputedStyle(stage).display === 'block',
                     leftReachable: ir.left >= dr.left - 1,
                     topReachable: ir.top >= dr.top - 1,
@@ -464,7 +468,25 @@ def test_real_browser_compact_geometry_focus_and_zoom(mhr, tmp_path) -> None:
                     bottomReachable: ir.bottom <= dr.top + stage.clientHeight + 1,
                 };
             })()""")
-            js("(() => { bsqClose(); return true; })()")
+            js("(() => { document.getElementById('bsq-lb-fit').click(); return true; })()")
+            QTest.qWait(60)
+            fitted = js("""(() => {
+                const dialog = document.getElementById('bsq-lb');
+                const image = document.getElementById('bsq-lb-img');
+                const stage = dialog.querySelector('.lb-stage');
+                const rect = image.getBoundingClientRect();
+                return {
+                    zoomCleared: !image.classList.contains('zoomed'),
+                    widthFits: rect.width <= stage.clientWidth + 1,
+                    heightFits: rect.height <= stage.clientHeight + 1,
+                    scrollCleared: stage.scrollLeft === 0 && stage.scrollTop === 0,
+                };
+            })()""")
+            js("""(() => {
+                document.getElementById('bsq-lb-actual').click();
+                bsqClose();
+                return true;
+            })()""")
             QTest.qWait(60)
             closed = js("""(() => {
                 const dialog = document.getElementById('bsq-lb');
@@ -480,7 +502,7 @@ def test_real_browser_compact_geometry_focus_and_zoom(mhr, tmp_path) -> None:
                 };
             })()""")
             geometry.append({"width": width, "layout": layout, "start": start,
-                             "end": end, "closed": closed})
+                             "end": end, "fitted": fitted, "closed": closed})
 
         view.resize(360, 900)
         QTest.qWait(60)
@@ -538,11 +560,13 @@ def test_real_browser_compact_geometry_focus_and_zoom(mhr, tmp_path) -> None:
         assert item["layout"]["heroFits"]
         assert item["layout"]["sanityWrapperFits"] and item["layout"]["sanityWrapped"]
         assert item["start"]["open"] and item["start"]["zoomed"]
+        assert item["start"]["imagePassive"] and item["start"]["imageTabIndex"] < 0
         assert item["start"]["startAligned"]
         assert item["start"]["leftReachable"] and item["start"]["topReachable"], json.dumps(item)
         assert item["start"]["scrollLeft"] == 0 and item["start"]["scrollTop"] == 0
         assert item["start"]["maxX"] > 0 and item["start"]["maxY"] > 0
         assert all(item["end"].values())
+        assert all(item["fitted"].values())
         assert item["closed"] == {
             "closed": True,
             "restoredIndex": 1,
