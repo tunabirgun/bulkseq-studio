@@ -193,11 +193,9 @@ numeric_covariate_checks <- function(coldata, covariates) {
   out
 }
 
-# An interaction or nesting operator in the design formula. all.vars() strips these, so a
-# group-means engine would silently refit the term as additive; DESeq2 fits the formula as
-# typed but then reports a coefficient that is not the interaction.
+# Inspect expanded terms so arithmetic in transformations is not an interaction.
 has_interaction <- function(design_formula) {
-  isTRUE(grepl("[:*^/]", design_formula))
+  any(attr(stats::terms(parse_design_formula(design_formula)), "order") > 1L)
 }
 
 # Moderated coefficient standard error behind limma's t statistic. topTable does not expose

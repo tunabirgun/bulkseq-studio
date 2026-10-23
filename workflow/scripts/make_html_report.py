@@ -1679,8 +1679,8 @@ figure.panel figcaption{padding:12px 14px}
 .lb-toolbar output{min-width:4ch;text-align:center}
 .lb-close{margin-left:auto}
 .lb-stage{overflow:auto;min-width:0;min-height:0;padding:0;background:var(--bg);overscroll-behavior:contain;touch-action:pan-x pan-y}
-.lb img{display:block;margin:auto;max-width:none;max-height:none;background:#fff;cursor:zoom-in}
-.lb img.zoomed{margin:0;cursor:zoom-out}
+.lb img{display:block;margin:auto;max-width:none;max-height:none;background:#fff}
+.lb img.zoomed{margin:0}
 .lb-caption{margin:0;padding:10px 18px;max-height:20dvh;overflow:auto;border-top:1px solid var(--border);font-size:16px;line-height:1.4}
 #term-tooltip{position:fixed;z-index:100;max-width:calc(100vw - 24px);width:330px;max-height:calc(100dvh - 24px);overflow:auto;padding:14px 16px;background:#fff;color:#000;border:1px solid var(--border);box-shadow:var(--sh2);font:16px/1.5 var(--serif)}
 #term-tooltip[hidden]{display:none}
@@ -2479,7 +2479,7 @@ FIGURE_DIALOG_HTML = """<dialog id="bsq-lb" class="lb" aria-label="Figure viewer
 <button id="bsq-lb-fit" type="button">Fit</button><button id="bsq-lb-actual" type="button">Actual size</button>
 <button id="bsq-lb-out" type="button" aria-label="Zoom out">−</button><output id="bsq-lb-percent" aria-live="polite">100%</output>
 <button id="bsq-lb-in" type="button" aria-label="Zoom in">+</button></div></div>
-<div class="lb-stage" tabindex="0" aria-label="Scrollable figure"><img id="bsq-lb-img" alt="" tabindex="0"></div>
+<div class="lb-stage" role="region" tabindex="0" aria-label="Scrollable figure"><img id="bsq-lb-img" alt=""></div>
 <p id="bsq-lb-caption" class="lb-caption"></p></dialog>"""
 
 FIGURE_DIALOG_SCRIPT = """var bsqScale=1,bsqFit=true;
@@ -2489,7 +2489,7 @@ function bsqResetZoom(){var lb=document.getElementById('bsq-lb'),li=document.get
 function bsqFinishClose(){var lb=document.getElementById('bsq-lb');if(lb.open)return;var li=document.getElementById('bsq-lb-img');var trigger=window._bsqTrig;window._bsqTrig=null;bsqResetZoom();li.removeAttribute('src');if(trigger&&trigger.isConnected)trigger.focus();}
 function bsqZoom(btn){var img=btn.querySelector('img'),lb=document.getElementById('bsq-lb'),li=document.getElementById('bsq-lb-img');if(!img||typeof lb.showModal!=='function')return;bsqResetZoom();window._bsqTrig=btn;li.alt=img.alt||'Figure';document.getElementById('bsq-lb-title').textContent=li.alt;var caption=btn.closest('figure').querySelector('figcaption');var parts=caption?Array.prototype.map.call(caption.querySelectorAll('.cap-lead,.cap-tech,.howto p'),function(n){return (n.textContent||'').trim();}).filter(Boolean):[];if(caption&&!parts.length)parts=[caption.textContent.trim()];parts.push('Use the scroll area to pan when enlarged.');document.getElementById('bsq-lb-caption').textContent=parts.join(' ');li.onload=function(){if(bsqFit)bsqFitImage();else bsqSetScale(bsqScale);};li.src=img.src;lb.showModal();if(li.complete)bsqFitImage();document.getElementById('bsq-lb-close').focus();}
 function bsqClose(){var lb=document.getElementById('bsq-lb');if(lb.open)lb.close();bsqFinishClose();}
-(function(){var lb=document.getElementById('bsq-lb'),li=document.getElementById('bsq-lb-img');document.getElementById('bsq-lb-close').addEventListener('click',bsqClose);document.getElementById('bsq-lb-fit').addEventListener('click',bsqFitImage);document.getElementById('bsq-lb-actual').addEventListener('click',function(){bsqFit=false;bsqSetScale(1);});document.getElementById('bsq-lb-out').addEventListener('click',function(){bsqFit=false;bsqSetScale(bsqScale/1.25);});document.getElementById('bsq-lb-in').addEventListener('click',function(){bsqFit=false;bsqSetScale(bsqScale*1.25);});li.addEventListener('click',function(){if(bsqFit){bsqFit=false;bsqSetScale(1);}else bsqFitImage();});li.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();li.click();}});lb.addEventListener('close',bsqFinishClose);lb.addEventListener('keydown',function(e){if(e.key!=='Tab')return;var items=Array.from(lb.querySelectorAll('button,[tabindex="0"]'));var first=items[0],last=items[items.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}});window.addEventListener('resize',function(){if(lb.open&&bsqFit)bsqFitImage();});})();"""
+(function(){var lb=document.getElementById('bsq-lb');document.getElementById('bsq-lb-close').addEventListener('click',bsqClose);document.getElementById('bsq-lb-fit').addEventListener('click',bsqFitImage);document.getElementById('bsq-lb-actual').addEventListener('click',function(){bsqFit=false;bsqSetScale(1);});document.getElementById('bsq-lb-out').addEventListener('click',function(){bsqFit=false;bsqSetScale(bsqScale/1.25);});document.getElementById('bsq-lb-in').addEventListener('click',function(){bsqFit=false;bsqSetScale(bsqScale*1.25);});lb.addEventListener('close',bsqFinishClose);lb.addEventListener('keydown',function(e){if(e.key!=='Tab')return;var items=Array.from(lb.querySelectorAll('button,[tabindex="0"]'));var first=items[0],last=items[items.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}});window.addEventListener('resize',function(){if(lb.open&&bsqFit)bsqFitImage();});})();"""
 
 
 def figure_dialog() -> str:

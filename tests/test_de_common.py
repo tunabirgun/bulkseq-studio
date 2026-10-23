@@ -21,6 +21,16 @@ from _runtime import bash_runtime
 
 ROOT = Path(__file__).resolve().parents[1]
 DE_COMMON = ROOT / "workflow" / "scripts" / "de_common.R"
+_INTERACTION_CASES = [
+    ("~ condition", False), ("~ genotype*treatment", True),
+    ("~ batch + condition", False), ("~ genotype:treatment", True),
+    ("~ condition + (1/batch)", False),
+    ("~ condition + I(age^2)", False), ("~ condition + log(age/2)", False),
+    ("~ condition + I(age*2)", False), ("~ condition + `batch/type`", False),
+    ("~ condition + donor %in% batch", True), ("~ condition + batch/donor", True),
+    ("~ (condition + batch)^2", True), ("~ condition^2", False),
+    ("~ condition*batch - condition:batch", False),
+]
 
 # Exit code the shell runner uses when it cannot resolve an R interpreter at all, kept
 # clear of Rscript's own status codes so "no R here" is never read as "the script failed".
@@ -59,10 +69,25 @@ write_check(file.path(out, "check_plain.json"), "09_deseq2_qc", "PASS",
             list(list(status = "PASS", message = plain)))
 writeBin(charToRaw(plain), file.path(out, "plain_raw.bin"))
 
-formulas <- c("~ condition", "~ genotype*treatment", "~ batch + condition",
-              "~ genotype:treatment", "~ condition + (1/batch)")
+formulas <- readLines(file.path(out, "formulas.txt"))
 writeLines(paste(formulas, vapply(formulas, has_interaction, logical(1)), sep = "\t"),
            file.path(out, "interaction.tsv"))
+warning_block <- Filter(function(expr) is.call(expr) &&
+  identical(expr[[1]], as.name("if")) &&
+  identical(expr[[2]], quote(has_interaction(design_formula))),
+  as.list(parse(file = args[[3]])))
+stopifnot(length(warning_block) == 1L)
+con_factor <- "condition"
+numerator <- "treated"
+denominator <- "control"
+coef_name <- "condition_treated_vs_control"
+for (i in seq_along(formulas)) {
+  design_formula <- formulas[[i]]
+  design_checks <- list()
+  eval(warning_block[[1]])
+  write_check(file.path(out, paste0("interaction_warning_", i, ".json")), "08_metadata_design_qc",
+              if (length(design_checks)) "REVIEW_REQUIRED" else "PASS", design_checks)
+}
 
 gtf <- file.path(out, "synthetic.gtf")
 writeLines(c(
@@ -169,12 +194,16 @@ def harness(tmp_path_factory) -> dict[str, Path]:
     work = tmp_path_factory.mktemp("de_common")
     out = work / "out"
     out.mkdir()
+    (out / "formulas.txt").write_text(
+        "\n".join(formula for formula, _ in _INTERACTION_CASES) + "\n", encoding="utf-8"
+    )
     script = work / "harness.R"
     script.write_text(_HARNESS, encoding="utf-8", newline="\n")
     runner = work / "run_r.sh"
     runner.write_text(_RUNNER, encoding="utf-8", newline="\n")
 
-    cmd = [*bash, as_path(runner), as_path(script), as_path(DE_COMMON), as_path(out)]
+    cmd = [*bash, as_path(runner), as_path(script), as_path(DE_COMMON), as_path(out),
+           as_path(ROOT / "workflow" / "scripts" / "run_deseq2.R")]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode == _NO_R:
@@ -208,8 +237,7 @@ def test_write_check_leaves_an_ordinary_message_byte_identical(harness) -> None:
 
 @pytest.mark.parametrize(
     ("formula", "expected"),
-    [("~ condition", False), ("~ genotype*treatment", True), ("~ batch + condition", False),
-     ("~ genotype:treatment", True), ("~ condition + (1/batch)", True)],
+    _INTERACTION_CASES,
 )
 def test_interaction_detector(harness, formula: str, expected: bool) -> None:
     rows = dict(
@@ -217,6 +245,20 @@ def test_interaction_detector(harness, formula: str, expected: bool) -> None:
         (harness["out"] / "interaction.tsv").read_text(encoding="utf-8").splitlines()
     )
     assert rows[formula] == ("TRUE" if expected else "FALSE")
+
+
+@pytest.mark.parametrize(("formula", "expected"), _INTERACTION_CASES)
+def test_deseq2_interaction_warning_route(harness, formula: str, expected: bool) -> None:
+    index = _INTERACTION_CASES.index((formula, expected)) + 1
+    payload = json.loads((harness["out"] / f"interaction_warning_{index}.json").read_text())
+    assert payload["status"] == ("REVIEW_REQUIRED" if expected else "PASS")
+    assert len(payload["messages"]) == int(expected)
+    if expected:
+        assert payload["messages"][0]["status"] == "REVIEW_REQUIRED"
+        message = payload["messages"][0]["message"]
+        assert "If the comparison factor participates" in message
+        assert "no interaction-coefficient or numeric-contrast selector" in message
+        assert "separately specified DESeq2 analysis" in message
 
 
 def test_annotate_from_gtf_reads_symbol_biotype_and_the_db_xref_geneid(harness) -> None:

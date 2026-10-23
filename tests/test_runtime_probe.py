@@ -62,16 +62,19 @@ def _callers(tmp_path: Path):
     modules = {
         name: importlib.import_module(name)
         for name in (
+            "test_additive_formula_contract",
             "test_custom_enrichment",
             "test_de_common",
             "test_de_contrasts",
             "test_enrichment_eligibility",
+            "test_enrichment_execution_status",
             "test_enrichment_mapping",
             "test_external_results_safety",
             "test_figure_rendering_contracts",
             "test_gprofiler_transport",
             "test_kegg_identity_catalogue",
             "test_microarray_probe_mapping",
+            "test_meta_enrichment_placeholder",
             "test_meta_enrichment_threshold",
             "test_meta_methods_runtime",
             "test_meta_volcano_threshold",
@@ -87,12 +90,16 @@ def _callers(tmp_path: Path):
         )
     }
     return [
+        ("test_additive_formula_contract",
+         lambda: modules["test_additive_formula_contract"]._run(tmp_path, "quit(status = 0)")),
         ("test_custom_enrichment", lambda: modules["test_custom_enrichment"]._r_runtime(harness)),
         ("test_custom_enrichment.custom_ora",
          lambda: modules["test_custom_enrichment"].test_custom_ora_population_denominators_use_raw_model_evidence(tmp_path)),
         ("test_de_contrasts", lambda: modules["test_de_contrasts"]._r_runtime(harness)),
         ("test_enrichment_eligibility",
          lambda: modules["test_enrichment_eligibility"]._r_runtime(harness)),
+        ("test_enrichment_execution_status",
+         lambda: modules["test_enrichment_execution_status"]._run(tmp_path, "custom", "empty")),
         ("test_enrichment_mapping", lambda: modules["test_enrichment_mapping"]._r_runtime(harness)),
         ("test_ppi_mapping_case", lambda: modules["test_ppi_mapping_case"]._r_runtime(harness)),
         ("test_external_results_safety",
@@ -109,6 +116,8 @@ def _callers(tmp_path: Path):
          lambda: modules["test_transfer_enrichment"]._r_runtime(harness)),
         ("test_microarray_probe_mapping",
          lambda: modules["test_microarray_probe_mapping"]._r_runtime(harness)),
+        ("test_meta_enrichment_placeholder",
+         lambda: modules["test_meta_enrichment_placeholder"].test_meta_enrichment_placeholder_renders_execution_evidence(tmp_path)),
         ("test_meta_enrichment_threshold",
          lambda: modules["test_meta_enrichment_threshold"]._r_runtime(harness)),
         ("test_meta_methods_runtime", lambda: modules["test_meta_methods_runtime"]._runtime()),
@@ -213,6 +222,18 @@ def test_every_r_caller_skips_when_the_packages_are_missing(monkeypatch, tmp_pat
         except pytest.skip.Exception:
             continue
         pytest.fail(f"{name} did not skip without the R packages it needs")
+
+
+@pytest.mark.parametrize("name", [
+    "test_additive_formula_contract", "test_enrichment_execution_status",
+    "test_meta_enrichment_placeholder",
+])
+def test_required_r_callers_fail_when_runtime_is_unavailable(monkeypatch, tmp_path, name) -> None:
+    monkeypatch.setenv("BULKSEQ_REQUIRE_R", "1")
+    monkeypatch.setattr(_runtime, "_runs_with", lambda command, packages: False)
+    reset_probe_cache()
+    with pytest.raises(pytest.fail.Exception):
+        dict(_callers(tmp_path))[name]()
 
 
 def test_required_meta_r_callers_fail_when_packages_are_missing(monkeypatch, tmp_path) -> None:

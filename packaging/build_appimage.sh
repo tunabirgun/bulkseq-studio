@@ -9,6 +9,7 @@
 # Requires appimagetool (set APPIMAGETOOL, or have it on PATH). The onedir already bundles all of
 # Qt (PyInstaller), so Qt is NOT re-bundled here; this only wraps the intact onedir. The app sets the
 # QtWebEngine flags itself (os.environ.setdefault before QApplication), so AppRun sets no env vars.
+# Set APPIMAGE_RUNTIME_FILE to use a preverified runtime without downloading one at build time.
 set -euo pipefail
 
 ONEDIR="${1:?onedir path}"
@@ -70,7 +71,11 @@ cp "$APPDIR/bulkseqstudio.png" "$APPDIR/.DirIcon"
 # GitHub release. This also makes appimagetool write the companion <OUT>.zsync next to the
 # AppImage; publish both as release assets. Override UPDATE_INFO to point elsewhere.
 UPDATE_INFO="${UPDATE_INFO:-gh-releases-zsync|tunabirgun|bulkseq-studio|latest|BulkSeqStudio-*-x86_64.AppImage.zsync}"
-(cd "$WORK" && ARCH=x86_64 "$TOOL" --appimage-extract-and-run --no-appstream -u "$UPDATE_INFO" "$APPDIR" "$OUT")
+runtime_args=()
+if [ -n "${APPIMAGE_RUNTIME_FILE:-}" ]; then
+    runtime_args=(--runtime-file "$(realpath "$APPIMAGE_RUNTIME_FILE")")
+fi
+(cd "$WORK" && ARCH=x86_64 "$TOOL" --appimage-extract-and-run --no-appstream "${runtime_args[@]}" -u "$UPDATE_INFO" "$APPDIR" "$OUT")
 chmod +x "$OUT"
 # appimagetool writes the companion .zsync into the CWD, not next to $OUT; move it
 # beside the AppImage so both are in $OUTDIR ready to publish.

@@ -70,18 +70,18 @@ if (min(n_per_group) < 2) {
     message = "At least one condition has fewer than two replicates.")
 }
 design_checks <- c(design_checks, numeric_covariate_checks(coldata, covariates))
-# The contrast below tests one coefficient. Under an interaction or nesting design that
-# coefficient is the simple effect at the reference level of the other factor(s), not the
-# interaction itself, so say which coefficient was reported rather than affirm the design.
+# The configured factor contrast does not select an interaction coefficient.
 if (has_interaction(design_formula)) {
   design_checks[[length(design_checks) + 1]] <- list(
     status = "REVIEW_REQUIRED",
     message = sprintf(paste0(
-      "Design %s contains an interaction or nesting operator. The reported result is the ",
-      "coefficient '%s', i.e. the %s vs %s difference at the reference level of the other ",
-      "design factor(s), not the interaction effect. To test the interaction term itself, ",
-      "request it as an explicit contrast or coefficient."),
-      design_formula, coef_name, numerator, denominator))
+      "Design %s contains interaction terms. The requested result is the %s vs %s factor ",
+      "contrast for '%s'. If the comparison factor participates in an interaction, its ",
+      "main-effect contrast is conditional on the other interacting terms (reference levels ",
+      "for factors and zero for numeric covariates). This does not test the interaction. ",
+      "BulkSeq Studio has no interaction-coefficient or numeric-contrast selector; testing ",
+      "an interaction requires a separately specified DESeq2 analysis."),
+      design_formula, numerator, denominator, con_factor))
 }
 design_status <- if (!full_rank) "FAIL" else if (any(vapply(design_checks, function(m)
   identical(m$status, "REVIEW_REQUIRED"), logical(1)))) "REVIEW_REQUIRED" else "PASS"

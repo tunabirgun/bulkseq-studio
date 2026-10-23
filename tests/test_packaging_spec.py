@@ -243,7 +243,13 @@ def test_linux_package_build_requires_all_three_verified_artifacts() -> None:
     assert "bulkseq-appimage-selftest.json" in workflow
     assert "result.get(\"webengine\") is True" in workflow
     assert "result.get(\"nodes\") == 3" in workflow
-    assert "a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0" in workflow
+    assert "AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage" in workflow
+    assert "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0" in workflow
+    assert "AppImage/type2-runtime/releases/download/20251108/runtime-x86_64" in workflow
+    assert "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d" in workflow
+    assert 'echo "APPIMAGE_RUNTIME_FILE=$RUNNER_TEMP/appimage-runtime" >> "$GITHUB_ENV"' in workflow
+    assert 'runtime_args=(--runtime-file "$(realpath "$APPIMAGE_RUNTIME_FILE")")' in appimage_script
+    assert '"${runtime_args[@]}" -u "$UPDATE_INFO"' in appimage_script
     assert "digest.hexdigest() in header.lower()" in workflow
 
     assert "BulkSeqStudio-$version-x86_64.AppImage" in release
