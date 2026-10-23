@@ -32,12 +32,11 @@ alpha <- as.numeric(snakemake@params[["alpha"]])
 out <- snakemake@output
 
 write_check <- function(path, status, message) {
-  msg <- gsub('"', '\\\\"', message)
-  json <- sprintf('{\n  "check": "24_custom_enrichment_qc",\n  "status": "%s",\n  "messages": [\n    {"status": "%s", "message": "%s"}\n  ]\n}',
-                  status, status, msg)
-  writeLines(json, path)
+  jsonlite::write_json(list(check = "24_custom_enrichment_qc", status = status,
+    messages = list(list(status = status, message = message))), path,
+    auto_unbox = TRUE, pretty = TRUE)
 }
-nrows <- function(x) if (is.null(x)) 0 else tryCatch(nrow(as.data.frame(x)), error = function(e) 0)
+nrows <- function(x) if (is.null(x)) 0 else nrow(as.data.frame(x))
 custom_ora_populations <- function(eora, attempted) {
   if (is.null(eora) || !methods::is(eora, "enrichResult"))
     return(list(model = if (attempted) "unavailable" else "not run",
@@ -187,6 +186,18 @@ with_deterministic_custom_gsea_ties <- function(expr, rank_info) {
 writeLines("", out[["ora"]]); writeLines("", out[["gsea"]])
 saveRDS(list(), out[["objects"]])
 summary_lines <- c("Custom gene-set enrichment summary", "=================================", "")
+execution_errors <- list()
+run_enrichment_stage <- function(stage, expr) {
+  tryCatch({
+    value <- force(expr)
+    nrows(value)
+    value
+  }, error = function(e) {
+    execution_errors[[stage]] <<- conditionMessage(e)
+    message(stage, " failed: ", conditionMessage(e))
+    NULL
+  })
+}
 
 result <- tryCatch({
   suppressMessages(library(clusterProfiler))
@@ -233,24 +244,26 @@ result <- tryCatch({
   overlap <- length(intersect(unique(t2g$gene), c(all_sig, names(ranked))))
   args_t2n <- if (is.null(t2n)) list() else list(TERM2NAME = t2n)
 
-  eora <- if (length(all_sig) >= 1) tryCatch(do.call(enricher, c(list(
+  eora <- if (length(all_sig) >= 1) run_enrichment_stage("ORA", do.call(enricher, c(list(
             gene = all_sig, universe = universe, TERM2GENE = t2g, pvalueCutoff = alpha,
-            pAdjustMethod = "BH", qvalueCutoff = 0.20, minGSSize = 10, maxGSSize = 500), args_t2n)),
-          error = function(e) { message("enricher failed: ", conditionMessage(e)); NULL }) else NULL
+            pAdjustMethod = "BH", qvalueCutoff = 0.20, minGSSize = 10, maxGSSize = 500), args_t2n))) else NULL
   if (nrows(eora) > 0) write.csv(as.data.frame(eora), out[["ora"]], row.names = FALSE)
 
   egse <- NULL
   if (length(ranked) > 0) {
     set.seed(42)
-    egse <- tryCatch(with_deterministic_custom_gsea_ties(
+    egse <- run_enrichment_stage("GSEA", with_deterministic_custom_gsea_ties(
               do.call(GSEA, c(list(geneList = ranked, TERM2GENE = t2g, pvalueCutoff = alpha,
                 pAdjustMethod = "BH", minGSSize = 10, maxGSSize = 500, eps = 0,
-                seed = TRUE, verbose = FALSE), args_t2n)), rank_info),
-            error = function(e) { message("GSEA failed: ", conditionMessage(e)); NULL })
+                seed = TRUE, verbose = FALSE), args_t2n)), rank_info))
   }
   if (nrows(egse) > 0) write.csv(as.data.frame(egse), out[["gsea"]], row.names = FALSE)
 
   saveRDS(list(eora = eora, egse = egse, n_terms = length(unique(t2g$term))), out[["objects"]])
+  ora_count <- if ("ORA" %in% names(execution_errors)) "unavailable" else as.character(nrows(eora))
+  gsea_count <- if ("GSEA" %in% names(execution_errors)) "unavailable" else as.character(nrows(egse))
+  failure_lines <- vapply(names(execution_errors), function(stage)
+    paste0(stage, " unavailable: ", execution_errors[[stage]]), character(1))
   ora_populations <- custom_ora_populations(eora, length(all_sig) > 0)
   summary_lines <<- c(summary_lines,
     sprintf("Custom gene sets (terms): %d", length(unique(t2g$term))),
@@ -260,9 +273,12 @@ result <- tryCatch({
     sprintf("Effective ORA annotated background: %s", if (is.na(ora_populations$background)) "unavailable" else ora_populations$background),
     sprintf("Effective ORA annotated selected genes: %s", if (is.na(ora_populations$selected)) "unavailable" else ora_populations$selected),
     rank_evidence,
-    sprintf("Custom ORA terms: %d", nrows(eora)),
-    sprintf("Custom GSEA sets: %d", nrows(egse)))
-  if (overlap == 0)
+    sprintf("Custom ORA terms: %s", ora_count),
+    sprintf("Custom GSEA sets: %s", gsea_count), failure_lines)
+  if (length(execution_errors))
+    list(status = "REVIEW_REQUIRED", message = paste("Custom enrichment incomplete:",
+      paste(failure_lines, collapse = "; ")))
+  else if (overlap == 0)
     list(status = "REVIEW_REQUIRED", message = sprintf("Custom enrichment empty: 0/%d gene-set genes overlap the DE gene id space -- the gene sets are probably in a different identifier namespace.", length(unique(t2g$gene))))
   else
     list(status = "PASS", message = sprintf("Custom enrichment: ORA=%d, GSEA=%d terms.", nrows(eora), nrows(egse)))

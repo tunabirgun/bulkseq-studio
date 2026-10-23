@@ -1,8 +1,8 @@
 {
-  "release": "v0.34.0",
+  "release": "v0.35.0",
   "platform": "linux-64",
-  "lock_url": "https://github.com/tunabirgun/bulkseq-studio/blob/v0.34.0/workflow/envs/bulkseq.lock.yaml",
-  "scope": "Direct workflow tools and main analysis packages pinned in the v0.34.0 linux-64 full environment lock. It is not an inventory of every transitive dependency or a record of every program that ran in a particular project.",
+  "lock_url": "https://github.com/tunabirgun/bulkseq-studio/blob/v0.35.0/workflow/envs/bulkseq.lock.yaml",
+  "scope": "Direct workflow tools and main analysis packages pinned in the v0.35.0 linux-64 full environment lock. It is not an inventory of every transitive dependency or a record of every program that ran in a particular project.",
   "tools": [
     {"tool":"Snakemake", "package":"snakemake-minimal", "role":"Workflow execution", "version":"9.23.1", "scope":"Direct workflow package"},
     {"tool":"Python", "package":"python", "role":"Workflow helpers and reports", "version":"3.12.13", "scope":"Direct runtime"},

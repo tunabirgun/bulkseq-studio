@@ -1138,6 +1138,25 @@ def test_custom_enrichment_empty_without_model_evidence_is_unavailable(mhr, tmp_
     assert "does not establish biological absence outside that collection" in rendered
 
 
+@pytest.mark.parametrize("failed_stage", ["ORA", "GSEA"])
+def test_custom_enrichment_reports_failed_stage_and_successful_sibling(mhr, tmp_path, failed_stage):
+    enr = tmp_path / "results" / "enrichment"
+    enr.mkdir(parents=True)
+    _write_custom_run_summary(tmp_path)
+    _write_csv(enr / "custom_ora.csv", _CP_COLS, _CP_ROWS if failed_stage == "GSEA" else [])
+    _write_csv(enr / "custom_gsea.csv", ["Description", "NES", "p.adjust", "setSize"],
+               [["successful sibling", 1.8, 0.01, 20]] if failed_stage == "ORA" else [])
+    (enr / "custom_enrichment_summary.txt").write_text(
+        f"Custom ORA terms: {'unavailable' if failed_stage == 'ORA' else '1'}\n"
+        f"Custom GSEA sets: {'unavailable' if failed_stage == 'GSEA' else '1'}\n"
+        f"{failed_stage} unavailable: injected <failure>\n", encoding="utf-8")
+    rendered = mhr._enrichment_section(tmp_path)
+    assert f"Custom {failed_stage} results are unavailable because execution failed" in rendered
+    assert "injected &lt;failure&gt;" in rendered
+    assert f"No supplied custom gene set met the adjusted {failed_stage} criterion" not in rendered
+    assert ("immune response" if failed_stage == "GSEA" else "successful sibling") in rendered
+
+
 def test_custom_ora_distinguishes_supplied_and_effective_populations(mhr, tmp_path):
     enr = tmp_path / "results" / "enrichment"
     enr.mkdir(parents=True)

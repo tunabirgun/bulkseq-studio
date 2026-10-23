@@ -52,6 +52,35 @@ jobs:
         run: bash scripts/setup_wsl_bioenv.sh bulkseq full
       - name: Print the recorded spec marker
         run: cat "$HOME/micromamba/envs/bulkseq/.bulkseq_spec"
+      - name: Run command-boundary contracts in the installed backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          backend="$HOME/micromamba/envs/bulkseq"
+          export PATH="$backend/bin:$PATH"
+          "$backend/bin/python" - <<'PY'
+          import shutil
+          import subprocess
+          import sys
+          import unittest
+          from pathlib import Path
+
+          import pydantic
+          import snakemake
+          from snakemake.utils import format as shell_format
+
+          star = shutil.which("STAR")
+          if star is None or not Path(star).resolve().is_relative_to(Path(sys.prefix).resolve()):
+              raise SystemExit("STAR must resolve inside the installed backend")
+          subprocess.run([star, "--version"], check=True)
+          suite = unittest.TestSuite(
+              unittest.defaultTestLoader.discover("tests", pattern=filename)
+              for filename in ("test_tool_argument_security.py", "test_star_index_quoting.py")
+          )
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          if not result.testsRun or result.skipped or not result.wasSuccessful():
+              raise SystemExit("Backend command-boundary contracts must execute without skips or failures")
+          PY
 
   # This Linux-hosted dry solve tracks osx-arm64 package availability only. The shipped
   # installer currently refuses macOS; solver success does not verify a Mac backend,

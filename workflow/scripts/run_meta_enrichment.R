@@ -25,7 +25,7 @@ write_check <- function(status, messages) {
   jsonlite::write_json(payload, out[["check"]], auto_unbox = TRUE,
                        pretty = TRUE, na = "null")
 }
-nrows <- function(x) if (is.null(x)) 0 else tryCatch(nrow(as.data.frame(x)), error = function(e) 0)
+nrows <- function(x) if (is.null(x)) 0 else nrow(as.data.frame(x))
 strip_version <- function(id) { v <- grepl("^ENS", id); id[v] <- sub("\\.\\d+$", "", id[v]); id }
 status_rank <- c(PASS = 0L, WARNING = 1L, REVIEW_REQUIRED = 2L, FAIL = 3L)
 check_status <- "PASS"
@@ -167,11 +167,22 @@ if (length(lists) < 2)
   skip("Cross-study enrichment skipped: fewer than 2 gene sets have >=5 mapped genes.")
 
 set.seed(42)
-cc <- tryCatch(
-  compareCluster(geneClusters = lists, fun = "enrichGO", OrgDb = orgdb, keyType = "ENTREZID",
+enrichment_error <- NULL
+cc <- tryCatch({
+  value <- compareCluster(geneClusters = lists, fun = "enrichGO", OrgDb = orgdb, keyType = "ENTREZID",
                  ont = ont, universe = universe, pAdjustMethod = "BH",
-                 pvalueCutoff = alpha, qvalueCutoff = 0.20, minGSSize = 10, maxGSSize = 500),
-  error = function(e) { message("compareCluster failed: ", conditionMessage(e)); NULL })
+                 pvalueCutoff = alpha, qvalueCutoff = 0.20, minGSSize = 10, maxGSSize = 500)
+  nrows(value)
+  value
+  },
+  error = function(e) {
+    enrichment_error <<- conditionMessage(e)
+    message("compareCluster failed: ", enrichment_error)
+    NULL
+  })
+if (!is.null(enrichment_error))
+  skip(paste("Cross-study enrichment unavailable: compareCluster failed:", enrichment_error),
+       "REVIEW_REQUIRED")
 if (is.null(cc) || nrows(cc) == 0)
   skip("Cross-study enrichment: no GO terms passed the FDR cutoff in any study/convergent set.")
 

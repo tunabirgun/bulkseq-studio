@@ -122,6 +122,7 @@ if META_MODE:
         rule meta_enrichment_figures:
             input:
                 objects="results/meta/meta_enrichment_objects.rds",
+                check="checks/18_meta_enrichment_qc.json",
             output:
                 dotplot_png="results/figures/meta_enrichment_dotplot.png",
                 dotplot_svg="results/figures/meta_enrichment_dotplot.svg",

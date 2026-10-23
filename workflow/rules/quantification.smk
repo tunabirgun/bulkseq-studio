@@ -140,7 +140,7 @@ else:
             "python workflow/scripts/run_featurecounts_per_sample.py {params.bam_args} "
             "--gtf {input.gtf:q} --strand-file {input.strand:q} "
             "--out {output.counts:q} --summary {output.summary:q} "
-            "{params.paired} --feature {params.feature} --attribute {params.attribute} "
+            "{params.paired} --feature {params.feature:q} --attribute {params.attribute:q} "
             "--threads {threads} --tmpdir {resources.tmpdir:q} > {log:q} 2>&1"
 
 

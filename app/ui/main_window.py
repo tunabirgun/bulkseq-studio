@@ -5,6 +5,8 @@ import json
 import os
 import re
 import sys
+import tempfile
+from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
 
@@ -102,6 +104,7 @@ from app.core.preflight_checks import (
 )
 from app.core.metadata import (
     dataframe_from_rows,
+    drop_blank_library_name,
     export_metadata,
     load_metadata,
     read_user_table,
@@ -387,6 +390,8 @@ class MainWindow(QMainWindow):
         self._mapping_checked: set[str] = set()
         self._mapping_halt_decided = False
         self._closing = False
+        self._saved_project_forms: dict[str, object] = {}
+        self._loaded_samples_state = ""
         self._launch_preflight_worker: BackgroundWorker | None = None
         self._phase_refresh_worker: BackgroundWorker | None = None
         self._launch_preflight_ui_state: dict[str, object] | None = None
@@ -554,6 +559,14 @@ class MainWindow(QMainWindow):
             self.restoreState(st)
 
     def closeEvent(self, event) -> None:
+        if not self._closing:
+            active = self._run_active or (self.runner is not None and self.runner.is_running())
+            if active and not self._confirm_stop_for_close():
+                event.ignore()
+                return
+            if not self._confirm_unsaved_changes():
+                event.ignore()
+                return
         # Flag closing so any queued worker callbacks return early instead of
         # touching widgets that are being torn down.
         self._closing = True
@@ -589,6 +602,173 @@ class MainWindow(QMainWindow):
             code = getattr(self, "_quit_code", 0)
             QTimer.singleShot(250, lambda: app.exit(code))
         super().closeEvent(event)
+
+    def _confirm_stop_for_close(self) -> bool:
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle(APP_NAME)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setText("A workflow is running. Closing will stop the run.")
+        stop = dialog.addButton("Stop run and close", QMessageBox.ButtonRole.DestructiveRole)
+        keep = dialog.addButton("Keep running", QMessageBox.ButtonRole.RejectRole)
+        dialog.setDefaultButton(keep)
+        dialog.setEscapeButton(keep)
+        dialog.exec()
+        return dialog.clickedButton() == stop
+
+    def _project_form_values(self, section: str) -> tuple:
+        fields = {
+            "workflow": "aligner quantifier trim trimmer rrna rrna_tool contam_screen enrichment figures "
+                        "gsva rseqc meta_analysis per_study_enrichment meta_go_ontology de_engine organellar "
+                        "custom_gmt custom_annot custom_background transfer_mode transfer_emapper transfer_ko_table "
+                        "fastp_q fastp_len trim_poly_g fastp_u fastp_polyx tm_sw_q tm_leading tm_trailing "
+                        "rd_ensure rd_chunk fs_subset fs_conf star_twopass star_multimap star_mismatch "
+                        "fc_feature fc_attribute de_min_count de_shrink alpha lfc_threshold design "
+                        "contrast_factor reference_level numerator denominator",
+            "resources": "profile cores ram",
+            "reference": "ref_organism ref_genome ref_annotation ref_format",
+            "accessions": "sra_box",
+            "genes": "goi_box",
+            "microarray": "micro_source micro_log2",
+        }
+        if section == "figures":
+            widgets = [widget for name, widget in vars(self).items()
+                       if name.startswith("fig_") and name != "fig_override_group_pick"]
+            widgets += [widget for group in self.fig_override_widgets.values() for widget in group.values()]
+            widgets.append(self.ppi_score)
+        else:
+            widgets = [getattr(self, name) for name in fields[section].split()]
+        values = []
+        for widget in widgets:
+            if isinstance(widget, QComboBox):
+                values.append(widget.currentText())
+            elif isinstance(widget, QCheckBox):
+                values.append(widget.isChecked())
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                values.append(widget.value())
+            elif isinstance(widget, QLineEdit):
+                values.append(widget.text())
+            elif isinstance(widget, QTextEdit):
+                values.append(widget.toPlainText())
+        return tuple(values)
+
+    def _remember_saved_form(self, section: str) -> None:
+        self._saved_project_forms[section] = self._project_form_values(section)
+
+    def _save_edited_config(self, config: AppConfig,
+                            files: dict[Path, Callable[[Path], object]] | None = None) -> None:
+        assert self.config is not None and self.project_root is not None
+        staging = Path(tempfile.mkdtemp(prefix=".project-save-", dir=self.project_root))
+        backups: dict[Path, Path | None] = {}
+        touched = []
+        restore_errors = []
+        try:
+            staged = {}
+            for index, (target, write) in enumerate((files or {}).items()):
+                staged[target] = staging / f"new-{index}"
+                write(staged[target])
+            config_path = self.project_root / "config" / "config.yaml"
+            for index, target in enumerate([*staged, config_path]):
+                backup = staging / f"old-{index}-{target.name}"
+                if target.exists() or target.is_symlink():
+                    shutil.copy2(target, backup)
+                    backups[target] = backup
+                else:
+                    backups[target] = None
+            for target, prepared in staged.items():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                touched.append(target)
+                shutil.copyfile(prepared, target)
+            touched.append(config_path)
+            self.manager.save_config(self.project_root, config)
+        except Exception as exc:
+            for target in reversed(touched):
+                try:
+                    backup = backups[target]
+                    if backup is None:
+                        target.unlink(missing_ok=True)
+                    else:
+                        shutil.copy2(backup, target)
+                except OSError as restore_exc:
+                    restore_errors.append(str(restore_exc))
+            if restore_errors:
+                raise OSError(f"Save failed ({exc}) and some files could not be restored. Original copies remain at {staging}. "
+                              + "; ".join(restore_errors)) from exc
+            raise
+        finally:
+            if not restore_errors:
+                try:
+                    shutil.rmtree(staging)
+                except OSError:
+                    self.statusBar().showMessage(f"Temporary save files remain at {staging}.")
+        # Keep the project-session identity used by import callbacks.
+        for name in type(config).model_fields:
+            setattr(self.config, name, getattr(config, name))
+
+    def _sample_edit_state(self) -> str:
+        return drop_blank_library_name(self.metadata_table.to_dataframe()).to_csv(index=False, sep="\t")
+
+    def _unsaved_project_sections(self) -> list[str]:
+        if self.project_root is None or self.config is None:
+            return []
+        focused = QApplication.focusWidget()
+        if focused is not None and self.isAncestorOf(focused):
+            focused.clearFocus()
+        changed = [section for section, saved in self._saved_project_forms.items()
+                   if self._project_form_values(section) != saved]
+        try:
+            saved_samples = drop_blank_library_name(load_metadata(self._configured_samples_path())).to_csv(
+                index=False, sep="\t")
+        except (OSError, ValueError, pd.errors.ParserError):
+            saved_samples = self._loaded_samples_state
+        if self._sample_edit_state() != saved_samples:
+            changed.append("samples")
+        return changed
+
+    def _confirm_unsaved_changes(self) -> bool:
+        changed = self._unsaved_project_sections()
+        if not changed:
+            return True
+        choice = QMessageBox.question(
+            self, APP_NAME, "Save changes to the current project before leaving?",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if choice == QMessageBox.StandardButton.Discard:
+            return True
+        if choice != QMessageBox.StandardButton.Save:
+            return False
+        try:
+            if "samples" in changed:
+                self._save_metadata()
+            if "workflow" in changed and not self._save_workflow_settings(validate=False):
+                return False
+            if "resources" in changed:
+                self._save_resources()
+            if "figures" in changed:
+                self._apply_figure_style()
+            if "reference" in changed:
+                self._use_custom_reference()
+                if self._project_form_values("reference") != self._saved_project_forms.get("reference"):
+                    return False
+            if "accessions" in changed:
+                self._save_sra()
+            if "genes" in changed:
+                self._persist_goi()
+            if "microarray" in changed:
+                self._on_micro_option_changed()
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, APP_NAME, f"Could not save changes. The project is still open.\n{exc}")
+            return False
+        return True
+
+    def _confirm_project_transition(self) -> bool:
+        if self._run_active or (self.runner is not None and self.runner.is_running()):
+            QMessageBox.warning(
+                self, APP_NAME,
+                "A run is currently active. Stop it on the Run Monitor tab before "
+                "opening or creating another project.")
+            return False
+        return self._confirm_unsaved_changes()
 
     # A settings form has no reason to grow past a readable measure. Without this the
     # cards stretch to the window edge, so a combo holding "STAR" renders ~1350px wide
@@ -1120,9 +1300,12 @@ class MainWindow(QMainWindow):
         if getattr(self, "_geo_worker", None) is not None and self._geo_worker.isRunning():
             return
         self.statusBar().showMessage(f"Fetching {gse} from GEO...")
+        root, config = self.project_root, self.config
         worker = BackgroundWorker(lambda: fetch_geo_series(gse))
-        worker.done.connect(lambda result: self._on_geo_fetched(gse, result))
-        worker.failed.connect(self._on_geo_failed)
+        worker.done.connect(lambda result: self._on_geo_fetched(gse, result)
+                            if self.project_root == root and self.config is config else None)
+        worker.failed.connect(lambda exc: self._on_geo_failed(exc)
+                              if self.project_root == root and self.config is config else None)
         self._geo_worker = worker
         worker.start()
 
@@ -1144,32 +1327,32 @@ class MainWindow(QMainWindow):
                 "not a microarray. Use the SRA/ENA accessions box above for RNA-seq studies.")
             return
         samples = info["samples"]
-        save_metadata(samples, self._configured_samples_path())
-        self.metadata_table.load_dataframe(samples)
         organism = str(info.get("organism", "")).strip()
         platform = str(info.get("platform", "")).strip()
-        self.config.input.type = "microarray"
-        self.config.input.count_matrix = None
-        self.config.input.deseq2_results = None
-        self.config.microarray.gse_accession = gse
-        self.config.microarray.platform = platform or None
-        self.config.microarray.source = self.micro_source.currentData()
-        self.config.microarray.log2_transform = self.micro_log2.currentData()
+        config = self.config.model_copy(deep=True)
+        config.input.type = "microarray"
+        config.input.count_matrix = None
+        config.input.deseq2_results = None
+        config.microarray.gse_accession = gse
+        config.microarray.platform = platform or None
+        config.microarray.source = self.micro_source.currentData()
+        config.microarray.log2_transform = self.micro_log2.currentData()
         if organism:
-            self.config.reference.organism_name = organism
+            config.reference.organism_name = organism
             # Pull the organism's enrichment/PPI ids from the catalog when the GEO
             # organism string matches a preset (e.g. Fusarium-GEO -> KEGG fgr, taxon
             # 229533). keytype stays SYMBOL below; no match leaves the ids None.
             entry = catalog_entry_for_organism(organism)
             if entry is not None:
-                self.config.enrichment.orgdb = entry.get("orgdb") or None
-                self.config.enrichment.kegg_organism = entry.get("kegg_organism") or None
-                self.config.enrichment.gprofiler_organism = entry.get("gprofiler_organism") or None
-                self.config.enrichment.taxon_id = entry.get("taxon_id")
-                self.config.ppi.taxon = entry.get("string_taxon")
+                config.enrichment.orgdb = entry.get("orgdb") or None
+                config.enrichment.kegg_organism = entry.get("kegg_organism") or None
+                config.enrichment.gprofiler_organism = entry.get("gprofiler_organism") or None
+                config.enrichment.taxon_id = entry.get("taxon_id")
+                config.ppi.taxon = entry.get("string_taxon")
         # GPL annotation maps probes to gene symbols, so enrichment uses SYMBOL.
-        self.config.enrichment.keytype = "SYMBOL"
-        self.manager.save_config(self.project_root, self.config)
+        config.enrichment.keytype = "SYMBOL"
+        self._save_edited_config(config, {self._configured_samples_path(): lambda path: save_metadata(samples, path)})
+        self.metadata_table.load_dataframe(samples)
         self._apply_input_mode_ui()
         organism_note = (organism or "organism not reported")
         enrichment_warn = "" if organism else (
@@ -1187,27 +1370,31 @@ class MainWindow(QMainWindow):
         # reference, so surface that on the Reference tab.
         if self.config is None:
             return
-        mode = self.config.input.type
+        config = self.config.model_copy(deep=True)
+        mode = config.input.type
         # A microarray-only SYMBOL enrichment keytype must not carry into a count-based route: it would
         # override the organism's correct ENSEMBL/LOC default and mis-map gene ids for enrichment. The
         # microarray ingest re-sets it; clear it for every other mode here (central guard — the per-import
         # clears in the count-matrix / deseq2-results handlers are now redundant but harmless). Persist
         # only on the rare transition that actually clears it.
         config_changed = False
-        if mode != "microarray" and self.config.enrichment.keytype == "SYMBOL":
-            self.config.enrichment.keytype = None
+        if mode != "microarray" and config.enrichment.keytype == "SYMBOL":
+            config.enrichment.keytype = None
             config_changed = True
-        direction = self.config.input.deseq2_results_direction
-        file_provenance = self.config.input.deseq2_results_provenance
+        direction = config.input.deseq2_results_direction
+        file_provenance = config.input.deseq2_results_provenance
         if mode != "deseq2_results" and (
             any((direction.numerator, direction.denominator, direction.confirmed, direction.confirmed_at))
             or file_provenance != Deseq2ResultsFileProvenance()
         ):
-            self.config.input.deseq2_results_direction = Deseq2ResultsDirectionProvenance()
-            self.config.input.deseq2_results_provenance = Deseq2ResultsFileProvenance()
+            config.input.deseq2_results_direction = Deseq2ResultsDirectionProvenance()
+            config.input.deseq2_results_provenance = Deseq2ResultsFileProvenance()
             config_changed = True
         if config_changed and self.project_root is not None:
-            self.manager.save_config(self.project_root, self.config)
+            self._save_edited_config(config)
+        elif config_changed:
+            for name in type(config).model_fields:
+                setattr(self.config, name, getattr(config, name))
         if hasattr(self, "input_route_tabs"):
             route_index = {
                 "sra": 0,
@@ -1249,7 +1436,7 @@ class MainWindow(QMainWindow):
         if getattr(self, "micro_source", None) is not None:
             # A local-matrix upload has no combo item (source="local_matrix"); leaving the combo
             # enabled at its default index would visibly contradict the persisted config.
-            is_local = mode == "microarray" and self.config.microarray.source == "local_matrix"
+            is_local = mode == "microarray" and config.microarray.source == "local_matrix"
             self.micro_source.setEnabled(not is_local)
             self.micro_source.setToolTip(
                 "Not applicable: this project uses a locally uploaded expression matrix, not a "
@@ -1270,10 +1457,12 @@ class MainWindow(QMainWindow):
         # to geo_series_matrix and the run would abort trying to download an empty accession. Only the
         # GEO/CEL sources come from this combo; a local matrix keeps its source. The log2 override is a
         # legitimate live control on the local path, so it is always persisted.
-        if self.config.microarray.source != "local_matrix":
-            self.config.microarray.source = self.micro_source.currentData()
-        self.config.microarray.log2_transform = self.micro_log2.currentData()
-        self.manager.save_config(self.project_root, self.config)
+        config = self.config.model_copy(deep=True)
+        if config.microarray.source != "local_matrix":
+            config.microarray.source = self.micro_source.currentData()
+        config.microarray.log2_transform = self.micro_log2.currentData()
+        self._save_edited_config(config)
+        self._remember_saved_form("microarray")
 
     def _apply_workflow_mode_gating(self, mode: str) -> None:
         # Grey out the Workflow Settings controls the engine ignores in this input mode, so the
@@ -1578,7 +1767,7 @@ class MainWindow(QMainWindow):
             return
 
         # Preserve the source bytes exactly, including a TSV delimiter, but validate
-        # the copied bytes before atomically replacing an earlier project copy.
+        # the copied bytes before replacing the project's saved inputs.
         project_copy = "config/deseq2_results.csv"
         dest = self.project_root / project_copy
         temp_dest = dest.with_name(dest.name + ".importing")
@@ -1599,28 +1788,30 @@ class MainWindow(QMainWindow):
                 lfc_shrinkage=method_record.lfc_shrinkage,
                 p_adjustment_method=method_record.p_adjustment_method,
             ))
-            temp_dest.replace(dest)
-            self.config.input.type = "deseq2_results"
-            self.config.input.deseq2_results = project_copy
-            self.config.input.deseq2_results_direction = direction_record
-            self.config.input.deseq2_results_provenance = file_record
-            self.config.input.count_matrix = None
-            self.config.microarray.gse_accession = None
+            config = self.config.model_copy(deep=True)
+            config.input.type = "deseq2_results"
+            config.input.deseq2_results = project_copy
+            config.input.deseq2_results_direction = direction_record
+            config.input.deseq2_results_provenance = file_record
+            config.input.count_matrix = None
+            config.microarray.gse_accession = None
             # A microarray-only SYMBOL keytype must not carry over; fall back to the
             # organism mapping (or the LOC/ENSEMBL handling in the enrichment step).
-            if self.config.enrichment.keytype == "SYMBOL":
-                self.config.enrichment.keytype = None
+            if config.enrichment.keytype == "SYMBOL":
+                config.enrichment.keytype = None
             # A results-only route has no sample-level matrix. Keep a valid header
             # without inventing a sample that would imply nonexistent metadata.
             samples = pd.DataFrame(columns=["sample_id", "condition", "layout", "fastq_1"])
-            save_metadata(samples, self._configured_samples_path())
-            self.metadata_table.load_dataframe(samples)
-            if self.config.deseq2.contrasts:
-                contrast = self.config.deseq2.contrasts[0]
+            if config.deseq2.contrasts:
+                contrast = config.deseq2.contrasts[0]
                 contrast.numerator = direction_record.numerator or ""
                 contrast.denominator = direction_record.denominator or ""
                 contrast.name = f"{direction_record.numerator}_vs_{direction_record.denominator}"
-            self.manager.save_config(self.project_root, self.config)
+            self._save_edited_config(config, {
+                dest: lambda path: shutil.copyfile(temp_dest, path),
+                self._configured_samples_path(): lambda path: save_metadata(samples, path),
+            })
+            self.metadata_table.load_dataframe(samples)
         except (DETableValidationError, OSError, ValueError) as exc:
             QMessageBox.warning(self, APP_NAME, f"Could not create a verified project copy: {exc}")
             return
@@ -1630,9 +1821,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, "gse_box"):
             self.gse_box.clear()
         self._apply_input_mode_ui()
-        organism = self.config.reference.organism_name
-        has_org = bool(self.config.enrichment.kegg_organism or self.config.enrichment.orgdb
-                       or self.config.enrichment.gprofiler_organism)
+        organism = config.reference.organism_name
+        has_org = bool(config.enrichment.kegg_organism or config.enrichment.orgdb
+                       or config.enrichment.gprofiler_organism)
         org_note = (
             f"\n\nEnrichment/PPI organism: {organism}." if has_org else
             "\n\nNo organism selected yet — pick your organism on the Reference Manager tab so GO/KEGG "
@@ -1856,34 +2047,36 @@ class MainWindow(QMainWindow):
             # Write the parsed table as canonical TSV. ingest_counts.py picks its
             # separator from the file extension (.csv -> comma, else tab), so a
             # raw-byte copy of a CSV into a .txt name would be misread as TSV.
-            df.to_csv(dest, sep="\t", index=False)
             samples = dataframe_from_rows([
                 {"sample_id": sid, "condition": "unknown", "layout": "n/a", "fastq_1": ""}
                 for sid in sample_ids
             ])
-            save_metadata(samples, self._configured_samples_path())
-            self.metadata_table.load_dataframe(samples)
-            self.config.input.type = "count_matrix"
-            self.config.input.count_matrix = "config/counts_matrix.txt"
-            self.config.input.estimated_counts = prospective_estimated_counts
+            config = self.config.model_copy(deep=True)
+            config.input.type = "count_matrix"
+            config.input.count_matrix = "config/counts_matrix.txt"
+            config.input.estimated_counts = prospective_estimated_counts
             # Switching to count-matrix mode: drop any stale microarray accession or
             # uploaded results table so a later save doesn't write inputs that no
             # longer apply.
-            self.config.microarray.gse_accession = None
-            self.config.input.deseq2_results = None
+            config.microarray.gse_accession = None
+            config.input.deseq2_results = None
             # Clear a microarray-only SYMBOL keytype so it can't carry into a
             # count-matrix run (whose ids are usually ENSEMBL); fall back to the
             # organism mapping.
-            if self.config.enrichment.keytype == "SYMBOL":
-                self.config.enrichment.keytype = None
-            self.manager.save_config(self.project_root, self.config)
+            if config.enrichment.keytype == "SYMBOL":
+                config.enrichment.keytype = None
+            self._save_edited_config(config, {
+                dest: lambda path: df.to_csv(path, sep="\t", index=False),
+                self._configured_samples_path(): lambda path: save_metadata(samples, path),
+            })
+            self.metadata_table.load_dataframe(samples)
         finally:
             QApplication.restoreOverrideCursor()
         if hasattr(self, "gse_box"):
             self.gse_box.clear()
         self._apply_input_mode_ui()
-        organism = self.config.reference.organism_name
-        has_org = bool(self.config.enrichment.kegg_organism or self.config.enrichment.orgdb)
+        organism = config.reference.organism_name
+        has_org = bool(config.enrichment.kegg_organism or config.enrichment.orgdb)
         org_note = (
             f"\n\nEnrichment/PPI organism: {organism}." if has_org else
             "\n\nFor GO/KEGG enrichment and the STRING PPI network, open the Reference "
@@ -1930,30 +2123,32 @@ class MainWindow(QMainWindow):
                 return
             sample_ids = [str(c) for c in df.columns[1:]]
             dest = self.project_root / "config" / "microarray_expression.tsv"
-            df.to_csv(dest, sep="\t", index=False)
             samples = dataframe_from_rows([
                 {"sample_id": sid, "condition": "unknown", "layout": "n/a", "fastq_1": ""}
                 for sid in sample_ids
             ])
-            save_metadata(samples, self._configured_samples_path())
-            self.metadata_table.load_dataframe(samples)
-            self.config.input.type = "microarray"
-            self.config.input.count_matrix = None
-            self.config.input.deseq2_results = None
-            self.config.microarray.source = "local_matrix"
-            self.config.microarray.expression_matrix = "config/microarray_expression.tsv"
-            self.config.microarray.gse_accession = None
-            self.config.microarray.platform = None
+            config = self.config.model_copy(deep=True)
+            config.input.type = "microarray"
+            config.input.count_matrix = None
+            config.input.deseq2_results = None
+            config.microarray.source = "local_matrix"
+            config.microarray.expression_matrix = "config/microarray_expression.tsv"
+            config.microarray.gse_accession = None
+            config.microarray.platform = None
             # Row ids are gene symbols/ids; enrichment keys on SYMBOL as with GEO probe mapping.
-            self.config.enrichment.keytype = "SYMBOL"
-            self.manager.save_config(self.project_root, self.config)
+            config.enrichment.keytype = "SYMBOL"
+            self._save_edited_config(config, {
+                dest: lambda path: df.to_csv(path, sep="\t", index=False),
+                self._configured_samples_path(): lambda path: save_metadata(samples, path),
+            })
+            self.metadata_table.load_dataframe(samples)
         finally:
             QApplication.restoreOverrideCursor()
         if hasattr(self, "gse_box"):
             self.gse_box.clear()
         self._apply_input_mode_ui()
-        organism = self.config.reference.organism_name
-        has_org = bool(self.config.enrichment.kegg_organism or self.config.enrichment.orgdb)
+        organism = config.reference.organism_name
+        has_org = bool(config.enrichment.kegg_organism or config.enrichment.orgdb)
         org_note = (
             f"\n\nEnrichment/PPI organism: {organism}." if has_org else
             "\n\nFor GO/KEGG enrichment and the STRING PPI network, open the Reference "
@@ -1980,9 +2175,12 @@ class MainWindow(QMainWindow):
         # off the UI thread (like the GEO fetch) instead of freezing the window.
         self.input_preview.setPlainText("Querying ENA…")
         self.statusBar().showMessage("Fetching metadata from ENA…")
+        root, config = self.project_root, self.config
         worker = BackgroundWorker(lambda: fetch_ena_metadata(accessions))
-        worker.done.connect(lambda meta: self._on_sra_fetched(accessions, meta))
-        worker.failed.connect(self._on_sra_failed)
+        worker.done.connect(lambda meta: self._on_sra_fetched(accessions, meta)
+                            if self.project_root == root and self.config is config else None)
+        worker.failed.connect(lambda exc: self._on_sra_failed(exc)
+                              if self.project_root == root and self.config is config else None)
         self._sra_worker = worker
         worker.start()
 
@@ -1994,23 +2192,27 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, APP_NAME, f"ENA query failed: {exc}")
 
     def _on_sra_fetched(self, accessions: list, meta: object) -> None:
-        if getattr(self, "_closing", False) or self.project_root is None:
+        if getattr(self, "_closing", False) or self.project_root is None or self.config is None:
             return
         self.statusBar().clearMessage()
         samples = metadata_to_samples(meta)
         if samples.empty:
             self.input_preview.setPlainText("No runs found for those accessions.")
             return
-        save_metadata(samples, self.project_root / "config" / "samples.auto_generated.tsv")
-        save_metadata(samples, self._configured_samples_path())
-        (self.project_root / "config" / "sra_accessions.txt").write_text("\n".join(accessions) + "\n", encoding="utf-8")
+        config = self.config.model_copy(deep=True)
+        config.input.type = "sra"
+        layouts = set(samples["layout"])
+        config.input.layout = layouts.pop() if len(layouts) == 1 else "mixed"  # type: ignore[assignment]
+        self._save_edited_config(config, {
+            self.project_root / "config" / "samples.auto_generated.tsv": lambda path: save_metadata(samples, path),
+            self._configured_samples_path(): lambda path: save_metadata(samples, path),
+            self.project_root / "config" / "sra_accessions.txt":
+                lambda path: path.write_text("\n".join(accessions) + "\n", encoding="utf-8"),
+        })
         self.metadata_table.load_dataframe(samples)
-        if self.config is not None:
-            self.config.input.type = "sra"
-            layouts = set(samples["layout"])
-            self.config.input.layout = layouts.pop() if len(layouts) == 1 else "mixed"  # type: ignore[assignment]
-            self.manager.save_config(self.project_root, self.config)
-            self._apply_input_mode_ui()
+        if [line.strip() for line in self.sra_box.toPlainText().splitlines() if line.strip()] == accessions:
+            self._remember_saved_form("accessions")
+        self._apply_input_mode_ui()
         self.tabs.setCurrentIndex(self.metadata_tab_index)
         self.input_preview.setPlainText(
             f"Built {len(samples)} sample(s). Set conditions in the Metadata tab, then run.\n\n"
@@ -2018,15 +2220,18 @@ class MainWindow(QMainWindow):
         )
 
     def _save_sra(self) -> None:
-        if not self._require_project():
+        if not self._require_project() or self.config is None:
             return
         assert self.project_root is not None
         accessions = [line.strip() for line in self.sra_box.toPlainText().splitlines() if line.strip()]
-        (self.project_root / "config" / "sra_accessions.txt").write_text("\n".join(accessions) + "\n", encoding="utf-8")
-        if self.config is not None:
-            self.config.input.type = "sra"
-            self.manager.save_config(self.project_root, self.config)
+        config = self.config.model_copy(deep=True)
+        config.input.type = "sra"
+        self._save_edited_config(config, {
+            self.project_root / "config" / "sra_accessions.txt":
+                lambda path: path.write_text("\n".join(accessions) + "\n", encoding="utf-8"),
+        })
         self.input_preview.setPlainText(f"Saved {len(accessions)} accession(s) to config/sra_accessions.txt")
+        self._remember_saved_form("accessions")
 
     def _build_metadata_tab(self) -> None:
         page = QWidget()
@@ -2330,34 +2535,34 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.Yes:
                 return
         annotation_md5 = md5sum(annotation)
-        self.config.reference.mode = "custom"
-        self.config.reference.organism_name = self.ref_organism.text().strip() or "custom"
+        config = self.config.model_copy(deep=True)
+        config.reference.mode = "custom"
+        config.reference.organism_name = self.ref_organism.text().strip() or "custom"
         # If the custom organism name matches a catalog preset, seed its enrichment/
         # PPI ids; an unknown name leaves them None (the smk fallback applies).
-        entry = catalog_entry_for_organism(self.config.reference.organism_name)
+        entry = catalog_entry_for_organism(config.reference.organism_name)
         if entry is not None:
-            enr = self.config.enrichment
+            enr = config.enrichment
             enr.orgdb = entry.get("orgdb") or None
             enr.kegg_organism = entry.get("kegg_organism") or None
             enr.gprofiler_organism = entry.get("gprofiler_organism") or None
             enr.taxon_id = entry.get("taxon_id")
-            self.config.ppi.taxon = entry.get("string_taxon")
-            if self.config.input.type != "microarray":
+            config.ppi.taxon = entry.get("string_taxon")
+            if config.input.type != "microarray":
                 enr.keytype = entry.get("enrichment_keytype") or None
                 enr.kegg_keytype = entry.get("kegg_keytype") or None
                 enr.kegg_key_form = entry.get("kegg_key_form") or None
         # Store WSL-resolvable paths: reference staging and validate_reference.py
         # run inside WSL, where a Windows path (C:\...) would not exist. The md5s
         # above were computed on the native paths (readable on the Windows side).
-        self.config.reference.genome_fasta = genome_wsl
-        self.config.reference.annotation_file = annotation_wsl
-        self.config.reference.annotation_format = self.ref_format.currentText()  # type: ignore[assignment]
-        self.config.reference.genome_md5 = genome_md5
-        self.config.reference.annotation_md5 = annotation_md5
-        self.manager.save_config(self.project_root, self.config)
+        config.reference.genome_fasta = genome_wsl
+        config.reference.annotation_file = annotation_wsl
+        config.reference.annotation_format = self.ref_format.currentText()  # type: ignore[assignment]
+        config.reference.genome_md5 = genome_md5
+        config.reference.annotation_md5 = annotation_md5
         lock = {
             "locked": True,
-            "organism": self.config.reference.organism_name,
+            "organism": config.reference.organism_name,
             "mode": "custom",
             "genome_path": str(genome),
             "annotation_path": str(annotation),
@@ -2365,10 +2570,13 @@ class MainWindow(QMainWindow):
             "annotation_md5": annotation_md5,
             "date_selected": date.today().isoformat(),
         }
-        lock_path.write_text(yaml.safe_dump(lock, sort_keys=False), encoding="utf-8")
+        self._save_edited_config(config, {
+            lock_path: lambda path: path.write_text(yaml.safe_dump(lock, sort_keys=False), encoding="utf-8"),
+        })
         self.reference_details.setPlainText(
             "Custom reference selected and locked:\n" + yaml.safe_dump(lock, sort_keys=False)
         )
+        self._remember_saved_form("reference")
 
     def _quantifier_valid_for(self, aligner: str) -> tuple[str, ...]:
         # Which quantifiers are valid for each aligner (mirrors the Snakefile's
@@ -5339,13 +5547,16 @@ class MainWindow(QMainWindow):
         # it into config (or clear it when empty). Returns the gene count. No dialog.
         assert self.project_root is not None and self.config is not None
         genes = [g.strip() for g in self.goi_box.toPlainText().splitlines() if g.strip()]
+        config = self.config.model_copy(deep=True)
+        files = {}
         if not genes:
-            self.config.gene_sets.custom_gene_list = None
+            config.gene_sets.custom_gene_list = None
         else:
             path = self.project_root / "config" / "genes_of_interest.txt"
-            path.write_text("\n".join(genes) + "\n", encoding="utf-8")
-            self.config.gene_sets.custom_gene_list = "config/genes_of_interest.txt"
-        self.manager.save_config(self.project_root, self.config)
+            files[path] = lambda target: target.write_text("\n".join(genes) + "\n", encoding="utf-8")
+            config.gene_sets.custom_gene_list = "config/genes_of_interest.txt"
+        self._save_edited_config(config, files)
+        self._remember_saved_form("genes")
         return len(genes)
 
     def _save_goi(self) -> None:
@@ -5656,8 +5867,9 @@ class MainWindow(QMainWindow):
                 "(Run Monitor) to produce them; afterwards this rebuilds the STRING PPI "
                 "network from those results without re-analyzing.")
             return
-        self.config.ppi.score_threshold = int(self.ppi_score.value())
-        self.manager.save_config(self.project_root, self.config)
+        config = self.config.model_copy(deep=True)
+        config.ppi.score_threshold = int(self.ppi_score.value())
+        self._save_edited_config(config)
         self._start_snakemake("ppi")
 
     def _info_label(self, text: str, help_text: str, buddy: QWidget | None = None) -> QWidget:
@@ -6162,7 +6374,8 @@ class MainWindow(QMainWindow):
         # False if there is no open project.
         if self.config is None or self.project_root is None:
             return False
-        style = self.config.figures_style
+        config = self.config.model_copy(deep=True)
+        style = config.figures_style
         style.palette = self.fig_palette.currentText()  # type: ignore[assignment]
         # Store only the cells the user actually set (non-inherit), so the config stays
         # clean and every unset key inherits the global setting.
@@ -6203,8 +6416,9 @@ class MainWindow(QMainWindow):
         # The PPI score control lives on this tab but feeds config.ppi (not figures_style);
         # persist it here so a normal Run honors it, not just Regenerate PPI.
         if hasattr(self, "ppi_score"):
-            self.config.ppi.score_threshold = self.ppi_score.value()
-        self.manager.save_config(self.project_root, self.config)
+            config.ppi.score_threshold = self.ppi_score.value()
+        self._save_edited_config(config)
+        self._remember_saved_form("figures")
         return True
 
     def _save_figure_style(self) -> None:
@@ -6540,6 +6754,8 @@ class MainWindow(QMainWindow):
         if not name:
             QMessageBox.warning(self, APP_NAME, "Enter a project name before creating a project.")
             return
+        if not self._confirm_project_transition():
+            return
         workdir = Path(self.workdir.text().strip() or str(Path.home() / "BulkSeqProjects"))
         messages = validate_working_directory(workdir, use_wsl=self.use_wsl.isChecked())
         if any(m.get("status") == "FAIL" for m in messages):
@@ -6568,12 +6784,14 @@ class MainWindow(QMainWindow):
             self.project_status.setPlainText(f"Project creation failed: {exc}")
             QMessageBox.critical(self, APP_NAME, f"Project creation failed:\n{exc}")
             return
-        self._load_project(root)
+        self._load_project(root, check_unsaved=False)
         self.project_status.setPlainText(
             f"Created {root}\n" + self._format_workdir_messages(messages)
         )
 
     def _create_benchmark_project(self, benchmark_id: str | None = None) -> None:
+        if not self._confirm_project_transition():
+            return
         workdir = Path(self.workdir.text().strip() or str(Path.home() / "BulkSeqProjects"))
         messages = validate_working_directory(workdir, use_wsl=self.use_wsl.isChecked())
         if any(m.get("status") == "FAIL" for m in messages):
@@ -6620,7 +6838,7 @@ class MainWindow(QMainWindow):
             self.project_status.setPlainText(f"Benchmark project creation failed: {exc}")
             QMessageBox.critical(self, APP_NAME, f"Benchmark project creation failed:\n{exc}")
             return
-        self._load_project(root)
+        self._load_project(root, check_unsaved=False)
         self.project_status.setPlainText(
             f"Created benchmark project: {root}\n"
             f"Dataset: {benchmark['name']} ({benchmark['organism_name']})\n"
@@ -6648,7 +6866,7 @@ class MainWindow(QMainWindow):
         configured = self.config.input.samples if self.config is not None else "config/samples.tsv"
         return project_configured_path(self.project_root, configured)
 
-    def _load_project(self, root: Path) -> None:
+    def _load_project(self, root: Path, *, check_unsaved: bool = True) -> None:
         # Opening (or creating) another project while a run is live would repoint
         # project_root under the running thread, whose log/finished signals would
         # then write into the new project. Block until the run is stopped.
@@ -6675,6 +6893,14 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, APP_NAME, f"Could not read project config:\n{exc}")
             self.project_status.setPlainText(f"Failed to open project: {exc}")
             return
+        if check_unsaved and not self._confirm_unsaved_changes():
+            return
+        if root == self.project_root:
+            try:
+                config = self.manager.load_config(root)
+            except (OSError, ValueError, yaml.YAMLError) as exc:
+                QMessageBox.critical(self, APP_NAME, f"Could not read project config:\n{exc}")
+                return
         self.project_root = root
         self.config = config
         # Smoothly flag a comma decimal separator (from a comma-locale hand-edit): the values
@@ -6685,14 +6911,21 @@ class MainWindow(QMainWindow):
         # Drop the previous project's transient state (log, status, figures,
         # network) before showing the new one.
         self._clear_transient_ui()
+        self.metadata_table.load_dataframe(pd.DataFrame())
         self._populate_widgets_from_config()
         samples = self._configured_samples_path()
-        if samples.exists():
+        sample_problem = ""
+        try:
             self.metadata_table.load_tsv(samples)
-            # _populate_widgets_from_config seeded the contrast dropdowns from the PREVIOUS
-            # table; re-seed now that the new project's samples are loaded (valid selected
-            # values are preserved by _refresh_conditions).
-            self._refresh_conditions()
+        except (OSError, ValueError, pd.errors.ParserError) as exc:
+            sample_problem = (
+                f"Could not load the sample sheet: {samples}\n{exc}\n"
+                "Import a sample table or add samples on the Samples page, then save and validate."
+            )
+            self._show_metadata_message(sample_problem)
+        self._refresh_conditions()
+        self._loaded_samples_state = self._sample_edit_state()
+        self._remember_saved_form("workflow")
         self._refresh_gallery()
         self._refresh_export_buttons()
         self._refresh_input_preview()
@@ -6702,9 +6935,10 @@ class MainWindow(QMainWindow):
         # Remember the folder this project lives in so the "Open project" picker starts there
         # next time (instead of the app's install/AppData folder).
         QSettings().setValue("last_project_dir", str(root.parent))
-        self.project_status.setPlainText(f"Open project: {root}")
+        self.project_status.setPlainText(f"Open project: {root}" + (f"\n{sample_problem}" if sample_problem else ""))
         self.statusBar().showMessage(
-            "Project open — review the inputs and settings, validate them, then start the workflow.")
+            "Sample sheet unavailable — import or add samples before validating."
+            if sample_problem else "Project open — review the inputs and settings, validate them, then start the workflow.")
         self._refresh_phase_checks()
         # If this project was left with an unfinished run, surface the one-click Resume banner.
         self._refresh_resume_banner()
@@ -7010,7 +7244,19 @@ class MainWindow(QMainWindow):
                 self.ref_format.setCurrentText(ref.annotation_format)
         elif hasattr(self, "reference_custom_toggle"):
             self.reference_custom_toggle.setChecked(False)
+            self.ref_organism.clear()
+            self.ref_genome.clear()
+            self.ref_annotation.clear()
+        if self.project_root is not None:
+            accessions = self.project_root / "config" / "sra_accessions.txt"
+            try:
+                self.sra_box.setPlainText(accessions.read_text(encoding="utf-8") if accessions.is_file() else "")
+            except (OSError, UnicodeError) as exc:
+                self.sra_box.clear()
+                QMessageBox.warning(self, APP_NAME, f"Could not read saved accessions. Import them again before saving.\n{exc}")
         self._apply_input_mode_ui()
+        for section in ("workflow", "resources", "figures", "reference", "accessions", "genes", "microarray"):
+            self._remember_saved_form(section)
 
     def _design_variables(self) -> list[str]:
         # The LIVE design field, so a formula typed but not yet saved is checked against the
@@ -7021,7 +7267,7 @@ class MainWindow(QMainWindow):
         return design_variables(self.config, formula)
 
     def _select_fastqs(self) -> None:
-        if not self._require_project():
+        if not self._require_project() or self.config is None:
             return
         files, _ = QFileDialog.getOpenFileNames(self, "Select FASTQ files", "", "FASTQ (*.fastq *.fq *.fastq.gz *.fq.gz)")
         if not files:
@@ -7041,16 +7287,18 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, APP_NAME, str(exc))
                 return
         assert self.project_root is not None
-        save_metadata(df, self.project_root / "config" / "samples.auto_generated.tsv")
-        save_metadata(df, self._configured_samples_path())
         # Selecting FASTQs switches the project back to the alignment route. Clear
         # any prior count-matrix / microarray mode so the run takes the fastq
         # branch (the SRA/count-matrix/GEO handlers set their own type the same way).
-        self.config.input.type = "fastq"
-        self.config.input.count_matrix = None
-        self.config.input.deseq2_results = None
-        self.config.microarray.gse_accession = None
-        self.manager.save_config(self.project_root, self.config)
+        config = self.config.model_copy(deep=True)
+        config.input.type = "fastq"
+        config.input.count_matrix = None
+        config.input.deseq2_results = None
+        config.microarray.gse_accession = None
+        self._save_edited_config(config, {
+            self.project_root / "config" / "samples.auto_generated.tsv": lambda path: save_metadata(df, path),
+            self._configured_samples_path(): lambda path: save_metadata(df, path),
+        })
         self.metadata_table.load_dataframe(df)
         self._apply_input_mode_ui()
         self.input_preview.setPlainText(df.to_string(index=False))
@@ -7238,18 +7486,19 @@ class MainWindow(QMainWindow):
         if row < 0 or row >= len(catalog) or self.config is None or self.project_root is None:
             return
         entry = catalog[row]
-        ref = self.config.reference
+        config = self.config.model_copy(deep=True)
+        ref = config.reference
         ref.mode = "preset"
         ref.organism_name = str(entry["organism_name"])
         # Propagate the per-organism enrichment/PPI identifiers the workflow reads.
-        enr = self.config.enrichment
+        enr = config.enrichment
         enr.orgdb = entry.get("orgdb") or None
         enr.kegg_organism = entry.get("kegg_organism") or None
         enr.gprofiler_organism = entry.get("gprofiler_organism") or None
         enr.taxon_id = entry.get("taxon_id")
-        self.config.ppi.taxon = entry.get("string_taxon")
+        config.ppi.taxon = entry.get("string_taxon")
         # Don't clobber the microarray SYMBOL keytype (mirrors the L468 guard).
-        if self.config.input.type != "microarray":
+        if config.input.type != "microarray":
             enr.keytype = entry.get("enrichment_keytype") or None
             enr.kegg_keytype = entry.get("kegg_keytype") or None
             enr.kegg_key_form = entry.get("kegg_key_form") or None
@@ -7282,7 +7531,7 @@ class MainWindow(QMainWindow):
                 "This preset has no ready GTF (see notes). Use the Custom Reference "
                 "section below to supply your own genome FASTA + annotation."
             )
-        self.manager.save_config(self.project_root, self.config)
+        self._save_edited_config(config)
         if ref.genome_fasta_url:
             self.statusBar().showMessage(f"Reference set: {ref.organism_name} — ready to run.", 6000)
         else:
@@ -7324,22 +7573,23 @@ class MainWindow(QMainWindow):
             if problem:
                 QMessageBox.warning(self, APP_NAME, problem + "\n\nWorkflow settings were not saved.")
                 return False
-        self.config.workflow.aligner = self.aligner.currentText()  # type: ignore[assignment]
-        self.config.workflow.quantifier = self.quantifier.currentText()  # type: ignore[assignment]
-        self.config.workflow.trimming = self.trim.isChecked()
-        self.config.workflow.trimmer = self.trimmer.currentData()  # type: ignore[assignment]
-        self.config.workflow.rrna_filtering = self.rrna.isChecked()
-        self.config.workflow.rrna_tool = self.rrna_tool.currentData()  # type: ignore[assignment]
-        self.config.workflow.contamination_screen = self.contam_screen.isChecked()
-        self.config.workflow.enrichment = self.enrichment.isChecked()
-        self.config.workflow.figures = self.figures.isChecked()
-        self.config.workflow.gsva = self.gsva.isChecked()
-        self.config.workflow.rseqc = self.rseqc.isChecked()
-        self.config.workflow.meta_analysis = self.meta_analysis.isChecked()
-        self.config.workflow.per_study_enrichment = self.per_study_enrichment.isChecked()
-        self.config.enrichment.go_ontology = self.meta_go_ontology.currentData()  # type: ignore[assignment]
-        self.config.workflow.de_engine = self.de_engine.currentData()  # type: ignore[assignment]
-        self.config.workflow.organellar_genes = self.organellar.currentData()  # type: ignore[assignment]
+        config = self.config.model_copy(deep=True)
+        config.workflow.aligner = self.aligner.currentText()  # type: ignore[assignment]
+        config.workflow.quantifier = self.quantifier.currentText()  # type: ignore[assignment]
+        config.workflow.trimming = self.trim.isChecked()
+        config.workflow.trimmer = self.trimmer.currentData()  # type: ignore[assignment]
+        config.workflow.rrna_filtering = self.rrna.isChecked()
+        config.workflow.rrna_tool = self.rrna_tool.currentData()  # type: ignore[assignment]
+        config.workflow.contamination_screen = self.contam_screen.isChecked()
+        config.workflow.enrichment = self.enrichment.isChecked()
+        config.workflow.figures = self.figures.isChecked()
+        config.workflow.gsva = self.gsva.isChecked()
+        config.workflow.rseqc = self.rseqc.isChecked()
+        config.workflow.meta_analysis = self.meta_analysis.isChecked()
+        config.workflow.per_study_enrichment = self.per_study_enrichment.isChecked()
+        config.enrichment.go_ontology = self.meta_go_ontology.currentData()  # type: ignore[assignment]
+        config.workflow.de_engine = self.de_engine.currentData()  # type: ignore[assignment]
+        config.workflow.organellar_genes = self.organellar.currentData()  # type: ignore[assignment]
         # Custom gene-set files are Snakemake inputs read INSIDE WSL, so a Browse-picked Windows/UNC
         # path (C:\... or \\wsl.localhost\...) must be WSL-resolved like the reference genome above —
         # otherwise the raw path is unusable in WSL and aborts the whole run at DAG build. Convert only
@@ -7362,48 +7612,49 @@ class MainWindow(QMainWindow):
         except UnsupportedUncPathError as exc:
             QMessageBox.warning(self, APP_NAME, str(exc) + "\n\nWorkflow settings were not saved.")
             return False
-        (self.config.gene_sets.custom_gene_sets,
-         self.config.gene_sets.functional_annotation_table,
-         self.config.gene_sets.background_gene_list) = gene_set_paths
-        self.config.enrichment.transfer = self.transfer_mode.currentData()  # type: ignore[assignment]
-        (self.config.enrichment.transfer_emapper,
-         self.config.enrichment.transfer_ko_table) = transfer_paths
-        self.config.fastp.qualified_quality_phred = self.fastp_q.value()
-        self.config.fastp.length_required = self.fastp_len.value()
-        self.config.fastp.trim_poly_g = self.trim_poly_g.isChecked()
+        (config.gene_sets.custom_gene_sets,
+         config.gene_sets.functional_annotation_table,
+         config.gene_sets.background_gene_list) = gene_set_paths
+        config.enrichment.transfer = self.transfer_mode.currentData()  # type: ignore[assignment]
+        (config.enrichment.transfer_emapper,
+         config.enrichment.transfer_ko_table) = transfer_paths
+        config.fastp.qualified_quality_phred = self.fastp_q.value()
+        config.fastp.length_required = self.fastp_len.value()
+        config.fastp.trim_poly_g = self.trim_poly_g.isChecked()
         # Advanced tool parameters.
-        self.config.fastp.unqualified_percent_limit = self.fastp_u.value()
-        self.config.fastp.trim_poly_x = self.fastp_polyx.isChecked()
-        self.config.trimmomatic.sliding_window_quality = self.tm_sw_q.value()
-        self.config.trimmomatic.leading = self.tm_leading.value()
-        self.config.trimmomatic.trailing = self.tm_trailing.value()
-        self.config.ribodetector.ensure = self.rd_ensure.currentData()  # type: ignore[assignment]
-        self.config.ribodetector.chunk_size = self.rd_chunk.value()
-        self.config.contamination.subset = self.fs_subset.value()
-        self.config.contamination.conf = self.fs_conf.text().strip() or None
-        self.config.star.twopass_mode = self.star_twopass.isChecked()
-        self.config.star.multimap_nmax = self.star_multimap.value()
-        self.config.star.mismatch_nover_read_lmax = self.star_mismatch.value()
-        self.config.featurecounts.feature_type = self.fc_feature.text().strip() or "exon"
-        self.config.featurecounts.attribute_type = self.fc_attribute.text().strip() or "gene_id"
-        self.config.deseq2.min_count = self.de_min_count.value()
-        self.config.deseq2.shrinkage_method = self.de_shrink.currentData()  # type: ignore[assignment]
-        self.config.deseq2.alpha = self.alpha.value()
-        self.config.deseq2.lfc_threshold = self.lfc_threshold.value()
-        if self.config.input.type != "deseq2_results":
-            self.config.deseq2.design_formula = self.design.text()
+        config.fastp.unqualified_percent_limit = self.fastp_u.value()
+        config.fastp.trim_poly_x = self.fastp_polyx.isChecked()
+        config.trimmomatic.sliding_window_quality = self.tm_sw_q.value()
+        config.trimmomatic.leading = self.tm_leading.value()
+        config.trimmomatic.trailing = self.tm_trailing.value()
+        config.ribodetector.ensure = self.rd_ensure.currentData()  # type: ignore[assignment]
+        config.ribodetector.chunk_size = self.rd_chunk.value()
+        config.contamination.subset = self.fs_subset.value()
+        config.contamination.conf = self.fs_conf.text().strip() or None
+        config.star.twopass_mode = self.star_twopass.isChecked()
+        config.star.multimap_nmax = self.star_multimap.value()
+        config.star.mismatch_nover_read_lmax = self.star_mismatch.value()
+        config.featurecounts.feature_type = self.fc_feature.text().strip() or "exon"
+        config.featurecounts.attribute_type = self.fc_attribute.text().strip() or "gene_id"
+        config.deseq2.min_count = self.de_min_count.value()
+        config.deseq2.shrinkage_method = self.de_shrink.currentData()  # type: ignore[assignment]
+        config.deseq2.alpha = self.alpha.value()
+        config.deseq2.lfc_threshold = self.lfc_threshold.value()
+        if config.input.type != "deseq2_results":
+            config.deseq2.design_formula = self.design.text()
             factor = self.contrast_factor.text().strip() or "condition"
             if self.reference_level.currentText().strip():
-                self.config.deseq2.reference_level = {
+                config.deseq2.reference_level = {
                     factor: self.reference_level.currentText().strip()
                 }
-            if self.config.deseq2.contrasts:
-                contrast = self.config.deseq2.contrasts[0]
+            if config.deseq2.contrasts:
+                contrast = config.deseq2.contrasts[0]
                 contrast.factor = factor
                 contrast.numerator = self.numerator.currentText().strip() or contrast.numerator
                 contrast.denominator = self.denominator.currentText().strip() or contrast.denominator
                 contrast.name = f"{contrast.numerator}_vs_{contrast.denominator}"
-        self.manager.save_config(self.project_root, self.config)
+        self._save_edited_config(config)
+        self._remember_saved_form("workflow")
         return True
 
     def _detect_resources(self) -> None:
@@ -7541,17 +7792,19 @@ class MainWindow(QMainWindow):
     def _save_resources(self) -> None:
         if self.config is None or self.project_root is None:
             return
-        self.config.resources.profile = self.profile.currentText()  # type: ignore[assignment]
-        self.config.resources.total_threads = self.cores.value()
-        self.config.resources.total_memory_gb = self.ram.value()
+        config = self.config.model_copy(deep=True)
+        config.resources.profile = self.profile.currentText()  # type: ignore[assignment]
+        config.resources.total_threads = self.cores.value()
+        config.resources.total_memory_gb = self.ram.value()
         # Resource profiles own the schedulable pool and its per-rule subdivision.
         # Persist the derived requests so the workflow actually uses the CPU budget
         # displayed by the GUI (instead of retaining the four-thread scaffold defaults).
         for rule_name, threads in recommend_rule_threads(self.cores.value()).items():
-            setattr(self.config.rule_threads, rule_name, threads)
+            setattr(config.rule_threads, rule_name, threads)
         for rule_name, memory_gb in recommend_rule_memory_gb(self.ram.value()).items():
-            setattr(self.config.rule_memory_gb, rule_name, memory_gb)
-        self.manager.save_config(self.project_root, self.config)
+            setattr(config.rule_memory_gb, rule_name, memory_gb)
+        self._save_edited_config(config)
+        self._remember_saved_form("resources")
 
     def _estimate_runtime(self) -> None:
         if not self._require_project() or self.config is None:

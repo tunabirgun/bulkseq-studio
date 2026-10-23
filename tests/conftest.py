@@ -37,8 +37,37 @@ def _abort_gui_teardown(message: str) -> None:
     raise RuntimeError(message)
 
 
+@pytest.fixture
+def _transition_dialog_responses():
+    if "app.ui.main_window" not in sys.modules:
+        yield
+        return
+    from PySide6.QtWidgets import QMessageBox
+
+    question = QMessageBox.question
+    execute = QMessageBox.exec
+
+    def answer_transition(parent, title, text, *args, **kwargs):
+        if text == "Save changes to the current project before leaving?":
+            return QMessageBox.StandardButton.Discard
+        return question(parent, title, text, *args, **kwargs)
+
+    def close_test_run(dialog):
+        if dialog.text() == "A workflow is running. Closing will stop the run.":
+            next(button for button in dialog.buttons() if button.text() == "Stop run and close").click()
+            return 0
+        return execute(dialog)
+
+    # A separate patch context survives test-local monkeypatch.undo(). Tests of
+    # transition decisions override these exact-dialog cleanup responses.
+    with pytest.MonkeyPatch.context() as patches:
+        patches.setattr(QMessageBox, "question", answer_transition)
+        patches.setattr(QMessageBox, "exec", close_test_run)
+        yield
+
+
 @pytest.fixture(autouse=True)
-def _isolate_cwd(tmp_path, monkeypatch, request):
+def _isolate_cwd(tmp_path, _transition_dialog_responses, monkeypatch, request):
     """Run every test in its own temporary working directory.
 
     Several tests create scratch projects via relative paths (``manual_test_*``).

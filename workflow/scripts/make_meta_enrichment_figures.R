@@ -55,7 +55,14 @@ placeholder <- function(msg) {
 cc <- tryCatch(readRDS(snakemake@input[["objects"]]), error = function(e) NULL)
 n <- tryCatch(nrow(as.data.frame(cc)), error = function(e) 0)
 if (is.null(cc) || is.null(n) || n == 0) {
-  placeholder("Cross-study enrichment unavailable\n(organism unmapped or no significant terms)")
+  check <- tryCatch(jsonlite::read_json(snakemake@input[["check"]]), error = function(e) NULL)
+  no_hits <- !is.null(check) && identical(check$status, "PASS") &&
+    any(vapply(check$messages, function(item)
+      identical(item$message, "Cross-study enrichment: no GO terms passed the FDR cutoff in any study/convergent set."),
+      logical(1)))
+  placeholder(if (no_hits)
+    "No GO terms passed the FDR cutoff\nin any study or convergent gene set\nSee checks/18_meta_enrichment_qc.json" else
+    "Cross-study enrichment results unavailable\nSee checks/18_meta_enrichment_qc.json")
 } else {
   p <- tryCatch({
     # enrichplot's compareCluster dotplot maps p.adjust to `fill` (1.30.4; older versions

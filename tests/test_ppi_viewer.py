@@ -369,12 +369,58 @@ def test_real_webengine_render_callback_reports_the_post_prune_counts():
         app_qt = __import__("PySide6.QtWidgets", fromlist=["QApplication"]).QApplication
         app = app_qt.instance() or app_qt([])
         viewer = PpiViewer()
+        assert viewer.available, "QtWebEngine view was not constructed"
+        viewer.resize(900, 600)
+        viewer.show()
+        app.processEvents()
+        terminations = []
+        page = viewer.view.page()
+        page.renderProcessTerminated.connect(
+            lambda status, code: terminations.append((str(status), code))
+        )
+        load_events = []
         ready_loop = QEventLoop()
-        QTimer.singleShot(5000, ready_loop.quit)
-        if viewer.view:
-            viewer.view.loadFinished.connect(lambda ok: ready_loop.quit() if ok else None)
-        ready_loop.exec()
-        assert viewer.available and viewer._ready
+        ready_timer = QTimer()
+        ready_timer.setSingleShot(True)
+        ready_timer.timeout.connect(ready_loop.quit)
+        viewer.view.loadFinished.connect(
+            lambda ok: (load_events.append(bool(ok)), ready_loop.quit()))
+        if not viewer._ready:
+            ready_timer.start(10000)
+            ready_loop.exec()
+            ready_timer.stop()
+        assert viewer._ready, f"PPI page did not load: {load_events}, renderer={terminations}"
+
+        page_ready = []
+        js_ready_loop = QEventLoop()
+        js_ready_timer = QTimer()
+        js_ready_timer.setSingleShot(True)
+        js_ready_timer.timeout.connect(js_ready_loop.quit)
+        waiting = {"active": True}
+
+        def probe_page():
+            if waiting["active"] and not page_ready:
+                page.runJavaScript(
+                    "Boolean(window.PPI && typeof PPI.render === 'function' && "
+                    "document.getElementById('cy'))", on_page_probe,
+                )
+
+        def on_page_probe(value):
+            if not waiting["active"]:
+                return
+            if value is True:
+                page_ready.append(True)
+                js_ready_loop.quit()
+            else:
+                QTimer.singleShot(50, probe_page)
+
+        probe_page()
+        if not page_ready:
+            js_ready_timer.start(10000)
+            js_ready_loop.exec()
+            js_ready_timer.stop()
+        waiting["active"] = False
+        assert page_ready, f"PPI.render was not ready: load={load_events}, renderer={terminations}"
 
         n = 350  # above viewer.js's BUDGET=300, so this must prune
         nodes = [{"data": {"id": f"G{i}", "symbol": f"G{i}", "degree": i}} for i in range(n)]
@@ -382,16 +428,27 @@ def test_real_webengine_render_callback_reports_the_post_prune_counts():
                  for i in range(n - 1)]
 
         received = []
-        viewer.load_graph({"nodes": nodes, "edges": edges}, on_rendered=received.append)
         wait = QEventLoop()
-        QTimer.singleShot(4000, wait.quit)
-        poll = QTimer()
-        poll.setInterval(20)
-        poll.timeout.connect(lambda: wait.quit() if received else None)
-        poll.start()
-        wait.exec()
-        assert received, "runJavaScript callback never fired"
+        render_timer = QTimer()
+        render_timer.setSingleShot(True)
+        render_timer.timeout.connect(wait.quit)
+        def on_rendered(value):
+            received.append(value)
+            wait.quit()
+
+        viewer.load_graph({"nodes": nodes, "edges": edges}, on_rendered=on_rendered)
+        if not received:
+            render_timer.start(15000)
+            wait.exec()
+            render_timer.stop()
+        assert received, (
+            f"PPI.render callback did not arrive: ready={page_ready}, "
+            f"size={viewer.view.size()}, renderer={terminations}"
+        )
+        assert isinstance(received[0], str), f"PPI.render returned no counts: {received[0]!r}"
         print(received[0])
+        viewer.close()
+        app.processEvents()
         '''
     )
     env = os.environ.copy()
@@ -403,7 +460,7 @@ def test_real_webengine_render_callback_reports_the_post_prune_counts():
         env=env,
         capture_output=True,
         text=True,
-        timeout=25,
+        timeout=60,
         check=False,
     )
     assert completed.returncode == 0, completed.stderr

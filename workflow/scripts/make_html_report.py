@@ -12,9 +12,11 @@ import base64
 import csv
 import html
 import json
+import math
 import re
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 # Snakemake runs this as `python workflow/scripts/make_html_report.py`, which already puts the
 # script directory on sys.path; the tests import it by file path, which does not. Every sibling
@@ -218,14 +220,35 @@ def _fig(figs: Path, basename: str, title: str) -> str:
     )
 
 
-def _count_csv_rows(path: Path) -> int | None:
-    if not path.exists():
-        return None
+def _read_de_rows(path: Path) -> list[dict[str, str]] | None:
+    required = {"gene_id", "log2FoldChange", "padj"}
     try:
-        with path.open(encoding="utf-8", errors="replace", newline="") as fh:
-            return max(sum(1 for _ in csv.reader(fh)) - 1, 0)
-    except OSError:
+        with path.open(encoding="utf-8-sig", newline="") as fh:
+            reader = csv.DictReader(fh, strict=True)
+            fields = reader.fieldnames or []
+            if not required.issubset(fields) or len(fields) != len(set(fields)):
+                return None
+            numeric = {"log2FoldChange", "padj", "baseMean"}.intersection(fields)
+            rows = []
+            for row in reader:
+                if None in row or any(value is None for value in row.values()) or not row["gene_id"].strip():
+                    return None
+                for column in numeric:
+                    value = row[column].strip()
+                    if value.casefold() in _NA_SYMBOL_TOKENS:
+                        continue
+                    number = float(value)
+                    if not math.isfinite(number) or (column == "padj" and not 0 <= number <= 1):
+                        return None
+                rows.append(row)
+            return rows
+    except (OSError, UnicodeError, csv.Error, ValueError):
         return None
+
+
+def _count_csv_rows(path: Path) -> int | None:
+    rows = _read_de_rows(path)
+    return len(rows) if rows is not None else None
 
 
 def _de_table(
@@ -235,17 +258,13 @@ def _de_table(
     *,
     base_mean_kind: str = "count",
 ) -> str:
-    if not results_csv.exists():
-        return f"<p class='muted small'>{html.escape(empty_msg)}</p>"
-    rows: list[dict[str, str]] = []
-    with results_csv.open(encoding="utf-8", errors="replace", newline="") as fh:
-        reader = csv.DictReader(fh)
-        for i, row in enumerate(reader):
-            if i >= top:
-                break
-            rows.append(row)
+    rows = _read_de_rows(results_csv)
+    if rows is None:
+        return ("<p class='muted small'>Differential-expression table unavailable: "
+                f"<code>{html.escape(results_csv.name)}</code> is missing, unreadable, or malformed.</p>")
     if not rows:
         return f"<p class='muted small'>{html.escape(empty_msg)}</p>"
+    rows = rows[:top]
     cols = [c for c in ("gene_id", "symbol", "log2FoldChange", "padj", "baseMean", "biotype")
             if c in rows[0]]
 
@@ -300,7 +319,8 @@ def _de_split(project: Path, top: int = 50, *, base_mean_kind: str = "count") ->
         empty_msg="No down-regulated genes passed the significance and fold-change thresholds.",
         base_mean_kind=base_mean_kind,
     )
-    if not (deseq / "upregulated_genes.csv").exists() and not (deseq / "downregulated_genes.csv").exists():
+    if not any((deseq / name).exists() for name in
+               ("deseq2_results.csv", "upregulated_genes.csv", "downregulated_genes.csv")):
         return ""
     return (f"<div class='de-split'>"
             f"<div><h3>Top up-regulated <span class='pill up'>▲ up</span></h3>{up}</div>"
@@ -487,7 +507,7 @@ def _fmt_genes(names: list[str]) -> str:
 
 def res_has_de(project: Path) -> bool:
     d = project / "results" / "deseq2"
-    return any((d / f).exists() for f in
+    return any(_read_de_rows(d / f) is not None for f in
                ("deseq2_results.csv", "upregulated_genes.csv", "downregulated_genes.csv"))
 
 
@@ -497,42 +517,40 @@ def _de_headline_stats(project: Path, alpha: float, lfc_t):
     #  thresholding results.csv when those CSVs are absent (BYO mode). tested = non-NaN
     #  padj rows. top genes = padj-ascending, sign-split, brace-mangled symbols skipped.
     deseq = project / "results" / "deseq2"
-    res = deseq / "deseq2_results.csv"
+    rows = _read_de_rows(deseq / "deseq2_results.csv")
     up_csv = _count_csv_rows(deseq / "upregulated_genes.csv")
     down_csv = _count_csv_rows(deseq / "downregulated_genes.csv")
-    tested = up_thr = down_thr = 0
+    tested = up_thr = down_thr = 0 if rows is not None else None
     top_up: list[str] = []
     top_down: list[str] = []
-    if res.exists():
-        with res.open(encoding="utf-8", errors="replace", newline="") as fh:
-            for r in csv.DictReader(fh):
-                try:
-                    pj = float(r["padj"])
-                except (KeyError, ValueError, TypeError):
-                    continue
-                if pj != pj:                       # NaN padj -> not tested
-                    continue
-                tested += 1
-                try:
-                    lfc = float(r["log2FoldChange"])
-                except (KeyError, ValueError, TypeError):
-                    lfc = 0.0
-                if pj < alpha and (lfc_t is None or abs(lfc) >= lfc_t):
-                    if lfc >= 0:
-                        up_thr += 1
-                    else:
-                        down_thr += 1
-                if len(top_up) < 3 or len(top_down) < 3:
-                    sym = _sym_or_blank(r.get("symbol"))
-                    if sym and not _CLEAN_SYM.match(sym):
-                        continue
-                    name = sym or (r.get("gene_id") or "").strip()
-                    if not name:
-                        continue
-                    bucket = top_up if lfc >= 0 else top_down
-                    esc = html.escape(name)
-                    if len(bucket) < 3 and esc not in bucket:
-                        bucket.append(esc)
+    for r in rows or []:
+        try:
+            pj = float(r["padj"])
+        except (ValueError, TypeError):
+            continue
+        if not math.isfinite(pj):
+            continue
+        tested += 1
+        try:
+            lfc = float(r["log2FoldChange"])
+        except (ValueError, TypeError):
+            continue
+        if not math.isfinite(lfc):
+            continue
+        if pj < alpha and (lfc_t is None or abs(lfc) >= lfc_t):
+            if lfc >= 0:
+                up_thr += 1
+            else:
+                down_thr += 1
+        if len(top_up) < 3 or len(top_down) < 3:
+            sym = _sym_or_blank(r.get("symbol"))
+            if sym and not _CLEAN_SYM.match(sym):
+                continue
+            name = sym or r["gene_id"].strip()
+            bucket = top_up if lfc >= 0 else top_down
+            esc = html.escape(name)
+            if len(bucket) < 3 and esc not in bucket:
+                bucket.append(esc)
     up = up_csv if up_csv is not None else up_thr
     down = down_csv if down_csv is not None else down_thr
     return up, down, tested, top_up, top_down
@@ -550,7 +568,7 @@ def _key_finding(run: dict, project: Path, sanity_text: str) -> str:
     # limma; calling the resulting 22,180-row table "probes" misstates its unit.
     unit = "genes/features" if inp.get("type") == "microarray" else "genes"
     up, down, tested, top_up, top_down = _de_headline_stats(project, float(alpha), lfc_t)
-    total = up + down
+    total = up + down if up is not None and down is not None else None
 
     if num and den:
         lead = f"Comparing <b>{html.escape(str(num))}</b> against <b>{html.escape(str(den))}</b>"
@@ -566,8 +584,9 @@ def _key_finding(run: dict, project: Path, sanity_text: str) -> str:
     if fold:
         thr += f" and {fold}"
 
-    if not res_has_de(project):
-        return f"{lead}, differential-expression results are not available for this run."
+    if not res_has_de(project) or total is None:
+        return (f"{lead}, complete differential-expression results are not available for this run. "
+                "Missing, unreadable, or malformed tables cannot establish that no genes met the thresholds.")
     if total == 0:
         return (f"{lead}, <b>no</b> {unit} met the chosen thresholds ({thr}). "
                 "Review the complete results, design, and diagnostics; this does not establish absence of change.")
@@ -586,14 +605,21 @@ def _status_sentence(sanity_text: str) -> str:
     if not checks:
         return ""
     n = len(checks)
+    recorded = re.search(r"^Overall:\s+(\w+)", sanity_text, re.M)
+    components = max((check["status"] for check in checks), key=PRIORITY.__getitem__)
+    if recorded and recorded.group(1) != components:
+        return (f"Check evidence is inconsistent: the aggregate records {recorded.group(1)}, "
+                f"while the listed checks resolve to {components}. Review the saved check records before interpreting results.")
     non = [_pretty_check_name(c["name"]) for c in checks if c["status"] != "PASS"]
     if not non:
-        return f"All {n} automated quality checks passed."
+        return f"{n} recorded automated quality {'check' if n == 1 else 'checks'} passed."
     has_fail = any(c["status"] == "FAIL" for c in checks)
-    word = ("issue" if has_fail else "advisory note") + ("s" if len(non) != 1 else "")
-    tail = "" if has_fail else " The run completed and the results are usable."
+    word = ("issue" if has_fail else "check") + ("s" if len(non) != 1 else "")
+    if not has_fail:
+        word += " requiring review"
+    tail = " Review these checks before interpreting the results."
     return (f"{n - len(non)} of {n} checks passed; {len(non)} {word}: "
-            f"{', '.join(html.escape(x) for x in non)}.{tail}")
+            f"{', '.join(non)}.{tail}")
 
 
 # (header, [candidate CSV columns — first present wins], kind). The alternate names cover the
@@ -775,7 +801,7 @@ def _custom_enrichment_section(project: Path) -> str:
         "Custom GSEA additional rank rows:", "Custom GSEA QC exclusion:",
         "Custom GSEA ranking order:", "Custom GSEA exact-score ties:",
         "Custom GSEA duplicate canonical-ID collapse:", "Custom ORA terms:",
-        "Custom GSEA sets:", "Custom enrichment failed:",
+        "Custom GSEA sets:", "Custom enrichment failed:", "ORA unavailable:", "GSEA unavailable:",
     )
     summary_lines = [line.strip() for line in summary_raw.splitlines()
                      if line.strip().startswith(evidence_prefixes)]
@@ -817,21 +843,33 @@ def _custom_enrichment_section(project: Path) -> str:
     figure_html = f"<div class='panels'>{figure}</div>" if figure else ""
     ora_model_present = ("Custom ORA model evidence: present" in summary_lines or
                          _enrich_table_state(enr / "custom_ora.csv", "ora") == "data")
+    failed_stages = {
+        stage for stage, count in (("ORA", "terms"), ("GSEA", "sets"))
+        if f"Custom {stage} {count}: unavailable" in summary_lines
+        or any(line.startswith((f"{stage} unavailable:", "Custom enrichment failed:"))
+               for line in summary_lines)
+    }
     ratio_note = (
         "<p class='muted small'>GeneRatio is term overlap / effective annotated selected genes; "
         "BgRatio is term membership / effective annotated background.</p>"
         if _enrich_table_state(enr / "custom_ora.csv", "ora") == "data" else "")
     ora = _custom_enrich_block(
         "Custom gene sets — over-representation (ORA)", enr / "custom_ora.csv", "ora",
-        ("No supplied custom gene set met the adjusted ORA criterion. This result is limited "
+        ("Custom ORA results are unavailable because execution failed; review the error "
+         "evidence above and check 24 before interpretation." if "ORA" in failed_stages else
+         "No supplied custom gene set met the adjusted ORA criterion. This result is limited "
          "to the configured collection and supplied universe." if ora_model_present else
          "Custom ORA model evidence is unavailable or the model was not run; a blank table "
          "does not establish that no supplied gene set met the criterion."),
     )
     gsea = _custom_enrich_block(
         "Custom gene sets — ranked-list enrichment (GSEA)", enr / "custom_gsea.csv", "gsea",
-        "No supplied custom gene set met the adjusted GSEA criterion. This result is limited "
-        "to the configured collection and ranked genes.",
+        ("Custom GSEA results are unavailable because execution failed; review the error "
+         "evidence above and check 24 before interpretation." if "GSEA" in failed_stages else
+         "No supplied custom gene set met the adjusted GSEA criterion. This result is limited "
+         "to the configured collection and ranked genes." if "Custom GSEA sets: 0" in summary_lines else
+         "Custom GSEA execution evidence is unavailable; a blank table does not establish "
+         "that no supplied gene set met the criterion."),
     )
     return ("<section class='custom-enrichment' aria-labelledby='custom-enrichment-title'>"
             "<h3 id='custom-enrichment-title'>Custom gene-set enrichment</h3>"
@@ -1113,7 +1151,7 @@ def _sanity_section(text: str) -> str:
             "A <b>FAIL</b> blocks a valid run. On the meta-analysis route, a check 01 "
             "<b>REVIEW_REQUIRED</b> or missing or malformed input evidence also stops per-study fitting.</p>")
     return (f"<section id='sanity'><div class='sec-head'><h2>Sanity checks</h2>"
-            f"{_badge(overall) if overall else ''}</div>{note}"
+            f"{_badge(overall) if overall else ''}</div><p>{html.escape(_status_sentence(text))}</p>{note}"
             f"<div class='tablewrap'><table class='checks'>{rows}</table></div></section>")
 
 
@@ -1330,6 +1368,8 @@ def _sample_composition(project: Path, num, den, run: dict | None = None) -> str
 
 
 def _meta_cards(run: dict, project: Path) -> str:
+    if not run:
+        return ""
     ref = run.get("reference", {}) or {}
     de = run.get("deseq2", {}) or {}
     wf = run.get("workflow", {}) or {}
@@ -1339,6 +1379,8 @@ def _meta_cards(run: dict, project: Path) -> str:
     is_micro = (run.get("input", {}) or {}).get("type") == "microarray"
     is_external = _is_external_results(run)
     cards: list[tuple[str, str]] = []
+    cards.append(("Result route", "Externally supplied differential-expression table" if is_external else
+                  _MODE_LABEL.get((run.get("input") or {}).get("type"), "Not recorded")))
 
     organism = _org_clean(ref)
     if organism:
@@ -1349,7 +1391,10 @@ def _meta_cards(run: dict, project: Path) -> str:
     num, den = _contrast_pair(run)
     if num and den:
         cards.append(("Contrast", f"{num} vs {den}"))
-    elif not is_external:
+        cards.append(("Effect direction", f"Positive log2 fold change: higher in {num} than {den}. Negative: lower in {num}."))
+    else:
+        cards.append(("Effect direction", "Group orientation not recorded or not confirmed; interpret the effect sign only."))
+    if not (num and den) and not is_external:
         contrasts = de.get("contrasts") or []
         if contrasts and isinstance(contrasts, list):
             cards.append(("Contrast", str(contrasts[0].get("name", "—"))))
@@ -1372,7 +1417,6 @@ def _meta_cards(run: dict, project: Path) -> str:
             filters.append(f"{_adjusted_p_name(run)} < {alpha}")
         if lfc is not None:
             filters.append(f"|log2FC|≥{lfc}")
-        cards.append(("Result route", "Externally supplied differential-expression table"))
         if filters:
             cards.append(("Result filter", " · ".join(filters)))
         cards.append(("Upstream DE method", str(provenance.get("upstream_method") or "unknown")))
@@ -1422,7 +1466,7 @@ def _meta_cards(run: dict, project: Path) -> str:
     up = _count_csv_rows(project / "results" / "deseq2" / "upregulated_genes.csv")
     down = _count_csv_rows(project / "results" / "deseq2" / "downregulated_genes.csv")
     if up is not None or down is not None:
-        cards.append(("Differential genes", f"{up or 0} up · {down or 0} down"))
+        cards.append(("Differential genes", f"{up if up is not None else 'unavailable'} up · {down if down is not None else 'unavailable'} down"))
 
     wall = timing.get("wall_clock_approx_hms")
     if wall:
@@ -1435,10 +1479,8 @@ def _meta_cards(run: dict, project: Path) -> str:
 
     if not cards:
         return ""
-    inner = "".join(
-        f"<div class='card'><div class='card-k'>{html.escape(k)}</div>"
-        f"<div class='card-v'>{html.escape(str(v))}</div></div>" for k, v in cards)
-    return f"<div class='cards'>{inner}</div>"
+    inner = "".join(f"<dt>{html.escape(k)}</dt><dd>{html.escape(str(v))}</dd>" for k, v in cards)
+    return section("Run settings", f"<dl class='run-settings'>{inner}</dl>", sid="run-settings")
 
 
 def _mapping(value) -> dict:
@@ -1732,6 +1774,17 @@ section h3{font-size:22px}
 table.data{font-size:16px}.pill,.badge{font-size:13px;border:1px solid var(--border)}
 pre{font-size:16px;border:1px solid var(--border)}
 .card,.hstat,.stat{box-shadow:none;border-radius:4px}
+.hero .kicker,.plain .tag,.hstat .k,.card-k{text-transform:none;letter-spacing:normal}
+.run-settings{display:grid;grid-template-columns:minmax(10rem,1fr) minmax(0,3fr);gap:8px 20px;margin:0}
+.run-settings dt{font-weight:600}.run-settings dd{margin:0;overflow-wrap:anywhere}
+.outcome{border-left:4px solid var(--brand-blue);padding:16px 20px;background:var(--bg);margin:22px 0}
+.outcome h2{font-size:24px}.outcome p:last-child{margin-bottom:0}
+.attention-list{padding-left:22px}.attention-list li{margin:8px 0;overflow-wrap:anywhere}
+.source-files ul{padding-left:22px}.source-files li{overflow-wrap:anywhere}
+.source-files summary{cursor:pointer;font-weight:600}.source-files details{margin:12px 0}
+.tablewrap,.tw{max-width:100%;overscroll-behavior-inline:contain}
+.tablewrap:focus-visible,.tw:focus-visible{outline-offset:-3px}
+@media(max-width:650px){.run-settings{grid-template-columns:minmax(0,1fr);gap:4px}.run-settings dd{margin-bottom:12px}}
 footer{max-width:1540px;font-size:16px}
 @media(max-width:1000px){.report-layout{grid-template-columns:minmax(0,1fr);padding:0 22px;gap:0}.report-nav{display:none}.mobile-contents{display:block;margin:0 0 24px;padding:14px 18px;background:var(--bg);border:1px solid var(--border)}.mobile-contents summary{cursor:pointer}.brand{padding:16px 22px}}
 @media(max-width:560px){.report-layout{padding:0 14px}.brand{padding:14px}.brand .wordmark{font-size:22px}.lb{inset:6px;width:calc(100% - 12px);height:calc(100dvh - 12px)}.lb-head{padding:10px}.lb-caption{padding:10px}.lb-toolbar{gap:6px}.lb-toolbar button{padding:5px 9px}.lb-close{margin-left:0}}
@@ -1769,18 +1822,81 @@ _MODE_LABEL = {"microarray": "Microarray", "fastq": "RNA-seq",
                "count_matrix": "Count matrix", "deseq2_results": "Provided differential-expression results"}
 
 
+def _run_outcome(project: Path, sanity_text: str) -> str:
+    overall, checks = _parse_sanity(sanity_text)
+    if not checks:
+        title = "Check evidence unavailable"
+        message = "Automated checks were not recorded in a readable form. Review the saved check records before interpreting any displayed results."
+    else:
+        title = {"PASS": "Recorded checks passed", "WARNING": "Advisory checks need review",
+                 "REVIEW_REQUIRED": "Review required", "FAIL": "Failed checks need attention"}[overall]
+        message = _status_sentence(sanity_text)
+    attention = [c for c in checks if c["status"] != "PASS"]
+    items = "".join(
+        f"<li>{_badge(c['status'])} <strong>{html.escape(_pretty_check_name(c['name']))}</strong>"
+        + (f": {html.escape(c['messages'][0])}" if c["messages"] else "") + "</li>"
+        for c in attention)
+    detail = f"<ul class='attention-list'>{items}</ul>" if items else ""
+    if sanity_text.strip():
+        detail += "<p><a href='#sanity'>Read all check messages</a>.</p>"
+    if not res_has_de(project):
+        message += " Differential-expression result files are unavailable; missing output is not a zero-result finding."
+    elif overall in ("FAIL", "REVIEW_REQUIRED") or not checks:
+        message += " Stored tables and figures remain visible for diagnosis; their presence does not establish a valid run."
+    return (f"<section id='outcome' class='outcome' aria-labelledby='outcome-title'>"
+            f"<h2 id='outcome-title'>{title}</h2><p>{html.escape(message)}</p>{detail}</section>")
+
+
+def _saved_outputs(project: Path, *, meta: bool = False) -> str:
+    groups = [("Differential-expression tables", "results/deseq2", {".csv", ".tsv"}),
+              ("Enrichment tables", "results/enrichment", {".csv", ".tsv"}),
+              ("Run records", "results/reports", {".json", ".txt"}),
+              ("Checks", "checks", {".json", ".txt"})]
+    if meta:
+        groups = [("Cross-study tables and records", "results/meta", {".csv", ".tsv", ".json"})] + groups[2:]
+    blocks = []
+    for label, folder, extensions in groups:
+        files = sorted(p for p in (project / folder).glob("*") if p.is_file() and p.suffix.lower() in extensions)
+        if not files:
+            continue
+        links = "".join(f"<li><a href='{quote('../../' + p.relative_to(project).as_posix(), safe='/')}'>{html.escape(p.name)}</a></li>"
+                        for p in files)
+        blocks.append(f"<details><summary>{label} ({len(files)})</summary><ul>{links}</ul></details>")
+    body = ("<p>Tables in this report show selected rows. These links open complete saved files and execution records. "
+            "Keep the report in its project folder to use them; embedded figures and displayed tables remain available offline.</p>"
+            + "".join(blocks) if blocks else "<p>No saved tables or execution records were found in the report's result folders.</p>")
+    return section("Saved outputs", f"<div class='source-files'>{body}</div>", sid="outputs")
+
+
+def report_contents(body: str) -> str:
+    labels = {"outcome": "Run status", "comparison": "Study scope", "findings": "Result summary",
+              "methods": "Methods", "field-guide": "Result fields", "convergent": "Matching-sign genes",
+              "enrichment": "Functional enrichment"}
+    links = []
+    for match in re.finditer(r"<(section|details)\b[^>]*\bid=['\"]([^'\"]+)['\"][^>]*>(.*?)(?=</\1>)", body, re.S):
+        _, sid, content = match.groups()
+        heading = re.search(r"<(h[12]|summary)[^>]*>(.*?)</\1>", content, re.S)
+        if not heading:
+            continue
+        label = labels.get(sid) or html.unescape(re.sub(r"<[^>]+>", "", heading.group(2))).strip()
+        links.append(f'<li><a href="#{html.escape(sid, quote=True)}">{html.escape(label)}</a></li>')
+    return "<ul>" + "".join(links) + "</ul>"
+
+
+def accessible_tables(body: str) -> str:
+    return re.sub(r"<div class=(['\"])(tablewrap|tw)\1",
+                  r"<div tabindex='0' role='region' aria-label='Scrollable table' class=\1\2\1", body)
+
+
 def _hero_findings(run: dict, project: Path, sanity_text: str, name: str) -> str:
-    # Hero + Key Findings: kicker, H1, subtitle, teal plain-language finding, 3 headline
-    # stat chips + up/down mini-bar, status badge + sentence, and the "how to read" details.
     inp = run.get("input", {}) or {}
     de = run.get("deseq2", {}) or {}
     unit = "genes/features" if inp.get("type") == "microarray" else "genes"
     alpha = float(de.get("alpha") or 0.05)
     lfc_t = _lfc_threshold(run, sanity_text)
     up, down, tested, top_up, top_down = _de_headline_stats(project, alpha, lfc_t)
-    total = up + down
+    total = up + down if up is not None and down is not None else None
     num, den = _contrast_pair(run)
-    is_external = _is_external_results(run)
 
     mode = _MODE_LABEL.get(inp.get("type"), "")
     organism = _org_clean(run.get("reference", {}) or {})
@@ -1791,13 +1907,13 @@ def _hero_findings(run: dict, project: Path, sanity_text: str, name: str) -> str
     finding = _key_finding(run, project, sanity_text)
 
     chips = ""
-    if total > 0:
+    if total is not None and total > 0:
         up_pct = up / total * 100
         down_pct = 100 - up_pct
-        num_lbl = html.escape(str(num)) if num else "treated"
+        num_lbl = html.escape(str(num)) if num else "the numerator"
         up_label = f"Higher in {num_lbl}"
         down_label = f"Lower in {num_lbl}"
-        if is_external and not (num and den):
+        if not (num and den):
             up_label = "Positive log2FC"
             down_label = "Negative log2FC"
         chips = (
@@ -1812,36 +1928,25 @@ def _hero_findings(run: dict, project: Path, sanity_text: str, name: str) -> str
             f'<div class="hstat down"><div class="v">&#9660;&nbsp;{down:,}</div>'
             f'<div class="k">{down_label}</div></div></div>')
 
-    overall, _ = _parse_sanity(sanity_text)
-    status = _status_sentence(sanity_text)
-    status_line = ""
-    if overall or status:
-        badge = _badge(overall) if overall else ""
-        status_line = f'<div class="status-line">{badge}<span>{html.escape(status)}</span></div>'
-
-    direction_context = (f"in {html.escape(str(num))} relative to {html.escape(str(den))}"
-                         if num and den else "for the recorded comparison")
     howto = (
         '<details class="howto"><summary>How to read this report</summary>'
         '<p>Read the section summaries alongside their evidence. The '
-        'tables show selected rows; consult the saved CSV files for complete results. Sorting changes only row order in this view. Figure zoom changes only display size. '
+        'tables show selected rows; open the <a href="#outputs">saved CSV files</a> for complete results. Sorting changes only row order in this view. Figure zoom changes only display size. '
         '<span style="border-bottom:1px dotted var(--brand-teal);color:var(--plain-ink);font-weight:600">'
         'Dotted-underlined</span> terms show a definition on hover, focus, or tap, and every one is '
-        'collected in the Glossary at the end. Direction is colour-coded throughout: '
-        f'<b style="color:var(--up-ink)">&#9650; red = higher</b>, '
-        f'<b style="color:var(--down-ink)">&#9660; blue = lower</b> {direction_context}.</p></details>')
+        'collected in the Glossary at the end. Direction colours identify positive (red) and negative (blue) log2 fold changes. '
+        'Use the recorded comparison to interpret group direction.</p></details>')
 
     return (
-        '<div class="hero"><div class="kicker">Guided results report</div>'
+        '<div class="hero"><div class="kicker">Results report</div>'
         f'<h1>{html.escape(name)}</h1>{sub_html}'
-        '<p class="lede">Read the summary, then inspect the recorded settings and evidence. The tables and figures '
-        'below carry the full numbers.</p></div>'
+        '</div>'
+        f'{_run_outcome(project, sanity_text)}'
         '<section id="findings" aria-label="Key findings">'
-        '<div class="plain" style="margin-top:0"><span class="tag">In plain terms</span>'
+        '<h2>Result summary</h2><div class="plain" style="margin-top:0">'
         f'<p class="finding">{finding}</p>'
-        '<p class="note">These are leads to confirm, not proof of function — treat the top '
-        'genes as a shortlist to follow up.</p></div>'
-        f'{chips}{status_line}{howto}</section>')
+        '</div>'
+        f'{chips}{howto}</section>')
 
 
 _realized_strandedness_text = realized_strandedness_text
@@ -2185,16 +2290,16 @@ def _ppi_hub_table(project: Path, top: int = 10) -> str:
 
 def _figure_groups(
     figs: Path,
-    up: int,
-    down: int,
+    up: int | None,
+    down: int | None,
     unit: str,
     is_micro: bool = False,
     run: dict | None = None,
     project: Path | None = None,
 ) -> str:
-    total = up + down
+    total = up + down if up is not None and down is not None else None
     dyn = {}
-    if total > 0:
+    if total is not None and total > 0:
         dyn["volcano"] = f"{up:,} {unit} rose and {down:,} fell past the cut-off."
         dyn["top_upregulated_heatmap"] = (
             f"The {min(up, 50):,} most statistically supported increases, sample by sample."
@@ -2241,8 +2346,8 @@ def _figure_groups(
 
 def _de_section(
     project: Path,
-    up: int,
-    down: int,
+    up: int | None,
+    down: int | None,
     num,
     den,
     unit: str,
@@ -2253,7 +2358,7 @@ def _de_section(
     split = _de_split(project, base_mean_kind=base_mean_kind)
     if not split:
         return ""
-    total = up + down
+    total = up + down if up is not None and down is not None else None
     one = unit[:-1] if unit.endswith("s") else unit
     badge = f'<span class="badge muted">{total:,} {unit}</span>' if total else ""
     run = run or {}
@@ -2261,7 +2366,11 @@ def _de_section(
     gloss = _route_gloss(run)
     num_lbl = html.escape(str(num)) if num else "the treated group"
     den_lbl = html.escape(str(den)) if den else "the control group"
-    if is_external and not (num and den):
+    if total is None:
+        plain_finding = ("Complete directional counts are unavailable. Each readable table is shown below; "
+                         "missing or malformed tables do not establish zero selected genes.")
+        direction_legend = ""
+    elif is_external and not (num and den):
         plain_finding = (
             f"Of the {unit} tested, <b>{up:,}</b> had <b class='up'>positive log2FC</b> and "
             f"<b>{down:,}</b> had <b class='down'>negative log2FC</b> in the supplied table. "
@@ -2335,9 +2444,10 @@ def _goi_section(project: Path, run: dict | None = None) -> str:
         if (figure := _fig(figs, basename, caption)))
     fig_html = f"<div class='panels'>{figures}</div>" if figures else ""
     result_label = "differential-expression" if is_external else "DESeq2"
-    table = _de_table(project / "results" / "genes_of_interest" / "goi_deseq2_results.csv", top=25,
+    table_path = project / "results" / "genes_of_interest" / "goi_deseq2_results.csv"
+    table = _de_table(table_path, top=25,
                       empty_msg=f"No genes-of-interest {result_label} results available.")
-    table_html = "" if table.startswith("<p class='muted small'>No genes-of-interest") else (
+    table_html = "" if not table_path.exists() or table.startswith("<p class='muted small'>No genes-of-interest") else (
         f"<h3>Genes of interest — {result_label} results</h3>{table}"
         f"<p class='muted small'>Full table: "
         f"<code>results/genes_of_interest/goi_deseq2_results.csv</code>.</p>")
@@ -2388,6 +2498,8 @@ def figure_dialog() -> str:
 
 def sortable_table_script() -> str:
     return """(function(){
+function revealSection(){var id=location.hash.slice(1),target=document.getElementById(id);if(target&&target.tagName==='DETAILS')target.open=true;document.querySelectorAll('.report-nav a,.mobile-contents a').forEach(function(link){if(link.hash===location.hash&&id)link.setAttribute('aria-current','location');else link.removeAttribute('aria-current');});}
+window.addEventListener('hashchange',revealSection);revealSection();
 function cellVal(cell){if(!cell)return '';var value=cell.getAttribute('data-sort-value');return value!==null?value:(cell.textContent||'');}
 function compare(left,right){var a=parseFloat(left),b=parseFloat(right);if(!isNaN(a)&&!isNaN(b))return a-b;return left.localeCompare(right);}
 document.querySelectorAll('table.sortable').forEach(function(table){var body=table.tBodies[0];if(!body)return;var original=Array.prototype.slice.call(body.rows);
@@ -2403,7 +2515,7 @@ def build(project: Path) -> str:
 
     run = _load_json(reports / "run_summary.json")
     timing = _load_json(reports / "timing_summary.json")
-    sanity = _read(project / "checks" / "sanity_checks.txt", limit=200)
+    sanity = _read(project / "checks" / "sanity_checks.txt")
 
     app_version = run.get("app_version") or ""
     run_date = run.get("run_date") or ""
@@ -2443,28 +2555,23 @@ def build(project: Path) -> str:
         "appropriate new analysis or report generation from the intended results.</p>"
         "<p>Sorting tables and enlarging figures affect this view only. They do not modify "
         "saved results, reclassify genes, or rerun the analysis.</p>"), sid="reading")
-    body = "\n".join((hero_findings, meta_cards, meta_link, settings, study, figures,
-                      de_html, goi_html, enrichment, sanity_html, runtime, versions, glossary))
-    links = []
-    for match in re.finditer(r"<section\b[^>]*\bid=['\"]([^'\"]+)['\"][^>]*>(.*?)(?=</section>)", body, re.S):
-        sid, content = match.groups()
-        heading = re.search(r"<h2[^>]*>(.*?)</h2>", content, re.S)
-        label = re.sub(r"<[^>]+>", "", heading.group(1)) if heading else "Key findings"
-        links.append(f'<li><a href="#{html.escape(sid, quote=True)}">{label}</a></li>')
-    contents = "<ul>" + "".join(links) + "</ul>"
+    body = accessible_tables("\n".join((hero_findings, meta_cards, study, meta_link, figures,
+                      de_html, goi_html, enrichment, sanity_html, _saved_outputs(project),
+                      runtime, versions, settings, glossary)))
+    contents = report_contents(body)
 
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>BulkSeq Studio report — {html.escape(name)}</title><style>{CSS}</style></head>
 <body>
-<a class="skip" href="#findings">Skip to key findings</a>
+<a class="skip" href="#main-content">Skip to report</a>
 <header class="top"><div class="brand">{LOGO_SVG}
 <span class="wordmark">BulkSeq Studio</span>{ver_chip}<span class="spacer"></span>{rmeta}</div>
 </header>
 <div class="report-layout">
 <nav class="report-nav" aria-label="Report sections"><b>In this report</b>{contents}<p>Only sections present in this report are listed. Figures and tables remain available offline.</p></nav>
-<main>
-<details class="mobile-contents"><summary>In this report</summary>{contents}</details>
+<main id="main-content" tabindex="-1">
+<details class="mobile-contents"><summary>In this report</summary><nav aria-label="Report sections">{contents}</nav></details>
 {body}
 </main></div>
 <footer>
@@ -2476,7 +2583,7 @@ def build(project: Path) -> str:
 </div>
 <p>Generated by BulkSeq Studio{f' v{html.escape(str(app_version))}' if app_version else ''} ·
 free and open-source under the MIT License. This report is fully self-contained —
-figures, tables and the logo are embedded, so no internet or external files are needed to view it.</p>
+figures, displayed tables and the logo are embedded. Links to complete saved outputs require the project files.</p>
 </footer>
 <div id="term-tooltip" role="tooltip" hidden></div>
 {figure_dialog()}

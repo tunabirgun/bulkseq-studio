@@ -306,6 +306,9 @@ jobs:
           set -o pipefail
           "${pythonLocation:?}/bin/python" -m pytest -q -rs --tb=short tests/test_figure_rendering_contracts.py \
             tests/test_de_contrasts.py \
+            tests/test_additive_formula_contract.py \
+            tests/test_enrichment_execution_status.py \
+            tests/test_meta_enrichment_placeholder.py \
             | tee "$RUNNER_TEMP/pytest-figure-contracts-bioconductor.txt"
 
       - name: Run required meta-analysis R contracts

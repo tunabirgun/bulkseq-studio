@@ -8,7 +8,7 @@
 #define MyAppName "BulkSeq Studio"
 ; The build helper passes these macros from the verified frozen stage.
 #ifndef MyAppVersion
-  #define MyAppVersion "0.34.0"
+  #define MyAppVersion "0.35.0"
 #endif
 #ifndef BuildSource
   #error BuildSource must name the verified frozen onedir

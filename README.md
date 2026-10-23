@@ -4,7 +4,7 @@
 
 BulkSeq Studio is a desktop application for Windows and Linux that manages bulk RNA-seq and microarray analyses. Its PySide6 interface runs a recorded Snakemake workflow from raw reads or processed inputs through differential expression, optional enrichment and networks, figures, checks and reports.
 
-> **Release status — 3 October 2026.** This documentation describes version 0.34.0. It corrects the Benjamini–Hochberg family for pooled-effect meta-analysis adjusted p-values; affected older meta results require recomputation. Synthetic and independent numerical checks support the correction, but the nine bundled biological datasets have not been rerun under 0.34.0. Check the [official release record](https://github.com/tunabirgun/bulkseq-studio/releases) for available packages before installing.
+> **Release status — 23 October 2026.** This documentation describes version 0.35.0. Alternative differential-expression engines now refuse formulas they cannot preserve, and custom or cross-study enrichment failures are reported as unavailable with `REVIEW_REQUIRED`, rather than as successful empty results. Review affected older analyses before interpreting them. Synthetic tests cover these contracts and preserve the tested supported additive fits; the nine bundled biological datasets have not been rerun under 0.35.0. Check the [official release record](https://github.com/tunabirgun/bulkseq-studio/releases) for available packages before installing.
 
 [Read the handbook](https://tunabirgun.github.io/bulkseq-studio/) · [Download from official releases](https://github.com/tunabirgun/bulkseq-studio/releases/latest) · [Changelog](CHANGELOG.md) · [Report an issue](https://github.com/tunabirgun/bulkseq-studio/issues)
 
@@ -28,16 +28,26 @@ Create a project, choose the input route, review the sample sheet, set a compati
 | Microarray | Uses a supported GEO array route or processed gene-by-sample intensities, then limma | Confirm platform, normalization and log transformation |
 | Imported differential-expression table | Uses supplied statistics for applicable downstream outputs without a local DE fit | Confirm upstream method, adjusted-p procedure and log2FC direction; no counts or sample PCA are reconstructed |
 
-The count-based engines are DESeq2 by default, with limma-voom and edgeR quasi-likelihood options. Read processing offers STAR, HISAT2 or Salmon where appropriate. GO/KEGG, custom gene sets, GSVA, STRING networks and optional QC modules depend on the route, organism, identifiers and installed tools. The [input guide](https://tunabirgun.github.io/bulkseq-studio/inputs.html) names what each route skips.
+The count-based engines are DESeq2 by default, with limma-voom and edgeR quasi-likelihood options. Source installations require PySide6 6.11.2 or newer; the packaged interface uses the reviewed build constraints. Read processing offers STAR, HISAT2 or Salmon where appropriate. GO/KEGG, custom gene sets, GSVA, STRING networks and optional QC modules depend on the route, organism, identifiers and installed tools. The [input guide](https://tunabirgun.github.io/bulkseq-studio/inputs.html) names what each route skips.
 
 ## Follow the four stages
 
 1. **Project and data:** Create or open a project, add the input, and review each sample's ID, condition, study of origin and file or matrix column. A sequencing lane is not an independent study or biological replicate.
 2. **Analysis setup:** Confirm the selected factor, numerator, denominator, formula and thresholds. Positive log2 fold change means higher expression in the numerator. Optional modules must match the data and annotation available.
 3. **Validate and run:** Save current inputs, inspect checks and a dry-run plan, then run or resume. Changed saved inputs make an earlier preflight stale. A dry run does not prove remote services or a large rule will succeed.
-4. **Explore results:** Open the main report, full tables and figures. If a cross-study report exists, it remains directly available even when the current checkbox is off. Read warnings and provenance before sharing an export.
+4. **Explore results:** Open the main report and read its recorded outcome and attention items before the findings, full tables and figures. If a cross-study report exists, it remains directly available even when the current checkbox is off. Read warnings and provenance before sharing an export.
+
+When leaving a project with unsaved edits, choose **Save**, **Discard** or **Cancel**. A failed save keeps the current project open. Closing during execution offers **Stop run and close** or **Keep running**, with Keep running selected by default. A missing sample sheet is shown as missing; it does not inherit the previous project’s samples. Public-data responses from a project you have left are ignored.
 
 The [checks reference](https://tunabirgun.github.io/bulkseq-studio/checks.html) defines `PASS`, `WARNING`, `REVIEW_REQUIRED`, `FAIL` and the interface's `STALE` state. Missing or malformed recorded evidence is not a pass. On a requested meta run, check 01 must be valid and report `PASS` or `WARNING` before per-study fitting; `REVIEW_REQUIRED`, `FAIL`, missing and malformed evidence stop that branch. The [command-line guide](https://tunabirgun.github.io/bulkseq-studio/cli.html) covers local execution and remote profiles; the GUI's full preflight is not implied by a direct `bulkseq run`.
+
+## Choose a supported design
+
+All four local differential-expression engines parse one one-sided R formula beginning with `~`. DESeq2 accepts the supported formula operators and the transformations `I`, `log`, `log2`, `log10`, `log1p`, `sqrt`, `abs`, `scale` and `poly`; arbitrary R calls are refused. Syntax support does not establish that a transformation or model is appropriate for the data.
+
+edgeR, limma-voom and microarray limma require additive, bare sample-sheet variables that include the chosen contrast factor, such as `~ batch + condition`. They accept intercept terms `0`, `1` and `-1`, then fit their documented group-means parameterization. Transformations, interactions, nesting, dot expansion and removal of a variable are refused. For example, `~ condition + log(age)` and `~ condition + age - age` are unsupported on these engines. The model-stage guard runs before fitting; the Python pre-run checks do not yet reproduce every R formula restriction. Preserve scientifically required terms and choose an appropriate model instead of simplifying the design solely to pass a check. See [design and contrast](https://tunabirgun.github.io/bulkseq-studio/design.html#formula-support).
+
+Advanced STAR arguments are parsed as individual arguments using POSIX quoting, so quoted spaces stay within one value and shell punctuation is not executed. Malformed quoting, empty arguments, null characters, embedded line breaks, bare `--` and workflow-reserved command options are refused. Keep read inputs and command settings in their dedicated workflow controls; see [advanced read parameters](https://tunabirgun.github.io/bulkseq-studio/analysis.html#star-arguments).
 
 ## Cross-study meta-analysis
 
@@ -51,6 +61,8 @@ Open `results/reports/meta_analysis_report.html` for the executed factor, direct
 
 ## Read and preserve results
 
+The main and cross-study reports place the recorded check outcome before result summaries and provide section links, keyboard navigation and complete recorded check messages. Their output index links files that actually exist in the project. Missing, unreadable or malformed tables are reported as unavailable; they do not establish that zero genes or terms passed a threshold. A single HTML file contains the report view, but links to complete saved outputs still require the accompanying project files.
+
 | Location | What to inspect |
 | --- | --- |
 | `results/deseq2/` | Complete route-specific differential-expression table before selected up/down lists; check the recorded engine and contrast |
@@ -61,13 +73,15 @@ Open `results/reports/meta_analysis_report.html` for the executed factor, direct
 
 The Figure Style `(default serif)` choice prefers Times New Roman in the R backend; if unavailable, the renderer names an installed serif fallback. Check that any explicitly chosen family is available to that backend. Updated volcano-key and heatmap/correlation spacing changes presentation, not model values.
 
+For custom gene-set and cross-study enrichment, inspect checks 24 and 18 as well as the tables. A failed enrichment call or result conversion is `REVIEW_REQUIRED`, and the affected output is unavailable. A successful computation with no retained terms can remain `PASS`; other mapping or eligibility findings can still require review. A blank table alone cannot distinguish these states.
+
 For custom gene-set ORA, the supplied background and selected list can be larger than the identifiers represented in the annotation. The summary distinguishes those supplied counts from the effective annotated populations; the report shows each term’s `GeneRatio` and `BgRatio`. This reporting correction does not change the enrichment selection or p-values. Direct Entrez IDs on OrgDb-backed routes also retain their mapping in 0.34.0; rerun an older analysis that failed at this step, because saved results do not update on their own.
 
 An adjusted p-value is not the probability that one gene is false; the BH statement concerns a rejection set under its assumptions. A later raw fold-change screen does not automatically inherit that FDR guarantee. A non-significant gene is not an equivalence result. PCA and heatmaps describe sample structure or transformed expression when a matrix exists; STRING edges are functional associations, not measured physical binding in these samples. Read [what the numbers mean](https://tunabirgun.github.io/bulkseq-studio/interpreting.html) and [outputs and provenance](https://tunabirgun.github.io/bulkseq-studio/outputs.html) before making biological claims.
 
 ## Update a project
 
-Close the application before installing a newer package. Preserve the original project and its `config/`, `checks/`, `logs/` and results before rerunning it. A newer bundled workflow is copied into an existing project when its version or verified content changes; a locally edited project workflow is protected rather than overwritten. The run summary records the application and workflow that actually executed. Revalidate the saved inputs and compare the [upgrade guide](https://tunabirgun.github.io/bulkseq-studio/upgrade.html) and [version notices](https://tunabirgun.github.io/bulkseq-studio/faq.html#version-notices) with your route. For pre-0.34.0 meta-analysis output, recompute before relying on pooled-effect adjusted values. Historical results do not acquire a new method merely because the application was upgraded.
+Close the application before installing a newer package. Preserve the original project and its `config/`, `checks/`, `logs/` and results before rerunning it. A newer bundled workflow is copied into an existing project when its version or verified content changes; a locally edited project workflow is protected rather than overwritten. The run summary records the application and workflow that actually executed. Revalidate the saved inputs and compare the [upgrade guide](https://tunabirgun.github.io/bulkseq-studio/upgrade.html) and [version notices](https://tunabirgun.github.io/bulkseq-studio/faq.html#version-notices) with your route. For pre-0.35.0 alternative-engine runs, compare the requested formula with the recorded fitted model: transformations, removed variables or an omitted contrast factor could previously be simplified silently. Review and rerun an affected analysis with a supported, scientifically appropriate design. Review older custom or cross-study enrichment reported as empty if the logs show an execution or conversion failure. For pre-0.34.0 meta-analysis output, recompute before relying on pooled-effect adjusted values. Version 0.35.0 retains the 0.34.0 pooled and combined testing-family definitions. Historical results do not acquire a new method merely because the application was upgraded.
 
 ## Citation and license
 

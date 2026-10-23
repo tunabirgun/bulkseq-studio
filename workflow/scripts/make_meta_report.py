@@ -91,7 +91,7 @@ def _hero(summary: dict, meta_status: str, call_alpha: str | None) -> str:
             + (f"Matching signs occur in {_num(conc)}% of retained shared rows."
                if conc is not None else ""))
     badge = R._badge(meta_status) if meta_status else ""
-    return (f"<section id='findings' class='hero'><div class='eyebrow'>Multi-study meta-analysis {badge}</div>"
+    return (f"<section id='findings' class='hero'><h2>Cross-study result summary</h2><div class='eyebrow'>Multi-study meta-analysis {badge}</div>"
             f"<p class='lead'>{html.escape(lead)}</p><div class='cards'>{inner}</div></section>")
 
 
@@ -133,13 +133,15 @@ def _study_scope(ledger: dict) -> str:
     formula = _recorded_text(execution.get("per_study_formula"))
     if factor and numerator and denominator:
         comparison = f"{html.escape(numerator)} versus {html.escape(denominator)} ({html.escape(factor)})"
+        title = f"Cross-study analysis: {comparison}"
         direction = (f"Positive log2 fold change means higher expression in {html.escape(numerator)} "
                      f"than {html.escape(denominator)}.")
     else:
-        comparison = "Comparison orientation not recorded"
+        title = "Cross-study analysis"
         missing = ", ".join(name for name, value in (("factor", factor), ("numerator", numerator),
                                                         ("denominator", denominator)) if not value)
-        direction = f"The {html.escape(missing)} {'was' if ',' not in missing else 'were'} not recorded with this result; positive-effect direction cannot be established here."
+        direction = ("<strong>Comparison orientation not recorded.</strong> "
+                     f"The {html.escape(missing)} {'was' if ',' not in missing else 'were'} not recorded with this result; positive-effect direction cannot be established here.")
     studies = R._mapping(ledger.get("studies"))
     inputs = studies.get("input") if isinstance(studies.get("input"), list) else None
     input_by_study = {row["study"]: row for item in (inputs or [])
@@ -193,7 +195,7 @@ def _study_scope(ledger: dict) -> str:
         fit = (f"The recorded per-study formula was <code>{html.escape(formula)}</code>."
                if formula else "The executed per-study formula was not recorded.")
     return ("<section id='comparison' class='hero'>"
-            f"<h1>Cross-study analysis: {comparison}</h1><p>{direction} {fit}</p>"
+            f"<h1>{title}</h1><p>{direction} {fit}</p>"
             f"<p><strong>Included studies:</strong> {included_text}</p>"
             f"<p><strong>Excluded studies:</strong> {excluded_text}</p>"
             "<p>These counts establish metadata eligibility for the selected comparison; they do not establish study independence, biological comparability, or post-run validity.</p></section>")
@@ -223,7 +225,7 @@ def _field_dictionary(summary: dict, ledger: dict) -> str:
 
 def _method_note(ledger: dict) -> str:
     if not _corrected_ledger(ledger):
-        return ("<section class='hero' role='alert'><h2>Legacy pooled-effect adjustment requires recomputation</h2>"
+        return ("<section id='methods' class='hero' role='alert'><h2>Legacy pooled-effect adjustment requires recomputation</h2>"
                 "<p>This result lacks the recognized corrected method marker. Recompute the meta-analysis before "
                 "interpreting <code>rem_padj</code>; this report does not relabel old values.</p></section>")
     ledger = R._mapping(ledger)
@@ -249,10 +251,21 @@ def _method_note(ledger: dict) -> str:
             "Missing-statistic reasons may overlap, so their counts must not be added.</p></details>")
 
 
-def _enrichment_table(path: Path, top_per: int = 6) -> str:
+def _enrichment_table(path: Path, top_per: int = 6, check_path: Path | None = None) -> str:
     head, rows = _csv_rows(path)
     if not head or not rows:
-        return "<p class='muted'>Cross-study enrichment was not available (organism unmapped or no significant terms).</p>"
+        check = R._mapping(R._load_json(check_path)) if check_path is not None else {}
+        messages = check.get("messages")
+        details = " ".join(str(item.get("message", "")) for item in messages
+                           if isinstance(item, dict)) if isinstance(messages, list) else ""
+        if check.get("status") == "PASS" and details:
+            message = details
+        else:
+            message = "Cross-study enrichment results are unavailable."
+            if details:
+                message += " " + details
+        return (f"<p class='muted'>{html.escape(message)} "
+                "<a href='../../checks/18_meta_enrichment_qc.json'>Review enrichment check 18</a>.</p>")
     idx = {h: i for i, h in enumerate(head)}
     cN, dN, gN, pN = idx.get("Cluster"), idx.get("Description"), idx.get("GeneRatio"), idx.get("p.adjust")
     if cN is None or dN is None:
@@ -391,8 +404,14 @@ def build(project: Path) -> str:
     check_messages = meta_check["messages"]
     first_message = check_messages[0]
     status = meta_check["status"]
-    check_note = ("<p role='alert'>Meta check evidence is unavailable or malformed; review the stored check record before relying on this report.</p>"
-                  if not meta_check["valid"] else "")
+    check_message = ("Meta check evidence is unavailable or malformed; review the stored check record before relying on this report."
+                     if not meta_check["valid"] else
+                     "Stored tables and figures remain visible for diagnosis; review these checks before interpreting the result."
+                     if status != "PASS" else "The recorded meta-analysis check passed. Review the method and study scope alongside the result.")
+    message_list = ("<ul class='attention-list'>" + "".join(f"<li>{html.escape(m['message'])}</li>" for m in check_messages) + "</ul>"
+                    if meta_check["valid"] else "")
+    check_note = (f"<section id='outcome' class='outcome'><h2>Meta-analysis checks</h2>{R._badge(status)}"
+                  f"<p>{check_message}</p>{message_list}</section>")
     app_version = run.get("app_version") or ""
     ver_chip = f"<span class='ver'>v{html.escape(str(app_version))}</span>" if app_version else ""
 
@@ -408,7 +427,7 @@ def build(project: Path) -> str:
             loss = "Shared identifiers exist, but no complete-case meta-analysis rows were retained; inspect the recorded missing-statistic losses."
         if loss and (not msg or not meta_check["valid"]):
             msg = f"{loss} {msg}".strip()
-        body = (f"<section class='hero'><div class='eyebrow'>Multi-study meta-analysis {R._badge(status or 'FAIL')}</div>"
+        body = (f"<section id='findings' class='hero'><h2>Cross-study result summary</h2><div class='eyebrow'>Multi-study meta-analysis {R._badge(status or 'FAIL')}</div>"
                 f"<p class='lead'>The meta-analysis did not produce a shared-gene result.</p>"
                 f"<p class='muted'>{html.escape(msg or 'No cross-study result was recorded; inspect the meta check and eligibility ledger.')}</p></section>")
     else:
@@ -432,7 +451,9 @@ def build(project: Path) -> str:
                              _table(sh, sr, num_cols={i for i in range(1, len(sh))}), sid="per-study")
         perstudy_reports = R.section("Per-study results", _per_study_reports(project), sid="per-study-reports")
         enr = R.section("Cross-study functional enrichment (shared vs distinct)",
-                        _enrichment_table(meta / "meta_enrichment_ora.csv"), sid="enrichment")
+                        _enrichment_table(meta / "meta_enrichment_ora.csv",
+                                          check_path=project / "checks" / "18_meta_enrichment_qc.json"),
+                        sid="enrichment")
         methods = _method_note(ledger)
         body = (_study_scope(ledger) + check_note + (methods if not _corrected_ledger(ledger) else "") +
                 _hero(summary, status, _call_alpha(ledger)) + (methods if _corrected_ledger(ledger) else "") +
@@ -446,11 +467,13 @@ def build(project: Path) -> str:
     main_report_note = ("The main <a href='results_report.html'>results report</a> describes the separately recorded joint fit."
                         if main_report.is_file() else
                         "The main results report is unavailable for this stored result; joint-fit details cannot be read here.")
+    body = R.accessible_tables(body + R._saved_outputs(project, meta=True))
+    contents = R.report_contents(body)
 
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>BulkSeq Studio meta-analysis — {html.escape(name)}</title><style>{R.CSS}
-main{{padding:26px clamp(16px,3vw,32px)}}
+main{{padding:26px 0}}
 .tw{{max-width:100%;overflow-x:auto}}
 .tw table{{min-width:max-content}}
 main>details{{margin:18px 0;padding:14px 18px;border:1px solid var(--border);border-radius:var(--r2);background:var(--surface)}}
@@ -460,12 +483,16 @@ main>details>summary{{cursor:pointer;font-family:var(--sans);font-weight:600;col
 @media(max-width:650px){{#field-guide dl{{grid-template-columns:minmax(0,1fr)}}#field-guide dd{{margin-bottom:8px}}}}
 </style></head>
 <body>
+<a class="skip" href="#main-content">Skip to report</a>
 <header class="top"><div class="brand">{R.LOGO_SVG}
 <span class="wordmark">BulkSeq Studio</span>{ver_chip}<span class="tag">meta-analysis</span></div></header>
-<main>
+<div class="report-layout">
+<nav class="report-nav" aria-label="Report sections"><b>In this report</b>{contents}</nav>
+<main id="main-content" tabindex="-1">
+<details class="mobile-contents"><summary>In this report</summary><nav aria-label="Report sections">{contents}</nav></details>
 {body}
 <p class='muted' style='margin-top:2rem'>{main_report_note} This page describes separate per-study DESeq2 fits and their cross-study combination. Joint and per-study fits can use different formulas; inspect their own execution records before interpreting either. A non-significant result does not establish no effect.</p>
-</main>
+</main></div>
 <footer><div class="flinks">
 <a href="{R.REPO_URL}" target="_blank" rel="noopener">GitHub repository ↗</a>
 <a href="{R.DOCS_URL}" target="_blank" rel="noopener">Documentation ↗</a></div>

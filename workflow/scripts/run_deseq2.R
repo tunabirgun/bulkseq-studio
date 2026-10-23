@@ -19,6 +19,7 @@ sink(log_con, type = "message")
 counts_file <- snakemake@input[["counts"]]
 samples_file <- snakemake@input[["samples"]]
 design_formula <- snakemake@params[["design"]]
+design <- parse_design_formula(design_formula)
 ref_factor <- snakemake@params[["ref_factor"]]
 ref_level <- snakemake@params[["ref_level"]]
 con_factor <- snakemake@params[["contrast_factor"]]
@@ -49,7 +50,7 @@ if (!nzchar(con_factor) || !(con_factor %in% colnames(coldata))) {
                con_factor, paste(colnames(coldata), collapse = ", ")))
 }
 coldata[[con_factor]] <- factor(coldata[[con_factor]])
-form_vars <- tryCatch(all.vars(as.formula(design_formula)), error = function(e) character(0))
+form_vars <- all.vars(design)
 covariates <- setdiff(form_vars, con_factor)
 covariates <- covariates[covariates %in% colnames(coldata)]
 
@@ -57,7 +58,7 @@ coef_name <- paste0(con_factor, "_", numerator, "_vs_", denominator)
 design_checks <- list()
 full_rank <- TRUE
 tryCatch({
-  mm <- model.matrix(as.formula(design_formula), data = coldata)
+  mm <- model.matrix(design, data = coldata)
   if (qr(mm)$rank < ncol(mm)) full_rank <- FALSE
 }, error = function(e) { full_rank <<- FALSE })
 design_checks[[1]] <- list(status = if (full_rank) "PASS" else "FAIL",
@@ -88,7 +89,7 @@ write_check(snakemake@output[["design_check"]], "08_metadata_design_qc", design_
 
 # ---- DESeq2 -----------------------------------------------------------------
 dds <- DESeqDataSetFromMatrix(countData = cts, colData = coldata,
-                              design = as.formula(design_formula))
+                              design = design)
 smallest_group <- min(table(coldata[[con_factor]]))
 # Prefilter: keep genes with >= min_count reads in at least the smallest group
 # (default 10; a light, recommended DESeq2 prefilter).

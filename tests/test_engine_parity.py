@@ -178,6 +178,8 @@ def _braced_block(text: str, start: int) -> str:
 
 
 def _interaction_handling(script: str) -> str:
+    if "additive_design_covariates(design_formula, con_factor, colnames(coldata))" in script:
+        return "refuse"
     match = re.search(r"has_interaction\(\s*design_formula\s*\)", script)
     if not match:
         return "not_applicable"

@@ -213,13 +213,29 @@ function fmt(v, dp) {
 }
 function showTip(evt) {
   const d = evt.target.data(), t = tip();
-  t.innerHTML =
-    '<div class="sym">' + (d.symbol || d.id) + '</div>' +
-    '<div class="row"><span class="k">log2FC:</span> ' + fmt(d.log2FoldChange, 2) + '</div>' +
-    '<div class="row"><span class="k">padj:</span> ' + fmt(d.padj, 3) + '</div>' +
-    '<div class="row"><span class="k">mean expr:</span> ' + fmt(d.meanExpr, 2) + '</div>' +
-    '<div class="row"><span class="k">degree:</span> ' + (d.degree != null ? d.degree : "n/a") +
-    '  <span class="k">module:</span> ' + (d.module != null ? d.module : "n/a") + '</div>';
+  t.replaceChildren();
+  const symbol = document.createElement("div");
+  symbol.className = "sym";
+  symbol.textContent = d.symbol || d.id;
+  t.appendChild(symbol);
+  [
+    [["log2FC:", fmt(d.log2FoldChange, 2)]],
+    [["padj:", fmt(d.padj, 3)]],
+    [["mean expr:", fmt(d.meanExpr, 2)]],
+    [["degree:", d.degree], ["module:", d.module]],
+  ].forEach(function (fields) {
+    const row = document.createElement("div");
+    row.className = "row";
+    fields.forEach(function (field, index) {
+      if (index) row.appendChild(document.createTextNode("  "));
+      const label = document.createElement("span");
+      label.className = "k";
+      label.textContent = field[0];
+      row.appendChild(label);
+      row.appendChild(document.createTextNode(" " + (field[1] != null ? field[1] : "n/a")));
+    });
+    t.appendChild(row);
+  });
   t.style.display = "block";
   moveTip(evt);
 }

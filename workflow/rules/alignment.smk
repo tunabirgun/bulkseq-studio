@@ -2,12 +2,14 @@
 # (protocol sections 6.9, 6.11). Salmon mode skips this file entirely -- it quantifies
 # straight from the trimmed FASTQ in quantification.smk (no BAM).
 
+from cli_arguments import parse_star_extra
+
 # STAR read-filtering knobs. Defaults equal STAR's own defaults.
 _STAR = config.get("star", {})
 _STAR_MULTIMAP = _STAR.get("multimap_nmax", 10)
 _STAR_MISMATCH_NOVER = _STAR.get("mismatch_nover_read_lmax", 1.0)
 _STAR_TWOPASS = "Basic" if _STAR.get("twopass_mode", False) else "None"
-_STAR_EXTRA = _STAR.get("extra", "")
+_STAR_EXTRA = parse_star_extra(_STAR.get("extra", ""))
 
 
 def _star_bam_sort_ram_bytes(_wildcards, resources):
@@ -130,14 +132,14 @@ if not USE_SALMON:
                 "logs/star_align_{sample}.log",
             shell:
                 "rm -rf {resources.tmpdir}/star_{wildcards.sample} && "
-                "STAR --runMode alignReads --genomeDir {input.index} "
+                "STAR --runMode alignReads --genomeDir {input.index:q} "
                 "--readFilesIn {input.fastqs:q} --readFilesCommand zcat "
                 "--outSAMtype BAM SortedByCoordinate --quantMode GeneCounts "
                 "--limitBAMsortRAM {params.bam_sort_ram} "
                 "--runThreadN {threads} "
                 "--outFilterMultimapNmax {params.multimap} "
                 "--outFilterMismatchNoverReadLmax {params.mismatch_nover} "
-                "--twopassMode {params.twopass} {params.extra} "
+                "--twopassMode {params.twopass} {params.extra:q} "
                 "--outTmpDir {resources.tmpdir}/star_{wildcards.sample} "
                 "--outFileNamePrefix results/aligned/{wildcards.sample}_ > {log} 2>&1"
 
@@ -185,7 +187,7 @@ if not USE_SALMON:
                 "python workflow/scripts/infer_strandedness_fc.py {params.bam_args} "
                 "--gtf {input.gtf:q} --out {output.legacy:q} --per-sample-out {output.per_sample:q} "
                 "--threads {threads} --tmpdir {resources.tmpdir:q} {params.paired} "
-                "--feature {params.feature} --attribute {params.attribute} > {log} 2>&1"
+                "--feature {params.feature:q} --attribute {params.attribute:q} > {log} 2>&1"
 
     else:
 

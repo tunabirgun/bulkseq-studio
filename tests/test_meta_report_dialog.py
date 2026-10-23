@@ -51,6 +51,33 @@ def _write_meta_project(project: Path) -> None:
         (figures / f"{name}.svg").write_text(svg, encoding="utf-8")
 
 
+@pytest.mark.parametrize("status,message", [
+    ("REVIEW_REQUIRED", "Cross-study enrichment unavailable: injected <failure>"),
+    ("PASS", "Cross-study enrichment: no GO terms passed the FDR cutoff in any study/convergent set."),
+    (None, None),
+])
+def test_meta_report_enrichment_uses_recorded_execution_outcome(tmp_path, status, message):
+    _write_meta_project(tmp_path)
+    checks = tmp_path / "checks"
+    checks.mkdir()
+    (tmp_path / "results" / "meta" / "meta_enrichment_ora.csv").write_text(
+        "Cluster,ID,Description\n", encoding="utf-8")
+    if status:
+        (checks / "18_meta_enrichment_qc.json").write_text(json.dumps({
+            "status": status, "messages": [{"status": status, "message": message}],
+        }), encoding="utf-8")
+    rendered = META.build(tmp_path)
+    assert "../../checks/18_meta_enrichment_qc.json" in rendered
+    assert "organism unmapped or no significant terms" not in rendered
+    if status == "PASS":
+        assert message in rendered
+    else:
+        assert "Cross-study enrichment results are unavailable" in rendered
+        assert "no GO terms passed" not in rendered
+    if status == "REVIEW_REQUIRED":
+        assert "injected &lt;failure&gt;" in rendered
+
+
 def test_meta_report_distinguishes_adjustment_families_and_legacy_results(tmp_path: Path) -> None:
     _write_meta_project(tmp_path)
     meta = tmp_path / "results" / "meta"

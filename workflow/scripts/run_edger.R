@@ -54,25 +54,7 @@ lv <- levels(grp)
 check_contrast(numerator, denominator, lv, con_factor)
 
 # ---- Design: group-means + optional additive covariates from the formula ----
-# edgeR here is fit as ~ 0 + grp + covariates; an interaction/nesting operator would be
-# silently stripped by all.vars() below and refit as a plain additive term, so refuse it
-# instead of reassuring the user about a model that was never fitted.
-if (has_interaction(design_formula)) {
-  stop(sprintf(paste0(
-    "Design formula '%s' contains an interaction or nesting operator (':', '*', '^', or '/'). ",
-    "The edgeR engine fits an additive group-means design (~ 0 + grp + covariates) and does not ",
-    "expose interaction coefficients. Use DESeq2 with an explicit design to test this term, or ",
-    "drop it from the design formula."), design_formula))
-}
-form_vars <- tryCatch(all.vars(as.formula(design_formula)), error = function(e) character(0))
-covariates <- setdiff(form_vars, con_factor)
-# A design covariate absent from the sample sheet (typo/renamed column) would otherwise be
-# dropped silently, running an UNadjusted (confounded) model. Fail loudly instead.
-missing_cov <- setdiff(covariates, colnames(coldata))
-if (length(missing_cov)) {
-  stop(sprintf("Design covariate(s) not found in the sample sheet: %s", paste(missing_cov, collapse = ", ")))
-}
-covariates <- covariates[covariates %in% colnames(coldata)]
+covariates <- additive_design_covariates(design_formula, con_factor, colnames(coldata))
 design_contrast <- group_means_design_contrast(
   grp, coldata, covariates, numerator, denominator)
 design <- design_contrast$design

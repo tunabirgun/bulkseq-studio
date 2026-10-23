@@ -105,11 +105,52 @@ check_contrast <- function(numerator, denominator, level_set, con_factor) {
   invisible(TRUE)
 }
 
-# Build the additive group-means design used by edgeR, limma-voom and limma, plus a
-# positional numerator-minus-denominator contrast. Synthetic internal variable names keep
-# sample columns such as `grp` from changing formula lookup.
-# Coefficient names remain unique for readable fit objects, but the estimand does not depend
-# on sanitizing a raw level name back into a coefficient name.
+parse_design_formula <- function(design_formula) {
+  invalid <- function() stop("Design must be one one-sided formula beginning with ~.")
+  if (!is.character(design_formula) || length(design_formula) != 1L || is.na(design_formula)) invalid()
+  parsed <- tryCatch(parse(text = design_formula, keep.source = FALSE), error = function(e) invalid())
+  if (length(parsed) != 1L || !is.call(parsed[[1]]) ||
+      !identical(parsed[[1]][[1]], as.name("~")) || length(parsed[[1]]) != 2L) invalid()
+  safe_calls <- c("(", "+", "-", "*", "/", "^", ":", "%in%", "I", "log", "log2",
+                  "log10", "log1p", "sqrt", "abs", "scale", "poly")
+  validate <- function(term) {
+    if (is.symbol(term) || is.numeric(term) || is.logical(term)) return(invisible(NULL))
+    if (!is.call(term) || !is.symbol(term[[1]]) || !as.character(term[[1]]) %in% safe_calls)
+      stop("Unsupported design expression. Allowed transformations: I, log, log2, log10, log1p, sqrt, abs, scale, poly.")
+    invisible(lapply(as.list(term)[-1], validate))
+  }
+  validate(parsed[[1]][[2]])
+  structure(parsed[[1]], class = "formula", .Environment = parent.frame())
+}
+
+# Reject formula operations that cannot survive the additive reparameterization.
+additive_design_covariates <- function(design_formula, con_factor, columns) {
+  unsupported <- function() stop(paste0(
+    "Alternative DE engines require a one-sided additive design of bare sample-sheet ",
+    "variables, including the contrast factor; only + and intercept terms 0, 1 or -1 ",
+    "are supported. Transformations, interactions, nesting and variable removal are unsupported."))
+  formula <- parse_design_formula(design_formula)
+  variables <- function(term) {
+    if (is.symbol(term) && as.character(term) != ".") return(as.character(term))
+    if (is.numeric(term) && length(term) == 1L && term %in% c(0, 1)) return(character(0))
+    if (!is.call(term)) unsupported()
+    operator <- as.character(term[[1]])
+    if (operator == "(" && length(term) == 2L) return(variables(term[[2]]))
+    if (operator == "+" && length(term) %in% c(2L, 3L))
+      return(unlist(lapply(as.list(term)[-1], variables), use.names = FALSE))
+    if (operator == "-" && length(term) %in% c(2L, 3L) &&
+        is.numeric(term[[length(term)]]) && term[[length(term)]] %in% c(0, 1))
+      return(if (length(term) == 3L) variables(term[[2]]) else character(0))
+    unsupported()
+  }
+  vars <- unique(variables(formula[[2]]))
+  if (!con_factor %in% vars) stop("The design formula must include the contrast factor: ", con_factor)
+  missing <- setdiff(vars, columns)
+  if (length(missing)) stop("Design covariate(s) not found in the sample sheet: ", paste(missing, collapse = ", "))
+  setdiff(vars, con_factor)
+}
+
+# Internal names avoid sample-column collisions; the contrast uses level positions.
 group_means_design_contrast <- function(grp, coldata, covariates, numerator, denominator) {
   level_set <- levels(grp)
   n_levels <- length(level_set)

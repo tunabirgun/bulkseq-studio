@@ -1563,9 +1563,10 @@ def test_a_second_contrast_is_disclosed_on_every_non_gui_surface(mrs, mhr, valid
         assert f"{IGNORED_LABEL}: {_IGNORED_TEXT}" in text
         assert "Contrasts: " not in text
 
-    cards = mhr._meta_cards(payload, tmp_path)
-    assert f"<div class='card-k'>{IGNORED_LABEL}</div>" in cards
-    assert _IGNORED_TEXT in cards
+    settings = mhr._meta_cards(payload, tmp_path)
+    definitions = re.search(r"<dl\b[^>]*>(.*?)</dl>", settings, re.S)
+    assert definitions is not None
+    assert f"<dt>{IGNORED_LABEL}</dt><dd>{_IGNORED_TEXT}</dd>" in definitions.group(1)
     assert f"{IGNORED_LABEL}: {_IGNORED_TEXT}" in mhr._study_design_section(payload)
 
     messages = validate_project.check_single_contrast({"deseq2": {"contrasts": _TWO_CONTRASTS}})

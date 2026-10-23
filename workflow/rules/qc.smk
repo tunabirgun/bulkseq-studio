@@ -140,9 +140,9 @@ if CONTAM_SCREEN:
             # fastq_screen names outputs by the input basename; rename to {sample}_screen.* so the
             # MultiQC sample names are clean and the declared output is deterministic.
             _FS_GUARD +
-            "test -f {params.conf:q} || {{ echo 'FastQ Screen config not found: {params.conf}. "
+            "test -f {params.conf:q} || {{ printf 'FastQ Screen config not found: %s. "
             "Set contamination.conf to a valid fastq_screen.conf (see fastq_screen --help), or turn "
-            "off contamination screening.' >&2; exit 1; }}; "
+            "off contamination screening.\n' {params.conf:q} >&2; exit 1; }}; "
             "mkdir -p results/qc/fastq_screen && "
             "BASE=$(basename {input.r1:q}); BASE=${{BASE%.fastq.gz}}; BASE=${{BASE%.fq.gz}} && "
             "fastq_screen --aligner bowtie2 --conf {params.conf:q} --subset {params.subset} "

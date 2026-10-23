@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.constants import APP_VERSION, WORKFLOW_VERSION
+from workflow.scripts.cli_arguments import parse_star_extra
 
 
 class ProjectConfig(BaseModel):
@@ -325,6 +326,12 @@ class StarConfig(BaseModel):
     multimap_nmax: int = 10
     mismatch_nover_read_lmax: float = 1.0
     extra: str = ""
+
+    @field_validator("extra")
+    @classmethod
+    def valid_extra_arguments(cls, value: str) -> str:
+        parse_star_extra(value)
+        return value
 
 
 class FeatureCountsConfig(BaseModel):
