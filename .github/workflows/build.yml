@@ -326,7 +326,8 @@ jobs:
           if-no-files-found: error
 
   linux:
-    runs-on: ubuntu-latest
+    # Runner migrations must not silently raise the bundled glibc floor.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 

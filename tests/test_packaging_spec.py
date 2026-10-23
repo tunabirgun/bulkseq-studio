@@ -11,6 +11,7 @@ import tomllib
 import zipfile
 
 import pytest
+import yaml
 
 
 def test_python_distribution_includes_the_application_and_shared_workflow_helper() -> None:
@@ -234,6 +235,8 @@ def test_linux_package_build_requires_all_three_verified_artifacts() -> None:
     appimage_script = (repo / "packaging" / "build_appimage.sh").read_text(encoding="utf-8")
     workflow = (repo / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
     release = (repo / "scripts" / "release.ps1").read_text(encoding="utf-8")
+
+    assert yaml.safe_load(workflow)["jobs"]["linux"]["runs-on"] == "ubuntu-24.04"
 
     assert 'zsync metadata was not produced' in appimage_script
     assert 'BulkSeqStudio-Portable-${VERSION}-linux-x86_64.tar.gz' in appimage_script
