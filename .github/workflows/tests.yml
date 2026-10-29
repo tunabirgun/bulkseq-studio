@@ -53,7 +53,9 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: |
+            requirements.txt
+            docs_src/reproduction/report-requirements.txt
 
       - name: Install dependencies
         shell: bash
@@ -69,6 +71,7 @@ jobs:
           subprocess.check_call([sys.executable, "-m", "pip", "install", *build_requires])
           PY
           python -m pip install -r requirements.txt -c constraints.txt
+          python -m pip install -r docs_src/reproduction/report-requirements.txt
           python -m pip install "pytest>=8.2"
 
       # Qt needs these shared libraries present even under the offscreen platform plugin;

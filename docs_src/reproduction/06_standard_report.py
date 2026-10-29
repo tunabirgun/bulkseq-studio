@@ -33,7 +33,7 @@ def write_svg(path: Path, width: int, height: int, title: str, body: str) -> Non
     source = (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img">'
         f'<title>{esc(title)}</title><rect width="100%" height="100%" fill="white"/>'
-        f'<g font-family="Times New Roman, Liberation Serif, DejaVu Serif, serif" fill="#000">{body}</g></svg>'
+        f'<g font-family="Times New Roman, Times, Liberation Serif, DejaVu Serif, FreeSerif, serif" fill="#000">{body}</g></svg>'
     )
     path.write_text(source, encoding="utf-8")
 
@@ -44,13 +44,17 @@ def raster(path: Path, width: int, height: int, paint) -> None:
     scale = 2
     image = Image.new("RGB", (width * scale, height * scale), "white")
     draw = ImageDraw.Draw(image)
-    font_file = os.environ.get("BULKSEQ_REPORT_FONT", "times.ttf")
-    try:
-        font = ImageFont.truetype(font_file, 14 * scale)
-        small = ImageFont.truetype(font_file, 12 * scale)
-    except OSError:
-        font = ImageFont.load_default()
-        small = font
+    requested = os.environ.get("BULKSEQ_REPORT_FONT")
+    candidates = (requested,) if requested else ("times.ttf", "Times New Roman.ttf", "Times.ttc", "LiberationSerif-Regular.ttf", "DejaVuSerif.ttf", "FreeSerif.otf")
+    for candidate in candidates:
+        try:
+            font = ImageFont.truetype(candidate, 14 * scale)
+            small = ImageFont.truetype(candidate, 12 * scale)
+            break
+        except OSError:
+            continue
+    else:
+        raise RuntimeError("No readable serif font; set BULKSEQ_REPORT_FONT to an installed font file")
     paint(draw, scale, font, small)
     image.save(path.with_suffix(".png"), "PNG", dpi=(300, 300))
 

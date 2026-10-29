@@ -6,6 +6,7 @@ import math
 import statistics
 import subprocess
 import sys
+import os
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT = ROOT / "docs" / "examples" / "standard"
@@ -57,3 +58,11 @@ def test_standard_example_rebuild_is_deterministic(tmp_path) -> None:
     assert report.exists() and report.stat().st_size > 10_000
     run = json.loads((outputs[0] / "results" / "reports" / "run_summary.json").read_text(encoding="utf-8"))
     assert run["input"]["type"] == "count_matrix"
+
+
+def test_standard_example_rejects_an_unavailable_requested_font(tmp_path) -> None:
+    script = ROOT / "docs_src" / "reproduction" / "06_standard_report.py"
+    environment = dict(os.environ, BULKSEQ_REPORT_FONT=str(tmp_path / "missing-font.ttf"))
+    result = subprocess.run([sys.executable, str(script), "--output", str(tmp_path / "standard")], env=environment, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "No readable serif font" in result.stderr

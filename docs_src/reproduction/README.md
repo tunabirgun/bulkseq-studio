@@ -74,10 +74,13 @@ The network tests deliberately corrupt an edge score and swap two protein labels
 ## 6. Generate the standard report example
 
 ```sh
+python -m pip install -r docs_src/reproduction/report-requirements.txt
 python docs_src/reproduction/06_standard_report.py
 ```
 
-Use the project Python environment, including PySide6 for PNG rendering. The script reuses the saved DESeq2 fixture, derives normalized mean counts with the same median-ratio rule, writes full and selected tables, and calls the application’s HTML report renderer. It does not refit a model or execute a complete workflow. Its status record explicitly requires review because this is a synthetic teaching artifact. `--output` selects another example directory; the default is `docs/examples/standard`.
+Use the project Python environment and the pinned Pillow dependency for PNG rendering. The script reuses the saved DESeq2 fixture, derives normalized mean counts with the same median-ratio rule, writes full and selected tables, and calls the application’s HTML report renderer. It does not refit a model or execute a complete workflow. Its status record explicitly requires review because this is a synthetic teaching artifact. `--output` selects another example directory; the default is `docs/examples/standard`.
+
+PNG text uses Times New Roman when available, with installed Times, Liberation Serif, DejaVu Serif or FreeSerif fallbacks at the same text size. `BULKSEQ_REPORT_FONT` selects a specific font file; an unavailable explicit font stops generation rather than silently substituting another face.
 
 In the pinned R environment, independently check normalized mean counts:
 
