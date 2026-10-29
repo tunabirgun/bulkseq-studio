@@ -1,0 +1,3 @@
+Overall: REVIEW_REQUIRED
+01_synthetic_example: REVIEW_REQUIRED
+- This report is a synthetic teaching example, not a completed biological study.

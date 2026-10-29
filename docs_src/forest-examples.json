@@ -1,0 +1,159 @@
+{
+  "provenance": {
+    "source": "Synthetic illustrative unshrunken log2 fold-change estimates and standard errors.",
+    "method": "DerSimonian-Laird random-effects pooling with z-Wald 95% confidence intervals.",
+    "limitations": "This explorer shows pooled effects only. It does not calculate combined p-values, adjusted p-values, meta_sig, or biological replication.",
+    "r_version": "R version 4.5.2 (2025-10-31)",
+    "metafor_version": "5.0.1"
+  },
+  "studies": ["Study A", "Study B", "Study C", "Study D"],
+  "scenarios": [
+    {
+      "id": "consistent",
+      "label": "Consistent effects",
+      "description": "All synthetic study estimates point upward with similar uncertainty.",
+      "effects": [1.15, 0.92, 1.08, 0.86],
+      "se": [0.22, 0.25, 0.2, 0.24],
+      "fits": [
+        {
+          "omitted": null,
+          "estimate": 1.017572489767,
+          "ciLow": 0.7970903852634,
+          "ciHigh": 1.23805459427,
+          "tau2": 0,
+          "weights": [0.2614599341702, 0.2024745730214, 0.3163665203459, 0.2196989724625]
+        },
+        {
+          "omitted": 1,
+          "estimate": 0.9706901475488,
+          "ciLow": 0.7141317022357,
+          "ciHigh": 1.227248592862,
+          "tau2": 0,
+          "weights": [0, 0.2741551642075, 0.4283674440743, 0.2974773917182]
+        },
+        {
+          "omitted": 2,
+          "estimate": 1.042344048812,
+          "ciLow": 0.7954554263771,
+          "ciHigh": 1.289232671246,
+          "tau2": 0,
+          "weights": [0.3278389946271, 0, 0.3966851834988, 0.2754758218741]
+        },
+        {
+          "omitted": 3,
+          "estimate": 0.9886827779926,
+          "ciLow": 0.7220204391317,
+          "ciHigh": 1.255345116854,
+          "tau2": 0,
+          "weights": [0.3824563043672, 0.296174162102, 0, 0.3213695335308]
+        },
+        {
+          "omitted": 4,
+          "estimate": 1.061938078006,
+          "ciLow": 0.8123394141387,
+          "ciHigh": 1.311536741873,
+          "tau2": 0,
+          "weights": [0.3350757271143, 0.2594826430773, 0.4054416298083, 0]
+        }
+      ]
+    },
+    {
+      "id": "uncertain",
+      "label": "One uncertain study",
+      "description": "Three estimates are precise; one has a wide interval and therefore little weight.",
+      "effects": [1.1, 0.96, 1.22, 0.3],
+      "se": [0.24, 0.26, 0.23, 0.95],
+      "fits": [
+        {
+          "omitted": null,
+          "estimate": 1.086792042267,
+          "ciLow": 0.8154257879994,
+          "ciHigh": 1.358158296534,
+          "tau2": 0,
+          "weights": [0.332807430864, 0.283575562393, 0.3623763330391, 0.0212406737039]
+        },
+        {
+          "omitted": 1,
+          "estimate": 1.0802036798,
+          "ciLow": 0.7479802636219,
+          "ciHigh": 1.412427095979,
+          "tau2": 0,
+          "weights": [0, 0.4250280586312, 0.543136044678, 0.03183589669082]
+        },
+        {
+          "omitted": 2,
+          "estimate": 1.136978946573,
+          "ciLow": 0.8163736858454,
+          "ciHigh": 1.4575842073,
+          "tau2": 0,
+          "weights": [0.4645394732425, 0, 0.5058123564985, 0.02964817025902]
+        },
+        {
+          "omitted": 3,
+          "estimate": 1.011086867324,
+          "ciLow": 0.6712475475907,
+          "ciHigh": 1.350926187056,
+          "tau2": 0,
+          "weights": [0.5219496202992, 0.4447381380064, 0, 0.03331224169444]
+        },
+        {
+          "omitted": 4,
+          "estimate": 1.103866712815,
+          "ciLow": 0.8295717177228,
+          "ciHigh": 1.378161707907,
+          "tau2": 0,
+          "weights": [0.3400298949114, 0.2897296145991, 0.3702404904895, 0]
+        }
+      ]
+    },
+    {
+      "id": "opposing",
+      "label": "An opposing study",
+      "description": "One study estimates an effect in the other direction; the pooled estimate does not establish agreement.",
+      "effects": [1.2, 1.05, -0.85, 1.1],
+      "se": [0.24, 0.22, 0.28, 0.25],
+      "fits": [
+        {
+          "omitted": null,
+          "estimate": 0.6348689121397,
+          "ciLow": -0.2455346079729,
+          "ciHigh": 1.515272432252,
+          "tau2": 0.7455207417682,
+          "weights": [0.2512386876901, 0.2541500563005, 0.2448961301612, 0.2497151258481]
+        },
+        {
+          "omitted": 1,
+          "estimate": 0.4422368300723,
+          "ciLow": -0.735713039308,
+          "ciHigh": 1.620186699452,
+          "tau2": 1.020662651875,
+          "weights": [0, 0.3378736139358, 0.3286510201184, 0.3334753659458]
+        },
+        {
+          "omitted": 2,
+          "estimate": 0.4900770005803,
+          "ciLow": -0.7576502436894,
+          "ciHigh": 1.73780424485,
+          "tau2": 1.149704206549,
+          "weights": [0.3356807371756, 0, 0.3299954221217, 0.3343238407028]
+        },
+        {
+          "omitted": 3,
+          "estimate": 1.113014138135,
+          "ciLow": 0.8463517992738,
+          "ciHigh": 1.379676476996,
+          "tau2": 0,
+          "weights": [0.3213695335308, 0.3824563043672, 0, 0.296174162102]
+        },
+        {
+          "omitted": 4,
+          "estimate": 0.4763323251628,
+          "ciLow": -0.7219006214408,
+          "ciHigh": 1.674565271766,
+          "tau2": 1.059936334056,
+          "weights": [0.3344449783182, 0.3372211155845, 0.3283339060974, 0]
+        }
+      ]
+    }
+  ]
+}

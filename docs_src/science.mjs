@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { renderForestExample } from './explorers.mjs';
 
 const versions = JSON.parse(readFileSync(new URL('./tool-versions.json', import.meta.url), 'utf8'));
 const escape = value => String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
@@ -70,6 +71,8 @@ export const sciencePage = {
       <p>The workflow separately pools unshrunken log2 fold changes and their standard errors with <code>metafor</code>: fixed effect for two studies and DerSimonian–Laird random effects for three or more. Standard errors are floored at 1e-6 for the fit. Its <code>rem_padj</code> uses Benjamini–Hochberg across every estimable pooled-effect test, including discordant or zero-sign rows. This answers a pooled-effect hypothesis, not the inverse-normal combined-p hypothesis. With two studies, <code>tau2</code>, <code>I2</code> and <code>QEp</code> are deliberately <code>NA</code> because the workflow does not report heterogeneity fields with so little information. The default metafor inference is z-based Wald inference; pooled estimates and intervals are exploratory with few studies, where nominal coverage and error control can be unreliable. See <a href="https://search.r-project.org/CRAN/refmans/metafor/html/misc-recs.html">metafor’s recommendations</a>. The model implementation follows <a href="https://doi.org/10.18637/jss.v036.i03">Viechtbauer (2010)</a>.</p>
       <p>Results produced before v0.34.0 need recomputation before their pooled adjusted values are interpreted: <code>rem_padj</code> already existed, but now uses Benjamini–Hochberg across every estimable pooled test. The matching-direction combined calls are unchanged.</p>
     </details>
+    ${renderForestExample()}
+    <p><a href="examples/meta/results/reports/meta_analysis_report.html">Open the synthetic meta-analysis report →</a></p>
     <p>Neither a combined p-value nor a pooled effect proves replication, causality, independence of studies or biological consistency outside the included datasets. Inspect study eligibility, identifiers, reference compatibility, effect directions, covariates and heterogeneity before making those claims.</p>
   </section>
 

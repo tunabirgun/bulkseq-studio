@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, copyFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { documentedVersion } from './site-config.mjs';
 import * as content from './content.mjs';
@@ -6,7 +6,7 @@ const { pages, glossary } = content;
 
 const out = fileURLToPath(new URL('../docs/', import.meta.url));
 const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const plain = value => value.replace(/<[^>]*>/g, ' ').replace(/&(?:nbsp|amp|lt|gt|quot|#39);/g, ' ').replace(/\s+/g, ' ').trim();
+const plain = value => value.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<[^>]*>/g, ' ').replace(/&(?:nbsp|amp|lt|gt|quot|#39);/g, ' ').replace(/\s+/g, ' ').trim();
 const href = page => `${page.slug}.html`;
 const home = pages.find(page => page.section === 'Home');
 // The four sections are the top-level destinations; Home is the hub, reached by the wordmark.
@@ -51,11 +51,12 @@ for (const page of pages) {
   search.push({title: page.title, url: href(page), summary: page.summary, section: page.section, text: plain(body)});
   const toc = headings.map(h => `<li class="toc-level-${h.level}"><a href="#${h.id}">${escape(h.title)}</a></li>`).join('');
   const hub = page.section === 'Home';
+  const explorers = ['outputs','science'].includes(page.slug);
   const neighbours = pages.filter(other => other.section !== 'Home');
   const position = neighbours.indexOf(page);
   const adjacent = hub ? '' : [neighbours[position - 1], neighbours[position + 1]].map((p, i) => p ? `<a href="${href(p)}"><span>${i ? 'Next' : 'Previous'}</span><strong>${escape(p.title)} ${i ? '→' : '←'}</strong></a>` : '<span></span>').join('');
   await writeFile(`${out}/${href(page)}`, `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="assets/bulkseq_logo.svg" type="image/svg+xml"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(hub ? page.title : `${page.title} · BulkSeq Studio documentation`)}</title><meta name="description" content="${escape(page.summary)}"><script src="assets/appearance.js"></script><link rel="stylesheet" href="assets/fonts.css"><link rel="stylesheet" href="assets/site.css">${hub ? '<link rel="stylesheet" href="assets/parameters.css">' : ''}<script src="assets/search-index.js" defer></script><script src="assets/site.js" defer></script>${hub ? '<script src="assets/signal.js" defer></script>' : ''}</head>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="assets/bulkseq_logo.svg" type="image/svg+xml"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escape(hub ? page.title : `${page.title} · BulkSeq Studio documentation`)}</title><meta name="description" content="${escape(page.summary)}"><script src="assets/appearance.js"></script><link rel="stylesheet" href="assets/fonts.css"><link rel="stylesheet" href="assets/site.css">${hub ? '<link rel="stylesheet" href="assets/parameters.css">' : ''}${explorers ? '<link rel="stylesheet" href="assets/explorers.css">' : ''}<script src="assets/search-index.js" defer></script><script src="assets/site.js" defer></script>${explorers ? '<script src="assets/explorer-core.js" defer></script><script src="assets/explorers.js" defer></script>' : ''}${hub ? '<script src="assets/signal.js" defer></script>' : ''}</head>
 <body data-page="${escape(page.slug)}"${hub ? ' class="is-hub"' : ''}><a class="skip-link" href="#main">Skip to content</a><header class="masthead"><div class="masthead-inner"><a class="wordmark" href="index.html"><span class="brand-text">BulkSeq Studio<span class="brand-meta">v${escape(documentedVersion)}</span></span></a><nav class="section-nav" aria-label="${hub ? 'Website sections' : 'Documentation sections'}">${hub ? '' : `<ul>${[['inputs','Input'],['science','Science'],['outputs','Output'],['export','Export'],['understanding','Understanding']].map(([slug,label])=>`<li><a href="${slug}.html"${page.slug===slug?' aria-current="page"':''}>${label}</a></li>`).join('')}</ul>`}</nav><div class="header-actions"><div class="appearance-control js-only" role="group" aria-label="Appearance"><button type="button" data-appearance="light" aria-label="Use light appearance" aria-pressed="false">Light</button><span aria-hidden="true">/</span><button type="button" data-appearance="dark" aria-label="Use dark appearance" aria-pressed="false">Dark</button></div><button class="search-trigger js-only" data-open-search aria-label="Search the documentation" title="Search (Ctrl K)"><span class="search-icon" aria-hidden="true"></span></button><button class="menu-trigger js-only" data-open-menu>Menu</button></div></div></header>
 <div class="layout">${hub ? '' : `<aside class="section-rail"><nav aria-label="${escape(page.section)} pages">${rail(page.section, page.slug)}</nav></aside>`}<main id="main" tabindex="-1">${hub ? '' : `<header class="article-header"><p class="eyebrow">${escape(hub ? `Version ${documentedVersion}` : page.section)}</p><h1>${escape(page.title)}</h1>${page.section === 'Explore' ? '' : `<p class="lead">${escape(page.summary)}</p>`}</header>`}${toc && !hub ? `<details class="mobile-toc"><summary>On this page</summary><ul>${toc}</ul></details>` : ''}<article>${body}</article>${adjacent ? `<nav class="adjacent" aria-label="Adjacent pages">${adjacent}</nav>` : ''}</main>${hub || !toc ? '' : `<aside class="toc-rail"><nav aria-label="On this page"><h2>On this page</h2><ul>${toc}</ul></nav><a class="back-top" href="#main">Back to top ↑</a></aside>`}</div>
 <dialog id="search-dialog" aria-labelledby="search-title"><div class="dialog-heading"><h2 id="search-title">Search the documentation</h2><button data-close-dialog aria-label="Close search">Close</button></div><label for="search-input">Search pages, methods and outputs</label><input id="search-input" type="search" autocomplete="off" placeholder="For example, contrasts or filtering"><p id="search-status" role="status">Type to search every page.</p><ul id="search-results"></ul></dialog>
@@ -64,5 +65,6 @@ for (const page of pages) {
 <footer class="site-credit">Built by <a href="https://github.com/tunabirgun">@tunabirgun</a>, for research use only.</footer><div id="term-tooltip" role="tooltip" hidden></div><div id="copy-status" class="visually-hidden" role="status"></div></body></html>`);
 }
 await writeFile(`${out}/assets/search-index.js`, `window.manualSearch = ${JSON.stringify(search)};\nwindow.manualGlossary = ${JSON.stringify(glossary)};\nwindow.walkthroughRoutes = ${JSON.stringify(content.walkthroughRoutes || [])};\n`);
+await copyFile(new URL('./explorer-core.cjs', import.meta.url), `${out}/assets/explorer-core.js`);
 await writeFile(`${out}/.nojekyll`, '');
 console.log(`Built ${pages.length} documentation pages.`);

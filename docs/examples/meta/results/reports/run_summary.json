@@ -1,0 +1,7 @@
+{
+  "app_version": "0.35.0",
+  "input": {
+    "type": "synthetic_meta_fixture"
+  },
+  "example": true
+}

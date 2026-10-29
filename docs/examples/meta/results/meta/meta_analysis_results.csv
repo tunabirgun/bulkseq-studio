@@ -1,0 +1,4 @@
+"gene_id","combined_pvalue","combined_padj","combined_z","combined_z_offscale","common_direction","n_studies_sig","rem_log2FC","rem_ci_lo","rem_ci_hi","rem_pvalue","rem_padj","tau2","I2","QEp","meta_sig","study_A_log2FC","study_A_padj","study_B_log2FC","study_B_padj"
+"up",0.00197017285911281,0.00197017285911281,2.88289834984443,FALSE,"up",0,0.54,0.189390983769367,0.890609016230632,0.00253868673815036,0.00761606021445108,NA,NA,NA,TRUE,0.4,0.08,1.1,0.05
+"opposite",0.0219113090103313,NA,2.01578351572674,FALSE,"discordant",1,0.268,-0.202391356289613,0.738391356289613,0.264136875256031,0.264136875256031,NA,NA,NA,FALSE,1.1,0.04,-0.2,0.3
+"neutral",0.5,NA,0,FALSE,"discordant",0,0.25,-0.165771147304903,0.665771147304903,0.238592829316436,0.264136875256031,NA,NA,NA,FALSE,0,0.8,0.5,0.25

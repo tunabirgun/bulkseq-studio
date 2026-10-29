@@ -1,0 +1,345 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BulkSeq Studio meta-analysis — meta</title><style>
+:root{
+  --brand-blue:#2C6FB6;--brand-blue-deep:#000;--brand-teal:#2C6FB6;--brand-teal-bright:#2C6FB6;
+  --spectrum:#2C6FB6;--accent:#000;--accent-2:#000;--accent-tint:#F5F7FA;
+  --bg:#F5F7FA;--surface:#fff;--text:#000;--muted:#000;--border:#D7DEE6;--border-strong:#D7DEE6;
+  --plain-bg:#F5F7FA;--plain-border:#2C6FB6;--plain-ink:#000;
+  --up:#C0392B;--down:#2C7BB6;--up-ink:#000;--down-ink:#000;--up-bg:#F5F7FA;--down-bg:#F5F7FA;
+  --ok:#000;--warn:#000;--fail:#000;--review:#000;
+  --ok-bg:#F5F7FA;--warn-bg:#F5F7FA;--fail-bg:#F5F7FA;--review-bg:#F5F7FA;
+  --code-bg:#F5F7FA;--code-text:#000;--tip-bg:#fff;--tip-text:#000;
+  --serif:"Times New Roman",Times,serif;--sans:"Times New Roman",Times,serif;--mono:"Times New Roman",Times,serif;
+  --r1:4px;--r2:4px;--r3:4px;--pill:4px;--sh:none;--sh2:0 6px 25px #0002;--measure:52rem;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--sans);color:var(--text);background:var(--bg);line-height:1.6;
+  -webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline;text-underline-offset:2px}
+.xlink{display:inline-block;margin-top:.4rem;font-family:var(--sans);font-weight:600;color:#000}
+.xlink:hover{color:var(--brand-blue-deep);text-decoration:underline;text-underline-offset:2px}
+h1,h2,h3{font-family:var(--serif);font-weight:600;letter-spacing:-.01em}
+header.top{position:sticky;top:0;z-index:50;background:var(--surface);border-bottom:1px solid var(--border)}
+header.top::before{content:"";display:block;height:3px;background:var(--spectrum)}
+.brand{display:flex;align-items:center;gap:12px;max-width:1080px;margin:0 auto;padding:14px clamp(16px,5vw,40px) 8px}
+.skip{position:absolute;left:-999px}
+.skip:focus{left:12px;top:12px;z-index:100;background:#fff;padding:8px 12px;border-radius:8px;box-shadow:var(--sh2)}
+.chipnav{display:flex;gap:6px;flex-wrap:wrap;max-width:1080px;margin:0 auto;padding:0 clamp(16px,5vw,40px) 10px}
+.chipnav a{font-family:var(--sans);font-size:.74rem;color:var(--muted);border:1px solid var(--border);
+  border-radius:var(--pill);padding:.2rem .6rem;background:var(--surface)}
+.chipnav a:hover{color:var(--text);border-color:var(--brand-blue);text-decoration:none}
+.brand .logo{width:38px;height:38px;flex:0 0 38px;filter:drop-shadow(0 1px 2px rgba(17,24,39,.12))}
+.brand .wordmark{font-family:var(--sans);font-weight:600;font-size:1.15rem;letter-spacing:-.01em}
+.brand .ver{font-family:var(--mono);font-size:.66rem;color:var(--accent-2);background:var(--accent-tint);
+  padding:.14rem .42rem;border-radius:5px;font-weight:500}
+.brand .spacer{flex:1 1 auto}
+.brand .rmeta{font-family:var(--sans);text-align:right;font-size:.8rem;color:var(--muted);line-height:1.35}
+.brand .rmeta b{color:var(--text);font-weight:600}
+main{max-width:1080px;margin:0 auto;padding:8px clamp(16px,5vw,40px) 8px}
+main,section,.cards,.panels,.vgrid,.de-split,.tablewrap{min-width:0}
+.hero{padding:26px 0 4px}
+.hero .kicker{font-family:var(--sans);text-transform:uppercase;letter-spacing:.12em;font-size:.7rem;
+  font-weight:700;color:#000}
+.hero h1{font-family:var(--serif);font-size:clamp(1.9rem,4vw,2.5rem);line-height:1.1;margin:.35rem 0 .15rem;
+  overflow-wrap:anywhere}
+.hero .sub{margin:0;color:var(--muted);font-family:var(--sans)}
+.hero .sub b{color:var(--text);font-weight:600}
+.hero .lede{margin:.35rem 0 0;color:var(--muted);font-family:var(--sans);font-size:.9rem;max-width:var(--measure)}
+/* teal "In plain terms" callout — the read-along track */
+.plain{background:var(--plain-bg);border:1px solid #cde9e7;border-left:4px solid var(--plain-border);
+  border-radius:var(--r3);padding:16px 18px;margin:16px 0;max-width:var(--measure)}
+.plain .tag{display:inline-block;font-family:var(--sans);font-size:.68rem;font-weight:700;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--plain-ink);margin-bottom:6px}
+.plain .finding{font-family:var(--serif);font-size:clamp(1.02rem,1.5vw,1.18rem);line-height:1.5;margin:0}
+.plain .finding b{font-weight:700} .plain .finding .up{color:var(--up-ink)} .plain .finding .down{color:var(--down-ink)}
+.plain .note{font-family:var(--sans);font-size:.85rem;color:var(--plain-ink);margin:.6rem 0 0}
+/* focusable glossary term — hover AND keyboard focus; never title= */
+.term{position:relative;display:inline;border:0;background:none;padding:0;margin:0;font:inherit;
+  color:var(--plain-ink);font-weight:600;cursor:help;border-bottom:1px dotted var(--brand-teal)}
+.term:focus-visible{outline:2px solid var(--brand-blue);outline-offset:2px;border-radius:3px}
+.term .tip{display:none;pointer-events:none}
+/* "How to read this" — elaboration only, never the primary result */
+.howto{margin-top:.6rem}
+.howto>summary{cursor:pointer;list-style:none;font-family:var(--sans);font-weight:600;font-size:.82rem;
+  color:var(--brand-blue-deep);display:inline-flex;align-items:center;gap:6px}
+.howto>summary::-webkit-details-marker{display:none}
+.howto>summary::before{content:"?";display:inline-flex;align-items:center;justify-content:center;width:18px;
+  height:18px;border-radius:50%;background:var(--brand-teal);color:#04363a;font-weight:800;font-size:.72rem}
+.howto>summary:focus-visible{outline:2px solid var(--brand-blue);outline-offset:2px;border-radius:3px}
+.howto p{font-family:var(--sans);font-size:.82rem;color:var(--muted);line-height:1.55;margin:.45rem 0 0;
+  border-left:3px solid var(--plain-border);background:var(--plain-bg);padding:.5rem .7rem;border-radius:0 6px 6px 0}
+.enrichment-coverage li{overflow-wrap:anywhere}
+/* 3 headline stats + up/down mini-bar (the 10-second scan) */
+.headline-stats{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0;max-width:var(--measure)}
+.hstat{flex:1 1 120px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);
+  padding:10px 12px;box-shadow:var(--sh)}
+.hstat .v{font-family:var(--sans);font-weight:800;font-size:1.55rem;line-height:1;font-variant-numeric:tabular-nums}
+.hstat.up .v{color:var(--up-ink)} .hstat.down .v{color:var(--down-ink)}
+.hstat .k{font-family:var(--sans);font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--muted);margin-top:4px}
+.dirbar{height:8px;border-radius:var(--pill);overflow:hidden;display:flex;margin-top:8px;background:#eef0f5}
+.dirbar .up{background:var(--up)} .dirbar .down{background:var(--down)}
+.status-line{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap;
+  font-family:var(--sans);font-size:.86rem;color:var(--muted)}
+@media(max-width:800px){.brand .rmeta{display:none}}
+@media(max-width:560px){.chipnav{display:none}}
+.cards{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin:22px 0 6px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;
+  box-shadow:0 1px 2px rgba(17,24,39,.04)}
+.card-k{font-family:var(--sans);font-size:.68rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.card-v{font-family:var(--sans);font-weight:600;font-size:1.02rem;margin-top:3px;word-break:break-word}
+section{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+  padding:20px 24px;margin:18px 0;box-shadow:0 1px 2px rgba(17,24,39,.04)}
+section h2{font-size:1.4rem;margin:0 0 .7rem;padding-bottom:.4rem;border-bottom:1px solid var(--border)}
+section h3{font-family:var(--sans);font-size:.95rem;font-weight:600;color:var(--text);margin:1.2rem 0 .5rem}
+.sec-head{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  border-bottom:1px solid var(--border);margin-bottom:.7rem}
+.sec-head h2{border:none;margin-bottom:0}
+.figgroup{font-family:var(--serif);font-size:1.06rem;font-weight:600;color:var(--brand-blue-deep);margin:22px 0 .1rem}
+.figgroup-sub{font-family:var(--sans);font-size:.84rem;color:var(--muted);max-width:var(--measure);margin:0 0 12px}
+.panels{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr))}
+figure.panel{margin:0;border:1px solid var(--border);border-radius:var(--r2);overflow:hidden;
+  background:var(--surface);display:flex;flex-direction:column;box-shadow:var(--sh)}
+.panels>.panel[data-panel-layout="dense"]{grid-column:1/-1;min-width:0;width:100%;max-width:100%}
+.panels>.panel[data-panel-layout="dense"] .frame{min-width:0;max-width:100%}
+.panel[data-panel-layout="dense"] .dense-figure-viewport{overflow-x:auto;overflow-y:hidden;overscroll-behavior-inline:contain}
+.panel[data-panel-layout="dense"] .dense-figure-viewport:focus-visible{outline:2px solid var(--brand-blue);outline-offset:-2px}
+.panel[data-panel-layout="dense"] .dense-figure-viewport>.figbtn,
+.panel[data-panel-layout="dense"] .dense-figure-viewport>.figbtn>img{min-width:var(--dense-min-width);max-width:none}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.panel .frame{position:relative;background:#fff;border-bottom:1px solid var(--border)}
+.panel .lab{position:absolute;top:8px;left:8px;z-index:2;font-family:var(--sans);font-weight:800;font-size:.78rem;
+  color:var(--text);background:#fff;border:2px solid var(--border-strong);border-radius:5px;
+  width:22px;height:22px;display:flex;align-items:center;justify-content:center;box-shadow:var(--sh)}
+.panel .figbtn{border:0;background:none;padding:0;margin:0;width:100%;display:block;cursor:zoom-in}
+.panel .figbtn:focus-visible{outline:2px solid var(--brand-blue);outline-offset:-2px}
+.panel img{width:100%;display:block;background:#fff}
+figure.panel figcaption{padding:12px 14px}
+.cap-lead{font-family:var(--serif);font-size:.98rem;font-weight:600;line-height:1.4;color:var(--text)}
+.cap-tech{font-family:var(--sans);font-size:.8rem;color:var(--muted);margin-top:.35rem;line-height:1.5}
+/* legend band above the DE scroll container — tooltips never clipped by overflow-x */
+.legend{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:center;background:var(--bg);
+  border:1px solid var(--border);border-radius:var(--r2);padding:10px 14px;margin:12px 0}
+.legend .li{display:flex;align-items:center;gap:7px;font-family:var(--sans);font-size:.82rem;color:var(--text)}
+.legend .sw{width:12px;height:12px;border-radius:3px;flex:0 0 12px}
+.legend .sw.up{background:var(--up)} .legend .sw.down{background:var(--down)}
+/* glossary */
+.glossary dl{margin:0;display:grid;gap:12px 18px;grid-template-columns:1fr}
+.gterm{font-family:var(--sans);font-weight:700;font-size:.9rem;color:var(--brand-blue-deep)}
+.gdef{font-family:var(--sans);font-size:.86rem;color:var(--text);line-height:1.5;margin:.15rem 0 0}
+@media(min-width:720px){.glossary dl{grid-template-columns:180px 1fr;align-items:baseline}
+  .gterm{grid-column:1} .gdef{grid-column:2;margin:0}}
+.lb{position:fixed;inset:18px;width:calc(100% - 36px);height:calc(100dvh - 36px);max-width:none;max-height:none;margin:auto;border:1px solid var(--border);padding:0;background:#fff;color:#000;overflow:hidden}
+.lb::backdrop{background:#0008}
+.lb[open]{display:grid;grid-template-rows:auto minmax(0,1fr) auto}
+.lb-head{padding:12px 18px;border-bottom:1px solid var(--border)}
+.lb-head h2{font-size:20px;line-height:1.3;margin:0 0 8px;overflow-wrap:anywhere}
+.lb-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.lb-toolbar button{padding:5px 12px;border:1px solid var(--border);background:#fff;border-radius:4px;font:inherit;color:#000;cursor:pointer}
+.lb-toolbar button:hover{background:var(--bg)}
+.lb-toolbar output{min-width:4ch;text-align:center}
+.lb-close{margin-left:auto}
+.lb-stage{overflow:auto;min-width:0;min-height:0;padding:0;background:var(--bg);overscroll-behavior:contain;touch-action:pan-x pan-y}
+.lb img{display:block;margin:auto;max-width:none;max-height:none;background:#fff}
+.lb img.zoomed{margin:0}
+.lb-caption{margin:0;padding:10px 18px;max-height:20dvh;overflow:auto;border-top:1px solid var(--border);font-size:16px;line-height:1.4}
+#term-tooltip{position:fixed;z-index:100;max-width:calc(100vw - 24px);width:330px;max-height:calc(100dvh - 24px);overflow:auto;padding:14px 16px;background:#fff;color:#000;border:1px solid var(--border);box-shadow:var(--sh2);font:16px/1.5 var(--serif)}
+#term-tooltip[hidden]{display:none}
+.enr-block{margin:0 0 1.3rem}
+.enr-block h3{margin:.2rem 0 .5rem}
+table.enr th.desc,table.enr td.desc{white-space:normal;min-width:190px;max-width:460px;text-align:left;font-family:var(--sans)}
+.de-split{display:grid;gap:20px;grid-template-columns:minmax(0,1fr)}
+.de-split h3{display:flex;align-items:center;gap:8px;margin-top:0}
+.pill{font-family:var(--sans);font-size:.66rem;font-weight:700;padding:.1rem .45rem;border-radius:999px}
+/* up=red, down=blue — echoes the volcano/figure direction palette (#C0392B / #2C7BB6). */
+.pill.up{color:var(--up-ink);background:var(--up-bg)} .pill.down{color:var(--down-ink);background:var(--down-bg)}
+.tablewrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px}
+table.data{border-collapse:collapse;width:100%;font-family:var(--sans);font-size:.83rem}
+table.data th,table.data td{padding:6px 10px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
+table.data thead th{background:var(--accent-tint);color:var(--accent-2);font-weight:600;position:sticky;top:0}
+table.sortable thead th{padding:0;user-select:none}
+table.sortable .sort-button{display:block;width:100%;appearance:none;border:0;background:transparent;color:inherit;font:inherit;font-weight:inherit;text-align:inherit;padding:6px 10px;cursor:pointer}
+table.sortable .sort-button::after{content:" \21C5";opacity:.35}
+table.sortable th[data-sort=asc] .sort-button::after{content:" \2191";opacity:1}
+table.sortable th[data-sort=desc] .sort-button::after{content:" \2193";opacity:1}
+table.sortable .sort-button:focus-visible{outline:3px solid var(--brand-blue);outline-offset:-3px}
+table.data tbody tr:last-child td{border-bottom:none}
+table.data td.num,table.data th.num{text-align:right;font-variant-numeric:tabular-nums}
+table.data td.mono,table.data th.mono,.mono{font-family:var(--mono);font-size:.8rem;
+  white-space:normal;overflow-wrap:anywhere}
+pre{background:var(--code-bg);color:var(--code-text);border-radius:10px;padding:14px 16px;overflow:auto;
+  font-family:var(--mono);font-size:.78rem;line-height:1.55}
+code{font-family:var(--mono);font-size:.85em;background:#eef1fb;color:var(--accent-2);
+  padding:.1em .36em;border-radius:5px}
+.muted{color:var(--muted)} .small{font-size:.8rem}
+.badge{font-family:var(--sans);font-size:.7rem;font-weight:700;letter-spacing:.04em;padding:.18rem .5rem;
+  border-radius:999px;display:inline-block;white-space:nowrap}
+.badge.ok{color:var(--ok);background:var(--ok-bg)} .badge.warn{color:var(--warn);background:var(--warn-bg)}
+.badge.fail{color:var(--fail);background:var(--fail-bg)} .badge.review{color:var(--review);background:var(--review-bg)}
+.badge.muted{color:var(--muted);background:#eef0f5}
+table.checks{border-collapse:collapse;width:100%;table-layout:fixed}
+table.checks td{padding:10px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+table.checks td.chk-status{width:96px} .chk-name{font-family:var(--sans);font-weight:600;font-size:.9rem}
+.chk-msgs{margin:.3rem 0 0;padding-left:1.1rem;font-family:var(--sans);font-size:.83rem;color:var(--muted)}
+.chk-msgs li{margin:.15rem 0;overflow-wrap:anywhere}
+.stats{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
+.stat{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;text-align:center}
+.stat-v{font-family:var(--sans);font-weight:700;font-size:1.25rem}
+.stat-k{font-family:var(--sans);font-size:.72rem;color:var(--muted);margin-top:2px}
+.bars{display:flex;flex-direction:column;gap:8px;margin-top:.5rem}
+.barrow{display:grid;grid-template-columns:150px 1fr 78px;align-items:center;gap:10px}
+.barrow>*{min-width:0}
+.barlab{font-family:var(--sans);font-size:.82rem}
+.bartrack{background:#eef0f5;border-radius:6px;height:16px;overflow:hidden}
+.barfill{background:var(--spectrum);height:100%;border-radius:6px}
+.barval{font-family:var(--mono);font-size:.76rem;color:var(--muted);text-align:right}
+details.steps{margin-top:1rem} details.steps summary{cursor:pointer;font-family:var(--sans);
+  font-weight:600;font-size:.88rem;color:var(--accent-2);padding:.3rem 0}
+.vgrid{display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.vgrid table.data th,.vgrid table.data td{white-space:normal}
+footer{max-width:1080px;margin:8px auto 0;padding:22px clamp(16px,5vw,40px) 40px;
+  font-family:var(--sans);color:var(--muted);font-size:.82rem;border-top:1px solid var(--border)}
+footer .flinks{display:flex;flex-wrap:wrap;gap:16px;margin-bottom:8px}
+@media(max-width:560px){.barrow{grid-template-columns:100px 1fr 64px}}
+html{scroll-padding-top:100px}
+body{background:#fff;font-size:18px}
+button,input,summary,output{font-family:var(--serif);color:#000}
+a{text-decoration:underline;text-underline-offset:4px}
+:focus-visible{outline:3px solid var(--brand-blue);outline-offset:3px}
+header.top::before{display:none}
+.brand{max-width:1540px;padding:18px 32px;min-height:80px}
+.brand .logo{width:30px;height:30px;flex-basis:30px;filter:none}
+.brand .wordmark{font-size:25px}
+.report-layout{max-width:1540px;margin:auto;display:grid;grid-template-columns:210px minmax(0,1fr);gap:44px;padding:0 32px}
+.report-nav{position:sticky;top:86px;align-self:start;max-height:calc(100dvh - 100px);overflow:auto;padding:32px 18px 24px 0;border-right:1px solid var(--border);font-size:16px}
+.report-nav ul,.mobile-contents ul{list-style:none;padding:0;margin:12px 0}
+.report-nav li,.mobile-contents li{margin:4px 0}
+.report-nav a,.mobile-contents a{display:block;padding:5px 8px;text-decoration:none;border-left:2px solid transparent}
+.report-nav a:hover,.report-nav a[aria-current]{background:var(--bg);border-left-color:var(--brand-blue)}
+.report-nav p{font-size:14px;border-top:1px solid var(--border);padding-top:16px}
+.mobile-contents{display:none}
+main{width:100%;max-width:1040px;padding:26px 0;margin:0 auto}
+.hero{padding:6px 0 24px;border-bottom:1px solid var(--border)}
+.hero h1{font-size:clamp(30px,3vw,44px);line-height:1.15}
+.hero .kicker{font-size:13px}
+section{padding:26px 0;margin:0;border:0;border-bottom:1px solid var(--border);border-radius:0;box-shadow:none}
+section h2{font-size:29px;border:0;line-height:1.2}
+section h3{font-size:22px}
+.plain{border-color:var(--border);border-left-color:var(--brand-blue);border-radius:0;max-width:none}
+.plain .tag{font-size:13px}
+.plain .finding{font-size:20px}
+.howto>summary,.howto p,.cap-tech,.figgroup-sub,.gdef,.small{font-size:16px}
+.howto>summary::before{background:var(--bg);color:#000;border:1px solid var(--border)}
+.panels{grid-template-columns:minmax(0,1fr)}
+.cap-lead{font-size:20px}.figgroup{font-size:23px}.gterm{font-size:17px}
+table.data{font-size:16px}.pill,.badge{font-size:13px;border:1px solid var(--border)}
+pre{font-size:16px;border:1px solid var(--border)}
+.card,.hstat,.stat{box-shadow:none;border-radius:4px}
+.hero .kicker,.plain .tag,.hstat .k,.card-k{text-transform:none;letter-spacing:normal}
+.run-settings{display:grid;grid-template-columns:minmax(10rem,1fr) minmax(0,3fr);gap:8px 20px;margin:0}
+.run-settings dt{font-weight:600}.run-settings dd{margin:0;overflow-wrap:anywhere}
+.outcome{border-left:4px solid var(--brand-blue);padding:16px 20px;background:var(--bg);margin:22px 0}
+.outcome h2{font-size:24px}.outcome p:last-child{margin-bottom:0}
+.attention-list{padding-left:22px}.attention-list li{margin:8px 0;overflow-wrap:anywhere}
+.source-files ul{padding-left:22px}.source-files li{overflow-wrap:anywhere}
+.source-files summary{cursor:pointer;font-weight:600}.source-files details{margin:12px 0}
+.tablewrap,.tw{max-width:100%;overscroll-behavior-inline:contain}
+.tablewrap:focus-visible,.tw:focus-visible{outline-offset:-3px}
+@media(max-width:650px){.run-settings{grid-template-columns:minmax(0,1fr);gap:4px}.run-settings dd{margin-bottom:12px}}
+footer{max-width:1540px;font-size:16px}
+@media(max-width:1000px){.report-layout{grid-template-columns:minmax(0,1fr);padding:0 22px;gap:0}.report-nav{display:none}.mobile-contents{display:block;margin:0 0 24px;padding:14px 18px;background:var(--bg);border:1px solid var(--border)}.mobile-contents summary{cursor:pointer}.brand{padding:16px 22px}}
+@media(max-width:560px){.report-layout{padding:0 14px}.brand{padding:14px}.brand .wordmark{font-size:22px}.lb{inset:6px;width:calc(100% - 12px);height:calc(100dvh - 12px)}.lb-head{padding:10px}.lb-caption{padding:10px}.lb-toolbar{gap:6px}.lb-toolbar button{padding:5px 9px}.lb-close{margin-left:0}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+/* Print / Save-as-PDF: scientists attach the report to lab notebooks and manuscripts. Open every
+   disclosure, let table cells wrap instead of clipping in the overflow box, keep figures with their
+   captions, preserve the direction/status colours, and drop the on-screen chrome. */
+@media print{
+  header.top{position:static}
+  .report-nav,.mobile-contents,.skip,.lb,.howto>summary::before{display:none!important}
+  .report-layout{display:block;padding:0}main{max-width:none;padding:0}
+  details{display:block!important} details>summary{display:none!important}
+  .tablewrap{overflow:visible!important}
+  table.data th,table.data td{white-space:normal!important}
+  .panel[data-panel-layout="dense"] .dense-figure-viewport{overflow:visible!important;max-width:none!important}
+  .panel[data-panel-layout="dense"] .dense-figure-viewport>.figbtn,
+  .panel[data-panel-layout="dense"] .dense-figure-viewport>.figbtn>img{width:100%!important;min-width:0!important;max-width:100%!important}
+  section,figure.panel,.enr-block,.hstat,.card,.stat,tr{break-inside:avoid}
+  .dirbar,.pill,.badge,.plain,.hstat .v,table.data thead th{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  a[href]{color:inherit}
+  body{background:#fff}
+}
+
+main{padding:26px 0}
+.tw{max-width:100%;overflow-x:auto}
+.tw table{min-width:max-content}
+main>details{margin:18px 0;padding:14px 18px;border:1px solid var(--border);border-radius:var(--r2);background:var(--surface)}
+main>details>summary{cursor:pointer;font-family:var(--sans);font-weight:600;color:#000}
+#field-guide dl{display:grid;grid-template-columns:minmax(12rem,1fr) minmax(0,3fr);gap:8px 14px}
+#field-guide dt{font-weight:600}#field-guide dd{margin:0}
+@media(max-width:650px){#field-guide dl{grid-template-columns:minmax(0,1fr)}#field-guide dd{margin-bottom:8px}}
+</style></head>
+<body>
+<a class="skip" href="#main-content">Skip to report</a>
+<header class="top"><div class="brand"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" fill="none" class="logo" role="img" aria-label="BulkSeq Studio logo">
+<defs>
+<linearGradient id="bsBar" x1="150" y1="0" x2="850" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#0B65B1"/><stop offset="0.5" stop-color="#22D1C5"/><stop offset="1" stop-color="#0B65B1"/></linearGradient>
+<linearGradient id="bsTeal" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#18B8C3"/><stop offset="1" stop-color="#20D2C6"/></linearGradient>
+<linearGradient id="bsBlue" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0C3E8F"/><stop offset="1" stop-color="#08327B"/></linearGradient>
+</defs>
+<g>
+<rect x="170" y="455" width="40" height="110" rx="18" fill="#0B65B1"/><rect x="235" y="390" width="40" height="175" rx="18" fill="#0D78B9"/><rect x="300" y="315" width="40" height="250" rx="18" fill="#1091C3"/><rect x="365" y="230" width="40" height="335" rx="18" fill="#15AAC8"/><rect x="430" y="145" width="40" height="420" rx="18" fill="#19BFC7"/><rect x="495" y="110" width="40" height="455" rx="18" fill="#22D1C5"/><rect x="560" y="150" width="40" height="415" rx="18" fill="#17B9D7"/><rect x="625" y="230" width="40" height="335" rx="18" fill="#16A7DB"/><rect x="690" y="315" width="40" height="250" rx="18" fill="#1394D6"/><rect x="755" y="385" width="40" height="180" rx="18" fill="#1080CA"/><rect x="820" y="455" width="40" height="110" rx="18" fill="#0B65B1"/>
+</g>
+<g>
+<rect x="90" y="615" width="820" height="14" rx="7" fill="url(#bsBlue)"/><rect x="170" y="590" width="130" height="64" rx="18" fill="url(#bsBlue)"/><path d="M355 590 H540 L575 622 L540 654 H355 Q335 654 335 634 V610 Q335 590 355 590 Z" fill="url(#bsBlue)"/><rect x="605" y="590" width="105" height="64" rx="18" fill="url(#bsBlue)"/><path d="M770 590 H865 L895 622 L865 654 H770 Q750 654 750 634 V610 Q750 590 770 590 Z" fill="url(#bsBlue)"/>
+</g>
+<g>
+<rect x="190" y="705" width="110" height="18" rx="9" fill="url(#bsBlue)"/><rect x="335" y="705" width="120" height="18" rx="9" fill="url(#bsBlue)"/><rect x="490" y="705" width="130" height="18" rx="9" fill="url(#bsTeal)"/><rect x="655" y="705" width="110" height="18" rx="9" fill="url(#bsBlue)"/><rect x="790" y="705" width="100" height="18" rx="9" fill="url(#bsBlue)"/>
+<rect x="250" y="770" width="210" height="20" rx="10" fill="url(#bsBlue)"/><rect x="515" y="770" width="160" height="20" rx="10" fill="url(#bsBlue)"/><rect x="705" y="770" width="140" height="20" rx="10" fill="url(#bsTeal)"/>
+<rect x="315" y="835" width="42" height="20" rx="10" fill="url(#bsBlue)"/><rect x="390" y="835" width="120" height="20" rx="10" fill="url(#bsBlue)"/><rect x="545" y="835" width="190" height="20" rx="10" fill="url(#bsTeal)"/>
+<rect x="390" y="900" width="170" height="20" rx="10" fill="url(#bsBlue)"/><rect x="595" y="900" width="110" height="20" rx="10" fill="url(#bsTeal)"/>
+<rect x="470" y="965" width="140" height="20" rx="10" fill="url(#bsBlue)"/>
+</g>
+</svg>
+<span class="wordmark">BulkSeq Studio</span><span class='ver'>v0.35.0</span><span class="tag">meta-analysis</span></div></header>
+<div class="report-layout">
+<nav class="report-nav" aria-label="Report sections"><b>In this report</b><ul><li><a href="#comparison">Study scope</a></li><li><a href="#outcome">Run status</a></li><li><a href="#findings">Result summary</a></li><li><a href="#methods">Methods</a></li><li><a href="#field-guide">Result fields</a></li><li><a href="#figures">Comparative figures</a></li><li><a href="#convergent">Matching-sign genes</a></li><li><a href="#per-study">Constructed study-level estimates</a></li><li><a href="#per-study-reports">Per-study results</a></li><li><a href="#enrichment">Functional enrichment</a></li><li><a href="#outputs">Saved outputs</a></li></ul></nav>
+<main id="main-content" tabindex="-1"><section class="outcome" aria-label="Synthetic example notice"><h2>Synthetic teaching example</h2><p>This report uses constructed study-level estimates and standard errors to exercise BulkSeq's cross-study combination and report format. It is not a biological study. It is not a count-based DESeq2 analysis or a complete BulkSeq run.</p></section>
+<details class="mobile-contents"><summary>In this report</summary><nav aria-label="Report sections"><ul><li><a href="#comparison">Study scope</a></li><li><a href="#outcome">Run status</a></li><li><a href="#findings">Result summary</a></li><li><a href="#methods">Methods</a></li><li><a href="#field-guide">Result fields</a></li><li><a href="#figures">Comparative figures</a></li><li><a href="#convergent">Matching-sign genes</a></li><li><a href="#per-study">Constructed study-level estimates</a></li><li><a href="#per-study-reports">Per-study results</a></li><li><a href="#enrichment">Functional enrichment</a></li><li><a href="#outputs">Saved outputs</a></li></ul></nav></details>
+<section id='comparison' class='hero'><h1>Cross-study analysis: case versus control (condition)</h1><p>Positive log2 fold change means higher expression in case than control. The recorded per-study formula was <code>~ condition</code>.</p><p><strong>Included studies:</strong> A (2 case, 2 control; 5 post-filter gene rows); B (2 case, 2 control; 5 post-filter gene rows)</p><p><strong>Excluded studies:</strong> No excluded studies were recorded.</p><p>These counts establish metadata eligibility for the selected comparison; they do not establish study independence, biological comparability, or post-run validity.</p></section><section id='outcome' class='outcome'><h2>Meta-analysis checks</h2><span class='badge review'>REVIEW</span><p>Stored tables and figures remain visible for diagnosis; review these checks before interpreting the result.</p><ul class='attention-list'><li>Synthetic teaching fixture: combine_meta completed on constructed study-level estimates. It does not include the input-level evidence required for a completed check 17 meta-analysis QC record.</li></ul></section><section id='findings' class='hero'><h2>Cross-study result summary</h2><div class='eyebrow'>Multi-study meta-analysis <span class='badge review'>REVIEW</span></div><p class='lead'>Across 2 studies, 1 gene has combined-p FDR below the recorded 0.05 threshold and matching nonzero effect signs. This criterion does not require each study to be individually significant and does not guarantee independent replication. The reported 2 discordant rows include opposite and zero signs. Matching signs occur in 33.3% of retained shared rows.</p><div class='cards'><div class='card'><div class='card-k'>Studies combined</div><div class='card-v'>2</div></div><div class='card'><div class='card-k'>Retained genes</div><div class='card-v'>3</div></div><div class='card'><div class='card-k'>Combined FDR + matching sign</div><div class='card-v'>1 up · 0 down</div></div><div class='card'><div class='card-k'>Opposite or zero signs</div><div class='card-v'>2</div></div><div class='card'><div class='card-k'>Direction concordance</div><div class='card-v'>33.3%</div></div><div class='card'><div class='card-k'>Pooling</div><div class='card-v'>fixed-effect</div></div></div></section><details id='methods'><summary>Testing families and retained rows</summary><p>Combined-p BH: 1 matching-sign test (<code>direction_concordant_combined_bh</code>). Pooled-effect BH: 3 estimable tests across all directions (<code>all_estimable_pooled_bh</code>). The pooled family includes opposite-sign and neutral rows; pooled significance does not decide the combined-p call.</p><p>Post-filter identifier intersection: 5; excluded for missing statistics (union): 2; complete-case retained: 3; pooled-fit failures: 0. Retained directions: 1 up, 0 down, 1 opposite sign, 1 neutral. Missing-statistic reasons may overlap, so their counts must not be added.</p></details><details id='field-guide'><summary>How to read the result fields</summary><p>The display-derived per-study up/down summary also requires the figure-setting absolute log2 fold change ≥ not applied in this synthetic fixture; a non-significant study does not establish no effect.</p><dl><dt><code>combined_padj</code></dt><dd>Combined-p FDR from the inverse-normal p-value test, adjusted among matching-sign genes; a small value alone does not prove replication.</dd><dt><code>meta_sig</code></dt><dd>Combined-p FDR below the run threshold (0.05) with matching nonzero per-study effect signs; individual studies need not reach FDR.</dd><dt><code>common_direction</code></dt><dd>Up or down means all retained effects have that sign; discordant includes opposite-sign and zero-effect rows.</dd><dt><code>n_studies_sig</code></dt><dd>Number of included studies with per-study adjusted p-value below the run threshold (0.05); this count does not apply the fold-change threshold.</dd><dt><code>rem_log2FC; rem_ci_lo/hi</code></dt><dd>Pooled effect and its 95% confidence interval from the common-effect fit at two studies or DerSimonian–Laird random-effects fit at three or more.</dd><dt><code>rem_padj</code></dt><dd>BH adjusted across every estimable pooled-effect test, including opposite-sign and neutral rows.</dd><dt><code>tau2; I2; QEp</code></dt><dd>Between-study heterogeneity fields are deliberately omitted for the two-study common-effect fit; omission is a workflow reporting policy.</dd></dl></details><section id='figures'><h2>Comparative figures</h2><div class='panels'><figure class="panel panel--meta-forest" data-figure="meta_forest"><div class="frame"><button class="figbtn" type="button" onclick="bsqZoom(this)" aria-label="Open Per-study and pooled effects full size"><img alt="Per-study and pooled effects" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI5MDAiIGhlaWdodD0iNTYwIiB2aWV3Qm94PSIwIDAgOTAwIDU2MCIgcm9sZT0iaW1nIj48dGl0bGU+UG9vbGVkIGVmZmVjdCBmb3Igc3ludGhldGljIGZlYXR1cmUgdXA8L3RpdGxlPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IndoaXRlIi8+PGcgZmlsbD0iYmxhY2siIHN0cm9rZT0iYmxhY2siIGZvbnQtZmFtaWx5PSJUaW1lcyBOZXcgUm9tYW4sc2VyaWYiPjx0ZXh0IHg9IjM2IiB5PSI0NCIgZm9udC1zaXplPSIyNCI+UG9vbGVkIGVmZmVjdCBmb3Igc3ludGhldGljIGZlYXR1cmUgdXA8L3RleHQ+PHBhdGggZD0iTTE5MC4wIDc0VjM5MCIgc3Ryb2tlPSIjNzc3IiBzdHJva2UtZGFzaGFycmF5PSI1IDUiLz48dGV4dCB4PSIzNiIgeT0iMTI4IiBmb250LXNpemU9IjE4Ij5TdHVkeSBBPC90ZXh0PjxwYXRoIGQ9Ik0xOTEuOSAxMjJIMzc2LjEiIHN0cm9rZS13aWR0aD0iMiIvPjxyZWN0IHg9IjI3NC4wIiB5PSIxMTIuMCIgd2lkdGg9IjIwLjAiIGhlaWdodD0iMjAuMCIvPjx0ZXh0IHg9Ijg2MCIgeT0iMTI4IiB0ZXh0LWFuY2hvcj0iZW5kIiBmb250LXNpemU9IjE1Ij4wLjQwIFswLjAxLCAwLjc5XTwvdGV4dD48dGV4dCB4PSIzNiIgeT0iMjE2IiBmb250LXNpemU9IjE4Ij5TdHVkeSBCPC90ZXh0PjxwYXRoIGQ9Ik0yNjQuMyAyMTBINjMyLjciIHN0cm9rZS13aWR0aD0iMiIvPjxyZWN0IHg9IjQ0My41IiB5PSIyMDUuMCIgd2lkdGg9IjEwLjAiIGhlaWdodD0iMTAuMCIvPjx0ZXh0IHg9Ijg2MCIgeT0iMjE2IiB0ZXh0LWFuY2hvcj0iZW5kIiBmb250LXNpemU9IjE1Ij4xLjEwIFswLjMyLCAxLjg4XTwvdGV4dD48cGF0aCBkPSJNMzYgMjkySDg2NCIgc3Ryb2tlPSIjOTk5Ii8+PHRleHQgeD0iMzYiIHk9IjMzNiIgZm9udC1zaXplPSIxOCI+Q29tbW9uIGVmZmVjdDwvdGV4dD48cG9seWdvbiBwb2ludHM9IjIzNC41LDMzMCAzMTYuOSwzMTUgMzk5LjMsMzMwIDMxNi45LDM0NSIgZmlsbD0iIzMxNThjOSIgc3Ryb2tlPSIjMzE1OGM5Ii8+PHRleHQgeD0iODYwIiB5PSIzMzYiIHRleHQtYW5jaG9yPSJlbmQiIGZvbnQtc2l6ZT0iMTUiPjAuNTQgWzAuMTksIDAuODldPC90ZXh0PjxwYXRoIGQ9Ik0xOTAgNDA4SDY2MCIgc3Ryb2tlPSIjNTU1Ii8+PHRleHQgeD0iMTkwLjAiIHk9IjQzMiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIxNCI+MDwvdGV4dD48dGV4dCB4PSI0MjUuMCIgeT0iNDMyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjE0Ij4xPC90ZXh0Pjx0ZXh0IHg9IjY2MC4wIiB5PSI0MzIiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtc2l6ZT0iMTQiPjI8L3RleHQ+PHRleHQgeD0iNDI1IiB5PSI0NjgiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtc2l6ZT0iMTYiPmxvZzIgZm9sZCBjaGFuZ2UgKGNhc2UgdnMgY29udHJvbCksIDk1JSBjb25maWRlbmNlIGludGVydmFsczwvdGV4dD48dGV4dCB4PSIzNiIgeT0iNTA4IiBmb250LXNpemU9IjE0Ij5TeW50aGV0aWMgc3R1ZHktbGV2ZWwgZml4dHVyZS4gU3F1YXJlcyBhcmUgc3R1ZHkgZXN0aW1hdGVzOyBkaWFtb25kIGlzIHRoZSBmaXhlZC1lZmZlY3QgZXN0aW1hdGUuPC90ZXh0Pjx0ZXh0IHg9IjM2IiB5PSI1MzAiIGZvbnQtc2l6ZT0iMTQiPlNxdWFyZSBhcmVhIGlzIHByb3BvcnRpb25hbCB0byBmaXhlZC1lZmZlY3QgaW52ZXJzZS12YXJpYW5jZSB3ZWlnaHQuIFRoaXMgaXMgYSBwb29sZWQtZWZmZWN0IGRpc3BsYXksIG5vdCBhIGNvbWJpbmVkLXAgc2lnbmlmaWNhbmNlIGRpc3BsYXkuPC90ZXh0PjwvZz48L3N2Zz4="/></button></div><figcaption><div class="cap-lead">Per-study and pooled effects</div><p>1 leading combined-FDR, matching-sign genes are selected; squares show per-study log2 fold changes and 95% intervals, diamonds the pooled estimates. The two-study common-effect fit assumes one underlying effect. Individual study intervals do not establish replication.</p><p>Complete source data: <a href='../../results/meta/meta_analysis_results.csv'>all meta results</a> · <a href='../../results/meta/per_study_A.csv'>A constructed study table</a> · <a href='../../results/meta/per_study_B.csv'>B constructed study table</a>.</p></figcaption></figure><figure class="panel panel--meta-integration-gain" data-figure="meta_integration_gain"><div class="frame"><button class="figbtn" type="button" onclick="bsqZoom(this)" aria-label="Open Combined and per-study call overlap full size"><img alt="Combined and per-study call overlap" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI5MDAiIGhlaWdodD0iNTYwIiB2aWV3Qm94PSIwIDAgOTAwIDU2MCIgcm9sZT0iaW1nIj48dGl0bGU+U3ludGhldGljIGZpeHR1cmUgY2FsbCBvdmVybGFwPC90aXRsZT48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSJ3aGl0ZSIvPjxnIGZpbGw9ImJsYWNrIiBzdHJva2U9ImJsYWNrIiBmb250LWZhbWlseT0iVGltZXMgTmV3IFJvbWFuLHNlcmlmIj48dGV4dCB4PSIzNiIgeT0iNDQiIGZvbnQtc2l6ZT0iMjQiPkNhbGxzIGluIHRoZSBzeW50aGV0aWMgZml4dHVyZTwvdGV4dD48cmVjdCB4PSI3MCIgeT0iMzkwIiB3aWR0aD0iOTIiIGhlaWdodD0iMCIgZmlsbD0iIzMxNThjOSIvPjx0ZXh0IHg9IjExNiIgeT0iMzc2IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjI0Ij4wPC90ZXh0Pjx0ZXh0IHg9IjExNiIgeT0iNDI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LXNpemU9IjE1Ij5Db21iaW5lZCBvbmx5PC90ZXh0PjxyZWN0IHg9IjI2MCIgeT0iMjIwIiB3aWR0aD0iOTIiIGhlaWdodD0iMTcwIiBmaWxsPSIjMzE1OGM5Ii8+PHRleHQgeD0iMzA2IiB5PSIyMDYiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtc2l6ZT0iMjQiPjE8L3RleHQ+PHRleHQgeD0iMzA2IiB5PSI0MjQiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtc2l6ZT0iMTUiPkJvdGg8L3RleHQ+PHJlY3QgeD0iNDUwIiB5PSIyMjAiIHdpZHRoPSI5MiIgaGVpZ2h0PSIxNzAiIGZpbGw9IiMzMTU4YzkiLz48dGV4dCB4PSI0OTYiIHk9IjIwNiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIyNCI+MTwvdGV4dD48dGV4dCB4PSI0OTYiIHk9IjQyNCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIxNSI+UGVyLXN0dWR5IG9ubHk8L3RleHQ+PHJlY3QgeD0iNjQwIiB5PSIyMjAiIHdpZHRoPSI5MiIgaGVpZ2h0PSIxNzAiIGZpbGw9IiMzMTU4YzkiLz48dGV4dCB4PSI2ODYiIHk9IjIwNiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIyNCI+MTwvdGV4dD48dGV4dCB4PSI2ODYiIHk9IjQyNCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1zaXplPSIxNSI+TmVpdGhlcjwvdGV4dD48cGF0aCBkPSJNNTIgMzkwSDgzNSIgc3Ryb2tlPSIjNTU1Ii8+PHRleHQgeD0iMzYiIHk9IjQ3OCIgZm9udC1zaXplPSIxNCI+Q29tYmluZWQgY2FsbDogbWF0Y2hpbmctc2lnbiBjb21iaW5lZC1wIEZEUiBiZWxvdyAwLjA1LiBQZXItc3R1ZHkgY2FsbDogYWRqdXN0ZWQgcCBiZWxvdyAwLjA1LjwvdGV4dD48dGV4dCB4PSIzNiIgeT0iNTAyIiBmb250LXNpemU9IjE0Ij5UaGUgZml4dHVyZSBkb2VzIG5vdCBhcHBseSBhIGZvbGQtY2hhbmdlIHNjcmVlbiB0byBlaXRoZXIgYmFyIGNhdGVnb3J5LjwvdGV4dD48L2c+PC9zdmc+"/></button></div><figcaption><div class="cap-lead">Combined and per-study call overlap</div><p>2 of 3 retained rows appear in the bars: 1 combined only, 0 both, 1 per-study only; 1 meet neither criterion. This figure&#x27;s per-study comparison uses its figure-setting FDR below 0.05 only; the separate per-study up/down summary also applies the fold-change threshold. A combined-only call is not a replication claim.</p><p>Complete source data: <a href='../../results/meta/meta_analysis_results.csv'>all meta results</a>.</p></figcaption></figure></div></section><section id='convergent'><h2>Combined-FDR, matching-sign genes (first 40)</h2><p>The study count uses per-study adjusted p-values only; the per-study up/down summary also applies the configured absolute fold-change threshold. A non-significant study is not evidence of no effect.</p><div tabindex='0' role='region' aria-label='Scrollable table' class='tw'><table class='sortable'><thead><tr><th scope='col'>gene_id</th><th scope='col'>gene_symbol</th><th scope='col'>n_studies_sig / 2 (run FDR &lt; 0.05)</th><th scope='col'>combined_padj</th><th scope='col'>rem_log2FC</th><th scope='col'>rem_padj</th></tr></thead><tbody><tr><td>up</td><td><i>up</i></td><td data-sort-value='0.0'>0</td><td data-sort-value='0.00197017285911281'>0.00197017285911281</td><td data-sort-value='0.54'>0.54</td><td data-sort-value='0.00761606021445108'>0.00761606021445108</td></tr></tbody></table></div></section><section id='per-study'><h2>Constructed study-level estimates</h2><div tabindex='0' role='region' aria-label='Scrollable table' class='tw'><table class='sortable'><thead><tr><th scope='col'>study</th><th scope='col'>input_samples</th><th scope='col'>case_samples</th><th scope='col'>control_samples</th><th scope='col'>post_filter_rows</th></tr></thead><tbody><tr><td>A</td><td data-sort-value='4.0'>4</td><td data-sort-value='2.0'>2</td><td data-sort-value='2.0'>2</td><td data-sort-value='5.0'>5</td></tr><tr><td>B</td><td data-sort-value='4.0'>4</td><td data-sort-value='2.0'>2</td><td data-sort-value='2.0'>2</td><td data-sort-value='5.0'>5</td></tr></tbody></table></div></section><section id='per-study-reports'><h2>Per-study results</h2><p class='muted'>Per-study report pages were not available.</p></section><section id='enrichment'><h2>Cross-study functional enrichment (shared vs distinct)</h2><p class='muted'>Cross-study enrichment results are unavailable. Functional enrichment was intentionally not run for this synthetic teaching fixture. <a href='../../checks/18_meta_enrichment_qc.json'>Review enrichment check 18</a>.</p></section><section id='outputs'><h2>Saved outputs</h2><div class='source-files'><p>Tables in this report show selected rows. These links open complete saved files and execution records. Keep the report in its project folder to use them; embedded figures and displayed tables remain available offline.</p><details><summary>Cross-study tables and records (7)</summary><ul><li><a href='../../results/meta/example_provenance.json'>example_provenance.json</a></li><li><a href='../../results/meta/meta_analysis_results.csv'>meta_analysis_results.csv</a></li><li><a href='../../results/meta/meta_convergent_genes.csv'>meta_convergent_genes.csv</a></li><li><a href='../../results/meta/meta_eligibility.json'>meta_eligibility.json</a></li><li><a href='../../results/meta/meta_study_summary.csv'>meta_study_summary.csv</a></li><li><a href='../../results/meta/per_study_A.csv'>per_study_A.csv</a></li><li><a href='../../results/meta/per_study_B.csv'>per_study_B.csv</a></li></ul></details><details><summary>Run records (2)</summary><ul><li><a href='../../results/reports/meta_analysis_summary.json'>meta_analysis_summary.json</a></li><li><a href='../../results/reports/run_summary.json'>run_summary.json</a></li></ul></details><details><summary>Checks (2)</summary><ul><li><a href='../../checks/17_meta_analysis_qc.json'>17_meta_analysis_qc.json</a></li><li><a href='../../checks/18_meta_enrichment_qc.json'>18_meta_enrichment_qc.json</a></li></ul></details></div></section>
+<p class='muted' style='margin-top:2rem'>The main results report is unavailable for this stored result; joint-fit details cannot be read here. This page describes a synthetic method fixture that exercises cross-study combination of constructed study-level estimates. Joint and per-study fits can use different formulas; inspect their own execution records before interpreting either. A non-significant result does not establish no effect.</p>
+</main></div>
+<footer><div class="flinks">
+<a href="https://github.com/tunabirgun/bulkseq-studio" target="_blank" rel="noopener">GitHub repository ↗</a>
+<a href="https://tunabirgun.github.io/bulkseq-studio/" target="_blank" rel="noopener">Documentation ↗</a></div>
+<p>Generated by BulkSeq Studio v0.35.0 ·
+constructed study-level estimates → inverse-normal combined p-values and effect-size pooling. Figures are embedded; source-data links refer to saved project tables.</p>
+</footer>
+<dialog id="bsq-lb" class="lb" aria-label="Figure viewer">
+<div class="lb-head"><h2 id="bsq-lb-title">Figure</h2><div class="lb-toolbar" aria-label="Figure tools">
+<button id="bsq-lb-close" class="lb-close" type="button" autofocus aria-label="Close figure viewer">Close</button>
+<button id="bsq-lb-fit" type="button">Fit</button><button id="bsq-lb-actual" type="button">Actual size</button>
+<button id="bsq-lb-out" type="button" aria-label="Zoom out">−</button><output id="bsq-lb-percent" aria-live="polite">100%</output>
+<button id="bsq-lb-in" type="button" aria-label="Zoom in">+</button></div></div>
+<div class="lb-stage" role="region" tabindex="0" aria-label="Scrollable figure"><img id="bsq-lb-img" alt=""></div>
+<p id="bsq-lb-caption" class="lb-caption"></p></dialog><script>var bsqScale=1,bsqFit=true;
+function bsqSetScale(value){var lb=document.getElementById('bsq-lb'),li=document.getElementById('bsq-lb-img'),stage=lb.querySelector('.lb-stage');bsqScale=Math.min(8,Math.max(.05,value));if(!li.naturalWidth)return;li.style.width=(li.naturalWidth*bsqScale)+'px';li.style.height=(li.naturalHeight*bsqScale)+'px';li.classList.toggle('zoomed',!bsqFit);lb.classList.toggle('is-zoomed',!bsqFit);document.getElementById('bsq-lb-percent').textContent=Math.round(bsqScale*100)+'%';stage.scrollLeft=0;stage.scrollTop=0;}
+function bsqFitImage(){var li=document.getElementById('bsq-lb-img'),stage=document.querySelector('#bsq-lb .lb-stage');bsqFit=true;bsqSetScale(Math.min(1,stage.clientWidth/li.naturalWidth,stage.clientHeight/li.naturalHeight));}
+function bsqResetZoom(){var lb=document.getElementById('bsq-lb'),li=document.getElementById('bsq-lb-img'),stage=lb.querySelector('.lb-stage');bsqFit=true;bsqScale=1;li.classList.remove('zoomed');lb.classList.remove('is-zoomed');li.style.width='';li.style.height='';stage.scrollLeft=0;stage.scrollTop=0;}
+function bsqFinishClose(){var lb=document.getElementById('bsq-lb');if(lb.open)return;var li=document.getElementById('bsq-lb-img');var trigger=window._bsqTrig;window._bsqTrig=null;bsqResetZoom();li.removeAttribute('src');if(trigger&&trigger.isConnected)trigger.focus();}
+function bsqZoom(btn){var img=btn.querySelector('img'),lb=document.getElementById('bsq-lb'),li=document.getElementById('bsq-lb-img');if(!img||typeof lb.showModal!=='function')return;bsqResetZoom();window._bsqTrig=btn;li.alt=img.alt||'Figure';document.getElementById('bsq-lb-title').textContent=li.alt;var caption=btn.closest('figure').querySelector('figcaption');var parts=caption?Array.prototype.map.call(caption.querySelectorAll('.cap-lead,.cap-tech,.howto p'),function(n){return (n.textContent||'').trim();}).filter(Boolean):[];if(caption&&!parts.length)parts=[caption.textContent.trim()];parts.push('Use the scroll area to pan when enlarged.');document.getElementById('bsq-lb-caption').textContent=parts.join(' ');li.onload=function(){if(bsqFit)bsqFitImage();else bsqSetScale(bsqScale);};li.src=img.src;lb.showModal();if(li.complete)bsqFitImage();document.getElementById('bsq-lb-close').focus();}
+function bsqClose(){var lb=document.getElementById('bsq-lb');if(lb.open)lb.close();bsqFinishClose();}
+(function(){var lb=document.getElementById('bsq-lb');document.getElementById('bsq-lb-close').addEventListener('click',bsqClose);document.getElementById('bsq-lb-fit').addEventListener('click',bsqFitImage);document.getElementById('bsq-lb-actual').addEventListener('click',function(){bsqFit=false;bsqSetScale(1);});document.getElementById('bsq-lb-out').addEventListener('click',function(){bsqFit=false;bsqSetScale(bsqScale/1.25);});document.getElementById('bsq-lb-in').addEventListener('click',function(){bsqFit=false;bsqSetScale(bsqScale*1.25);});lb.addEventListener('close',bsqFinishClose);lb.addEventListener('keydown',function(e){if(e.key!=='Tab')return;var items=Array.from(lb.querySelectorAll('button,[tabindex="0"]'));var first=items[0],last=items[items.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}});window.addEventListener('resize',function(){if(lb.open&&bsqFit)bsqFitImage();});})();</script>
+<script>
+(function(){
+function revealSection(){var id=location.hash.slice(1),target=document.getElementById(id);if(target&&target.tagName==='DETAILS')target.open=true;document.querySelectorAll('.report-nav a,.mobile-contents a').forEach(function(link){if(link.hash===location.hash&&id)link.setAttribute('aria-current','location');else link.removeAttribute('aria-current');});}
+window.addEventListener('hashchange',revealSection);revealSection();
+function cellVal(cell){if(!cell)return '';var value=cell.getAttribute('data-sort-value');return value!==null?value:(cell.textContent||'');}
+function compare(left,right){var a=parseFloat(left),b=parseFloat(right);if(!isNaN(a)&&!isNaN(b))return a-b;return left.localeCompare(right);}
+document.querySelectorAll('table.sortable').forEach(function(table){var body=table.tBodies[0];if(!body)return;var original=Array.prototype.slice.call(body.rows);
+table.querySelectorAll('thead th').forEach(function(header,column){var label=(header.textContent||'').trim();var button=document.createElement('button');button.type='button';button.className='sort-button';button.textContent=label;button.setAttribute('aria-label','Sort by '+label);header.textContent='';header.appendChild(button);
+button.addEventListener('click',function(){var state=header.getAttribute('data-sort');var next=state==='asc'?'desc':(state==='desc'?'none':'asc');table.querySelectorAll('thead th').forEach(function(other){other.removeAttribute('data-sort');other.removeAttribute('aria-sort');});var rows=Array.prototype.slice.call(body.rows);if(next==='none'){original.forEach(function(row){body.appendChild(row);});return;}rows.sort(function(first,second){var order=compare(cellVal(first.cells[column]),cellVal(second.cells[column]));return next==='desc'?-order:order;});rows.forEach(function(row){body.appendChild(row);});header.setAttribute('data-sort',next);header.setAttribute('aria-sort',next==='asc'?'ascending':'descending');});});});
+})();
+</script>
+</body></html>

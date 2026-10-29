@@ -1,0 +1,442 @@
+{
+  "provenance": {
+    "database": "STRING",
+    "version": "12.5",
+    "retrieved": "2026-10-29",
+    "source": "https://version-12-5.string-db.org/api/json",
+    "apiDocumentation": "https://string-db.org/help/api/",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://string-db.org/cgi/access?footer_active_subpage=licensing",
+    "attribution": "STRING database, version 12.5; modified into a fixed teaching snapshot.",
+    "querySymbols": [
+      "TP53",
+      "MDM2",
+      "ATM",
+      "CHEK2",
+      "BRCA1",
+      "BRCA2",
+      "RAD51",
+      "CDKN1A",
+      "BAX",
+      "GADD45A",
+      "H2AX",
+      "PPM1D"
+    ],
+    "mappings": [
+      {
+        "querySymbol": "TP53",
+        "stringId": "9606.ENSP00000269305"
+      },
+      {
+        "querySymbol": "MDM2",
+        "stringId": "9606.ENSP00000258149"
+      },
+      {
+        "querySymbol": "ATM",
+        "stringId": "9606.ENSP00000278616"
+      },
+      {
+        "querySymbol": "CHEK2",
+        "stringId": "9606.ENSP00000372023"
+      },
+      {
+        "querySymbol": "BRCA1",
+        "stringId": "9606.ENSP00000418960"
+      },
+      {
+        "querySymbol": "BRCA2",
+        "stringId": "9606.ENSP00000369497"
+      },
+      {
+        "querySymbol": "RAD51",
+        "stringId": "9606.ENSP00000493712"
+      },
+      {
+        "querySymbol": "CDKN1A",
+        "stringId": "9606.ENSP00000384849"
+      },
+      {
+        "querySymbol": "BAX",
+        "stringId": "9606.ENSP00000293288"
+      },
+      {
+        "querySymbol": "GADD45A",
+        "stringId": "9606.ENSP00000360025"
+      },
+      {
+        "querySymbol": "H2AX",
+        "stringId": "9606.ENSP00000434024"
+      },
+      {
+        "querySymbol": "PPM1D",
+        "stringId": "9606.ENSP00000306682"
+      }
+    ],
+    "species": 9606,
+    "minimumScore": 400,
+    "networkType": "functional",
+    "addedNodes": 0,
+    "edgeCounts": {
+      "400": 60,
+      "700": 43,
+      "900": 32
+    },
+    "componentCounts": {
+      "400": 1,
+      "700": 1,
+      "900": 1
+    }
+  },
+  "nodes": [
+    {
+      "id": "9606.ENSP00000269305",
+      "label": "TP53"
+    },
+    {
+      "id": "9606.ENSP00000258149",
+      "label": "MDM2"
+    },
+    {
+      "id": "9606.ENSP00000278616",
+      "label": "ATM"
+    },
+    {
+      "id": "9606.ENSP00000372023",
+      "label": "CHEK2"
+    },
+    {
+      "id": "9606.ENSP00000418960",
+      "label": "BRCA1"
+    },
+    {
+      "id": "9606.ENSP00000369497",
+      "label": "BRCA2"
+    },
+    {
+      "id": "9606.ENSP00000493712",
+      "label": "RAD51"
+    },
+    {
+      "id": "9606.ENSP00000384849",
+      "label": "CDKN1A"
+    },
+    {
+      "id": "9606.ENSP00000293288",
+      "label": "BAX"
+    },
+    {
+      "id": "9606.ENSP00000360025",
+      "label": "GADD45A"
+    },
+    {
+      "id": "9606.ENSP00000434024",
+      "label": "H2AX"
+    },
+    {
+      "id": "9606.ENSP00000306682",
+      "label": "PPM1D"
+    }
+  ],
+  "edges": [
+    {
+      "source": "9606.ENSP00000258149",
+      "target": "9606.ENSP00000269305",
+      "score": 999
+    },
+    {
+      "source": "9606.ENSP00000258149",
+      "target": "9606.ENSP00000278616",
+      "score": 995
+    },
+    {
+      "source": "9606.ENSP00000258149",
+      "target": "9606.ENSP00000293288",
+      "score": 732
+    },
+    {
+      "source": "9606.ENSP00000258149",
+      "target": "9606.ENSP00000306682",
+      "score": 889
+    },
+    {
+      "source": "9606.ENSP00000258149",
+      "target": "9606.ENSP00000360025",
+      "score": 883
+    },
+    {
+      "source": "9606.ENSP00000258149",
+      "target": "9606.ENSP00000369497",
+      "score": 597
+    },
+    {
+      "source": "9606.ENSP00000258149",
+      "target": "9606.ENSP00000372023",
+      "score": 994
+    },
+    {
+      "source": "9606.ENSP00000258149",
+      "target": "9606.ENSP00000384849",
+      "score": 999
+    },
+    {
+      "source": "9606.ENSP00000258149",
+      "target": "9606.ENSP00000418960",
+      "score": 732
+    },
+    {
+      "source": "9606.ENSP00000258149",
+      "target": "9606.ENSP00000434024",
+      "score": 498
+    },
+    {
+      "source": "9606.ENSP00000258149",
+      "target": "9606.ENSP00000493712",
+      "score": 429
+    },
+    {
+      "source": "9606.ENSP00000269305",
+      "target": "9606.ENSP00000278616",
+      "score": 999
+    },
+    {
+      "source": "9606.ENSP00000269305",
+      "target": "9606.ENSP00000293288",
+      "score": 999
+    },
+    {
+      "source": "9606.ENSP00000269305",
+      "target": "9606.ENSP00000306682",
+      "score": 999
+    },
+    {
+      "source": "9606.ENSP00000269305",
+      "target": "9606.ENSP00000360025",
+      "score": 994
+    },
+    {
+      "source": "9606.ENSP00000269305",
+      "target": "9606.ENSP00000369497",
+      "score": 999
+    },
+    {
+      "source": "9606.ENSP00000269305",
+      "target": "9606.ENSP00000372023",
+      "score": 999
+    },
+    {
+      "source": "9606.ENSP00000269305",
+      "target": "9606.ENSP00000384849",
+      "score": 999
+    },
+    {
+      "source": "9606.ENSP00000269305",
+      "target": "9606.ENSP00000418960",
+      "score": 999
+    },
+    {
+      "source": "9606.ENSP00000269305",
+      "target": "9606.ENSP00000434024",
+      "score": 968
+    },
+    {
+      "source": "9606.ENSP00000269305",
+      "target": "9606.ENSP00000493712",
+      "score": 999
+    },
+    {
+      "source": "9606.ENSP00000278616",
+      "target": "9606.ENSP00000293288",
+      "score": 670
+    },
+    {
+      "source": "9606.ENSP00000278616",
+      "target": "9606.ENSP00000306682",
+      "score": 890
+    },
+    {
+      "source": "9606.ENSP00000278616",
+      "target": "9606.ENSP00000360025",
+      "score": 783
+    },
+    {
+      "source": "9606.ENSP00000278616",
+      "target": "9606.ENSP00000369497",
+      "score": 997
+    },
+    {
+      "source": "9606.ENSP00000278616",
+      "target": "9606.ENSP00000372023",
+      "score": 999
+    },
+    {
+      "source": "9606.ENSP00000278616",
+      "target": "9606.ENSP00000384849",
+      "score": 861
+    },
+    {
+      "source": "9606.ENSP00000278616",
+      "target": "9606.ENSP00000418960",
+      "score": 999
+    },
+    {
+      "source": "9606.ENSP00000278616",
+      "target": "9606.ENSP00000434024",
+      "score": 999
+    },
+    {
+      "source": "9606.ENSP00000278616",
+      "target": "9606.ENSP00000493712",
+      "score": 997
+    },
+    {
+      "source": "9606.ENSP00000293288",
+      "target": "9606.ENSP00000306682",
+      "score": 505
+    },
+    {
+      "source": "9606.ENSP00000293288",
+      "target": "9606.ENSP00000360025",
+      "score": 601
+    },
+    {
+      "source": "9606.ENSP00000293288",
+      "target": "9606.ENSP00000372023",
+      "score": 513
+    },
+    {
+      "source": "9606.ENSP00000293288",
+      "target": "9606.ENSP00000384849",
+      "score": 732
+    },
+    {
+      "source": "9606.ENSP00000293288",
+      "target": "9606.ENSP00000418960",
+      "score": 443
+    },
+    {
+      "source": "9606.ENSP00000293288",
+      "target": "9606.ENSP00000434024",
+      "score": 556
+    },
+    {
+      "source": "9606.ENSP00000306682",
+      "target": "9606.ENSP00000360025",
+      "score": 434
+    },
+    {
+      "source": "9606.ENSP00000306682",
+      "target": "9606.ENSP00000369497",
+      "score": 416
+    },
+    {
+      "source": "9606.ENSP00000306682",
+      "target": "9606.ENSP00000372023",
+      "score": 942
+    },
+    {
+      "source": "9606.ENSP00000306682",
+      "target": "9606.ENSP00000384849",
+      "score": 685
+    },
+    {
+      "source": "9606.ENSP00000306682",
+      "target": "9606.ENSP00000418960",
+      "score": 460
+    },
+    {
+      "source": "9606.ENSP00000306682",
+      "target": "9606.ENSP00000434024",
+      "score": 953
+    },
+    {
+      "source": "9606.ENSP00000360025",
+      "target": "9606.ENSP00000372023",
+      "score": 490
+    },
+    {
+      "source": "9606.ENSP00000360025",
+      "target": "9606.ENSP00000384849",
+      "score": 998
+    },
+    {
+      "source": "9606.ENSP00000360025",
+      "target": "9606.ENSP00000418960",
+      "score": 846
+    },
+    {
+      "source": "9606.ENSP00000360025",
+      "target": "9606.ENSP00000434024",
+      "score": 569
+    },
+    {
+      "source": "9606.ENSP00000369497",
+      "target": "9606.ENSP00000372023",
+      "score": 987
+    },
+    {
+      "source": "9606.ENSP00000369497",
+      "target": "9606.ENSP00000384849",
+      "score": 454
+    },
+    {
+      "source": "9606.ENSP00000369497",
+      "target": "9606.ENSP00000418960",
+      "score": 999
+    },
+    {
+      "source": "9606.ENSP00000369497",
+      "target": "9606.ENSP00000434024",
+      "score": 975
+    },
+    {
+      "source": "9606.ENSP00000369497",
+      "target": "9606.ENSP00000493712",
+      "score": 999
+    },
+    {
+      "source": "9606.ENSP00000372023",
+      "target": "9606.ENSP00000384849",
+      "score": 850
+    },
+    {
+      "source": "9606.ENSP00000372023",
+      "target": "9606.ENSP00000418960",
+      "score": 999
+    },
+    {
+      "source": "9606.ENSP00000372023",
+      "target": "9606.ENSP00000434024",
+      "score": 970
+    },
+    {
+      "source": "9606.ENSP00000372023",
+      "target": "9606.ENSP00000493712",
+      "score": 922
+    },
+    {
+      "source": "9606.ENSP00000384849",
+      "target": "9606.ENSP00000418960",
+      "score": 805
+    },
+    {
+      "source": "9606.ENSP00000384849",
+      "target": "9606.ENSP00000434024",
+      "score": 569
+    },
+    {
+      "source": "9606.ENSP00000418960",
+      "target": "9606.ENSP00000434024",
+      "score": 999
+    },
+    {
+      "source": "9606.ENSP00000418960",
+      "target": "9606.ENSP00000493712",
+      "score": 999
+    },
+    {
+      "source": "9606.ENSP00000434024",
+      "target": "9606.ENSP00000493712",
+      "score": 999
+    }
+  ]
+}

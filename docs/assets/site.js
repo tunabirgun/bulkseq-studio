@@ -1,4 +1,12 @@
 document.documentElement.classList.add('js');
+// Standalone reports do not participate in the website's page transitions.
+window.addEventListener('pageswap', event => {
+  const destination = event.activation?.entry?.url;
+  if (event.viewTransition && (location.protocol === 'file:' || (destination && new URL(destination).pathname.includes('/examples/')))) {
+    event.viewTransition.ready.catch(() => {});
+    event.viewTransition.skipTransition();
+  }
+});
 const $ = selector => document.querySelector(selector);
 const searchDialog = $('#search-dialog'), menuDialog = $('#menu-dialog'), imageDialog = $('#image-dialog');
 let opener;

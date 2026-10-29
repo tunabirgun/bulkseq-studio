@@ -1,5 +1,10 @@
 # Changelog
 
+## Website examples — 2026-10-29
+
+- Add a synthetic-expression heatmap and a cached STRING network to Output, and a synthetic-study forest plot to Science. Controls expose color limits, network confidence and leave-one-study-out pooling with keyboard and touch interaction. The examples retain method explanations, source attribution and reproducible numerical checks; they do not change application analysis results.
+- Add standard and meta-analysis example reports generated with the application’s report renderers. Link them from the homepage and relevant guidance, with downloadable bundles containing the linked files. Both exports identify their synthetic data and limited analysis scope.
+
 ## 0.35.0 — 2026-10-23
 
 > **Scientific output changes.** edgeR, limma-voom and microarray limma now refuse formulas that their additive group-means construction cannot preserve. Earlier runs could silently discard transformations, variable-removal operations or an omitted contrast factor and fit a different model; review the requested and fitted formulas and rerun affected analyses with an appropriate supported design. Custom gene-set and cross-study enrichment now distinguish execution or result-conversion errors from a successful empty result: affected outputs are unavailable and their checks report `REVIEW_REQUIRED`. A prior blank table accompanied by an error is not a negative enrichment finding. Synthetic regressions establish these corrected contracts and preserve the tested supported additive fits; the nine bundled biological datasets have not been rerun under 0.35.0. The 0.34.0 pooled-effect and combined-p testing-family definitions are unchanged.

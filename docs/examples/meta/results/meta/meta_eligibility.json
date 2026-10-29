@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "method": "combined_concordance_and_pooled_full_family_bh_v1",
+  "design_supported": true,
+  "families": {
+    "combined": {
+      "id": "direction_concordant_combined_bh",
+      "size": 1
+    },
+    "pooled": {
+      "id": "all_estimable_pooled_bh",
+      "size": 3
+    }
+  },
+  "studies": {
+    "input": [
+      {
+        "study": "A",
+        "input_samples": 4,
+        "contrast_samples": 4,
+        "numerator_samples": 2,
+        "denominator_samples": 2
+      },
+      {
+        "study": "B",
+        "input_samples": 4,
+        "contrast_samples": 4,
+        "numerator_samples": 2,
+        "denominator_samples": 2
+      }
+    ],
+    "included": [
+      {
+        "study": "A",
+        "post_filter_rows": 5,
+        "replicates": 4
+      },
+      {
+        "study": "B",
+        "post_filter_rows": 5,
+        "replicates": 4
+      }
+    ],
+    "excluded": []
+  },
+  "genes": {
+    "original_count_rows": 8,
+    "identifier_intersection": 5,
+    "missing_pvalue": 1,
+    "missing_effect": 0,
+    "missing_se": 2,
+    "missing_reasons_overlap": true,
+    "exclusion_union": 2,
+    "complete_case_retained": 3,
+    "pooled_fit_failures": 0,
+    "direction": {
+      "up": 1,
+      "down": 0,
+      "opposite_sign": 1,
+      "neutral": 1
+    }
+  },
+  "execution": {
+    "dataset_column": "dataset",
+    "contrast_factor": "condition",
+    "numerator": "case",
+    "denominator": "control",
+    "per_study_formula": "~ condition",
+    "requested_meta_design_formula": "~ condition + dataset",
+    "combined_alpha": 0.05
+  },
+  "example": {
+    "kind": "synthetic_method_fixture",
+    "scope": "Constructed study-level estimates and standard errors; not a count-based DESeq2 analysis or biological study."
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "check": "17_meta_analysis_qc",
+  "status": "REVIEW_REQUIRED",
+  "messages": [
+    {
+      "status": "REVIEW_REQUIRED",
+      "message": "Synthetic teaching fixture: combine_meta completed on constructed study-level estimates. It does not include the input-level evidence required for a completed check 17 meta-analysis QC record."
+    }
+  ]
+}

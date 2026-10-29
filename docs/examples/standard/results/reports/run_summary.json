@@ -1,0 +1,36 @@
+{
+  "app_version": "0.35.0",
+  "run_date": "Synthetic standard analysis report; deterministic DESeq2 fixture",
+  "input": {
+    "type": "count_matrix",
+    "samples": "config/samples.tsv"
+  },
+  "reference": {
+    "mode": "synthetic teaching reference",
+    "source": "docs_src/model-examples.json"
+  },
+  "workflow": {
+    "de_engine": "DESeq2"
+  },
+  "deseq2": {
+    "alpha": 0.05,
+    "lfc_threshold": 1,
+    "design_formula": "~ condition",
+    "contrasts": [
+      {
+        "numerator": "B",
+        "denominator": "A"
+      }
+    ]
+  },
+  "software_versions": {
+    "R": "4.5.2"
+  },
+  "r_packages": {
+    "DESeq2": "1.50.2",
+    "edgeR": "4.8.2",
+    "limma": "3.66.0",
+    "apeglm": "1.32.0",
+    "jsonlite": "2.0.0"
+  }
+}

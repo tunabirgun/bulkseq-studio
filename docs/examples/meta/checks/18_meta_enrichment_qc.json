@@ -1,0 +1,10 @@
+{
+  "check": "18_meta_enrichment_qc",
+  "status": "REVIEW_REQUIRED",
+  "messages": [
+    {
+      "status": "REVIEW_REQUIRED",
+      "message": "Functional enrichment was intentionally not run for this synthetic teaching fixture."
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "label": "Synthetic teaching example",
+  "source": "tests/meta_pooled_methods.R",
+  "calculation": "BulkSeq combine_meta with two constructed studies; common-effect pooling for k=2.",
+  "not_claimed": [
+    "A biological study",
+    "A complete BulkSeq run",
+    "Per-study DESeq2 fits",
+    "Functional enrichment"
+  ]
+}

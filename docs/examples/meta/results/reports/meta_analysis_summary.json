@@ -1,0 +1,13 @@
+{
+  "n_studies": 2,
+  "n_shared_genes": 3,
+  "n_meta_sig": 1,
+  "n_sig_up": 1,
+  "n_sig_down": 0,
+  "n_discordant": 2,
+  "direction_concordance_pct": 33.3,
+  "pooling": "fixed-effect",
+  "alpha": 0.05,
+  "per_study_lfc_threshold": "not applied in this synthetic fixture",
+  "n_forest_displayed": 1
+}
