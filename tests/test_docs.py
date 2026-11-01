@@ -16,6 +16,7 @@ from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
 import re
+from urllib.parse import unquote
 
 import pytest
 
@@ -225,18 +226,22 @@ def _readme_errors(readme: str, pages: dict[str, str]) -> list[str]:
     if f"version {PUBLIC_VERSION} is the current public release" in lowered:
         errors.append("README.md: claims publication before the release record is verified")
 
-    # Every link into the published site must land on a page the site actually builds; the
-    # page list is read from docs/ so a renamed or dropped chapter fails here.
+    # Resolve generated chapters and maintained report examples against the published tree.
     for link in re.findall(r"\((%s[^)\s]*)\)" % re.escape(SITE_BASE), readme):
         # The site root is served as index.html, so a bare base URL must find that page. A
         # deep link carries a fragment, which has to name a heading the page actually renders
         # -- resolving only the file would pass a link that lands at the top of the wrong
         # section after a heading is renamed.
         target, _, anchor = link[len(SITE_BASE):].partition("#")
-        page = target or "index.html"
-        if page not in pages:
+        page = unquote(target) or "index.html"
+        source = pages.get(page)
+        if source is None and "/" in page:
+            file = (DOCS_ROOT / page).resolve()
+            if file.is_relative_to(DOCS_ROOT.resolve()) and file.is_file():
+                source = _read(file) if file.suffix.lower() == ".html" else ""
+        if source is None:
             errors.append(f"README.md: link into the site does not resolve: {link}")
-        elif anchor and f'id="{anchor}"' not in pages[page]:
+        elif anchor and f'id="{anchor}"' not in source:
             errors.append(f"README.md: link into the site does not resolve: {link}")
 
     for block in readme.split("\n\n"):
@@ -370,6 +375,11 @@ def test_documentation_gate_passes_current_tree() -> None:
     assert _validation_errors() == []
 
 
+def test_report_deep_link_passes_release_boundary_gate() -> None:
+    readme = _read(README_PATH).rstrip() + f"\n\n[Example]({SITE_BASE}examples/standard/results/reports/results_report.html#main-content)\n"
+    assert _validation_errors(readme_override=readme) == []
+
+
 @pytest.mark.parametrize("defect", ["missing", "duplicate", "outside-header"])
 def test_version_gate_requires_one_label_inside_the_header(defect: str) -> None:
     source = _read(DOCS_ROOT / "index.html")
@@ -405,6 +415,9 @@ def _replace_once(source: str, old: str, new: str) -> str:
         ("README.md", "BulkSeq Studio is a desktop application for Windows and Linux ", "BulkSeq Studio is a desktop\napplication for Windows and Linux ", "one physical line"),
         ("README.md", f"({SITE_BASE}guide.html)", f"({SITE_BASE}guide-notes.html)", "link into the site does not resolve"),
         ("README.md", f"({SITE_BASE}faq.html#version-notices)", f"({SITE_BASE}faq.html#no-such-heading)", "link into the site does not resolve"),
+        ("README.md", f"({SITE_BASE}examples/standard/results/reports/results_report.html)", f"({SITE_BASE}examples/absent.html)", "link into the site does not resolve"),
+        ("README.md", f"({SITE_BASE}examples/standard/results/reports/results_report.html)", f"({SITE_BASE}examples/standard/results/reports/results_report.html#absent-anchor)", "link into the site does not resolve"),
+        ("README.md", f"({SITE_BASE}examples/standard/results/reports/results_report.html)", f"({SITE_BASE}%2e%2e/README.md)", "link into the site does not resolve"),
     ],
     ids=(
         "stale-version-label",
@@ -422,6 +435,9 @@ def _replace_once(source: str, old: str, new: str) -> str:
         "hard-wrapped-readme-prose",
         "broken-site-link",
         "broken-site-anchor",
+        "missing-nested-report",
+        "broken-report-anchor",
+        "encoded-site-escape",
     ),
 )
 def test_documentation_gate_rejects_negative_mutations(
