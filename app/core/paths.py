@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from workflow.scripts.input_paths import wsl_input_path
+
 # WSL-native UNC paths surface on Windows as \\wsl.localhost\<distro>\... or the
 # legacy \\wsl$\<distro>\... . Both already live on the Linux filesystem, so the
 # translation is just stripping the \\wsl...\<distro> prefix (not a /mnt mount).
@@ -78,17 +80,24 @@ def project_configured_path(project_root: str | Path, configured_path: str | Pat
     match = _WSL_MOUNT.match(text)
     if os.name == "nt" and match:
         return Path(f"{match.group(1)}:/{match.group(2)}")
+    if os.name == "nt" and text.startswith("/") and not text.startswith("//"):
+        distro = wsl_unc_distro(project_root) or wsl_default_distro()
+        if distro:
+            return Path(f"//wsl.localhost/{distro}{text}")
     path = Path(text).expanduser()
     return path if path.is_absolute() else Path(project_root) / path
 
 
-def windows_to_wsl_path(path: str | Path) -> str:
+def windows_to_wsl_path(path: str | Path, *, distro: str | None = None) -> str:
     # A WSL-native UNC path is already on the Linux filesystem: map
     # \\wsl.localhost\<distro>\home\user\... -> /home/user/... (no /mnt prefix).
     text = str(path).replace("\\", "/")
     unc = _WSL_UNC.match(text)
     if unc:
-        return "/" + unc.group(1).lstrip("/")
+        try:
+            return wsl_input_path(str(path), distro)
+        except ValueError as exc:
+            raise UnsupportedUncPathError(str(exc)) from exc
     if _UNC.match(text):
         # Path.resolve() keeps '\\server\share' as the drive, which the /mnt mapping below
         # would turn into the nonsense '/mnt/\\server\share/...' and hand to WSL as a real
@@ -97,6 +106,8 @@ def windows_to_wsl_path(path: str | Path) -> str:
             f"'{path}' is a Windows network share (UNC). WSL cannot reach it: use a local "
             "drive (C:\\...) or a WSL path (\\\\wsl.localhost\\<distro>\\...) instead."
         )
+    if text.startswith("/"):
+        return text
     p = Path(path).resolve()
     drive = p.drive.rstrip(":").lower()
     rest = "/".join(p.parts[1:])

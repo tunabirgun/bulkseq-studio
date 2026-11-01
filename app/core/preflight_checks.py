@@ -155,6 +155,7 @@ def input_validation_messages(config: AppConfig, project_root: Path, samples: pd
         selected = config.deseq2.contrasts[0] if config.deseq2.contrasts else None
         messages = validate_metadata(
             samples, allow_pending_sra=config.input.type in PENDING_INPUT_ROUTES,
+            project_root=project_root,
             design_variables=design_variables(config, formula),
             contrast=active_contrast(config, numerator, denominator),
             contrast_factor=selected.factor if selected else "condition",

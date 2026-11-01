@@ -17,6 +17,7 @@ from app.constants import WSL_ENV_NAME, WSL_MAMBA_ROOT, WSL_MICROMAMBA
 from app.core.config_models import AppConfig
 from app.core.paths import (
     UnsupportedUncPathError, windows_to_wsl_path, without_bundle_library_path, workflow_root,
+    wsl_unc_distro,
 )
 
 # Marker prefix exported into the WSL process environment so the whole process
@@ -527,6 +528,10 @@ def build_snakemake_command(
     """
     args = build_snakemake_args(config, mode, project_root, exec_profile=exec_profile)
     if use_wsl:
+        project_distro = wsl_unc_distro(project_root)
+        if distro and project_distro and distro.casefold() != project_distro.casefold():
+            raise RuntimeError("The selected WSL distribution does not match the project's WSL folder.")
+        distro = distro or project_distro
         try:
             wsl_root = windows_to_wsl_path(project_root)
         except UnsupportedUncPathError as exc:

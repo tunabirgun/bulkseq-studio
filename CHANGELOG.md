@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.35.1 — 2026-11-01
+
+- Fix Windows/WSL local FASTQ path handling reported in [issue #1](https://github.com/tunabirgun/bulkseq-studio/issues/1). Validation resolves files from the project; WSL execution translates Windows-drive and WSL UNC paths to Linux paths before building the job graph. Native Linux paths are preserved, and both WSL UNC spellings and forward-slash UNC paths are supported.
+- Select the WSL distribution named by the project folder and reject conflicting distribution paths. Malformed single-slash UNC paths receive an actionable error.
+- Preserve existing saved sample-sheet contents during validation and execution. Bump the bundled workflow version so existing projects receive the fix when reopened. Statistical methods and dependency pins are unchanged.
+- Add regressions for path formats, missing files, pending downloads and distribution selection. Verify synthetic FASTQs through Windows validation, actual WSL dry runs, FastQC and trimming, including filenames with spaces.
+
 ## Website examples — 2026-10-29
 
 - Add a synthetic-expression heatmap and a cached STRING network to Output, and a synthetic-study forest plot to Science. Controls expose color limits, network confidence and leave-one-study-out pooling with keyboard and touch interaction. The examples retain method explanations, source attribution and reproducible numerical checks; they do not change application analysis results.

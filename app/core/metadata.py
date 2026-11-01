@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import re
+import os
 from collections import Counter, defaultdict
 from pathlib import Path
 
 import pandas as pd
 
 from app.constants import REQUIRED_METADATA_COLUMNS, SAFE_ID_PATTERN
+from app.core.paths import project_configured_path, wsl_unc_distro
+from workflow.scripts.input_paths import wsl_input_path
 from workflow.scripts.validate_metadata import condition_messages
 from workflow.scripts.meta_readiness import assess_meta_readiness
 
@@ -114,7 +117,8 @@ def validate_metadata(df: pd.DataFrame, allow_pending_sra: bool = False,
                       contrast: tuple[str, str] | None = None,
                       contrast_factor: str = "condition", meta_enabled: bool = False,
                       input_type: str = "fastq", design_formula: str = "~ condition",
-                      meta_contrast_labels: tuple[str, str] | None = None) -> list[dict[str, str]]:
+                      meta_contrast_labels: tuple[str, str] | None = None,
+                      project_root: Path | None = None) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = []
     missing = [col for col in REQUIRED_METADATA_COLUMNS if col not in df.columns]
     if missing:
@@ -153,12 +157,22 @@ def validate_metadata(df: pd.DataFrame, allow_pending_sra: bool = False,
         layout = str(row.get("layout", "")).lower()
         r1 = str(row.get("fastq_1", ""))
         r2 = str(row.get("fastq_2", ""))
-        if not allow_pending_sra and r1 and not Path(r1).exists():
-            messages.append({"status": "FAIL", "message": f"Row {idx + 1}: FASTQ R1 does not exist: {r1}"})
         if layout == "paired" and not r2:
             messages.append({"status": "FAIL", "message": f"Row {idx + 1}: paired-end sample is missing fastq_2."})
-        if layout == "paired" and r2 and not allow_pending_sra and not Path(r2).exists():
-            messages.append({"status": "FAIL", "message": f"Row {idx + 1}: FASTQ R2 does not exist: {r2}"})
+        for label, value in (("R1", r1), ("R2", r2 if layout == "paired" else "")):
+            if not value or allow_pending_sra:
+                continue
+            try:
+                if project_root is not None and (os.name == "nt" or os.environ.get("WSL_DISTRO_NAME")):
+                    native = wsl_input_path(value, wsl_unc_distro(project_root) or os.environ.get("WSL_DISTRO_NAME"))
+                    value_on_host = value if os.name == "nt" else native
+                else:
+                    value_on_host = value
+                path = project_configured_path(project_root, value_on_host) if project_root is not None else Path(value_on_host)
+                if not path.exists():
+                    messages.append({"status": "FAIL", "message": f"Row {idx + 1}: FASTQ {label} does not exist: {value}"})
+            except ValueError as exc:
+                messages.append({"status": "FAIL", "message": f"Row {idx + 1}: FASTQ {label}: {exc}"})
 
     # One implementation with the workflow's check 01, so both report the same tiers.
     messages.extend(condition_messages(df, contrast_factor))

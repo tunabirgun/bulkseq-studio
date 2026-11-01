@@ -8,6 +8,9 @@ import shutil
 import sys
 import pandas as pd
 
+sys.path.insert(0, os.path.join(workflow.basedir, "scripts"))
+from input_paths import wsl_input_path
+
 
 def _env_bin_dir():
     # The bulkseq env's bin dir, robust to how snakemake was launched (activated,
@@ -40,6 +43,12 @@ configfile: "config/config.yaml"
 _INPUT_AT_PARSE = config.get("input", {})
 _DE_RESULTS_AT_PARSE = _INPUT_AT_PARSE.get("type") == "deseq2_results"
 samples_df = pd.read_csv(config["input"]["samples"], sep="\t", dtype=str).fillna("")
+if os.environ.get("WSL_DISTRO_NAME"):
+    for column in ("fastq_1", "fastq_2"):
+        if column in samples_df:
+            samples_df[column] = samples_df[column].map(
+                lambda value: wsl_input_path(value, os.environ["WSL_DISTRO_NAME"]) if value else value
+            )
 samples_df = samples_df.set_index("sample_id", drop=False)
 SAMPLES = samples_df["sample_id"].tolist()
 # A results-only upload has no per-sample matrix, so its samples.tsv may legitimately be
@@ -363,7 +372,6 @@ def rule_mem_mb(name, default=8):
 # report it properly, so the check runs here and repeats inside validate_project.py for the
 # sanity-check panel.
 # ---------------------------------------------------------------------------
-sys.path.insert(0, os.path.join(workflow.basedir, "scripts"))
 from snakemake.exceptions import WorkflowError  # noqa: E402
 from validate_project import check_gating_paths  # noqa: E402
 

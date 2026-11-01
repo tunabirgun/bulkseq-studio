@@ -148,6 +148,7 @@ from app.core.paths import (
     project_configured_path,
     UnsupportedUncPathError,
     windows_to_wsl_path,
+    wsl_default_distro,
     wsl_recommended_workdir,
     wsl_unc_distro,
     wsl_vhdx_basepath,
@@ -7278,9 +7279,10 @@ class MainWindow(QMainWindow):
         # (C:\...) is unresolvable — translate the file columns to /mnt/<drive>/... first.
         if getattr(self, "use_wsl", None) is not None and self.use_wsl.isChecked():
             try:
+                distro = wsl_unc_distro(self.project_root) or wsl_default_distro()
                 for _col in ("fastq_1", "fastq_2"):
                     if _col in df.columns:
-                        df[_col] = df[_col].map(lambda p: windows_to_wsl_path(p) if p else p)
+                        df[_col] = df[_col].map(lambda p: windows_to_wsl_path(p, distro=distro) if p else p)
             except UnsupportedUncPathError as exc:
                 # Reject the whole selection: a partially translated sheet would mix reachable
                 # and unreachable paths and fail the run at DAG build instead of here.
@@ -7472,6 +7474,7 @@ class MainWindow(QMainWindow):
             "sra", "count_matrix", "microarray", "deseq2_results")
         messages = validate_metadata(
             self.metadata_table.to_dataframe(),
+            project_root=self.project_root,
             allow_pending_sra=allow_pending_sra,
             design_variables=self._design_variables(),
             contrast=self._active_contrast(),

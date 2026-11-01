@@ -57,7 +57,7 @@ def _validate_project(root: Path) -> None:
     _c = config.deseq2.contrasts[0] if config.deseq2.contrasts else None
     contrast = (_c.numerator, _c.denominator) if _c else None
     messages = validate_metadata(samples, allow_pending_sra=config.input.type == "sra",
-                                 contrast=contrast)
+                                 contrast=contrast, project_root=root)
     write_check(root, "01_input_validation", messages)
     estimate = estimate_runtime(config, samples)
     print("Validation")
