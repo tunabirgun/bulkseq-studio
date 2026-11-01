@@ -8,6 +8,15 @@ BulkSeq Studio is a desktop application for Windows and Linux that manages bulk 
 
 [Read the handbook](https://tunabirgun.github.io/bulkseq-studio/) · [Download from official releases](https://github.com/tunabirgun/bulkseq-studio/releases/latest) · [Changelog](CHANGELOG.md) · [Report an issue](https://github.com/tunabirgun/bulkseq-studio/issues)
 
+## Explore the reports before installing
+
+| Example | What you can inspect |
+| --- | --- |
+| [Standard analysis report](https://tunabirgun.github.io/bulkseq-studio/examples/standard/results/reports/results_report.html) | Check outcomes, differential-expression tables, figures and links to saved outputs |
+| [Cross-study report](https://tunabirgun.github.io/bulkseq-studio/examples/meta/results/reports/meta_analysis_report.html) | Study contributions, comparison direction, pooled effects and method limits |
+
+These browser examples use synthetic data and demonstrate report reading; they are not biological benchmark results or evidence that a complete analysis ran successfully. No installation is needed to view them. For a real-data run, follow the [bundled-data tutorial](https://tunabirgun.github.io/bulkseq-studio/tutorial.html).
+
 ![The four-stage desktop navigator with a synthetic project open](docs/assets/images/four-stage-navigator.png)
 
 ## Install and begin
@@ -87,4 +96,10 @@ Close the application before installing a newer package. Preserve the original p
 
 ## Citation and license
 
-Cite the exact application and workflow versions in the run summary, the applicable method and tool references, and the [release record](https://github.com/tunabirgun/bulkseq-studio/releases) for the software that produced your result. BulkSeq Studio is released under the [MIT License](LICENSE).
+Use [CITATION.cff](CITATION.cff) or GitHub's **Cite this repository** menu for the current software citation. Cite the exact application and workflow versions in your run summary, the applicable method and tool references, and the [release record](https://github.com/tunabirgun/bulkseq-studio/releases) for the software that produced your result. The citation file describes the current release, so retain the version you actually used when citing an older analysis. BulkSeq Studio is released under the [MIT License](LICENSE).
+
+## Questions and contributions
+
+Use [Discussions](https://github.com/tunabirgun/bulkseq-studio/discussions) for usage questions, interpretation questions and examples you are permitted to share. Use [Issues](https://github.com/tunabirgun/bulkseq-studio/issues/new/choose) for reproducible bugs and concrete feature requests. The [contribution guide](CONTRIBUTING.md) explains how to report a problem, improve documentation or propose a code change.
+
+If BulkSeq Studio is useful to you, consider starring the repository to help others discover it.

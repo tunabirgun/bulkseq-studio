@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions and shared examples
+    url: https://github.com/tunabirgun/bulkseq-studio/discussions
+    about: Ask usage questions or discuss examples you are permitted to share.
+  - name: Installation and workflow handbook
+    url: https://tunabirgun.github.io/bulkseq-studio/
+    about: Read setup instructions, input requirements and result interpretation guidance.

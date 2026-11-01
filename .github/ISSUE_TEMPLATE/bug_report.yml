@@ -1,0 +1,57 @@
+name: Bug report
+description: Report a reproducible application, setup or workflow problem.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: "Search existing issues first. Share a small synthetic or public-data reproduction and sanitized excerpts only. Do not attach raw reads, patient/donor information, private sample identifiers, credentials or whole project folders."
+  - type: input
+    id: version
+    attributes:
+      label: BulkSeq Studio version
+      description: Copy the version shown in the application; mention if this is a source checkout.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows with WSL2
+        - Native Linux
+        - macOS source GUI/configuration
+        - Other or not sure
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and input route
+      description: "Include OS and distro versions, installer/portable/source, and FASTQ/accessions/counts/microarray/imported results. For path issues, describe Windows-drive versus WSL locations using synthetic paths."
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Prefer a bundled example or a minimal synthetic input. Include relevant settings.
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: Expected and actual behavior
+      description: Describe what should happen and what happened instead, including the failing stage.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized error excerpt
+      description: Paste only the relevant error and nearby context. Replace private names and paths with consistent placeholders.
+      render: text
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Optional sanitized screenshot, public example link, or workaround you tried.

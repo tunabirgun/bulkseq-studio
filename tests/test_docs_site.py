@@ -244,6 +244,18 @@ def _readme_errors(readme: str, pages: dict[str, str]) -> list[str]:
         # The site root is served as index.html, so a bare base URL must find that page.
         parts = urlsplit(link[len(SITE_BASE):])
         target = unquote(parts.path) or "index.html"
+        if "/" in target and target not in pages:
+            file = (DOCS / target).resolve()
+            if not file.is_relative_to(DOCS.resolve()) or not file.is_file():
+                errors.append(f"README.md: link into the site does not resolve: {link}")
+            elif parts.fragment:
+                page = _Page()
+                if file.suffix.lower() == ".html":
+                    page.feed(file.read_text(encoding="utf-8"))
+                    page.close()
+                if parts.fragment not in page.ids:
+                    errors.append(f"README.md: unresolved fragment in {link}")
+            continue
         if target not in pages:
             errors.append(f"README.md: link into the site does not resolve: {link}")
         elif parts.fragment and parts.fragment not in parsed[target].ids:
@@ -375,14 +387,24 @@ def test_readme_links_into_the_site_resolve() -> None:
     assert _readme_errors(README.read_text(encoding="utf-8"), _committed_pages()) == []
 
 
+@pytest.mark.parametrize("fragment", ["", "#main-content"])
+def test_readme_accepts_nested_report_and_its_anchor(fragment: str) -> None:
+    link = f"{SITE_BASE}examples/standard/results/reports/results_report.html{fragment}"
+    assert _readme_errors(f"[Example]({link})", _committed_pages()) == []
+
+
 @pytest.mark.parametrize(
     ("link", "expected"),
     [
         (f"{SITE_BASE}guide.html", "does not resolve"),
         (f"{SITE_BASE}faq.html#absent-anchor", "unresolved fragment"),
         ("docs/assets/images/absent.png", "missing file"),
+        (f"{SITE_BASE}examples/absent.html", "does not resolve"),
+        (f"{SITE_BASE}examples/standard/results/reports/results_report.html#absent-anchor", "unresolved fragment"),
+        (f"{SITE_BASE}../README.md", "does not resolve"),
+        (f"{SITE_BASE}%2e%2e/README.md", "does not resolve"),
     ],
-    ids=("site-page", "broken-anchor", "repository-file"),
+    ids=("site-page", "broken-anchor", "repository-file", "nested-file", "nested-anchor", "outside-site", "encoded-outside-site"),
 )
 def test_readme_gate_rejects_a_broken_link(link: str, expected: str) -> None:
     pages = _committed_pages()

@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use BulkSeq Studio, cite this software release and the methods used in your analysis."
+type: software
+title: "BulkSeq Studio"
+authors:
+  - family-names: "Birgün"
+    given-names: "Tuna"
+    orcid: "https://orcid.org/0009-0009-1827-7933"
+version: "0.35.1"
+date-released: "2026-11-01"
+url: "https://tunabirgun.github.io/bulkseq-studio/"
+repository-code: "https://github.com/tunabirgun/bulkseq-studio"
+license: MIT
+keywords:
+  - bulk RNA-seq
+  - microarray
+  - differential expression
+  - meta-analysis
+  - reproducible workflows

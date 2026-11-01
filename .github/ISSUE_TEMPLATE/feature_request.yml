@@ -1,0 +1,26 @@
+name: Feature request
+description: Describe a concrete improvement to a supported workflow.
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: "For general questions or early ideas, use Discussions. Keep examples synthetic or public and omit private research details."
+  - type: textarea
+    id: problem
+    attributes:
+      label: What task is difficult or missing?
+      description: Describe the workflow and who would benefit.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Explain the expected result and how someone could verify it. Include method references if the request changes scientific calculations.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and constraints
+      description: Optional current workaround, related tools, platform needs or compatibility concerns.
