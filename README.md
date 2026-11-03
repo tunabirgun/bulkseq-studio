@@ -1,8 +1,10 @@
 # BulkSeq Studio
 
-Desktop application for Windows and Linux that manages bulk RNA-seq and microarray analyses through a recorded Snakemake workflow. Start from FASTQ files, public accessions, raw count matrices, supported microarray inputs or imported differential-expression results.
+[![Release](https://img.shields.io/github/v/release/tunabirgun/bulkseq-studio?label=release&color=0b7285)](https://github.com/tunabirgun/bulkseq-studio/releases) [![Python](https://img.shields.io/badge/python-3.11%2B-3776ab)](https://www.python.org/) [![Snakemake](https://img.shields.io/badge/snakemake-9.23.1-039475)](https://snakemake.readthedocs.io/) [![License](https://img.shields.io/badge/license-MIT-6c757d)](LICENSE) [![Tests](https://github.com/tunabirgun/bulkseq-studio/actions/workflows/tests.yml/badge.svg)](https://github.com/tunabirgun/bulkseq-studio/actions/workflows/tests.yml)
 
-[Download](https://github.com/tunabirgun/bulkseq-studio/releases/latest) · [Handbook](https://tunabirgun.github.io/bulkseq-studio/) · [Changelog](CHANGELOG.md)
+BulkSeq Studio is a desktop application for Windows and Linux that manages bulk RNA-seq and microarray analyses through a recorded Snakemake workflow. Start from FASTQ files, public accessions, raw count matrices, supported microarray inputs or imported differential-expression results.
+
+[Download from official releases](https://github.com/tunabirgun/bulkseq-studio/releases/latest) · [Handbook](https://tunabirgun.github.io/bulkseq-studio/) · [Changelog](CHANGELOG.md)
 
 ![Desktop navigator](docs/assets/images/four-stage-navigator.png)
 
@@ -27,7 +29,7 @@ Missing or failed results are unavailable, not zero findings. Preserve the proje
 
 ## Updates
 
-Version 0.35.1 fixes Windows/WSL FASTQ paths without changing 0.35.0 statistical methods or dependency pins; bundled biological datasets were not rerun for this patch. Review [scientific changes](CHANGELOG.md) and the [upgrade guide](https://tunabirgun.github.io/bulkseq-studio/upgrade.html) before reusing older results. Pre-0.35.0 alternative-engine/enrichment outputs and pre-0.34.0 pooled-effect adjusted values may need review and recomputation. Upgrading does not revise historical results.
+**Release status:** This documentation describes version 0.35.1, which fixes Windows/WSL FASTQ paths without changing 0.35.0 statistical methods or dependency pins; bundled biological datasets were not rerun for this patch. Review [version notices](https://tunabirgun.github.io/bulkseq-studio/faq.html#version-notices), [scientific changes](CHANGELOG.md) and the [upgrade guide](https://tunabirgun.github.io/bulkseq-studio/upgrade.html) before reusing older results. Pre-0.35.0 alternative-engine/enrichment outputs and pre-0.34.0 pooled-effect adjusted values may need review and recomputation. Upgrading does not revise historical results.
 
 Close the app before installing an update, retain the original project, and rerun input validation. Source installation requires Python 3.11+ and PySide6 6.11.2+; see [CONTRIBUTING.md](CONTRIBUTING.md) for development.
 
