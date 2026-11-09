@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import unicodedata
 from datetime import date, datetime
 from pathlib import Path
@@ -549,6 +550,70 @@ class ResourcesConfig(BaseModel):
     total_memory_gb: int = Field(default=8, ge=1)
 
 
+_SLURM_NAME = re.compile(r"[A-Za-z0-9_.,-]{1,128}")
+# Options the Slurm executor sets itself from each rule's declared resources, or that would
+# redirect a job's identity or output. Allowing them in slurm_extra would let one setting
+# silently contradict what the run summary records for that rule.
+_SLURM_RESERVED_OPTIONS = frozenset({
+    "--account", "--partition", "--cpus-per-task", "--ntasks", "--nodes", "--mem", "--mem-per-cpu",
+    "--time", "--job-name", "--output", "--error", "--wrap", "--chdir", "--export", "--array",
+    "--dependency", "--parsable",
+})
+_SLURM_EXTRA_TOKEN = re.compile(r"--[A-Za-z][A-Za-z0-9-]*(=[A-Za-z0-9_.,:/@+=-]+)?")
+
+
+class ExecutionConfig(BaseModel):
+    """How a cluster run is submitted (bulkseq run --exec-profile slurm / kubernetes).
+
+    These settings live in the project's config.yaml rather than in the copied workflow's
+    profile, because editing any file under workflow/ changes the recorded workflow digest and
+    BulkSeq then refuses to run the project. Local runs ignore everything here.
+    """
+
+    # Slurm partition(s) and account. Empty means "let the site default decide".
+    slurm_partition: str = ""
+    slurm_account: str = ""
+    # Extra sbatch options, e.g. "--qos=normal --constraint=intel". Only --option or
+    # --option=value tokens; options the executor manages itself are refused.
+    slurm_extra: str = ""
+    # Maximum number of jobs queued with the scheduler at once.
+    jobs: int = Field(default=16, ge=1, le=10000)
+    # Walltime in minutes for a rule that declares none.
+    default_runtime_min: int = Field(default=240, ge=1, le=60 * 24 * 30)
+    # Memory floor in MB for a rule that declares no mem_mb. Snakemake's own default
+    # (1000 MB) is too small for the R steps (enrichment, figures, reports), which would be
+    # OOM-killed on a strict scheduler.
+    default_mem_mb: int = Field(default=4000, ge=500, le=4_000_000)
+    # Run the steps that need the internet (downloads, KEGG/g:Profiler/STRING queries, GEO
+    # retrieval) on the submitting host instead of a compute node. Many clusters give compute
+    # nodes no outbound access; these steps are light.
+    network_rules_on_submit_host: bool = True
+
+    @field_validator("slurm_partition", "slurm_account", mode="before")
+    @classmethod
+    def valid_slurm_name(cls, value: object) -> object:
+        text = str(value or "").strip()
+        if text and not _SLURM_NAME.fullmatch(text):
+            raise ValueError("Slurm partition/account names may contain only letters, digits, '_', '.', '-' "
+                             "and ',' (for a partition list).")
+        return text
+
+    @field_validator("slurm_extra", mode="before")
+    @classmethod
+    def valid_slurm_extra(cls, value: object) -> object:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        for token in text.split():
+            if not _SLURM_EXTRA_TOKEN.fullmatch(token):
+                raise ValueError(f"slurm_extra accepts only --option or --option=value tokens; got {token!r}.")
+            option = token.split("=", 1)[0]
+            if option in _SLURM_RESERVED_OPTIONS:
+                raise ValueError(f"slurm_extra may not set {option}: the executor sets it from each rule's "
+                                 "declared resources or from the dedicated settings.")
+        return " ".join(text.split())
+
+
 class RuleThreads(BaseModel):
     # One field per rule_threads() key read in workflow/rules; tests/test_exec_profiles.py
     # keeps the two in step.
@@ -604,6 +669,7 @@ class AppConfig(BaseModel):
     ppi: PpiConfig = Field(default_factory=PpiConfig)
     figures_style: FigureConfig = Field(default_factory=FigureConfig)
     resources: ResourcesConfig = Field(default_factory=ResourcesConfig)
+    execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     rule_threads: RuleThreads = Field(default_factory=RuleThreads)
     rule_memory_gb: RuleMemoryGb = Field(default_factory=RuleMemoryGb)
 

@@ -611,6 +611,8 @@ dependencies:
   - sleef==3.9.0=ha0421bc_0
   - smart_open==7.6.1=pyhcf101f3_0
   - smmap==5.0.3=pyhcf101f3_1
+  - snakemake-executor-plugin-slurm==2.8.0=pyhdfd78af_0
+  - snakemake-executor-plugin-slurm-jobstep==0.6.1=pyhdfd78af_0
   - snakemake-interface-common==1.23.0=pyhdfd78af_1
   - snakemake-interface-executor-plugins==9.4.0=pyh84498cf_0
   - snakemake-interface-logger-plugins==2.1.0=pyhdfd78af_0

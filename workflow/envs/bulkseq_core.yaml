@@ -14,6 +14,9 @@ channels:
 dependencies:
   - python=3.12
   - snakemake-minimal
+  # Slurm executor for `bulkseq run --exec-profile slurm`. Snakemake 8+ needs an executor plugin
+  # for any cluster; without it the profile's `executor: slurm` fails before submission.
+  - snakemake-executor-plugin-slurm=2.8.0
   - aria2
   - fastqc=0.12.1
   - multiqc=1.30
