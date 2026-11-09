@@ -14,6 +14,38 @@ import pytest
 import yaml
 
 
+@pytest.mark.parametrize("release_url_works,digest_ok", [(True, True), (False, True), (False, False)])
+def test_ci_release_fetch_falls_back_and_always_checks_the_digest(tmp_path, release_url_works,
+                                                                  digest_ok) -> None:
+    if os.name == "nt" or not shutil.which("bash") or not shutil.which("sha256sum"):
+        pytest.skip("needs POSIX bash and sha256sum")
+    import hashlib
+    repo = Path(__file__).resolve().parents[1]
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    # A curl stand-in: the release URL fails unless allowed, the API serves the asset.
+    (stub / "curl").write_text(
+        "#!/usr/bin/env bash\n"
+        "out=''; url=''\n"
+        'while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2;; http*) url=$1; shift;; *) shift;; esac; done\n'
+        'case "$url" in\n'
+        f'  */releases/download/*) [ "{int(release_url_works)}" = 1 ] || exit 22; printf payload > "$out";;\n'
+        '  */releases/tags/*) printf \'{"assets": [{"name": "a.bin", "id": 7}]}\';;\n'
+        '  */releases/assets/7) printf payload > "$out";;\n'
+        "  *) exit 99;;\n"
+        "esac\n", encoding="utf-8")
+    (stub / "curl").chmod(0o755)
+    digest = hashlib.sha256(b"payload" if digest_ok else b"other").hexdigest()
+    dest = tmp_path / "a.bin"
+    result = subprocess.run(
+        ["bash", str(repo / "scripts" / "ci_fetch_release_asset.sh"), "o/r", "v1", "a.bin", digest, str(dest)],
+        env={**os.environ, "PATH": f"{stub}{os.pathsep}{os.environ['PATH']}"},
+        capture_output=True, text=True, timeout=60)
+    assert (result.returncode == 0) == digest_ok, result.stdout + result.stderr
+    assert ("API asset route" in result.stdout) == (not release_url_works)
+    assert dest.read_bytes() == b"payload"
+
+
 def test_python_distribution_includes_the_application_and_shared_workflow_helper() -> None:
     repo = Path(__file__).resolve().parents[1]
     with (repo / "pyproject.toml").open("rb") as handle:
@@ -246,10 +278,13 @@ def test_linux_package_build_requires_all_three_verified_artifacts() -> None:
     assert "bulkseq-appimage-selftest.json" in workflow
     assert "result.get(\"webengine\") is True" in workflow
     assert "result.get(\"nodes\") == 3" in workflow
-    assert "AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage" in workflow
-    assert "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0" in workflow
-    assert "AppImage/type2-runtime/releases/download/20251108/runtime-x86_64" in workflow
-    assert "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d" in workflow
+    fetch = "bash scripts/ci_fetch_release_asset.sh"
+    assert (f"{fetch} AppImage/appimagetool 1.9.1 appimagetool-x86_64.AppImage \\\n"
+            "            ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0") in workflow
+    assert (f"{fetch} AppImage/type2-runtime 20251108 runtime-x86_64 \\\n"
+            "            2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d") in workflow
+    fetcher = (repo / "scripts" / "ci_fetch_release_asset.sh").read_text(encoding="utf-8")
+    assert 'echo "$sha  $dest" | sha256sum --check --strict' in fetcher
     assert 'echo "APPIMAGE_RUNTIME_FILE=$RUNNER_TEMP/appimage-runtime" >> "$GITHUB_ENV"' in workflow
     assert 'runtime_args=(--runtime-file "$(realpath "$APPIMAGE_RUNTIME_FILE")")' in appimage_script
     assert '"${runtime_args[@]}" -u "$UPDATE_INFO"' in appimage_script
