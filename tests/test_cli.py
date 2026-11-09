@@ -37,6 +37,17 @@ def project(tmp_path) -> Path:
     return root
 
 
+def _option_values(argv: list[str], option: str) -> list[str]:
+    if option not in argv:
+        return []
+    values = []
+    for token in argv[argv.index(option) + 1:]:
+        if token.startswith("--"):
+            break
+        values.append(token)
+    return values
+
+
 def _configure_samples(project: Path, path: Path, input_type: str = "sra") -> None:
     config = ProjectManager().load_config(project)
     config.input.type = input_type
@@ -196,10 +207,13 @@ def test_cluster_profiles_never_pass_a_global_memory_cap(project, exec_profile) 
     # would have it submitted with 8 GB and OOM-killed hours into the run.
     config = ProjectManager().load_config(project)
     argv = build_snakemake_args(config, "run", project, exec_profile=exec_profile)
-    assert not [a for a in argv if a.startswith("mem_mb=")], (
+    assert not [a for a in _option_values(argv, "--resources") if a.startswith("mem_mb")], (
         f"{exec_profile} passes a global mem_mb pool; it would silently shrink every "
         f"rule's scheduler allocation"
     )
+    # --default-resources only fills rules that declare no mem_mb, and must be a floor.
+    defaults = [a for a in _option_values(argv, "--default-resources") if a.startswith("mem_mb=")]
+    assert defaults == [f"mem_mb=max(2*input.size_mb, {config.execution.default_mem_mb})"]
     assert "--cores" not in argv, (
         f"{exec_profile} passes --cores; the per-rule thread ceiling belongs in the profile"
     )

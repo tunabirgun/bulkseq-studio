@@ -408,6 +408,23 @@ include: "rules/stats.smk"
 include: "rules/ppi.smk"
 
 
+# Rules that need the internet: downloads, GEO retrieval, KEGG/g:Profiler queries and STRING.
+# Cluster compute nodes often have no outbound access, so under a cluster executor these run
+# on the submitting host (localrules). Enrichment is the heaviest (19-80 s, at most 1.4 GB on the
+# bundled datasets). A local run is unaffected: there every
+# rule is local already. Only rules defined in this mode are named, because naming an absent
+# rule makes Snakemake warn on every run. `localrules: a, b` compiles to exactly this call; the
+# keyword form takes literal names only, so it cannot be filtered.
+NETWORK_RULES = (
+    "download_fastq", "download_genome", "download_gtf", "rrna_db", "ingest_geo",
+    "enrichment", "transfer_enrichment", "network_string",
+)
+if (config.get("execution") or {}).get("network_rules_on_submit_host", True):
+    # is_rule, not hasattr(rules, ...): the rules namespace raises WorkflowError, not
+    # AttributeError, for an undefined name.
+    workflow.localrules(*(name for name in NETWORK_RULES if workflow.is_rule(name)))
+
+
 # ---------------------------------------------------------------------------
 # Targets
 # ---------------------------------------------------------------------------

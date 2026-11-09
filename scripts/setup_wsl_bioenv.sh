@@ -539,11 +539,11 @@ verify_environment() {
   printf "  %-22s" "Python imports"
   python_path="$("$MICROMAMBA" run -n "$ENV_NAME" bash -c 'command -v python' 2>/dev/null | tail -n 1 || true)"
   if python_versions="$(run_limited 20 "$MICROMAMBA" run -n "$ENV_NAME" python -c \
-      'import numpy, pandas, yaml; print("numpy=" + numpy.__version__ + "; pandas=" + pandas.__version__ + "; PyYAML=" + yaml.__version__)' 2>&1)"; then
+      'import importlib.metadata as md, numpy, pandas, yaml, snakemake_executor_plugin_slurm; print("numpy=" + numpy.__version__ + "; pandas=" + pandas.__version__ + "; PyYAML=" + yaml.__version__ + "; snakemake-executor-plugin-slurm=" + md.version("snakemake-executor-plugin-slurm"))' 2>&1)"; then
     echo "$python_path"
     printf "    versions: %s\n" "$python_versions"
   else
-    echo "numpy/pandas/PyYAML import failed"
+    echo "numpy/pandas/PyYAML/snakemake_executor_plugin_slurm import failed"
     [ -n "$python_versions" ] && printf "    %s\n" "$(printf '%s\n' "$python_versions" | head -n 1)"
     verification_failed=1
   fi

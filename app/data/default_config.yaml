@@ -225,6 +225,14 @@ resources:
   profile: balanced
   total_threads: 4
   total_memory_gb: 8
+execution:
+  slurm_partition: ''
+  slurm_account: ''
+  slurm_extra: ''
+  jobs: 16
+  default_runtime_min: 240
+  default_mem_mb: 4000
+  network_rules_on_submit_host: true
 rule_threads:
   fastqc: 1
   fastp: 4

@@ -19,6 +19,17 @@ Use an official x86-64 Windows or Linux package and follow the [installation gui
 
 The [tutorial](https://tunabirgun.github.io/bulkseq-studio/tutorial.html) explains the interface. [Synthetic example reports](https://tunabirgun.github.io/bulkseq-studio/examples/standard/results/reports/results_report.html) illustrate report reading, not biological validation.
 
+## Command line and HPC
+
+The `bulkseq` command runs the same workflow as the interface. On a Slurm cluster, install both the analysis environment (`scripts/setup_wsl_bioenv.sh full`) and the command (`pip install -e .` from a source checkout) on the Linux login node, set the site settings in the project's configuration before the first run, and submit from there:
+
+```bash
+bulkseq config set -C PATH execution.slurm_partition short
+bulkseq run -C PATH --exec-profile slurm
+```
+
+Do not edit the copied `workflow/profiles/site/slurm/config.yaml`; a changed workflow copy stops the project from running. Steps that need the internet run on the login node by default. Slurm submission was verified on a single-node test cluster, not on a production cluster, and Kubernetes execution is unverified. See [Command line and HPC](https://tunabirgun.github.io/bulkseq-studio/cli.html#hpc).
+
 ## Analysis boundaries
 
 DESeq2, edgeR, limma-voom and microarray limma have different supported design formulas. Inputs, annotation coverage and backend availability determine which modules can run. Review the [input](https://tunabirgun.github.io/bulkseq-studio/inputs.html), [engine](docs/engines.html) and [interpretation](https://tunabirgun.github.io/bulkseq-studio/interpreting.html) guides; syntax acceptance does not establish a suitable scientific model.
@@ -29,7 +40,7 @@ Missing or failed results are unavailable, not zero findings. Preserve the proje
 
 ## Updates
 
-**Release status:** This documentation describes version 0.35.1, which fixes Windows/WSL FASTQ paths without changing 0.35.0 statistical methods or dependency pins; bundled biological datasets were not rerun for this patch. Review [version notices](https://tunabirgun.github.io/bulkseq-studio/faq.html#version-notices), [scientific changes](CHANGELOG.md) and the [upgrade guide](https://tunabirgun.github.io/bulkseq-studio/upgrade.html) before reusing older results. Pre-0.35.0 alternative-engine/enrichment outputs and pre-0.34.0 pooled-effect adjusted values may need review and recomputation. Upgrading does not revise historical results.
+**Release status:** This documentation describes version 0.36.0, which adds Slurm submission from the command line without changing 0.35.x statistical methods or scientific output; bundled biological datasets were not rerun for this release. Review [version notices](https://tunabirgun.github.io/bulkseq-studio/faq.html#version-notices), [scientific changes](CHANGELOG.md) and the [upgrade guide](https://tunabirgun.github.io/bulkseq-studio/upgrade.html) before reusing older results. Pre-0.35.0 alternative-engine/enrichment outputs and pre-0.34.0 pooled-effect adjusted values may need review and recomputation. Upgrading does not revise historical results.
 
 Close the app before installing an update, retain the original project, and rerun input validation. Source installation requires Python 3.11+ and PySide6 6.11.2+; see [CONTRIBUTING.md](CONTRIBUTING.md) for development.
 

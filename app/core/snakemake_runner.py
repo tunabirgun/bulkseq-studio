@@ -5,6 +5,7 @@ import os
 import queue
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -313,6 +314,117 @@ def site_profile_dir(exec_profile: str) -> str:
     return f"workflow/profiles/site/{exec_profile}"
 
 
+SLURM_LOGDIR = "logs/slurm"
+
+# What a cluster launch needs on the submitting host besides snakemake itself. Only the Slurm
+# plugin is part of the environment; the Kubernetes one must be added by the user.
+CLUSTER_EXECUTOR_PLUGINS = {
+    "slurm": ("snakemake_executor_plugin_slurm", "snakemake-executor-plugin-slurm"),
+    "kubernetes": ("snakemake_executor_plugin_kubernetes", "snakemake-executor-plugin-kubernetes"),
+}
+SHIPPED_EXECUTOR_PLUGINS = frozenset({"slurm"})
+CLUSTER_SUBMIT_COMMANDS = {"slurm": "sbatch"}
+
+
+def _snakemake_interpreter(snakemake: str, path: str) -> str | None:
+    """The Python that runs `snakemake`: its shebang when that names a Python, else the
+    interpreter installed beside it (conda rewrites long-prefix shebangs to /bin/sh)."""
+    script = Path(snakemake)
+    try:
+        with script.open("rb") as handle:
+            first = handle.readline().decode("utf-8", "replace").strip()
+    except OSError:
+        first = ""
+    if first.startswith("#!"):
+        parts = first[2:].split()
+        if len(parts) > 1 and Path(parts[0]).name == "env":
+            parts = [shutil.which(parts[-1], path=path) or ""]
+        if parts and Path(parts[0]).name.startswith("python") and Path(parts[0]).is_file():
+            return parts[0]
+    for folder in (script.parent, script.parent.parent):
+        for name in ("python", "python3", "python.exe"):
+            if (folder / name).is_file():
+                return str(folder / name)
+    return None
+
+
+def cluster_launch_problems(config: AppConfig, exec_profile: str, mode: str = "run",
+                            env: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
+    """(errors, warnings) for launching a cluster run from this host, judged against the
+    PATH the Snakemake child process will actually get. A local run has none.
+
+    No operating-system branch: Windows (and any workstation) is refused because it has no
+    `sbatch`, the same way a Linux host without Slurm is.
+    """
+    if exec_profile == "local":
+        return [], []
+    env = env if env is not None else _snakemake_child_env(False)
+    path = env.get("PATH", "")
+    errors: list[str] = []
+    warnings: list[str] = []
+    submit = CLUSTER_SUBMIT_COMMANDS.get(exec_profile)
+    if submit and mode != "dry-run" and not shutil.which(submit, path=path):
+        errors.append(
+            f"'{submit}' is not on PATH, so no job can be submitted. Run "
+            f"`bulkseq run --exec-profile {exec_profile}` on the cluster's Linux login node, where "
+            f"the scheduler commands are installed (a workstation, including Windows, cannot submit).")
+    module, package = CLUSTER_EXECUTOR_PLUGINS[exec_profile]
+    snakemake = shutil.which("snakemake", path=path)
+    if not snakemake:
+        errors.append(
+            "'snakemake' is not on PATH. Install the BulkSeq environment on this host "
+            "(scripts/setup_wsl_bioenv.sh full) or activate it before launching.")
+    else:
+        python = _snakemake_interpreter(snakemake, path)
+        probe = None
+        if python:
+            try:
+                probe = subprocess.run([python, "-c", f"import {module}"], env=env, timeout=120,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            except (OSError, subprocess.SubprocessError):
+                probe = None
+        if (probe is None or probe.returncode != 0) and exec_profile in SHIPPED_EXECUTOR_PLUGINS:
+            errors.append(
+                f"The {exec_profile} executor plugin ({package}) cannot be imported by the Python "
+                f"that runs {snakemake}. Repair the environment: rerun scripts/setup_wsl_bioenv.sh "
+                f"so it installs from the current lock (Check Environment does this in the app).")
+        elif probe is None or probe.returncode != 0:
+            errors.append(
+                f"The {exec_profile} executor plugin ({package}) is not part of the BulkSeq "
+                f"environment, and repairing the environment will not add it. Install it in the "
+                f"environment that runs {snakemake} yourself, and read "
+                f"workflow/profiles/site/{exec_profile}/config.yaml first: this target also needs a "
+                f"container image carrying the tools, which BulkSeq does not provide.")
+    if exec_profile == "slurm" and not config.execution.slurm_partition:
+        warnings.append(
+            "execution.slurm_partition is empty, so jobs go to the cluster's default partition. "
+            "Set one with `bulkseq config set execution.slurm_partition <name>` (list them with `sinfo -s`).")
+    return errors, warnings
+
+
+def cluster_default_resources(config: AppConfig, exec_profile: str) -> list[str]:
+    """The complete --default-resources list for a cluster run.
+
+    Passing --default-resources on the command line replaces the profile's list, so every
+    default a cluster run relies on is here. Defaults only fill resources a rule does not
+    declare; star_align keeps its own 24 GB. Snakemake evaluates each value as a Python
+    expression, so strings are passed as quoted literals.
+    """
+    execution = config.execution
+    resources = [
+        f"runtime={execution.default_runtime_min}",
+        # Snakemake's own fallback is 1000 MB, which OOM-kills the R steps (enrichment,
+        # figures, reports) on a scheduler that enforces the request.
+        f"mem_mb=max(2*input.size_mb, {execution.default_mem_mb})",
+    ]
+    if exec_profile == "slurm":
+        for key in ("slurm_partition", "slurm_account", "slurm_extra"):
+            value = getattr(execution, key)
+            if value:
+                resources.append(f"{key}={value!r}")
+    return resources
+
+
 def build_snakemake_args(
     config: AppConfig, mode: str = "run", project_root: Path | None = None,
     exec_profile: str = "local",
@@ -342,10 +454,19 @@ def build_snakemake_args(
         # mem_mb=N` must NOT be passed here: Snakemake CLAMPS every rule's request down to
         # the pool rather than refusing, so a laptop-sized default (8 GB) would submit
         # star_align — which declares 24 GB — with 8 GB and have it OOM-killed hours in.
-        # Job count and the thread ceiling come from the profile instead (see
-        # workflow/profiles/site/*/config.yaml), because `--jobs` alone silently doubles as
-        # the thread cap when `--cores` is absent.
-        args += ["--profile", site_profile_dir(exec_profile), "--resources", "downloads=3"]
+        # The thread ceiling comes from the profile (see workflow/profiles/site/*/config.yaml),
+        # because `--jobs` without `--cores` silently doubles as the per-rule thread cap.
+        # Site settings come from config.yaml's `execution` section, never from the copied
+        # profile: editing anything under workflow/ changes the recorded digest and the
+        # project then refuses to run.
+        args += ["--profile", site_profile_dir(exec_profile), "--resources", "downloads=3",
+                 "--jobs", str(config.execution.jobs),
+                 "--default-resources", *cluster_default_resources(config, exec_profile)]
+        if exec_profile == "slurm":
+            # Per-job sbatch logs inside the project's logs/, kept: by default the plugin
+            # deletes a successful job's log and, at every start, any log older than 10 days,
+            # failed jobs' logs included. logs/ is part of the run's record.
+            args += ["--slurm-logdir", SLURM_LOGDIR, "--slurm-keep-successful-logs"]
     args += ["--configfile", "config/config.yaml"]
     if mode == "dry-run":
         args.insert(1, "-n")
