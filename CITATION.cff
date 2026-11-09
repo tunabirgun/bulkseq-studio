@@ -6,8 +6,8 @@ authors:
   - family-names: "Birgün"
     given-names: "Tuna"
     orcid: "https://orcid.org/0009-0009-1827-7933"
-version: "0.35.1"
-date-released: "2026-11-01"
+version: "0.36.0"
+date-released: "2026-11-09"
 url: "https://tunabirgun.github.io/bulkseq-studio/"
 repository-code: "https://github.com/tunabirgun/bulkseq-studio"
 license: MIT

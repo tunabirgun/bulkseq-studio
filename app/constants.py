@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 APP_NAME = "BulkSeq Studio"
-APP_VERSION = "0.35.1"
-WORKFLOW_VERSION = "0.35.1"
+APP_VERSION = "0.36.0"
+WORKFLOW_VERSION = "0.36.0"
 # Named mutex held by a running application; packaging/installer.iss AppMutex must match.
 APP_MUTEX_NAME = "BulkSeqStudioRunning"
 

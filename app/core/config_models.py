@@ -553,11 +553,15 @@ class ResourcesConfig(BaseModel):
 _SLURM_NAME = re.compile(r"[A-Za-z0-9_.,-]{1,128}")
 # Options the Slurm executor sets itself from each rule's declared resources, or that would
 # redirect a job's identity or output. Allowing them in slurm_extra would let one setting
-# silently contradict what the run summary records for that rule.
+# silently contradict what the run summary records for that rule. It includes every option
+# snakemake-executor-plugin-slurm 2.8.0 refuses in slurm_extra (get_forbidden_slurm_options;
+# tests/test_slurm_execution.py compares the two where the plugin is installed), so a value
+# accepted here is not then rejected at submission.
 _SLURM_RESERVED_OPTIONS = frozenset({
-    "--account", "--partition", "--cpus-per-task", "--ntasks", "--nodes", "--mem", "--mem-per-cpu",
-    "--time", "--job-name", "--output", "--error", "--wrap", "--chdir", "--export", "--array",
-    "--dependency", "--parsable",
+    "--account", "--partition", "--cpus-per-task", "--cpus-per-gpu", "--ntasks", "--ntasks-per-gpu",
+    "--nodes", "--mem", "--mem-per-cpu", "--time", "--job-name", "--output", "--error", "--wrap",
+    "--chdir", "--workdir", "--export", "--array", "--dependency", "--parsable", "--comment",
+    "--constraint", "--qos", "--clusters", "--gres", "--gpus",
 })
 _SLURM_EXTRA_TOKEN = re.compile(r"--[A-Za-z][A-Za-z0-9-]*(=[A-Za-z0-9_.,:/@+=-]+)?")
 
@@ -573,8 +577,9 @@ class ExecutionConfig(BaseModel):
     # Slurm partition(s) and account. Empty means "let the site default decide".
     slurm_partition: str = ""
     slurm_account: str = ""
-    # Extra sbatch options, e.g. "--qos=normal --constraint=intel". Only --option or
-    # --option=value tokens; options the executor manages itself are refused.
+    # Extra sbatch options, e.g. "--nice=10 --mail-type=FAIL". Only --option or
+    # --option=value tokens; options the executor manages itself (including --qos and
+    # --constraint) are refused.
     slurm_extra: str = ""
     # Maximum number of jobs queued with the scheduler at once.
     jobs: int = Field(default=16, ge=1, le=10000)
@@ -586,7 +591,8 @@ class ExecutionConfig(BaseModel):
     default_mem_mb: int = Field(default=4000, ge=500, le=4_000_000)
     # Run the steps that need the internet (downloads, KEGG/g:Profiler/STRING queries, GEO
     # retrieval) on the submitting host instead of a compute node. Many clusters give compute
-    # nodes no outbound access; these steps are light.
+    # nodes no outbound access. Enrichment is the heaviest of them: 19-80 s and at most
+    # 1.4 GB peak memory on the bundled datasets (0.33.0 runs).
     network_rules_on_submit_host: bool = True
 
     @field_validator("slurm_partition", "slurm_account", mode="before")

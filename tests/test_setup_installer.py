@@ -218,7 +218,8 @@ def test_stage3_is_profile_aware_and_executes_direct_companion_tools() -> None:
         assert command in stage3
     assert 'run_limited 20 "$MICROMAMBA" run -n "$ENV_NAME" "$tool"' in stage3
     assert "path presence alone is never accepted" in stage3
-    assert "import numpy, pandas, yaml" in stage3
+    assert "numpy, pandas, yaml, snakemake_executor_plugin_slurm;" in stage3
+    assert 'md.version("snakemake-executor-plugin-slurm")' in stage3
 
 
 def test_install_command_survives_an_apostrophe_and_a_space_in_the_path(monkeypatch) -> None:

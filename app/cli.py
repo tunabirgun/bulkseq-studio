@@ -35,13 +35,14 @@ from app.core.snakemake_runner import (
     EXEC_PROFILES,
     SnakemakeRunner,
     build_snakemake_command,
+    cluster_launch_problems,
     run_snakemake_sync,
     snakemake_run_state,
 )
 
 EXIT_OK = 0
 EXIT_USAGE = 2
-EXIT_INVALID = 3       # not a project, an unreadable or invalid config, or a workflow copy that cannot be refreshed
+EXIT_INVALID = 3       # not a project, an unreadable or invalid config, a workflow copy that cannot be refreshed, or a host that cannot launch the cluster target
 EXIT_GATE = 4          # `bulkseq check` found a FAIL, or the sample sheet is missing or unreadable
 EXIT_RUN_FAILED = 5    # the Snakemake run itself failed
 EXIT_INTERRUPTED = 130
@@ -51,7 +52,8 @@ EXIT_CODE_HELP = (
     (EXIT_OK, "success; for check, also when the worst finding is WARNING or REVIEW_REQUIRED"),
     (1, "unexpected error, printed with a traceback; please report it"),
     (EXIT_USAGE, "usage error: no command, or an invalid option"),
-    (EXIT_INVALID, "not a project, an unreadable or invalid config, or the workflow copy could not be refreshed"),
+    (EXIT_INVALID, "not a project, an unreadable or invalid config, the workflow copy could not be refreshed, "
+                   "or this host cannot launch the chosen cluster target"),
     (EXIT_GATE, "check found a FAIL, or the sample sheet is missing or unreadable"),
     (EXIT_RUN_FAILED, "the workflow run failed"),
     (EXIT_INTERRUPTED, "interrupted with Ctrl-C"),
@@ -371,6 +373,13 @@ def cmd_run(args) -> int:
     if root is None:
         return EXIT_INVALID
     config = _load(root)
+    errors, warnings = cluster_launch_problems(config, args.exec_profile, args.mode)
+    for message in warnings:
+        _err(f"Warning: {message}")
+    if errors:
+        for message in errors:
+            _err(message)
+        return EXIT_INVALID
     # Mirrors the GUI's pre-run re-sync (main_window.py's launch flow): an existing project
     # keeps its own copy of workflow/, so an app update's workflow fix would not reach a CLI
     # run unless re-synced here too. A failed sync must block execution because its provenance
