@@ -373,7 +373,7 @@ def cluster_launch_problems(config: AppConfig, exec_profile: str, mode: str = "r
     if not snakemake:
         errors.append(
             "'snakemake' is not on PATH. Install the BulkSeq environment on this host "
-            "(scripts/setup_wsl_bioenv.sh full) or activate it before launching.")
+            "(bash scripts/setup_wsl_bioenv.sh bulkseq full) or activate it before launching.")
     else:
         python = _snakemake_interpreter(snakemake, path)
         probe = None

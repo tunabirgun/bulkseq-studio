@@ -19,16 +19,16 @@ Use an official x86-64 Windows or Linux package and follow the [installation gui
 
 The [tutorial](https://tunabirgun.github.io/bulkseq-studio/tutorial.html) explains the interface. [Synthetic example reports](https://tunabirgun.github.io/bulkseq-studio/examples/standard/results/reports/results_report.html) illustrate report reading, not biological validation.
 
-## Command line and HPC
+## Cluster runs
 
-The `bulkseq` command runs the same workflow as the interface. On a Slurm cluster, install both the analysis environment (`scripts/setup_wsl_bioenv.sh full`) and the command (`pip install -e .` from a source checkout) on the Linux login node, set the site settings in the project's configuration before the first run, and submit from there:
+The `bulkseq` command runs the same workflow as the interface, locally or on a Slurm cluster. On the cluster's Linux login node, install the analysis environment (`bash scripts/setup_wsl_bioenv.sh bulkseq full`) and the command (`pip install -e .` from a source checkout), set the site settings in the project's configuration before the first run, and submit:
 
 ```bash
 bulkseq config set -C PATH execution.slurm_partition short
 bulkseq run -C PATH --exec-profile slurm
 ```
 
-Do not edit the copied `workflow/profiles/site/slurm/config.yaml`; a changed workflow copy stops the project from running. Steps that need the internet run on the login node by default. Slurm submission was verified on a single-node test cluster, not on a production cluster, and Kubernetes execution is unverified. See [Command line and HPC](https://tunabirgun.github.io/bulkseq-studio/cli.html#hpc).
+Each step becomes its own Slurm job; steps that need the internet run on the login node. Do not edit the project's copy of `workflow/profiles/site/slurm/config.yaml`, which would stop the project from running. Slurm submission was verified on a single-node test cluster, not on a production cluster, and Kubernetes is unverified. See [Run on a Slurm cluster](https://tunabirgun.github.io/bulkseq-studio/cluster.html).
 
 ## Analysis boundaries
 

@@ -693,7 +693,7 @@ def _documented_invocations() -> dict[str, list[str]]:
 
     repo = _Path(__file__).resolve().parents[1]
     found: dict[str, list[str]] = {}
-    for rel in ("docs/cli.html", "README.md", "workflow/profiles/site/slurm/config.yaml",
+    for rel in ("docs/cli.html", "docs/cluster.html", "README.md", "workflow/profiles/site/slurm/config.yaml",
                 "workflow/profiles/site/kubernetes/config.yaml"):
         path = repo / rel
         if not path.is_file():
@@ -714,6 +714,10 @@ def _documented_invocations() -> dict[str, list[str]]:
         # Single line only: an invocation never wraps, and `\s` would let the trailing word of
         # one code line join the first word of the next ("... bulkseq" + newline + "pip install").
         for m in _re.finditer(r"(?:^|[ \t])bulkseq((?:[ \t]+[a-z][a-z-]*)+)", text, _re.M):
+            # `setup_wsl_bioenv.sh bulkseq full` names the environment, not the command.
+            preceding = text[:m.start()].rsplit("\n", 1)[-1].split()
+            if preceding and preceding[-1].endswith(".sh"):
+                continue
             words = m.group(1).split()
             # Stop at the first token that is not a bare subcommand word.
             cmd = []
