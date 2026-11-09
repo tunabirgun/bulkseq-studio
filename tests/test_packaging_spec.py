@@ -17,8 +17,8 @@ import yaml
 @pytest.mark.parametrize("release_url_works,digest_ok", [(True, True), (False, True), (False, False)])
 def test_ci_release_fetch_falls_back_and_always_checks_the_digest(tmp_path, release_url_works,
                                                                   digest_ok) -> None:
-    if os.name == "nt" or not shutil.which("bash") or not shutil.which("sha256sum"):
-        pytest.skip("needs POSIX bash and sha256sum")
+    if os.name == "nt" or not shutil.which("bash") or not shutil.which("python3"):
+        pytest.skip("needs POSIX bash and python3")
     import hashlib
     repo = Path(__file__).resolve().parents[1]
     stub = tmp_path / "bin"
@@ -43,7 +43,8 @@ def test_ci_release_fetch_falls_back_and_always_checks_the_digest(tmp_path, rele
         capture_output=True, text=True, timeout=60)
     assert (result.returncode == 0) == digest_ok, result.stdout + result.stderr
     assert ("API asset route" in result.stdout) == (not release_url_works)
-    assert dest.read_bytes() == b"payload"
+    # A download that fails the digest is deleted, never left for a later step to use.
+    assert dest.exists() == digest_ok and (not digest_ok or dest.read_bytes() == b"payload")
 
 
 def test_python_distribution_includes_the_application_and_shared_workflow_helper() -> None:
@@ -284,7 +285,7 @@ def test_linux_package_build_requires_all_three_verified_artifacts() -> None:
     assert (f"{fetch} AppImage/type2-runtime 20251108 runtime-x86_64 \\\n"
             "            2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d") in workflow
     fetcher = (repo / "scripts" / "ci_fetch_release_asset.sh").read_text(encoding="utf-8")
-    assert 'echo "$sha  $dest" | sha256sum --check --strict' in fetcher
+    assert 'if [ "$actual" != "$sha" ]; then' in fetcher and 'rm -f "$dest"' in fetcher
     assert 'echo "APPIMAGE_RUNTIME_FILE=$RUNNER_TEMP/appimage-runtime" >> "$GITHUB_ENV"' in workflow
     assert 'runtime_args=(--runtime-file "$(realpath "$APPIMAGE_RUNTIME_FILE")")' in appimage_script
     assert '"${runtime_args[@]}" -u "$UPDATE_INFO"' in appimage_script
