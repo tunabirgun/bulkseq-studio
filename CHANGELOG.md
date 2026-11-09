@@ -2,15 +2,52 @@
 
 ## 0.36.0 — 2026-11-09
 
-New feature with no change to scientific output: counting, differential-expression, enrichment and figure methods, their parameters and the analysis package pins are those of 0.35.1. A local run's results are unchanged. The workflow version is bumped because the copied workflow gains the cluster settings below, so existing projects re-synchronise when next run.
+Minor release: Slurm cluster execution from the command line. No scientific output changes: counting, differential-expression, enrichment and figure methods, their parameters and the analysis package pins are those of 0.35.1, and a local run produces the same results. The bundled datasets were not rerun for this release. The workflow version moves to 0.36.0 because the copied workflow gains the cluster behaviour below, so existing projects re-synchronise their workflow on the next run.
 
-- Add Slurm execution to `bulkseq run --exec-profile slurm`. The environment specifications and lock now carry `snakemake-executor-plugin-slurm` 2.8.0 with `snakemake-executor-plugin-slurm-jobstep` 0.6.1; without the plugin, Snakemake 9 could not submit to Slurm at all.
-- Move site settings into the project configuration: `execution.slurm_partition`, `slurm_account`, `slurm_extra`, `jobs`, `default_runtime_min`, `default_mem_mb` and `network_rules_on_submit_host`. The handbook previously told users to edit the copied Slurm profile, which changes the recorded workflow digest and makes the project refuse to run. `slurm_extra` accepts only `--option[=value]` tokens and refuses every option the executor plugin manages, including `--qos` and `--constraint`, which the plugin would otherwise reject at submission; this version has no setting for QOS or constraints.
-- Pass a cluster run one complete `--default-resources` list: walltime, a memory floor of max(2 × input size, 4000 MB) for rules that declare no memory (Snakemake's own 1000 MB default can OOM-kill the R steps), and the configured partition, account and extra options. Rules that declare resources keep them, and no global memory pool is passed. Every job's scheduler log is kept under `logs/slurm/`; the plugin's default deletion of successful and older logs is turned off.
-- Run the steps that need the internet (FASTQ, genome, annotation and rRNA-database downloads, GEO retrieval, enrichment, annotation-transfer enrichment and STRING) on the submitting host under a cluster executor, because compute nodes often lack outbound access. Cross-study, per-study and custom enrichment were checked and make no network calls. Local runs are unaffected.
-- Check a cluster launch before submitting: `sbatch` must be on the PATH and the plugin importable by the Python that runs Snakemake, otherwise `bulkseq run` exits 3 with the remedy; an empty partition warns. A Windows workstation is refused because it has no `sbatch`. A Kubernetes launch without its plugin is told that the plugin is not part of the environment and that the target needs a container image. Environment setup now verifies and reports the Slurm plugin version.
-- Validation: the full environment installs from the modified lock through `scripts/setup_wsl_bioenv.sh`. On a single-node Slurm 23.11 test cluster with slurmdbd accounting (WSL2, Ubuntu 24.04), synthetic 3-versus-3 FASTQ and count-matrix projects ran through `sbatch` (54 and 16 jobs, each recorded by `sacct`), with the reference downloads run on the submitting host. Their `counts.txt` and `deseq2_results.csv` were byte-identical to a local run of an identical copy. A third run set `slurm_account` and `slurm_extra`; `sacct` and `scontrol` showed both on every job, and all job logs were kept. No production cluster (including İTÜ UHEM), Kubernetes or macOS execution was verified.
-- Known limitation, unchanged from 0.35.1 (reproduced with its Snakefile): every `config.yaml` key tested, including the new `execution` settings, makes Snakemake replan the checks and all downstream steps of a completed project, including the genome index and alignment (36 of 54 jobs in the test project; trimming and FastQC were not replanned). Set the cluster settings before the first run.
+### Added
+
+- **Slurm execution.** `bulkseq run --exec-profile slurm` submits each workflow step as its own Slurm job from the cluster's login node. The environment specifications and the lock now carry `snakemake-executor-plugin-slurm` 2.8.0 with `snakemake-executor-plugin-slurm-jobstep` 0.6.1; without the plugin, Snakemake 9 could not submit to Slurm at all.
+- **Cluster settings in the project configuration.** A new `execution` section holds `slurm_partition`, `slurm_account`, `slurm_extra`, `jobs` (16), `default_runtime_min` (240), `default_mem_mb` (4000) and `network_rules_on_submit_host` (true). `slurm_extra` accepts only `--option` or `--option=value` tokens and refuses every option the executor plugin manages, including `--qos` and `--constraint`, which the plugin would otherwise reject at submission.
+- **Resources passed to the scheduler.** A cluster run receives `--jobs` and one complete `--default-resources` list: the walltime, a memory request of max(2 × input size, `default_mem_mb`) for steps that declare none, and the configured partition, account and extra options. Steps that declare memory keep it (STAR alignment 24 GB by default), and no global memory pool is passed. Snakemake's own fallback, 1000 MB, would kill the R steps on a scheduler that enforces requests.
+- **Internet steps on the login node.** Under a cluster executor, FASTQ, genome, annotation and rRNA-database downloads, GEO retrieval, enrichment, annotation-transfer enrichment and STRING run on the submitting host, because compute nodes often have no outbound access. Cross-study, per-study and custom enrichment were checked and make no network calls. Local runs are unaffected.
+- **Launch checks.** Before submitting, `bulkseq run` requires `sbatch` on the PATH and the executor plugin importable by the Python that runs Snakemake; otherwise it exits 3 and names the remedy. An empty partition produces a warning. A Windows workstation is refused because it has no `sbatch`.
+- **Kept scheduler logs.** Every job's log is written under `logs/slurm/rule_<step>/`. The plugin's default deletion of successful logs, and of all logs older than ten days, is turned off.
+
+### Fixed
+
+- **The documented Slurm set-up blocked the project.** The handbook told users to edit the copied `workflow/profiles/site/slurm/config.yaml`; any edit under the project's `workflow/` changes the recorded digest, and the project then refuses to run. Site settings now live in `config.yaml`, and the profile says not to edit it.
+- **A Kubernetes launch without its plugin pointed at the wrong remedy.** It now says that the plugin is not part of the environment and that the target also needs a container image carrying the tools.
+
+### Changed
+
+- **Environment setup verifies the plugin.** `scripts/setup_wsl_bioenv.sh` imports `snakemake_executor_plugin_slurm` with the other Python modules and prints its version.
+- **Exit status 3** also covers a host that cannot launch the chosen cluster target.
+
+### Continuous integration
+
+- Release-asset downloads (the AppImage tool and runtime, and micromamba for the R and osx-arm64 jobs) go through `scripts/ci_fetch_release_asset.sh`. It retries the release URL, falls back to the GitHub API asset route, and always enforces the pinned SHA-256. The direct URL returned HTTP 504 for long stretches and failed jobs before any project code ran.
+
+### Documentation
+
+- A new handbook page, [Run on a Slurm cluster](https://tunabirgun.github.io/bulkseq-studio/cluster.html), covers prerequisites, installation on the login node, settings, what runs where, resources, monitoring, failures and resuming, troubleshooting and what has been verified. The Command line page, exit-code reference, upgrade guide and README point to it.
+
+### Known limitations
+
+- Every `config.yaml` key tested, including the new `execution` settings, makes Snakemake replan the checks and all downstream steps of a completed project, including the genome index and alignment (36 of 54 jobs in the test project; trimming and FastQC were not replanned). This is unchanged from 0.35.1, reproduced with its Snakefile. Set the cluster settings before the first run.
+- No step declares a walltime, so `execution.default_runtime_min` applies to every job.
+- Steps without a declared memory request twice their input size with no upper limit. On large studies this includes `read_length` (all raw FASTQ files), `infer_strandedness` (all BAM files) and the genome checks.
+- QOS and node constraints cannot be set in this version.
+- If the plugin is given no account, it tries to guess one with a `sacct` call that fails, and then submits without an account. Set `execution.slurm_account` where the site bills to one.
+
+### Validation
+
+- The full environment installs from the modified lock through `scripts/setup_wsl_bioenv.sh bulkseq full`, and its import check reports `snakemake-executor-plugin-slurm=2.8.0`. The plugin and its jobstep also solve for osx-arm64.
+- A single-node Slurm 23.11 test cluster with slurmdbd accounting ran under WSL2 (Ubuntu 24.04). On it, synthetic 3-versus-3 FASTQ and count-matrix projects ran through `sbatch`, in 54 and 16 jobs, each recorded by `sacct` and the job-completion log; the reference downloads ran on the submitting host. Their `counts.txt` and `deseq2_results.csv` were byte-identical to a local run of an identical copy. All 20 planted differentially expressed genes were recovered in the correct direction, and the up- and down-regulated lists contained only those genes.
+- A third run set `slurm_account` and `slurm_extra`; `sacct` and `scontrol` showed both on every job, and all job logs were kept.
+- Each job's memory request matched its step: declared values were kept (STAR 24 GB, DESeq2 12 GB, featureCounts 8 GB, MultiQC 2 GB, FastQC 1 GB), and every undeclared step received the 4000 MB floor.
+- The launch checks refused a host whose environment lacked the plugin, and a PATH without `sbatch`, with exit 3.
+- Test suites: Windows, 1,723 passed and 18 skipped; Linux under WSL, 1,694 passed and 47 skipped; CI pytest on Ubuntu, Windows and macOS.
+- Not verified: a production cluster (including İTÜ UHEM), Kubernetes, macOS execution, `network_rules_on_submit_host: false` under a real scheduler, and the Windows refusal outside the test suite.
 
 ## 0.35.1 — 2026-11-01
 

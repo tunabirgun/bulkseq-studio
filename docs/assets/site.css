@@ -491,3 +491,6 @@ figure,table{break-inside:avoid}
 @media(max-width:540px){.masthead-inner{height:auto;min-height:104px;padding-top:8px;padding-bottom:4px;gap:0 16px}.header-actions{display:contents}.wordmark{grid-column:1;grid-row:1}.appearance-control{grid-column:1;grid-row:2;justify-self:start;margin-left:-4px}.search-trigger{grid-column:2;grid-row:1;justify-self:end;min-width:44px;min-height:44px}.menu-trigger{grid-column:2;grid-row:2;justify-self:end;min-height:44px}}
 html:not(.js) .js-only{display:none}
 @media print{:root,:root[data-theme="dark"],:root:not([data-theme]){color-scheme:light;--paper:#fff;--paper-raised:#fff;--canvas:#f3f3f3;--ink:#000;--ink-soft:#000;--ink-faint:#000;--rule:#aaa;--rule-strong:#555;--sage:#eee;--lavender:#eee;--warn:#000;--caution:#000;--ok:#000;--blue:#3d4ddb;--orange:#dd6846;--blue-soft:#eaedf6;--clay:#f4e5dc;--point-muted-opacity:.35}}
+/* Setting names stay whole; the table scrolls sideways on narrow screens instead. */
+.setting-table td:first-child code{overflow-wrap:normal;white-space:nowrap}
+.key-table td:nth-child(2) code{overflow-wrap:normal;white-space:nowrap}
