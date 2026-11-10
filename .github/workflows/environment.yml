@@ -128,9 +128,11 @@ jobs:
       - name: Build the image and run its tests
         run: |
           set -euo pipefail
+          # The build runs the definition's %test itself. The runner blocks unprivileged user
+          # namespaces and lacks squashfuse, so the checks after the build also run as root.
           sudo apptainer build "$RUNNER_TEMP/bulkseq.sif" packaging/apptainer/bulkseq.def
-          apptainer test "$RUNNER_TEMP/bulkseq.sif"
-          apptainer run "$RUNNER_TEMP/bulkseq.sif" slurm-script --help
+          sudo apptainer test "$RUNNER_TEMP/bulkseq.sif"
+          sudo apptainer run "$RUNNER_TEMP/bulkseq.sif" slurm-script --help
 
   # This Linux-hosted dry solve tracks osx-arm64 package availability only. The shipped
   # installer currently refuses macOS; solver success does not verify a Mac backend,
