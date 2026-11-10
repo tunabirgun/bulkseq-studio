@@ -105,6 +105,7 @@ if MICROARRAY_MODE:
             rule_threads("deseq2", 2)
         resources:
             mem_mb=rule_mem_mb("deseq2", 12),
+            runtime=rule_runtime_min("deseq2", 240),
         benchmark:
             "benchmarks/limma_de.tsv"
         log:
@@ -190,6 +191,7 @@ elif VOOM_MODE:
             rule_threads("deseq2", 2)
         resources:
             mem_mb=rule_mem_mb("deseq2", 12),
+            runtime=rule_runtime_min("deseq2", 240),
         benchmark:
             "benchmarks/voom_de.tsv"
         log:
@@ -228,6 +230,7 @@ elif EDGER_MODE:
             rule_threads("deseq2", 2)
         resources:
             mem_mb=rule_mem_mb("deseq2", 12),
+            runtime=rule_runtime_min("deseq2", 240),
         benchmark:
             "benchmarks/edger_de.tsv"
         log:
@@ -271,6 +274,7 @@ else:
             rule_threads("deseq2", 2)
         resources:
             mem_mb=rule_mem_mb("deseq2", 12),
+            runtime=rule_runtime_min("deseq2", 240),
         benchmark:
             "benchmarks/deseq2.tsv"
         log:

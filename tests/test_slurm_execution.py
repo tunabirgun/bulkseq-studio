@@ -76,7 +76,7 @@ def test_slurm_arguments_carry_the_project_execution_settings(project) -> None:
     assert _values(argv, "--slurm-logdir") == [SLURM_LOGDIR]
     assert "--slurm-keep-successful-logs" in argv
     assert _values(argv, "--default-resources") == [
-        "runtime=600",
+        "runtime=600*attempt",
         "mem_mb=max(2*input.size_mb, 6000)",
         "slurm_partition='debug'",
         "slurm_account='proj_01'",
@@ -104,7 +104,7 @@ def test_unset_slurm_settings_are_left_to_the_site(project) -> None:
 def test_kubernetes_gets_the_generic_defaults_only(project) -> None:
     argv = build_snakemake_args(_config(project, slurm_partition="debug"), "run", project,
                                 exec_profile="kubernetes")
-    assert _values(argv, "--default-resources") == ["runtime=240", "mem_mb=max(2*input.size_mb, 4000)"]
+    assert _values(argv, "--default-resources") == ["runtime=240*attempt", "mem_mb=max(2*input.size_mb, 4000)"]
     assert "--slurm-logdir" not in argv
 
 
@@ -305,7 +305,7 @@ def test_a_dry_run_does_not_need_sbatch(project, fake_host) -> None:
 
 def test_a_missing_plugin_says_to_repair_the_environment(project, fake_host) -> None:
     errors, _ = cluster_launch_problems(_config(project), "slurm", "run",
-                                        fake_host("sbatch", "snakemake", plugin=False))
+                                        fake_host("sbatch", "squeue", "sacct", "snakemake", plugin=False))
     assert len(errors) == 1 and PLUGIN in errors[0] and "Repair the environment" in errors[0]
 
 
@@ -318,16 +318,29 @@ def test_kubernetes_plugin_is_not_promised_by_an_environment_repair(project, fak
 
 
 def test_a_missing_snakemake_is_reported(project, fake_host) -> None:
-    errors, _ = cluster_launch_problems(_config(project), "slurm", "run", fake_host("sbatch"))
+    errors, _ = cluster_launch_problems(_config(project), "slurm", "run", fake_host("sbatch", "squeue", "sacct"))
     assert len(errors) == 1 and "'snakemake' is not on PATH" in errors[0]
 
 
-def test_a_ready_host_passes_and_only_an_empty_partition_warns(project, fake_host) -> None:
-    env = fake_host("sbatch", "snakemake")
+def test_a_submit_host_without_squeue_is_refused(project, fake_host) -> None:
+    errors, warnings = cluster_launch_problems(_config(project, slurm_partition="debug", slurm_account="a"),
+                                               "slurm", "run", fake_host("sbatch", "snakemake"))
+    assert len(errors) == 1 and "'squeue' is not on PATH" in errors[0]
+    assert any("sacct is not on PATH" in w for w in warnings)
+
+
+def test_a_ready_host_passes_and_only_empty_site_settings_warn(project, fake_host) -> None:
+    env = fake_host("sbatch", "squeue", "sacct", "snakemake")
     errors, warnings = cluster_launch_problems(_config(project), "slurm", "run", env)
-    assert errors == [] and len(warnings) == 1 and "slurm_partition" in warnings[0]
-    errors, warnings = cluster_launch_problems(_config(project, slurm_partition="debug"), "slurm", "run", env)
+    assert errors == [] and len(warnings) == 2
+    assert any("slurm_partition" in w for w in warnings) and any("slurm_account" in w for w in warnings)
+    errors, warnings = cluster_launch_problems(
+        _config(project, slurm_partition="debug", slurm_account="acct"), "slurm", "run", env)
     assert errors == [] and warnings == []
+    # Plugin 2.8.0 ignores --slurm-no-account, so the empty-account warning stays.
+    errors, warnings = cluster_launch_problems(
+        _config(project, slurm_partition="debug", slurm_account="", slurm_no_account=True), "slurm", "run", env)
+    assert errors == [] and len(warnings) == 1 and "slurm_account" in warnings[0]
 
 
 def test_local_runs_are_never_checked(project) -> None:

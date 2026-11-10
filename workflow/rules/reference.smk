@@ -175,6 +175,10 @@ rule read_length:
         lambda wc: [raw_fastq(s, 1) for s in SAMPLES],
     output:
         "results/qc/read_length.txt",
+    # Reads the first 10,000 reads of each file; declared so a cluster job is not sized from
+    # the whole study's FASTQ (the fallback is twice the summed input size).
+    resources:
+        mem_mb=2000,
     shell:
         # Disable pipefail: head closes the pipe early, giving zcat a SIGPIPE.
         r"""
@@ -190,6 +194,16 @@ rule read_length:
 
 if not STAR_INDEX_PREBUILT:
 
+    # STAR stops genomeGenerate when its own estimate exceeds --limitGenomeGenerateRAM, whose
+    # default is 31,000,000,000 bytes, however much memory the job holds; maize- and wheat-sized
+    # genomes exceed it. The ceiling is raised to 90% of the rule's reservation and only when that
+    # is above STAR's default, so it never lowers a limit that works today. The flag is spliced
+    # into the command text only then: Snakemake records that text, and an unchanged default
+    # command keeps existing projects from rebuilding their index after an update.
+    _STAR_INDEX_RAM_BYTES = rule_mem_base_mb("star_index", 24) * 1_000_000 * 9 // 10
+    _STAR_INDEX_RAM_FLAG = (f" --limitGenomeGenerateRAM {_STAR_INDEX_RAM_BYTES}"
+                            if _STAR_INDEX_RAM_BYTES > 31_000_000_000 else "")
+
     rule star_index:
         input:
             fa=GENOME_FA,
@@ -202,6 +216,7 @@ if not STAR_INDEX_PREBUILT:
             rule_threads("star_index", 8)
         resources:
             mem_mb=rule_mem_mb("star_index", 24),
+            runtime=rule_runtime_min("star_index", 720),
         benchmark:
             "benchmarks/star_index.tsv"
         log:
@@ -216,7 +231,7 @@ if not STAR_INDEX_PREBUILT:
             STAR --runMode genomeGenerate --genomeDir {output} \
                  --genomeFastaFiles {input.fa} --sjdbGTFfile {input.gtf} \
                  --sjdbOverhang $OH --genomeSAindexNbases $NBASES \
-                 --runThreadN {threads} >> {log} 2>&1
+                 --runThreadN {threads}""" + _STAR_INDEX_RAM_FLAG + r""" >> {log} 2>&1
             """
 
 
@@ -233,6 +248,7 @@ if not HISAT2_INDEX_PREBUILT:
             rule_threads("hisat2_index", 8)
         resources:
             mem_mb=rule_mem_mb("hisat2_index", 16),
+            runtime=rule_runtime_min("hisat2_index", 720),
         benchmark:
             "benchmarks/hisat2_index.tsv"
         log:
@@ -295,6 +311,7 @@ if not SALMON_INDEX_PREBUILT:
             rule_threads("salmon_index", 8)
         resources:
             mem_mb=rule_mem_mb("salmon_index", 16),
+            runtime=rule_runtime_min("salmon_index", 480),
         benchmark:
             "benchmarks/salmon_index.tsv"
         log:

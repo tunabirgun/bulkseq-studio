@@ -16,8 +16,14 @@ to stderr, so `bulkseq config show --json > c.json` is always clean.
 """
 
 import argparse
+import contextlib
 import json
+import os
+import shutil
+import signal
+import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -31,11 +37,16 @@ from app.core.preflight_checks import input_validation_messages
 from app.core.paths import project_configured_path
 from app.core.project import ProjectExistsError, ProjectManager, is_project_root
 from app.core.sanity_checks import aggregate_status
+from app.core.slurm_script import ALLOCATION_SCRIPT, finishing_command, render_allocation_script
 from app.core.snakemake_runner import (
     EXEC_PROFILES,
+    ONLINE_ANALYSIS_RULES,
+    PREFETCH_RULES,
+    RUN_STAGES,
     SnakemakeRunner,
     build_snakemake_command,
     cluster_launch_problems,
+    defined_rules,
     run_snakemake_sync,
     snakemake_run_state,
 )
@@ -129,18 +140,52 @@ def _metadata_for_project_validation(root: Path, frame):
 
 # ---------------------------------------------------------------- config get/set helpers
 
-def _walk_config(config: AppConfig, dotted: str):
-    """Resolve a dotted key against the pydantic model, returning (owner, field, value)."""
+def _walk_config(config: AppConfig, dotted: str, create: bool = False):
+    """Resolve a dotted key against the pydantic model, returning (owner, field, value).
+
+    A mapping field (execution.rule_resources) is walked by key; with ``create`` a missing
+    entry is added with its model's defaults, so `config set execution.rule_resources.
+    star_index.slurm_partition bigmem` works on a project that has no entry yet.
+    """
     parts = dotted.split(".")
     owner = config
-    for name in parts[:-1]:
+    for index, name in enumerate(parts[:-1]):
+        if isinstance(owner, dict):
+            if name not in owner:
+                value_type = _mapping_value_type(config, parts[:index])
+                if not create or value_type is None:
+                    raise KeyError(dotted)
+                owner[name] = value_type()
+            owner = owner[name]
+            continue
         if not hasattr(owner, name):
             raise KeyError(dotted)
         owner = getattr(owner, name)
     leaf = parts[-1]
+    if isinstance(owner, dict):
+        return owner, leaf, owner.get(leaf, "")
     if not hasattr(owner, leaf):
         raise KeyError(dotted)
     return owner, leaf, getattr(owner, leaf)
+
+
+def _mapping_value_type(config: AppConfig, path: list[str]):
+    """The model class stored in the mapping field at ``path`` (e.g. RuleSlurmPlacement)."""
+    import typing
+
+    owner = config
+    for name in path[:-1]:
+        owner = getattr(owner, name)
+    field = type(owner).model_fields.get(path[-1]) if hasattr(type(owner), "model_fields") else None
+    args = typing.get_args(field.annotation) if field else ()
+    return args[1] if len(args) == 2 and isinstance(args[1], type) else None
+
+
+def _positive_int(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return value
 
 
 def _coerce(current, raw: str):
@@ -162,8 +207,13 @@ def _coerce(current, raw: str):
         return float(raw)
     if current is None or isinstance(current, str):
         return raw
+    if isinstance(current, (list, dict)) and raw.strip()[:1] in ("[", "{"):
+        # Structured values as YAML/JSON, e.g. a contrast list or execution.rule_resources.
+        return yaml.safe_load(raw)
     if isinstance(current, list):
         return [item.strip() for item in raw.split(",") if item.strip()]
+    if hasattr(current, "model_dump") and raw.strip()[:1] == "{":
+        return type(current).model_validate(yaml.safe_load(raw))
     return raw
 
 
@@ -260,14 +310,19 @@ def cmd_config_set(args) -> int:
     manager = ProjectManager()
     config = manager.load_config(root)
     try:
-        owner, leaf, current = _walk_config(config, args.key)
+        owner, leaf, current = _walk_config(config, args.key, create=True)
     except KeyError:
         _err(f"No such config key: {args.key}\n"
              f"List them with:  bulkseq config show")
         return EXIT_INVALID
     try:
-        new_value = _coerce(current, args.value)
-    except ValueError as exc:
+        if isinstance(owner, dict) and leaf not in owner:
+            # A new entry of a mapping field: parse the value as that entry's model.
+            value_type = _mapping_value_type(config, args.key.split(".")[:-1])
+            new_value = value_type.model_validate(yaml.safe_load(args.value)) if value_type else _coerce(current, args.value)
+        else:
+            new_value = _coerce(current, args.value)
+    except (ValueError, yaml.YAMLError) as exc:
         _err(f"Cannot parse value for {args.key}: {exc}")
         return EXIT_INVALID
 
@@ -276,8 +331,12 @@ def cmd_config_set(args) -> int:
     # anything reinvented here. The file is only written once validation passes, so a
     # rejected value leaves config.yaml untouched.
     try:
-        setattr(owner, leaf, new_value)
-        AppConfig.model_validate(config.model_dump(mode="json"))
+        if isinstance(owner, dict):
+            owner[leaf] = new_value
+        else:
+            setattr(owner, leaf, new_value)
+        # warnings=False: a mapping entry assigned above is still a plain dict until validated.
+        config = AppConfig.model_validate(config.model_dump(mode="json", warnings=False))
     except Exception as exc:  # noqa: BLE001 - pydantic raises its own ValidationError type
         _err(f"Invalid value for {args.key}: {exc}")
         return EXIT_INVALID
@@ -373,7 +432,12 @@ def cmd_run(args) -> int:
     if root is None:
         return EXIT_INVALID
     config = _load(root)
-    errors, warnings = cluster_launch_problems(config, args.exec_profile, args.mode)
+    stage = getattr(args, "stage", "all")
+    if stage != "all" and args.exec_profile != "local":
+        _err("--stage splits a run across hosts with the local executor; use it with --exec-profile local "
+             "(see `bulkseq slurm-script`).")
+        return EXIT_USAGE
+    errors, warnings = cluster_launch_problems(config, args.exec_profile, args.mode, project_root=root)
     for message in warnings:
         _err(f"Warning: {message}")
     if errors:
@@ -396,8 +460,112 @@ def cmd_run(args) -> int:
         unlock_cmd = build_snakemake_command(root, config, "unlock", use_wsl=use_wsl,
                                               exec_profile=args.exec_profile)
         SnakemakeRunner(root, unlock_cmd).unlock(config)
-    code = run_snakemake_sync(root, config, args.mode, exec_profile=args.exec_profile)
+    options = {"cores": getattr(args, "cores", None), "memory_gb": getattr(args, "memory_gb", None)}
+    if stage != "all":
+        rules = defined_rules(root, config)
+        if rules is None:
+            _err("Could not list the workflow's rules for this stage; run `bulkseq run --mode dry-run` "
+                 "to see why.")
+            return EXIT_RUN_FAILED
+        if stage in ("prefetch", "online") and not set(rules) & set(PREFETCH_RULES if stage == "prefetch" else ONLINE_ANALYSIS_RULES):
+            print(f"This project has no {stage} stage: none of its steps belongs to it.", file=sys.stderr)
+            return EXIT_OK
+        options.update(stage=stage, defined_rules=rules)
+    with _hangup_stops_run(), _run_log(root, args.exec_profile, stage) as emit:
+        code = run_snakemake_sync(root, config, args.mode, exec_profile=args.exec_profile, on_line=emit, **options)
     return EXIT_OK if code == 0 else EXIT_RUN_FAILED
+
+
+@contextlib.contextmanager
+def _hangup_stops_run():
+    """Treat a closed terminal (SIGHUP) or a SIGTERM like Ctrl-C.
+
+    Without this a dropped SSH session kills only this relay: Snakemake runs on in its own
+    process group with nowhere to write, and on a cluster its queued jobs are orphaned. Raising
+    KeyboardInterrupt sends it through the same stop path as Ctrl-C, which cancels the jobs.
+    Run inside tmux or screen (or as a batch job) to survive a disconnect instead.
+    """
+    previous = {}
+
+    def interrupt(signum, _frame):
+        raise KeyboardInterrupt
+
+    for name in ("SIGHUP", "SIGTERM"):
+        if hasattr(signal, name):
+            try:
+                previous[name] = signal.signal(getattr(signal, name), interrupt)
+            except (ValueError, OSError):
+                pass
+    try:
+        yield
+    finally:
+        for name, handler in previous.items():
+            signal.signal(getattr(signal, name), handler)
+
+
+@contextlib.contextmanager
+def _run_log(root: Path, exec_profile: str, stage: str):
+    """Mirror a cluster, split-stage or in-allocation run's output into logs/ (outlives the terminal)."""
+    def show(line: str) -> None:
+        print(line, file=sys.stderr)
+
+    if exec_profile == "local" and stage == "all" and not os.environ.get("SLURM_JOB_ID"):
+        yield show
+        return
+    path = root / "logs" / f"bulkseq_run_{datetime.now():%Y%m%d_%H%M%S}_{exec_profile}_{stage}.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        print(f"Recording this run's output in {path}", file=sys.stderr)
+
+        def tee(line: str) -> None:
+            show(line)
+            try:
+                handle.write(line + "\n")
+                handle.flush()
+            except OSError:
+                pass
+        yield tee
+
+
+def cmd_slurm_script(args) -> int:
+    """Write (and optionally submit) the single-allocation job script."""
+    root = _resolve_project(args)
+    if root is None:
+        return EXIT_INVALID
+    config = _load(root)
+    execution = config.execution
+    script = root / ALLOCATION_SCRIPT
+    # Slurm does not create the directory of --output; a missing one fails the job at once.
+    (root / "logs" / "slurm").mkdir(parents=True, exist_ok=True)
+    script.write_text(render_allocation_script(root, config), encoding="utf-8", newline="\n")
+    print(f"Wrote {script}", file=sys.stderr)
+    if not args.submit:
+        _emit({"script": str(script)} if args.json else f"Submit it with:  sbatch {script}", args)
+        return EXIT_OK
+    sbatch = shutil.which("sbatch")
+    if not sbatch:
+        _err("'sbatch' is not on PATH; run this on the cluster's login node.")
+        return EXIT_INVALID
+    if not execution.compute_nodes_have_internet and not args.no_prefetch:
+        print("Downloading inputs on this host first (compute nodes have no internet: "
+              "execution.compute_nodes_have_internet is false)...", file=sys.stderr)
+        prefetch = argparse.Namespace(**{**vars(args), "mode": "resume", "exec_profile": "local", "stage": "prefetch",
+                                         "cores": execution.local_cores, "memory_gb": None})
+        code = cmd_run(prefetch)
+        if code != EXIT_OK:
+            _err("The download stage failed, so nothing was submitted. Fix it and rerun this command.")
+            return code
+    result = subprocess.run([sbatch, "--parsable", str(script)], cwd=root, capture_output=True, text=True)
+    if result.returncode != 0:
+        _err(f"sbatch refused the job:\n{result.stderr.strip()}")
+        return EXIT_RUN_FAILED
+    job = result.stdout.strip().split(";")[0]
+    follow = f"squeue -j {job}; tail -f {root / 'logs' / 'slurm' / f'allocation-{job}.log'}"
+    finish = ("" if execution.compute_nodes_have_internet else
+              f"\nWhen it has finished, complete the online steps, figures and reports here:  {finishing_command(root, config)}")
+    _emit({"job_id": job, "script": str(script)} if args.json
+          else f"Submitted job {job}. Follow it with:  {follow}{finish}", args)
+    return EXIT_OK
 
 
 # ------------------------------------------------------------------------------ parser
@@ -470,7 +638,24 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--exec-profile", default="local", choices=list(EXEC_PROFILES),
                      dest="exec_profile",
                      help="where jobs run: this machine, or a cluster scheduler")
+    run.add_argument("--stage", default="all", choices=list(RUN_STAGES),
+                     help="run part of the workflow with the local executor: prefetch = only the downloads "
+                          "(a host with internet); compute = all but the online steps after differential "
+                          "expression and what depends on them (a node without internet); online = only "
+                          "those online steps (a host with internet); all = everything still missing")
+    run.add_argument("--cores", type=_positive_int, default=None,
+                     help="CPU cores for this run only (local executor; default resources.total_threads)")
+    run.add_argument("--memory-gb", type=_positive_int, default=None, dest="memory_gb",
+                     help="memory in GB for this run only (local executor; default resources.total_memory_gb)")
     run.set_defaults(func=cmd_run)
+
+    script = sub.add_parser("slurm-script", parents=[common],
+                            help="write the job script that runs the whole workflow in one Slurm allocation")
+    script.add_argument("--submit", action="store_true",
+                        help="download the inputs on this host, then submit the script with sbatch")
+    script.add_argument("--no-prefetch", action="store_true", dest="no_prefetch",
+                        help="with --submit: skip the download stage (the inputs are already present)")
+    script.set_defaults(func=cmd_slurm_script)
 
     return parser
 

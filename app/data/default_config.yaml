@@ -64,6 +64,7 @@ reference:
   genome_md5: null
   annotation_md5: null
   genome_size_category: custom
+  bam_index: auto
 workflow:
   meta_analysis: false   # multi-study meta-analysis (a `dataset` column with >1 study, ticked on)
   per_study_enrichment: false   # opt-in: per-study ORA/GSEA in a meta run (heavy; clusterProfiler x N studies)
@@ -228,11 +229,40 @@ resources:
 execution:
   slurm_partition: ''
   slurm_account: ''
+  slurm_qos: ''
+  slurm_constraint: ''
+  slurm_clusters: ''
+  slurm_reservation: ''
   slurm_extra: ''
+  slurm_no_account: false
+  slurm_requeue: site-default
+  slurm_array_jobs: ''
+  slurm_array_limit: 0
+  slurm_status_command: auto
+  slurm_jobname_prefix: ''
+  slurm_exclude_nodes: ''
+  slurm_pass_command_as_script: false
+  slurm_efficiency_report: false
+  slurm_partition_config: ''
+  rule_resources: {}
   jobs: 16
+  min_cpus_per_job: 0
+  local_cores: 2
+  latency_wait_s: 60
+  retries: 1
+  max_runtime_min: 0
+  max_mem_mb: 0
   default_runtime_min: 240
   default_mem_mb: 4000
+  tmpdir: ''
   network_rules_on_submit_host: true
+  allocation_cpus: 0
+  allocation_mem_gb: 0
+  allocation_time_min: 1440
+  compute_nodes_have_internet: false
+  container_image: ''
+  container_runtime: apptainer
+  container_binds: []
 rule_threads:
   fastqc: 1
   fastp: 4
@@ -261,3 +291,13 @@ rule_memory_gb:
   featurecounts: 8
   deseq2: 12
   multiqc: 2
+rule_runtime_min:
+  star_index: 720
+  hisat2_index: 720
+  salmon_index: 480
+  star_align: 360
+  hisat2_align: 360
+  salmon_quant: 240
+  sortmerna: 360
+  featurecounts: 240
+  deseq2: 240

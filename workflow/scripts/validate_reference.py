@@ -203,6 +203,28 @@ def build_reference_evidence(
         fasta_metrics, fasta_contigs = inspect_fasta(fasta)
     except (OSError, ReferenceStagingError) as exc:
         _message(messages, "FAIL", f"FASTA content validation failed: {exc}")
+    # A BAI index addresses at most 2^29-1 bp per sequence, so `samtools index` would fail after
+    # alignment. The Snakefile chooses CSI from reference.bam_index, a .fai beside the genome or
+    # the organism; mirror that choice here and stop the run before alignment when it is BAI.
+    longest = int(fasta_metrics.get("longest_sequence_bp") or 0)
+    if longest > 2**29 - 1:
+        chosen = str(reference.get("bam_index") or "auto").lower()
+        if chosen == "auto":
+            csi_by_fai = False
+            try:
+                with (Path(str(fasta) + ".fai")).open(encoding="utf-8") as handle:
+                    csi_by_fai = max(int(line.split("\t")[1]) for line in handle if line.strip()) > 2**29 - 1
+            except (OSError, ValueError, IndexError):
+                pass
+            chosen = "csi" if csi_by_fai or reference.get("organism_name") in ("Triticum aestivum", "Hordeum vulgare") else "bai"
+        if chosen != "csi":
+            _message(
+                messages,
+                "FAIL",
+                f"The longest reference sequence has {longest:,} bp, above the 536,870,911 bp a BAI index can "
+                "address, so BAM indexing would fail. Set reference.bam_index to csi "
+                "(`bulkseq config set reference.bam_index csi`) and rerun.",
+            )
     try:
         annotation_metrics, annotation_contigs, feature_rows_by_contig = inspect_annotation(
             annotation,

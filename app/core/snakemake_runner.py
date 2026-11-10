@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -49,10 +50,12 @@ FAILURE_MARKERS = re.compile(
 # a Ctrl-C waits for the reader to notice the closed pipe after the tree was killed.
 _OUTPUT_POLL_SEC = 0.1
 _READER_JOIN_SEC = 5.0
+# How long a stopped cluster run may spend cancelling its scheduler jobs.
+_CLUSTER_CANCEL_GRACE_SEC = 180
 
 
 def run_snakemake_sync(project_root, config: AppConfig, mode: str, *, exec_profile: str = "local",
-                        on_line=None) -> int:
+                        on_line=None, **arg_options) -> int:
     """Run a Snakemake command to completion, streaming output and returning an exit code.
 
     Launch-equivalent to the GUI's SnakemakeRunner.start(): same cwd, child env, and stream
@@ -72,7 +75,7 @@ def run_snakemake_sync(project_root, config: AppConfig, mode: str, *, exec_profi
     use_wsl = sys.platform.startswith("win") and exec_profile == "local"
     run_tag = _new_run_tag() if use_wsl else None
     command = build_snakemake_command(project_root, config, mode, use_wsl=use_wsl,
-                                       run_tag=run_tag, exec_profile=exec_profile)
+                                       run_tag=run_tag, exec_profile=exec_profile, **arg_options)
     emit = on_line or (lambda line: print(line, file=sys.stderr))
     failed_in_output = False
     runner = SnakemakeRunner(project_root, command)
@@ -113,6 +116,19 @@ def run_snakemake_sync(project_root, config: AppConfig, mode: str, *, exec_profi
     if failed_in_output and code == 0:
         return 1
     return code
+
+
+def defined_rules(project_root, config: AppConfig) -> list[str] | None:
+    """Rules the project's workflow defines for its current configuration, or None on failure.
+
+    Asked of Snakemake itself (--list-rules) because which rules exist depends on the input
+    route and settings, which only the Snakefile evaluates.
+    """
+    lines: list[str] = []
+    code = run_snakemake_sync(project_root, config, "list-rules", on_line=lines.append)
+    if code != 0:
+        return None
+    return [line.strip() for line in lines if re.fullmatch(r"\s*[A-Za-z_][A-Za-z0-9_]*\s*", line)]
 
 
 def _pump_output(stream, lines: "queue.SimpleQueue[str]") -> None:
@@ -182,6 +198,8 @@ class SnakemakeCommand:
     use_wsl: bool = False
     distro: str | None = None
     run_tag: str | None = None
+    # A cluster executor owns scheduler jobs that must be cancelled on stop (see stop()).
+    cluster: bool = False
 
 
 def _target_input_exists(project_root: Path | None, rel_path: str) -> bool:
@@ -349,7 +367,8 @@ def _snakemake_interpreter(snakemake: str, path: str) -> str | None:
 
 
 def cluster_launch_problems(config: AppConfig, exec_profile: str, mode: str = "run",
-                            env: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
+                            env: dict[str, str] | None = None,
+                            project_root: Path | None = None) -> tuple[list[str], list[str]]:
     """(errors, warnings) for launching a cluster run from this host, judged against the
     PATH the Snakemake child process will actually get. A local run has none.
 
@@ -395,11 +414,134 @@ def cluster_launch_problems(config: AppConfig, exec_profile: str, mode: str = "r
                 f"environment that runs {snakemake} yourself, and read "
                 f"workflow/profiles/site/{exec_profile}/config.yaml first: this target also needs a "
                 f"container image carrying the tools, which BulkSeq does not provide.")
-    if exec_profile == "slurm" and not config.execution.slurm_partition:
+    if exec_profile == "slurm":
+        _slurm_launch_problems(config, mode, env, path, errors, warnings, project_root)
+    return errors, warnings
+
+
+def _slurm_minutes(text: str) -> int | None:
+    """Minutes in a Slurm time limit ('7-00:00:00', '4:00:00', '30:00'); None if unlimited."""
+    text = text.strip()
+    if not text or text.lower() in ("infinite", "unlimited", "n/a"):
+        return None
+    days, _, clock = text.rpartition("-")
+    parts = [int(p) for p in clock.split(":")]
+    while len(parts) < 3:
+        parts.insert(0, 0)
+    hours, minutes, seconds = parts[-3:]
+    return int(days or 0) * 1440 + hours * 60 + minutes + (1 if seconds else 0)
+
+
+def slurm_partition_limits(partition: str, env: dict[str, str], path: str) -> dict[str, int | None] | None:
+    """Largest walltime (min), CPUs per node and memory per node (MB) in a partition, from sinfo.
+
+    None when sinfo is missing, fails or knows no such partition. A partition list
+    ("a,b") is judged by its most generous member, as Slurm would place the job there.
+    """
+    sinfo = shutil.which("sinfo", path=path)
+    if not sinfo:
+        return None
+    try:
+        result = subprocess.run([sinfo, "-h", "-p", partition, "-o", "%l|%c|%m"], env=env, timeout=60,
+                                capture_output=True, text=True)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    rows = [line.split("|") for line in result.stdout.splitlines() if line.count("|") == 2]
+    if result.returncode != 0 or not rows:
+        return None
+    limits: dict[str, int | None] = {"time_min": 0, "cpus": 0, "mem_mb": 0}
+    for time_text, cpus, mem in rows:
+        try:
+            minutes = _slurm_minutes(time_text)
+        except ValueError:
+            minutes = None
+        limits["time_min"] = None if minutes is None or limits["time_min"] is None else max(limits["time_min"], minutes)
+        for key, raw in (("cpus", cpus), ("mem_mb", mem)):
+            digits = "".join(ch for ch in raw if ch.isdigit())
+            if digits:
+                limits[key] = max(int(limits[key] or 0), int(digits))
+    return limits
+
+
+def _slurm_launch_problems(config: AppConfig, mode: str, env: dict[str, str], path: str,
+                           errors: list[str], warnings: list[str], project_root: Path | None) -> None:
+    execution = config.execution
+    # Judged only on a host that can submit at all; without sbatch one error says enough.
+    if mode != "dry-run" and shutil.which("sbatch", path=path):
+        if not shutil.which("squeue", path=path):
+            errors.append("'squeue' is not on PATH; the Slurm executor needs it to follow jobs.")
+        if not shutil.which("sacct", path=path):
+            if execution.slurm_status_command == "sacct":
+                errors.append("execution.slurm_status_command is 'sacct', but sacct is not on PATH. "
+                              "Set it to squeue or auto.")
+            else:
+                warnings.append("sacct is not on PATH, so job states come from squeue, which forgets a "
+                                "finished job after a few minutes. Keep execution.latency_wait_s generous.")
+    if execution.slurm_partition_config and not (Path(project_root or ".") / execution.slurm_partition_config).is_file():
+        errors.append(f"execution.slurm_partition_config names {execution.slurm_partition_config!r}, "
+                      "which does not exist (the path is relative to the project folder).")
+    if not execution.slurm_account:
+        warnings.append(
+            "execution.slurm_account is empty. Most centres (TRUBA and UHeM among them) require -A; "
+            "set it with `bulkseq config set execution.slurm_account <account>` (UHeM: `projelerim`; "
+            "elsewhere `sacctmgr show assoc user=$USER format=account`). Without one the executor tries "
+            "to guess an account with sacct and submits without -A when that fails.")
+    if not execution.slurm_partition:
         warnings.append(
             "execution.slurm_partition is empty, so jobs go to the cluster's default partition. "
             "Set one with `bulkseq config set execution.slurm_partition <name>` (list them with `sinfo -s`).")
-    return errors, warnings
+        return
+    partitions = {execution.slurm_partition}
+    partitions.update(p.slurm_partition for p in execution.rule_resources.values() if p.slurm_partition)
+    placed_partition = {rule: p.slurm_partition for key, p in execution.rule_resources.items()
+                        for rule in step_rules(key) if p.slurm_partition}
+    # Per-step settings keyed by step; a rule's values are those of the step it belongs to.
+    step_of = {rule: key for key, rules in STEP_RULES.items() for rule in rules}
+    threads = config.rule_threads.model_dump()
+    memory = {name: gb * 1000 for name, gb in config.rule_memory_gb.model_dump().items()}
+    runtime = config.rule_runtime_min.model_dump()
+    for partition in sorted(partitions):
+        limits = slurm_partition_limits(partition, env, path)
+        if limits is None:
+            if shutil.which("sinfo", path=path):
+                warnings.append(f"sinfo reports no partition {partition!r}; check the name with `sinfo -s`.")
+            continue
+        every_rule = {rule for key in set(threads) | set(memory) | set(runtime) for rule in step_rules(key)}
+        if partition == execution.slurm_partition:
+            judged = {rule for rule in every_rule if placed_partition.get(rule, partition) == partition}
+        else:
+            judged = {rule for rule, where in placed_partition.items() if where == partition}
+        cpus, mem_mb, time_min = limits["cpus"], limits["mem_mb"], limits["time_min"]
+        for name in sorted(judged):
+            key = step_of.get(name, name)
+            if cpus and max(threads.get(key, 0), execution.min_cpus_per_job) > cpus:
+                warnings.append(f"{name} asks for {max(threads.get(key, 0), execution.min_cpus_per_job)} CPUs, "
+                                f"but the largest node in partition {partition!r} has {cpus}.")
+            if mem_mb and memory.get(key, 0) > mem_mb:
+                warnings.append(f"{name} asks for {memory[key]} MB (rule_memory_gb.{key}), but the largest node "
+                                f"in partition {partition!r} has {mem_mb} MB. Lower it, or place the step on a "
+                                f"larger partition with execution.rule_resources.{key}.slurm_partition.")
+            if time_min and runtime.get(key, 0) > time_min:
+                warnings.append(f"{name} asks for {runtime[key]} min (rule_runtime_min.{key}), above the "
+                                f"{time_min} min limit of partition {partition!r}.")
+        if time_min and execution.default_runtime_min > time_min:
+            warnings.append(f"execution.default_runtime_min ({execution.default_runtime_min}) is above the "
+                          f"{time_min} min limit of partition {partition!r}.")
+        if time_min and not execution.max_runtime_min and execution.retries:
+            warnings.append(f"A retried job doubles its walltime; set execution.max_runtime_min to {time_min} "
+                            f"so a retry never asks for more than partition {partition!r} allows.")
+    squeue = shutil.which("squeue", path=path)
+    if squeue and mode in ("run", "resume"):
+        try:
+            queued = subprocess.run([squeue, "--me", "-h", "-o", "%i"], env=env, timeout=60,
+                                    capture_output=True, text=True)
+            count = len(queued.stdout.split()) if queued.returncode == 0 else 0
+        except (OSError, subprocess.SubprocessError):
+            count = 0
+        if count:
+            warnings.append(f"You already have {count} job(s) in the queue (`squeue --me`). If any belong to an "
+                            "earlier run of this project, cancel them with scancel first: a resumed run "
+                            "submits those steps again and two jobs would then write the same files.")
 
 
 def cluster_default_resources(config: AppConfig, exec_profile: str) -> list[str]:
@@ -417,19 +559,131 @@ def cluster_default_resources(config: AppConfig, exec_profile: str) -> list[str]
         # figures, reports) on a scheduler that enforces the request.
         f"mem_mb=max(2*input.size_mb, {execution.default_mem_mb})",
     ]
+    if execution.tmpdir:
+        resources.append(f"tmpdir={execution.tmpdir!r}")
+    # A retried job (attempt 2, 3, ...) asks for attempt x the fallback walltime, capped by
+    # max_runtime_min; the fallback memory grows the same way only under max_mem_mb. Snakemake
+    # evaluates these with `attempt` and `input` in scope.
+    if execution.retries:
+        runtime = f"{execution.default_runtime_min}*attempt"
+        resources[0] = f"runtime=min({runtime}, {execution.max_runtime_min})" if execution.max_runtime_min else f"runtime={runtime}"
+        if execution.max_mem_mb:
+            resources[1] = f"mem_mb=min(max(2*input.size_mb, {execution.default_mem_mb})*attempt, {execution.max_mem_mb})"
     if exec_profile == "slurm":
-        for key in ("slurm_partition", "slurm_account", "slurm_extra"):
+        # QOS travels as a resource rather than --slurm-qos: the plugin appends both when both
+        # are set, and only the resource can be overridden per rule (execution.rule_resources).
+        for key, resource in SLURM_DEFAULT_RESOURCE_KEYS:
             value = getattr(execution, key)
             if value:
-                resources.append(f"{key}={value!r}")
+                resources.append(f"{resource}={value!r}")
+        if execution.min_cpus_per_job:
+            resources.append(f"cpus_per_task=max(threads, {execution.min_cpus_per_job})")
     return resources
+
+
+# execution.<field> -> the plugin's resource name.
+SLURM_DEFAULT_RESOURCE_KEYS = (
+    ("slurm_partition", "slurm_partition"),
+    ("slurm_account", "slurm_account"),
+    ("slurm_qos", "qos"),
+    ("slurm_constraint", "constraint"),
+    ("slurm_clusters", "clusters"),
+    ("slurm_extra", "slurm_extra"),
+)
+
+
+# The per-step settings (rule_threads, rule_memory_gb, rule_runtime_min, rule_resources) are
+# keyed by step names that several rules share. --set-resources and --slurm-array-jobs take
+# Snakemake rule names, so a step key is expanded to the rules that read it; a name not listed
+# here is taken to be a rule name already.
+STEP_RULES: dict[str, tuple[str, ...]] = {
+    "fastqc": ("fastqc_raw", "fastqc_trim"),
+    "fastp": ("fastp_se", "fastp_pe", "trim_galore_se", "trim_galore_pe", "trimmomatic_se", "trimmomatic_pe"),
+    "sortmerna": ("sortmerna_index", "sortmerna_se", "sortmerna_pe", "ribodetector_se", "ribodetector_pe"),
+    "deseq2": ("deseq2", "limma_de", "voom_de", "edger_de"),
+}
+
+
+def step_rules(name: str) -> tuple[str, ...]:
+    return STEP_RULES.get(name, (name,))
+
+
+def slurm_plugin_args(config: AppConfig) -> list[str]:
+    """The plugin's own command-line settings, from execution.slurm_*."""
+    execution = config.execution
+    # Per-job sbatch logs inside the project's logs/, kept: by default the plugin deletes a
+    # successful job's log and, at every start, any log older than 10 days, failed jobs'
+    # logs included. logs/ is part of the run's record.
+    args = ["--slurm-logdir", SLURM_LOGDIR, "--slurm-keep-successful-logs",
+            "--slurm-delete-logfiles-older-than", "0"]
+    if execution.slurm_requeue == "requeue":
+        args.append("--slurm-requeue")
+    elif execution.slurm_requeue == "no-requeue":
+        args.append("--slurm-no-requeue")
+    if execution.slurm_no_account:
+        args.append("--slurm-no-account")
+    if execution.slurm_reservation:
+        args += ["--slurm-reservation", execution.slurm_reservation]
+    if execution.slurm_array_jobs and execution.slurm_array_jobs != "all":
+        names = [rule for key in execution.slurm_array_jobs.split(",") for rule in step_rules(key)]
+        args += ["--slurm-array-jobs", ",".join(names)]
+    elif execution.slurm_array_jobs:
+        args += ["--slurm-array-jobs", "all"]
+    if execution.slurm_array_limit:
+        args += ["--slurm-array-limit", str(execution.slurm_array_limit)]
+    if execution.slurm_status_command != "auto":
+        args += ["--slurm-status-command", execution.slurm_status_command]
+    if execution.slurm_jobname_prefix:
+        args += ["--slurm-jobname-prefix", execution.slurm_jobname_prefix]
+    if execution.slurm_exclude_nodes:
+        args += ["--slurm-exclude-failed-nodes", execution.slurm_exclude_nodes]
+    if execution.slurm_pass_command_as_script:
+        args.append("--slurm-pass-command-as-script")
+    if execution.slurm_efficiency_report:
+        # The plugin treats the path as a directory and writes efficiency_report_<run>.csv in it.
+        args += ["--slurm-efficiency-report", "--slurm-efficiency-report-path", SLURM_LOGDIR]
+    if execution.slurm_partition_config:
+        args += ["--slurm-partition-config", execution.slurm_partition_config]
+    return args
+
+
+def rule_resource_overrides(config: AppConfig, exec_profile: str) -> list[str]:
+    """--set-resources values for execution.rule_resources (Slurm placement per rule)."""
+    if exec_profile != "slurm":
+        return []
+    names = {"slurm_partition": "slurm_partition", "slurm_account": "slurm_account", "qos": "qos",
+             "constraint": "constraint", "clusters": "clusters", "slurm_extra": "slurm_extra"}
+    values = []
+    for key, placement in sorted(config.execution.rule_resources.items()):
+        for rule in step_rules(key):
+            for field, resource in names.items():
+                value = getattr(placement, field)
+                if value:
+                    values.append(f"{rule}:{resource}={value!r}")
+    return values
+
+
+# Stages of a run split across hosts (`bulkseq run --stage`, `bulkseq slurm-script`).
+# prefetch: only the downloads, on a host with internet. compute: everything except the steps
+# that query online services after differential expression and the steps that depend on them
+# (their figures, the check summary, the reports), for a node without internet. online: only
+# those online steps, on a host with internet. all: whatever is still missing.
+RUN_STAGES = ("all", "prefetch", "compute", "online")
+PREFETCH_RULES = ("download_fastq", "download_genome", "download_gtf", "rrna_db", "ingest_geo")
+ONLINE_ANALYSIS_RULES = ("enrichment", "transfer_enrichment", "network_string", "set_overlap")
 
 
 def build_snakemake_args(
     config: AppConfig, mode: str = "run", project_root: Path | None = None,
-    exec_profile: str = "local",
+    exec_profile: str = "local", stage: str = "all", defined_rules: Iterable[str] | None = None,
+    cores: int | None = None, memory_gb: int | None = None,
 ) -> list[str]:
-    """Snakemake argument vector, independent of how it is launched."""
+    """Snakemake argument vector, independent of how it is launched.
+
+    ``cores``/``memory_gb`` replace the project's local pool for this launch only (a run inside
+    a Slurm allocation sizes itself from the allocation). ``defined_rules`` names the rules this
+    project's workflow defines; a split stage needs it to name only rules that exist.
+    """
     args = [
         "snakemake",
         "--snakefile",
@@ -440,9 +694,9 @@ def build_snakemake_args(
         # summed threads/mem stay inside them.
         args += [
             "--cores",
-            str(config.resources.total_threads),
+            str(cores or config.resources.total_threads),
             "--resources",
-            f"mem_mb={config.resources.total_memory_gb * 1000}",
+            f"mem_mb={(memory_gb or config.resources.total_memory_gb) * 1000}",
             # Cap concurrent FASTQ downloads (each opens a few connections); more than a
             # handful at once makes ENA refuse connections under load. The download_fastq
             # rule consumes downloads=1, so at most 3 run in parallel.
@@ -459,14 +713,30 @@ def build_snakemake_args(
         # Site settings come from config.yaml's `execution` section, never from the copied
         # profile: editing anything under workflow/ changes the recorded digest and the
         # project then refuses to run.
+        execution = config.execution
         args += ["--profile", site_profile_dir(exec_profile), "--resources", "downloads=3",
-                 "--jobs", str(config.execution.jobs),
+                 "--jobs", str(execution.jobs),
+                 "--local-cores", str(execution.local_cores),
+                 "--latency-wait", str(execution.latency_wait_s),
+                 "--retries", str(execution.retries),
                  "--default-resources", *cluster_default_resources(config, exec_profile)]
+        overrides = rule_resource_overrides(config, exec_profile)
+        if overrides:
+            args += ["--set-resources", *overrides]
         if exec_profile == "slurm":
-            # Per-job sbatch logs inside the project's logs/, kept: by default the plugin
-            # deletes a successful job's log and, at every start, any log older than 10 days,
-            # failed jobs' logs included. logs/ is part of the run's record.
-            args += ["--slurm-logdir", SLURM_LOGDIR, "--slurm-keep-successful-logs"]
+            args += slurm_plugin_args(config)
+    if stage != "all" and mode in ("run", "dry-run", "resume"):
+        wanted = PREFETCH_RULES if stage == "prefetch" else ONLINE_ANALYSIS_RULES
+        present = [name for name in wanted if defined_rules is None or name in set(defined_rules)]
+        if stage in ("prefetch", "online"):
+            # Callers skip the launch when the stage has no rule (a count-matrix project
+            # downloads nothing; a project without enrichment, STRING or the overlap has no
+            # online analysis step).
+            if not present:
+                raise ValueError(f"This project has no {stage} stage: none of its steps belongs to it.")
+            args += ["--until", *present]
+        elif present:
+            args += ["--omit-from", *present]
     args += ["--configfile", "config/config.yaml"]
     if mode == "dry-run":
         args.insert(1, "-n")
@@ -478,6 +748,8 @@ def build_snakemake_args(
         args.insert(1, "--rerun-incomplete")
     elif mode == "unlock":
         args = ["snakemake", "--snakefile", "workflow/Snakefile", "--unlock", "--configfile", "config/config.yaml"]
+    elif mode == "list-rules":
+        args = ["snakemake", "--snakefile", "workflow/Snakefile", "--list-rules", "--configfile", "config/config.yaml"]
     elif mode == "figures":
         # Re-render only the figure rules with the current style. --forcerun
         # forces them; --allowed-rules forbids running any other rule, so the
@@ -634,6 +906,7 @@ def build_snakemake_command(
     distro: str | None = None,
     run_tag: str | None = None,
     exec_profile: str = "local",
+    **arg_options,
 ) -> SnakemakeCommand:
     """Build the launch command.
 
@@ -647,7 +920,7 @@ def build_snakemake_command(
     process tree (which survives killing the Windows wsl.exe relay) can be found
     and terminated by :func:`build_wsl_kill_command`.
     """
-    args = build_snakemake_args(config, mode, project_root, exec_profile=exec_profile)
+    args = build_snakemake_args(config, mode, project_root, exec_profile=exec_profile, **arg_options)
     if use_wsl:
         project_distro = wsl_unc_distro(project_root)
         if distro and project_distro and distro.casefold() != project_distro.casefold():
@@ -665,7 +938,8 @@ def build_snakemake_command(
         return SnakemakeCommand(
             cmd, subprocess.list2cmdline(cmd), use_wsl=True, distro=distro, run_tag=run_tag
         )
-    return SnakemakeCommand(args, subprocess.list2cmdline(args), use_wsl=False)
+    return SnakemakeCommand(args, subprocess.list2cmdline(args), use_wsl=False,
+                            cluster=exec_profile != "local")
 
 
 def native_mamba_root() -> Path:
@@ -827,6 +1101,16 @@ class SnakemakeRunner:
         if sys.platform.startswith("win"):
             _run_quiet(["taskkill", "/F", "/T", "/PID", str(self.process.pid)])
             return
+        # A cluster run is interrupted rather than terminated: Snakemake answers SIGINT by
+        # cancelling every job it submitted (scancel), while SIGTERM only stops it from
+        # submitting more and waits for the running jobs, which the SIGKILL below would then
+        # orphan in the queue. Cancelling a long queue takes a while, hence the longer wait.
+        if self.command.cluster and self._signal_native_group(signal.SIGINT):
+            try:
+                self.process.wait(timeout=_CLUSTER_CANCEL_GRACE_SEC)
+                return
+            except subprocess.TimeoutExpired:
+                pass
         # POSIX (native Linux): signal the process group, mirroring what
         # taskkill /T does on Windows and what build_wsl_kill_command does in the VM.
         # SIGTERM first so Snakemake can unlock the working directory, then SIGKILL

@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.37.0 — 2026-11-10
+
+Minor release: cluster runs made practical for the İTÜ UHeM and TRUBA benchmark, after an audit of the Slurm path against both centres' user documentation. No scientific output changes: counting, differential-expression, enrichment and figure methods, their parameters and the analysis package versions are those of 0.36.0, and a run that completes under 0.36.0 produces the same results. The lock changes only two compile-time header packages (below). The bundled datasets were not rerun for this release. The workflow version moves to 0.37.0, so existing projects re-synchronise their workflow on the next run; a finished project does not rebuild its genome index or repeat its alignments because of it, with one exception: a project whose `rule_memory_gb.star_index` is 35 GB or more gets the new STAR memory limit in its indexing command and rebuilds the index and its alignments once.
+
+### Added
+
+- **Single-allocation mode.** `bulkseq slurm-script` writes `config/slurm_allocation.sbatch`, one job on one node that runs the whole workflow with the local executor, sized from the allocation; `--submit` first runs the downloads on the login node and then submits it. Centres that allocate and bill whole nodes (UHeM Altay: a one-core job occupies the 128-core node, minimum charge 64 CPU-hours) or set a minimum core count per job (TRUBA: 56 on orfoz) would otherwise charge every one-thread step as a large reservation.
+- **Split stages.** `bulkseq run --stage prefetch` runs only the downloads; `--stage compute` runs everything except the steps that query online services after differential expression (enrichment, annotation transfer, STRING, the MSigDB Hallmark set) and the steps that depend on them (their figures, the check summary, the reports); `--stage online` runs only those online steps. A plain run afterwards finishes what is missing, so a job on a compute node without internet and a login-node run complete a study between them. `--cores` and `--memory-gb` size a local run for one launch without changing the project.
+- **The Slurm options a study needs, as project settings.** New `execution` settings: `slurm_qos`, `slurm_constraint`, `slurm_clusters`, `slurm_reservation`, `slurm_no_account`, `slurm_requeue`, `slurm_array_jobs`, `slurm_array_limit`, `slurm_status_command`, `slurm_jobname_prefix`, `slurm_exclude_nodes`, `slurm_pass_command_as_script`, `slurm_efficiency_report`, `slurm_partition_config`, `min_cpus_per_job`, `local_cores` (2), `latency_wait_s` (60), `retries` (1), `max_runtime_min`, `max_mem_mb`, `tmpdir`, the `allocation_*` settings, `compute_nodes_have_internet`, `container_image`, `container_runtime` and `container_binds`. QOS, node features and cluster were impossible to set in 0.36.0. The plugin's memory-fudge, status-timing and efficiency-threshold settings are not exposed.
+- **Per-step walltime and placement.** A new `rule_runtime_min` section gives the heavy steps their own walltimes (STAR and HISAT2 indexing 720 min, alignment 360 min, among others) instead of one 240-minute default. `execution.rule_resources.<step>` sends one step to its own partition, account, QOS, node features, cluster or extra options. A retried job asks for the attempt number times its walltime, capped by `max_runtime_min`, and times its memory only when `max_mem_mb` caps it.
+- **Cluster settings in the interface.** Compute resources has a Cluster (Slurm) settings panel with every setting, a per-step table of threads, memory, walltime and placement, and a button that copies the login-node commands.
+- **Apptainer image definition.** `packaging/apptainer/bulkseq.def` builds an image holding the pinned environment, installed by the same setup script, and the command line, for sites that forbid conda installs (TRUBA `/arf`). A single-allocation job runs inside it when `execution.container_image` is set.
+- **Launch checks against the partition.** A cluster launch now also requires `squeue`, warns without `sacct`, warns when no account is set, compares every step's threads, memory and walltime with the largest node and the time limit of its partition (from `sinfo`) and names each step that cannot fit, and warns when jobs are still in your queue before a run or resume.
+- **A run log that outlives the terminal.** Cluster, split-stage and in-allocation runs mirror their output into `logs/bulkseq_run_<time>_<profile>_<stage>.log`.
+
+### Fixed
+
+- **The pinned environment could not install on cluster hosts.** The lock pinned `sysroot_linux-64` 2.39, which requires glibc 2.39, so RHEL/Rocky 8 (glibc 2.28; UHeM Altay), Rocky 9 (2.34; TRUBA ARF) and Ubuntu 22.04 (2.35) fell back to an unpinned solve that is not the validated environment. It now pins `sysroot_linux-64` 2.28 with `kernel-headers_linux-64` 4.18, the compile-time headers R uses to build packages from source; every other pin is unchanged, and a dry-run solve at glibc 2.28, 2.34 and 2.39 downloads only those two packages.
+- **STAR could not index maize- or wheat-sized genomes at any memory.** STAR stops genome generation when its own estimate exceeds `--limitGenomeGenerateRAM`, whose default is 31 GB. The limit is now 90% of `rule_memory_gb.star_index` whenever that is above 31 GB; at the 24 GB default the command is unchanged.
+- **BAM indexing failed on bread wheat and barley.** A BAI index addresses at most 2^29−1 bp per sequence, and `samtools index` failed on their longer chromosomes. Those genomes now get a CSI index under the same file name, chosen from `reference.bam_index`, from a user-supplied `.fai` beside the genome, or from the organism. The reference check now measures the longest sequence and stops a run before alignment when it exceeds the BAI limit while BAI is chosen, naming the setting to change. Other genomes keep the original command.
+- **Two study-wide steps asked the scheduler for twice the whole study's data.** `read_length` (every raw FASTQ) and HISAT2's `infer_strandedness` (every BAM) declared no memory, so the cluster fallback of twice the input size made them unschedulable on a real study. They now declare 2 GB and the featureCounts reservation.
+- **Tuning a failed cluster job replanned the whole study.** Any save of `config.yaml` made Snakemake rerun the setup checks and everything after them, including the genome index and every alignment. A save that changes only `execution`, `resources`, `rule_threads`, `rule_memory_gb` or `rule_runtime_min` now keeps the file's timestamp, and a changed thread count, memory or walltime reruns nothing, except `rule_memory_gb.star_index` crossing 35 GB, which changes the STAR command.
+- **A dropped SSH session orphaned the submitted jobs.** Closing the terminal killed only the relay, leaving Snakemake without a terminal and its jobs in the queue; stopping a cluster run sent SIGTERM, which only stops new submissions, and then SIGKILL. A hangup, SIGTERM or Ctrl-C now interrupts Snakemake, which cancels every job it submitted, with up to three minutes to do so.
+- **The MSigDB Hallmark overlap ran on compute nodes.** `set_overlap` downloads the gene sets at run time and now runs on the submitting host with the other online steps.
+- **The setup script ignored `MAMBA_ROOT_PREFIX`.** It always installed under `~/micromamba`, which a small cluster home quota cannot hold. It now honours the variable, writes it into the shell start-up file and warns below 15 GB free.
+
+### Changed
+
+- Cluster runs pass `--local-cores` (2), `--latency-wait` (60 s, for shared filesystems) and `--retries` from the settings, keep scheduler logs of every age (`--slurm-delete-logfiles-older-than 0`), send QOS as a per-job resource so a step can override it, and write the efficiency report to `logs/slurm/efficiency_report_<run id>.csv`.
+- A per-step setting named by a step key that several rules share (`fastqc`, `fastp`, `sortmerna`, `deseq2`) applies to every rule that reads it.
+- `bulkseq config set` walks mappings and accepts YAML or JSON for structured values, e.g. `execution.rule_resources.star_index.slurm_partition` or a contrast list.
+- `slurm_extra` names the dedicated settings when it refuses an option they manage.
+
+### Continuous integration
+
+- The Environment workflow solves the lock for glibc 2.28 and builds the Apptainer image, then runs its tests.
+
+### Documentation
+
+- [Run on a Slurm cluster](https://tunabirgun.github.io/bulkseq-studio/cluster.html) is rewritten: choosing between per-step jobs and one allocation, requirements (including glibc 2.28), installation with a custom environment location and without the desktop packages, the Apptainer route, every setting with its default, per-step resources and large-genome sizing, both run modes, a table of Slurm commands for following, inspecting, holding, cancelling and debugging a run, disconnects and resuming, recipes for UHeM Altay and TRUBA ARF from their user documentation as it read in November 2026, and an expanded troubleshooting table. The Command line page, the upgrade guide and the README describe the new commands.
+
+### Known limitations
+
+- No production cluster has been used: UHeM and TRUBA behaviour is taken from their public documentation, and their compute-node internet access, `/tmp` sizes and login-node limits are undocumented there.
+- The Apptainer image is built and self-tested by the Environment CI workflow only; running it under a cluster's Apptainer or Singularity has not been tested.
+- Memory and walltime suggestions for wheat are estimates scaled from the STAR manual, not measurements; maize's index peak (57.9 GB, reference PC, STAR's default limit) is measured.
+- `execution.slurm_no_account` passes `--slurm-no-account`, which executor plugin 2.8.0 defines but does not yet act on; with no account the plugin still tries to guess one and submits without `-A` when that fails.
+- Kubernetes execution remains untested.
+
+### Validation
+
+- Test suites: Windows 1,775 passed and 18 skipped; WSL2 (native-Linux branches) 1,746 passed and 47 skipped, in the environment reinstalled from the revised lock, where the update changed only `sysroot_linux-64` and `kernel-headers_linux-64`.
+- Slurm, single-node 23.11 test cluster with accounting under WSL2 (Ubuntu 24.04), synthetic 3-versus-3 paired-end project with a `file://` reference: per-step mode submitted 53 jobs, all `COMPLETED`; `sacct` shows partition, account, QOS `normal`, the job-name prefix and `cpus_per_task` of at least 2 on every job, and the deseq2 step placed through `rule_resources` carried `--nice=3`. Single-allocation mode (`bulkseq slurm-script --submit`, 4 CPUs, 12 GB) ran the offline part in one job and a login-node run finished the rest. The count matrix and the DESeq2 table of the local, per-step and single-allocation runs have identical SHA-256 digests.
+- The allocation script submitted from an unrelated directory wrote its log into the project and completed. A job sent TERM part-way, as at a walltime limit, was resubmitted unchanged and resumed without a lock or incomplete-file error. `--stage online` on the login node followed by `sbatch config/slurm_allocation.sbatch all` finished a project. Every run above, six projects in all, gave the same SHA-256 digests for the count matrix and the DESeq2 table.
+- A hangup signal to a per-step run cancelled all 14 queued jobs and exited 130. Scheduling-only edits after a finished per-step run (`rule_memory_gb`, `execution.jobs`, `rule_runtime_min`) gave "Nothing to be done". A project finished under 0.36.0, upgraded to 0.37.0, saved through the configuration model and given a partition and a walltime also gave "Nothing to be done".
+- CSI under the `.bai` name: `samtools index` 1.22.1 refused a 600 Mb synthetic sequence with BAI and succeeded with `-c -o`; samtools and pysam then answered a region query through the `.bai`-named CSI.
+- The lock solves in a micromamba dry run for glibc 2.28, 2.34 and 2.39, downloading only the two header packages.
+- Not executed anywhere: a production cluster, the Apptainer image under a cluster runtime, macOS execution, Kubernetes.
+
 ## 0.36.0 — 2026-11-09
 
 Minor release: Slurm cluster execution from the command line. No scientific output changes: counting, differential-expression, enrichment and figure methods, their parameters and the analysis package pins are those of 0.35.1, and a local run produces the same results. The bundled datasets were not rerun for this release. The workflow version moves to 0.36.0 because the copied workflow gains the cluster behaviour below, so existing projects re-synchronise their workflow on the next run.

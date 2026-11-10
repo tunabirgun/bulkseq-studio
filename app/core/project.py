@@ -21,6 +21,13 @@ from app.core.paths import (data_path, is_unsupported_unc_path, is_wsl_unc_path,
 
 _DECIMAL_COMMA_RE = re.compile(r"^-?\d+,\d+$")
 
+# Config sections that only say how jobs are scheduled; no analysis result depends on them.
+SCHEDULING_SECTIONS = frozenset({"execution", "resources", "rule_threads", "rule_memory_gb", "rule_runtime_min"})
+
+
+def _analysis_sections(data: dict) -> dict:
+    return {key: value for key, value in data.items() if key not in SCHEDULING_SECTIONS}
+
 
 class ProjectExistsError(ValueError):
     """Raised when scaffolding would write to an occupied destination.
@@ -203,7 +210,24 @@ class ProjectManager:
         return root
 
     def save_config(self, project_root: Path, config: AppConfig) -> None:
-        self._write_yaml(project_root / "config" / "config.yaml", config.model_dump(mode="json"))
+        path = project_root / "config" / "config.yaml"
+        data = config.model_dump(mode="json")
+        try:
+            before = path.stat()
+            # Read through the current model, so a setting this release added (present in the new
+            # dump at its default, absent from an older file) is not mistaken for an analysis change.
+            raw, _ = normalize_decimal_commas(yaml.safe_load(path.read_text(encoding="utf-8")))
+            previous = AppConfig.model_validate(raw).model_dump(mode="json")
+        except (OSError, UnicodeDecodeError, yaml.YAMLError, ValueError, TypeError):
+            before, previous = None, None
+        self._write_yaml(path, data)
+        # config.yaml is an input of the setup checks, so a newer mtime makes Snakemake rerun them and
+        # everything after them: the genome index and every alignment. A change confined to how jobs
+        # are scheduled (threads, memory, walltime, Slurm placement) alters no result, yet tuning those
+        # is exactly what a failed cluster job asks for. Such a save keeps the file's previous mtime.
+        if (before is not None and isinstance(previous, dict)
+                and _analysis_sections(previous) == _analysis_sections(data)):
+            os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
 
     def load_config(self, project_root: Path) -> AppConfig:
         with (project_root / "config" / "config.yaml").open("r", encoding="utf-8") as handle:
