@@ -32,7 +32,9 @@ if RRNA_FILTER and RRNA_TOOL == "ribodetector":
             params:
                 chunk=_RD.get("chunk_size", 256), ensure=_RD.get("ensure", "norrna"),
             threads: rule_threads("sortmerna", 4)
-            resources: mem_mb=rule_mem_mb("sortmerna", 12),
+            resources:
+                mem_mb=rule_mem_mb("sortmerna", 12),
+                runtime=rule_runtime_min("sortmerna", 360),
             benchmark: "benchmarks/ribodetector_{sample}.tsv"
             log: "logs/ribodetector_{sample}.log",
             shell:
@@ -55,7 +57,9 @@ if RRNA_FILTER and RRNA_TOOL == "ribodetector":
             params:
                 chunk=_RD.get("chunk_size", 256), ensure=_RD.get("ensure", "norrna"),
             threads: rule_threads("sortmerna", 4)
-            resources: mem_mb=rule_mem_mb("sortmerna", 12),
+            resources:
+                mem_mb=rule_mem_mb("sortmerna", 12),
+                runtime=rule_runtime_min("sortmerna", 360),
             benchmark: "benchmarks/ribodetector_{sample}.tsv"
             log: "logs/ribodetector_{sample}.log",
             shell:
@@ -104,6 +108,7 @@ elif RRNA_FILTER:
             rule_threads("sortmerna", 4)
         resources:
             mem_mb=rule_mem_mb("sortmerna", 12),
+            runtime=rule_runtime_min("sortmerna", 360),
         benchmark:
             "benchmarks/sortmerna_index.tsv"
         log:
@@ -126,7 +131,9 @@ elif RRNA_FILTER:
             params:
                 wd=lambda wc: f"results/rrna/{wc.sample}",
             threads: rule_threads("sortmerna", 4)
-            resources: mem_mb=rule_mem_mb("sortmerna", 12),
+            resources:
+                mem_mb=rule_mem_mb("sortmerna", 12),
+                runtime=rule_runtime_min("sortmerna", 360),
             benchmark: "benchmarks/sortmerna_{sample}.tsv"
             log: "logs/sortmerna_{sample}.log",
             shell:
@@ -155,7 +162,9 @@ elif RRNA_FILTER:
                 paired=_SMR_PAIRED,
                 wd=lambda wc: f"results/rrna/{wc.sample}",
             threads: rule_threads("sortmerna", 4)
-            resources: mem_mb=rule_mem_mb("sortmerna", 12),
+            resources:
+                mem_mb=rule_mem_mb("sortmerna", 12),
+                runtime=rule_runtime_min("sortmerna", 360),
             benchmark: "benchmarks/sortmerna_{sample}.tsv"
             log: "logs/sortmerna_{sample}.log",
             shell:

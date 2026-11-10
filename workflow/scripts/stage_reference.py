@@ -85,6 +85,7 @@ def inspect_fasta(path: Path) -> tuple[dict[str, object], set[str]]:
     """Parse a FASTA and return bounded metrics plus its exact contig IDs."""
     records = 0
     total_bases = 0
+    longest_bases = 0
     current_id: str | None = None
     current_bases = 0
     contigs: set[str] = set()
@@ -124,6 +125,7 @@ def inspect_fasta(path: Path) -> tuple[dict[str, object], set[str]]:
                     )
                 current_bases += len(line)
                 total_bases += len(line)
+                longest_bases = max(longest_bases, current_bases)
     except UnicodeDecodeError as exc:
         raise ReferenceStagingError("FASTA is not valid ASCII text.") from exc
     if records == 0:
@@ -133,6 +135,7 @@ def inspect_fasta(path: Path) -> tuple[dict[str, object], set[str]]:
     metrics: dict[str, object] = {
         "record_count": records,
         "total_bases": total_bases,
+        "longest_sequence_bp": longest_bases,
         "contig_count": len(contigs),
         "contig_set_sha256": _contig_digest(contigs),
         "contig_examples": sorted(contigs)[:10],

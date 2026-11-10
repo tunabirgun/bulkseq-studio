@@ -342,6 +342,36 @@ ANNOTATION_GTF = "references/annotation.gtf"
 # build rule (guarded with `if not <PREBUILT>` in reference.smk); unset, every path below
 # is byte-identical to the always-built default.
 STAR_INDEX = REF.get("star_index") or "references/star_index"
+
+# A BAI index addresses at most 2^29-1 bp per reference sequence, and `samtools index` fails on
+# a longer one. Bread wheat (IWGSC RefSeq v2.1, chromosome 3B about 830 Mb) and barley (MorexV3,
+# 2H about 666 Mb) exceed it, so they get a CSI index, written under the same .bai name so every
+# consumer keeps its input path; htslib reads the format from the file's magic, not its name.
+# The choice is made at parse time, and must come out the same in every parse of a run (the
+# controller's and, under a cluster executor, each job's): from reference.bam_index (bai/csi)
+# when set, else from a FASTA index (.fai) beside the staged genome when the user supplied
+# one, else from the organism. Nothing the run itself writes is consulted. The reference check
+# (validate_reference.py) fails a run whose longest sequence exceeds the BAI limit while BAI is
+# chosen, naming the setting to change. Every other genome keeps the original command.
+_BAI_MAX_BP = 2**29 - 1
+LONG_CHROMOSOME_ORGANISMS = {"Triticum aestivum", "Hordeum vulgare"}
+
+
+def _longest_sequence_bp():
+    try:
+        with open(GENOME_FA + ".fai", encoding="utf-8") as handle:
+            return max(int(line.split("\t")[1]) for line in handle if line.strip())
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+_BAM_INDEX = str(REF.get("bam_index") or "auto").lower()
+if _BAM_INDEX in ("bai", "csi"):
+    BAM_INDEX_CSI = _BAM_INDEX == "csi"
+else:
+    _LONGEST_BP = _longest_sequence_bp()
+    BAM_INDEX_CSI = (_LONGEST_BP > _BAI_MAX_BP if _LONGEST_BP is not None
+                     else REF.get("organism_name") in LONG_CHROMOSOME_ORGANISMS)
 HISAT2_INDEX = REF.get("hisat2_index") or "references/hisat2_index/genome"  # bowtie/hisat2 index prefix
 HISAT2_INDEX_DIR = os.path.dirname(HISAT2_INDEX) or "."
 TRANSCRIPTOME_FA = REF.get("transcriptome_fasta") or "references/transcripts.fa"
@@ -356,8 +386,31 @@ def rule_threads(name, default=4):
     return int(config.get("rule_threads", {}).get(name, default))
 
 
-def rule_mem_mb(name, default=8):
+_EXECUTION = config.get("execution") or {}
+
+
+def rule_mem_base_mb(name, default=8):
     return int(config.get("rule_memory_gb", {}).get(name, default)) * 1000
+
+
+def rule_mem_mb(name, default=8):
+    # A retried job (cluster runs retry; local runs do not) asks for attempt x the reservation,
+    # but only when execution.max_mem_mb caps it: an uncapped doubling could exceed every node
+    # and leave the retry pending forever. Without the cap the value is the plain integer, as
+    # before, so a local run sees exactly what it always saw.
+    base = rule_mem_base_mb(name, default)
+    cap = int(_EXECUTION.get("max_mem_mb") or 0)
+    if not cap:
+        return base
+    return lambda wildcards, attempt: max(base, min(base * attempt, cap))
+
+
+def rule_runtime_min(name, default=240):
+    # Walltime of a cluster job in minutes; local runs ignore it. A retry (typically after a
+    # TIMEOUT) asks for attempt x the walltime, capped by execution.max_runtime_min when set.
+    base = int(config.get("rule_runtime_min", {}).get(name, default))
+    cap = int(_EXECUTION.get("max_runtime_min") or 0)
+    return lambda wildcards, attempt: max(base, min(base * attempt, cap)) if cap else base * attempt
 
 
 # ---------------------------------------------------------------------------
@@ -417,9 +470,9 @@ include: "rules/ppi.smk"
 # keyword form takes literal names only, so it cannot be filtered.
 NETWORK_RULES = (
     "download_fastq", "download_genome", "download_gtf", "rrna_db", "ingest_geo",
-    "enrichment", "transfer_enrichment", "network_string",
+    "enrichment", "transfer_enrichment", "network_string", "set_overlap",
 )
-if (config.get("execution") or {}).get("network_rules_on_submit_host", True):
+if _EXECUTION.get("network_rules_on_submit_host", True):
     # is_rule, not hasattr(rules, ...): the rules namespace raises WorkflowError, not
     # AttributeError, for an undefined name.
     workflow.localrules(*(name for name in NETWORK_RULES if workflow.is_rule(name)))

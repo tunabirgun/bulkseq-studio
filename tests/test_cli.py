@@ -486,7 +486,9 @@ def test_run_leaves_a_current_project_workflow_alone(monkeypatch, project, capsy
 def test_cli_does_not_assemble_snakemake_flags_itself() -> None:
     # A regression guard with teeth: if someone hand-writes "--cores" or "--resources"
     # into the CLI, equivalence is gone the moment the GUI's builder changes.
-    source = (REPO / "app" / "cli.py").read_text(encoding="utf-8")
+    # Declaring a CLI option of the same name (`bulkseq run --cores`) is not assembling one.
+    source = "\n".join(line for line in (REPO / "app" / "cli.py").read_text(encoding="utf-8").splitlines()
+                       if "add_argument(" not in line)
     for flag in ('"--cores"', '"--resources"', '"--snakefile"', '"--configfile"'):
         assert flag not in source, f"app/cli.py hand-assembles {flag}; call the builder instead"
 

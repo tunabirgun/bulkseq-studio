@@ -14,11 +14,13 @@ on:
     paths:
       - scripts/setup_wsl_bioenv.sh
       - workflow/envs/**
+      - packaging/apptainer/**
       - .github/workflows/environment.yml
   pull_request:
     paths:
       - scripts/setup_wsl_bioenv.sh
       - workflow/envs/**
+      - packaging/apptainer/**
       - .github/workflows/environment.yml
   schedule:
     - cron: "0 6 * * 1"
@@ -81,6 +83,54 @@ jobs:
           if not result.testsRun or result.skipped or not result.wasSuccessful():
               raise SystemExit("Backend command-boundary contracts must execute without skips or failures")
           PY
+
+  # The pinned lock is what setup installs; a host whose glibc is older than any pinned
+  # package needs gets the floating spec instead, which is not the validated environment.
+  # Cluster compute nodes commonly run RHEL/Rocky 8 (glibc 2.28: UHeM Altay) or 9 (2.34:
+  # TRUBA ARF), so the lock must solve there. 0.36.0 pinned sysroot_linux-64 2.39, which
+  # needs glibc >= 2.39 and failed this check.
+  lock-glibc-floor:
+    name: lock solves on glibc 2.28 (dry run)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned micromamba
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash scripts/ci_fetch_release_asset.sh mamba-org/micromamba-releases 2.8.1-1 micromamba-linux-64 \
+            77b7790ec97f64581118f103585b175df4306f95829b0fa6bfe4a19cc88a1182 "$RUNNER_TEMP/micromamba"
+          chmod +x "$RUNNER_TEMP/micromamba"
+      - name: The linux-64 lock must solve for glibc 2.28
+        env:
+          CONDA_OVERRIDE_GLIBC: "2.28"
+          MAMBA_ROOT_PREFIX: ${{ runner.temp }}/mamba
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/micromamba" create --dry-run --yes --platform linux-64 --name probe \
+            --file workflow/envs/bulkseq.lock.yaml
+
+  # The image TRUBA-style sites need (no conda on the shared filesystem): built from the
+  # definition with the real installer inside, then its %test section runs the CLI and finds
+  # every tool. Proves the image builds; running it under a cluster's Apptainer is not covered.
+  apptainer-image:
+    name: apptainer image builds (live)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Apptainer from the project's PPA
+        run: |
+          set -euo pipefail
+          sudo add-apt-repository -y ppa:apptainer/ppa
+          sudo apt-get update
+          sudo apt-get install -y apptainer
+      - name: Build the image and run its tests
+        run: |
+          set -euo pipefail
+          sudo apptainer build "$RUNNER_TEMP/bulkseq.sif" packaging/apptainer/bulkseq.def
+          apptainer test "$RUNNER_TEMP/bulkseq.sif"
+          apptainer run "$RUNNER_TEMP/bulkseq.sif" slurm-script --help
 
   # This Linux-hosted dry solve tracks osx-arm64 package availability only. The shipped
   # installer currently refuses macOS; solver success does not verify a Mac backend,

@@ -42,6 +42,7 @@ elif USE_SALMON:
                 rule_threads("salmon_quant", 8)
             resources:
                 mem_mb=rule_mem_mb("salmon_quant", 8),
+                runtime=rule_runtime_min("salmon_quant", 240),
             benchmark:
                 "benchmarks/salmon_quant_{sample}.tsv"
             log:
@@ -64,6 +65,7 @@ elif USE_SALMON:
                 rule_threads("salmon_quant", 8)
             resources:
                 mem_mb=rule_mem_mb("salmon_quant", 8),
+                runtime=rule_runtime_min("salmon_quant", 240),
             benchmark:
                 "benchmarks/salmon_quant_{sample}.tsv"
             log:
@@ -129,6 +131,7 @@ else:
             rule_threads("featurecounts", 6)
         resources:
             mem_mb=rule_mem_mb("featurecounts", 8),
+            runtime=rule_runtime_min("featurecounts", 240),
         benchmark:
             "benchmarks/featurecounts.tsv"
         log:

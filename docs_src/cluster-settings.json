@@ -1,0 +1,237 @@
+[
+ {
+  "title": "Where jobs go",
+  "settings": [
+   {
+    "key": "slurm_partition",
+    "label": "Partition",
+    "help": "Slurm partition (queue) for every job, or a comma-separated list Slurm may choose from. Empty uses the cluster's default. List them with `sinfo -s`.",
+    "default": ""
+   },
+   {
+    "key": "slurm_account",
+    "label": "Account",
+    "help": "Account (project) charged for the jobs, passed as -A. TRUBA and UHeM require it; UHeM lists yours with `projelerim`, other sites with `sacctmgr show assoc user=$USER format=account`.",
+    "default": ""
+   },
+   {
+    "key": "slurm_no_account",
+    "label": "Submit without an account",
+    "help": "Passes --slurm-no-account for clusters that have no accounts. The 2.8.0 executor plugin defines the flag but does not yet act on it: with no account it still tries to guess one and submits without -A when that fails.",
+    "default": false
+   },
+   {
+    "key": "slurm_qos",
+    "label": "Quality of service",
+    "help": "QOS name passed as --qos, where the site requires one.",
+    "default": ""
+   },
+   {
+    "key": "slurm_constraint",
+    "label": "Node features",
+    "help": "Feature expression passed as --constraint, e.g. a node type such as orfoz on TRUBA's debug queue.",
+    "default": ""
+   },
+   {
+    "key": "slurm_clusters",
+    "label": "Cluster",
+    "help": "For federated sites: the cluster name passed as --clusters.",
+    "default": ""
+   },
+   {
+    "key": "slurm_reservation",
+    "label": "Reservation",
+    "help": "An advance reservation the jobs should run in.",
+    "default": ""
+   },
+   {
+    "key": "slurm_exclude_nodes",
+    "label": "Exclude nodes",
+    "help": "Nodes never to use, e.g. a017,a[040-042].",
+    "default": ""
+   },
+   {
+    "key": "slurm_extra",
+    "label": "Other sbatch options",
+    "help": "Further options such as --nice=10 or --mail-type=FAIL. Options the settings above or the executor manage (account, partition, QOS, memory, CPUs, time, output) are refused here.",
+    "default": ""
+   }
+  ]
+ },
+ {
+  "title": "Job sizes and limits",
+  "settings": [
+   {
+    "key": "jobs",
+    "label": "Jobs in the queue at once",
+    "help": "Maximum number of jobs submitted at the same time. Keep it below the site's per-user limit.",
+    "default": 16
+   },
+   {
+    "key": "min_cpus_per_job",
+    "label": "Minimum CPUs per job",
+    "help": "Smallest CPU request of any job (0 = each step's own thread count). Set it to the partition's minimum where one exists, e.g. TRUBA orfoz 56, hamsi 28, barbun 20.",
+    "default": 0
+   },
+   {
+    "key": "default_runtime_min",
+    "label": "Default walltime (min)",
+    "help": "Walltime of a step with no walltime of its own (see the per-step table).",
+    "default": 240
+   },
+   {
+    "key": "default_mem_mb",
+    "label": "Default memory floor (MB)",
+    "help": "Memory of a step that declares none: the larger of this and twice the step's input size.",
+    "default": 4000
+   },
+   {
+    "key": "retries",
+    "label": "Retries",
+    "help": "Times a failed job is submitted again. A retry asks for the attempt number times the walltime (the step's own or the default one), capped by the walltime cap when set.",
+    "default": 1
+   },
+   {
+    "key": "max_runtime_min",
+    "label": "Walltime cap (min)",
+    "help": "Upper bound for a retried job's walltime (0 = no cap). Set it to the partition's time limit.",
+    "default": 0
+   },
+   {
+    "key": "max_mem_mb",
+    "label": "Memory cap for retries (MB)",
+    "help": "When set, a retried job also asks for more memory, up to this value (e.g. the node's memory). 0 keeps the memory of a retry unchanged.",
+    "default": 0
+   },
+   {
+    "key": "tmpdir",
+    "label": "Temporary directory",
+    "help": "Absolute directory for each job's temporary files (STAR and samtools sort spill). Empty keeps the node's own. Quotes and '$' are not accepted, so a variable cannot be used here.",
+    "default": ""
+   }
+  ]
+ },
+ {
+  "title": "Executor behaviour",
+  "settings": [
+   {
+    "key": "slurm_requeue",
+    "label": "Requeue",
+    "help": "site-default leaves it to the cluster; requeue lets Slurm restart a job after a node failure or pre-emption; no-requeue forbids it.",
+    "default": "site-default"
+   },
+   {
+    "key": "slurm_status_command",
+    "label": "Job-state command",
+    "help": "auto uses sacct when present. Choose squeue on a cluster without job accounting.",
+    "default": "auto"
+   },
+   {
+    "key": "slurm_array_jobs",
+    "label": "Submit as job arrays",
+    "help": "Empty, all, or comma-separated step or rule names whose jobs are grouped into Slurm job arrays (a step name such as fastp covers every rule that reads its settings).",
+    "default": ""
+   },
+   {
+    "key": "slurm_array_limit",
+    "label": "Array size limit",
+    "help": "Largest array per submission (0 = the executor's default).",
+    "default": 0
+   },
+   {
+    "key": "slurm_jobname_prefix",
+    "label": "Job-name prefix",
+    "help": "Prefix shown in squeue (letters, digits, _ and -).",
+    "default": ""
+   },
+   {
+    "key": "slurm_pass_command_as_script",
+    "label": "Pass commands as scripts",
+    "help": "Feeds each job's command to sbatch on standard input, for sites with a short command-line limit.",
+    "default": false
+   },
+   {
+    "key": "slurm_efficiency_report",
+    "label": "Efficiency report",
+    "help": "Writes logs/slurm/efficiency_report_<run id>.csv with each job's CPU and memory use at the end of the run.",
+    "default": false
+   },
+   {
+    "key": "slurm_partition_config",
+    "label": "Partition limits file",
+    "help": "Optional YAML file (path relative to the project) describing partition limits, so the executor chooses a partition for each job by its size.",
+    "default": ""
+   },
+   {
+    "key": "latency_wait_s",
+    "label": "Shared-filesystem wait (s)",
+    "help": "How long to wait for a finished job's output to appear on the shared filesystem.",
+    "default": 60
+   },
+   {
+    "key": "local_cores",
+    "label": "Login-node cores",
+    "help": "Cores the steps that run on the submitting host may use together (downloads, enrichment).",
+    "default": 2
+   }
+  ]
+ },
+ {
+  "title": "Internet access",
+  "settings": [
+   {
+    "key": "network_rules_on_submit_host",
+    "label": "Run online steps on the login node",
+    "help": "Downloads, GEO retrieval, enrichment, STRING and the MSigDB Hallmark set run where the run was started, because compute nodes often have no internet.",
+    "default": true
+   },
+   {
+    "key": "compute_nodes_have_internet",
+    "label": "Compute nodes have internet",
+    "help": "Single-allocation mode only: when false, the job leaves the online steps, and the figures, check summary and reports that depend on them, for a finishing run on the login node.",
+    "default": false
+   }
+  ]
+ },
+ {
+  "title": "Single-allocation mode (bulkseq slurm-script)",
+  "settings": [
+   {
+    "key": "allocation_cpus",
+    "label": "CPUs",
+    "help": "CPUs of the one job (0 = the whole node, --exclusive).",
+    "default": 0
+   },
+   {
+    "key": "allocation_mem_gb",
+    "label": "Memory (GB)",
+    "help": "Memory of the one job (0 = all of the node's memory).",
+    "default": 0
+   },
+   {
+    "key": "allocation_time_min",
+    "label": "Walltime (min)",
+    "help": "Walltime of the one job. A run that needs longer is continued by submitting the script again.",
+    "default": 1440
+   },
+   {
+    "key": "container_image",
+    "label": "Container image",
+    "help": "Apptainer/Singularity image (.sif) to run the workflow in, for sites that forbid conda installs. Empty runs the installed environment.",
+    "default": ""
+   },
+   {
+    "key": "container_runtime",
+    "label": "Container command",
+    "help": "apptainer or singularity, whichever the cluster provides.",
+    "default": "apptainer"
+   },
+   {
+    "key": "container_binds",
+    "label": "Container bind paths",
+    "help": "Further directories the container must see, comma-separated absolute paths. The project folder, the temporary directory and the folders of the configured reference and FASTQ files are bound already.",
+    "default": []
+   }
+  ]
+ }
+]

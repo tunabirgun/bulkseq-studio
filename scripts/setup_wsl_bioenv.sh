@@ -67,7 +67,10 @@ esac
 # the XDG data convention, keeping the source checkout and a mounted AppImage read-only.
 LOG_DIR="${BULKSEQ_SETUP_LOG_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/BulkSeq Studio/logs}"
 LOG_FILE="$LOG_DIR/wsl_bioenv_install.log"
-MAMBA_ROOT="$HOME/micromamba"
+# MAMBA_ROOT_PREFIX moves the environments off a small home directory (a cluster's home quota);
+# the app and every workflow rule read the same variable, so it must stay exported in the
+# shells and batch jobs that run BulkSeq.
+MAMBA_ROOT="${MAMBA_ROOT_PREFIX:-$HOME/micromamba}"
 MICROMAMBA="$HOME/.local/bin/micromamba"
 MM_URL="https://micro.mamba.pm/api/micromamba/${MM_PLATFORM}/${MM_VERSION}"
 
@@ -140,6 +143,13 @@ echo "Log file: $LOG_FILE"
 # mkdir is used rather than flock so the lock is portable to macOS (no flock).
 # ---------------------------------------------------------------------------
 mkdir -p "$MAMBA_ROOT"
+# The full environment and its package cache take several GB; warn early rather than fail
+# half-way through an install on a quota-limited filesystem.
+FREE_KB="$(df -Pk "$MAMBA_ROOT" 2>/dev/null | awk 'NR == 2 {print $4}')"
+if [ -n "$FREE_KB" ] && [ "$FREE_KB" -lt $((15 * 1024 * 1024)) ] 2>/dev/null; then
+  echo "WARNING: only $((FREE_KB / 1024 / 1024)) GB free under $MAMBA_ROOT; the environment needs about 15 GB." >&2
+  echo "         Set MAMBA_ROOT_PREFIX to a directory with more space (e.g. project or scratch storage) and rerun." >&2
+fi
 LOCK_DIR="$MAMBA_ROOT/.bulkseq_setup.lock"
 SPEC_STAGE_DIR=""
 release_lock() {
@@ -449,13 +459,32 @@ echo "Configuring shell activation helper"
 _install_shell_hook() {  # $1 = rc file, $2 = micromamba shell name
   local rc="$1" shell_name="$2"
   if grep -q "micromamba shell hook" "$rc" 2>/dev/null; then
-    echo "micromamba shell hook is already present in $rc"
+    # A hook from an earlier setup may export another root; new shells would then find the
+    # old environment. Rewrite that one line rather than appending a second hook.
+    if grep -q '^export MAMBA_ROOT_PREFIX=' "$rc" && ! grep -qF "export MAMBA_ROOT_PREFIX=$(printf '%q' "$MAMBA_ROOT")" "$rc" \
+       && ! { [ "$MAMBA_ROOT" = "$HOME/micromamba" ] && grep -qF 'export MAMBA_ROOT_PREFIX="$HOME/micromamba"' "$rc"; }; then
+      local line
+      if [ "$MAMBA_ROOT" = "$HOME/micromamba" ]; then line='export MAMBA_ROOT_PREFIX="$HOME/micromamba"'; else line="export MAMBA_ROOT_PREFIX=$(printf '%q' "$MAMBA_ROOT")"; fi
+      python3 - "$rc" "$line" <<'PY'
+import re, sys
+path, line = sys.argv[1], sys.argv[2]
+text = open(path, encoding="utf-8").read()
+open(path, "w", encoding="utf-8").write(re.sub(r"^export MAMBA_ROOT_PREFIX=.*$", lambda m: line, text, count=1, flags=re.M))
+PY
+      echo "Updated MAMBA_ROOT_PREFIX in $rc to $MAMBA_ROOT"
+    else
+      echo "micromamba shell hook is already present in $rc"
+    fi
     return 0
   fi
   {
     echo ""
     echo "# BulkSeq Studio micromamba setup"
-    echo 'export MAMBA_ROOT_PREFIX="$HOME/micromamba"'
+    if [ "$MAMBA_ROOT" = "$HOME/micromamba" ]; then
+      echo 'export MAMBA_ROOT_PREFIX="$HOME/micromamba"'
+    else
+      printf 'export MAMBA_ROOT_PREFIX=%q\n' "$MAMBA_ROOT"
+    fi
     echo "eval \"\$(\$HOME/.local/bin/micromamba shell hook --shell ${shell_name})\""
   } >> "$rc"
   echo "Added the micromamba shell hook to $rc"

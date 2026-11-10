@@ -220,6 +220,9 @@ class ReferenceConfig(BaseModel):
     genome_md5: str | None = None
     annotation_md5: str | None = None
     genome_size_category: str = "custom"
+    # BAM index format: auto picks CSI for reference sequences longer than BAI's 2^29-1 bp
+    # limit (bread wheat, barley); bai/csi force one.
+    bam_index: Literal["auto", "bai", "csi"] = "auto"
 
     @field_validator("genome_md5", "annotation_md5", mode="before")
     @classmethod
@@ -564,6 +567,65 @@ _SLURM_RESERVED_OPTIONS = frozenset({
     "--constraint", "--qos", "--clusters", "--gres", "--gpus",
 })
 _SLURM_EXTRA_TOKEN = re.compile(r"--[A-Za-z][A-Za-z0-9-]*(=[A-Za-z0-9_.,:/@+=-]+)?")
+# Slurm feature expressions (--constraint) combine names with & | , * and [ ]; node lists
+# (--exclude) use brackets and ranges such as a[001-008].
+_SLURM_CONSTRAINT = re.compile(r"[A-Za-z0-9_.,&|*:\[\]()-]{1,256}")
+_SLURM_NODELIST = re.compile(r"[A-Za-z0-9_.,\[\]-]{1,1024}")
+_SLURM_JOBNAME_PREFIX = re.compile(r"[A-Za-z0-9_-]{1,50}")
+_RULE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,99}")
+
+
+def _slurm_text(value: object, pattern: re.Pattern[str], what: str) -> str:
+    text = str(value or "").strip()
+    if text and not pattern.fullmatch(text):
+        raise ValueError(f"{what} {text!r} contains characters Slurm does not accept here.")
+    return text
+
+
+def _slurm_extra_text(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    for token in text.split():
+        if not _SLURM_EXTRA_TOKEN.fullmatch(token):
+            raise ValueError(f"slurm_extra accepts only --option or --option=value tokens; got {token!r}.")
+        option = token.split("=", 1)[0]
+        if option in _SLURM_RESERVED_OPTIONS:
+            raise ValueError(f"slurm_extra may not set {option}: the executor sets it from each rule's "
+                             "declared resources or from the dedicated settings "
+                             "(slurm_partition, slurm_account, slurm_qos, slurm_constraint, slurm_clusters).")
+    return " ".join(text.split())
+
+
+class RuleSlurmPlacement(BaseModel):
+    """Where one rule's jobs go, overriding the run-wide execution.slurm_* values.
+
+    Passed as ``--set-resources <rule>:<key>=<value>``; empty fields are not passed. Memory,
+    threads and walltime are not here: they belong to rule_memory_gb, rule_threads and
+    rule_runtime_min, which every executor (local included) reads.
+    """
+
+    slurm_partition: str = ""
+    slurm_account: str = ""
+    qos: str = ""
+    constraint: str = ""
+    clusters: str = ""
+    slurm_extra: str = ""
+
+    @field_validator("slurm_partition", "slurm_account", "qos", "clusters", mode="before")
+    @classmethod
+    def valid_name(cls, value: object) -> str:
+        return _slurm_text(value, _SLURM_NAME, "Slurm name")
+
+    @field_validator("constraint", mode="before")
+    @classmethod
+    def valid_constraint(cls, value: object) -> str:
+        return _slurm_text(value, _SLURM_CONSTRAINT, "Constraint")
+
+    @field_validator("slurm_extra", mode="before")
+    @classmethod
+    def valid_extra(cls, value: object) -> str:
+        return _slurm_extra_text(value)
 
 
 class ExecutionConfig(BaseModel):
@@ -571,53 +633,167 @@ class ExecutionConfig(BaseModel):
 
     These settings live in the project's config.yaml rather than in the copied workflow's
     profile, because editing any file under workflow/ changes the recorded workflow digest and
-    BulkSeq then refuses to run the project. Local runs ignore everything here.
+    BulkSeq then refuses to run the project. Local runs ignore everything here except the
+    retry caps below, which only act when a job is retried, and the allocation_* settings,
+    which only `bulkseq slurm-script` reads.
     """
 
     # Slurm partition(s) and account. Empty means "let the site default decide".
     slurm_partition: str = ""
     slurm_account: str = ""
+    # Quality of service, node features, cluster (federated/multi-cluster sites) and an
+    # advance reservation. Empty means unset.
+    slurm_qos: str = ""
+    slurm_constraint: str = ""
+    slurm_clusters: str = ""
+    slurm_reservation: str = ""
     # Extra sbatch options, e.g. "--nice=10 --mail-type=FAIL". Only --option or
-    # --option=value tokens; options the executor manages itself (including --qos and
-    # --constraint) are refused.
+    # --option=value tokens; options the executor manages itself are refused.
     slurm_extra: str = ""
+    # Passed to the executor as --slurm-no-account for sites with no accounts. The 2.8.0 plugin
+    # defines the flag but does not yet act on it: with no account it still tries to guess one
+    # with sacct and submits without -A when that fails.
+    slurm_no_account: bool = False
+    # "site-default" leaves requeueing to slurm.conf; the other two add --requeue/--no-requeue.
+    slurm_requeue: Literal["site-default", "requeue", "no-requeue"] = "site-default"
+    # Submit the jobs of these rules as job arrays: "" (never), "all", or "rule1,rule2".
+    slurm_array_jobs: str = ""
+    # Maximum array tasks per sbatch call (0 = the plugin's default).
+    slurm_array_limit: int = Field(default=0, ge=0, le=1_000_000)
+    # How the plugin polls job state. "auto" uses sacct when present; "squeue" suits sites
+    # without accounting (squeue forgets a finished job after MinJobAge).
+    slurm_status_command: Literal["auto", "sacct", "squeue"] = "auto"
+    # Prefix for job names in squeue (letters, digits, '_' and '-', at most 50).
+    slurm_jobname_prefix: str = ""
+    # Nodes never to submit to, e.g. "a017,a[040-042]".
+    slurm_exclude_nodes: str = ""
+    # Feed each job's command to sbatch on stdin, for sites with a short max_submit_line_size.
+    slurm_pass_command_as_script: bool = False
+    # Write logs/slurm/efficiency_report.csv (CPU and memory use per job) at the end.
+    slurm_efficiency_report: bool = False
+    # Optional YAML of partition limits (project-relative path) for the plugin's automatic
+    # partition choice; see the plugin's --slurm-partition-config.
+    slurm_partition_config: str = ""
+    # Per-rule placement, e.g. {"star_index": {"slurm_partition": "bigmem"}}.
+    rule_resources: dict[str, RuleSlurmPlacement] = Field(default_factory=dict)
     # Maximum number of jobs queued with the scheduler at once.
     jobs: int = Field(default=16, ge=1, le=10000)
+    # Smallest --cpus-per-task any job asks for (0 = each rule's own thread count). For
+    # partitions that refuse smaller jobs, e.g. TRUBA orfoz (56) or hamsi (28). The tools
+    # still use their configured threads; only the reservation grows.
+    min_cpus_per_job: int = Field(default=0, ge=0, le=4096)
+    # Cores the submitting host may use for the steps that run there (downloads, enrichment).
+    local_cores: int = Field(default=2, ge=1, le=256)
+    # Seconds to wait for an output file to appear on a shared filesystem.
+    latency_wait_s: int = Field(default=60, ge=0, le=3600)
+    # Times a failed job is submitted again. Each retry multiplies the rule's walltime by the
+    # attempt number (capped by max_runtime_min); memory grows the same way only when
+    # max_mem_mb is set, so a retry can never ask for more than a node holds.
+    retries: int = Field(default=1, ge=0, le=10)
+    max_runtime_min: int = Field(default=0, ge=0, le=60 * 24 * 365)
+    max_mem_mb: int = Field(default=0, ge=0, le=100_000_000)
     # Walltime in minutes for a rule that declares none.
     default_runtime_min: int = Field(default=240, ge=1, le=60 * 24 * 30)
     # Memory floor in MB for a rule that declares no mem_mb. Snakemake's own default
     # (1000 MB) is too small for the R steps (enrichment, figures, reports), which would be
     # OOM-killed on a strict scheduler.
     default_mem_mb: int = Field(default=4000, ge=500, le=4_000_000)
+    # Directory for each job's temporary files (STAR and samtools sort spill, R tempdir).
+    # Empty keeps the node's own TMPDIR. A shell variable such as $TMPDIR is not expanded.
+    tmpdir: str = ""
     # Run the steps that need the internet (downloads, KEGG/g:Profiler/STRING queries, GEO
-    # retrieval) on the submitting host instead of a compute node. Many clusters give compute
-    # nodes no outbound access. Enrichment is the heaviest of them: 19-80 s and at most
-    # 1.4 GB peak memory on the bundled datasets (0.33.0 runs).
+    # retrieval, the MSigDB Hallmark set) on the submitting host instead of a compute node.
+    # Many clusters give compute nodes no outbound access.
     network_rules_on_submit_host: bool = True
+    # Single-allocation mode (`bulkseq slurm-script`): the whole workflow runs with the local
+    # executor inside one Slurm job on one node. 0 CPUs / 0 GB mean the whole node
+    # (--exclusive, --mem=0); the time is the job's walltime in minutes.
+    allocation_cpus: int = Field(default=0, ge=0, le=4096)
+    allocation_mem_gb: int = Field(default=0, ge=0, le=100_000)
+    allocation_time_min: int = Field(default=24 * 60, ge=1, le=60 * 24 * 365)
+    # Whether compute nodes reach the internet. When false, the allocation job leaves the
+    # steps that need it for a short finishing run on the login node.
+    compute_nodes_have_internet: bool = False
+    # Run the allocation job inside an Apptainer/Singularity image (.sif) built from
+    # packaging/apptainer/bulkseq.def, for sites that forbid conda installs (TRUBA /arf).
+    container_image: str = ""
+    container_runtime: Literal["apptainer", "singularity"] = "apptainer"
+    # Further directories to make visible inside the container, besides the project folder, the
+    # temporary directory and the folders of the reference files and FASTQ files the project names.
+    container_binds: list[str] = Field(default_factory=list)
 
-    @field_validator("slurm_partition", "slurm_account", mode="before")
+    @field_validator("slurm_partition", "slurm_account", "slurm_qos", "slurm_clusters",
+                     "slurm_reservation", mode="before")
     @classmethod
     def valid_slurm_name(cls, value: object) -> object:
         text = str(value or "").strip()
         if text and not _SLURM_NAME.fullmatch(text):
-            raise ValueError("Slurm partition/account names may contain only letters, digits, '_', '.', '-' "
-                             "and ',' (for a partition list).")
+            raise ValueError("Slurm partition, account, QOS, cluster and reservation names may contain only "
+                             "letters, digits, '_', '.', '-' and ',' (for a list).")
         return text
+
+    @field_validator("slurm_constraint", mode="before")
+    @classmethod
+    def valid_constraint(cls, value: object) -> str:
+        return _slurm_text(value, _SLURM_CONSTRAINT, "Constraint")
+
+    @field_validator("slurm_exclude_nodes", mode="before")
+    @classmethod
+    def valid_nodelist(cls, value: object) -> str:
+        text = _slurm_text(value, _SLURM_NODELIST, "Node list")
+        # The executor splits the list on commas before passing it on, which breaks a comma
+        # inside brackets (a[040,042]); ranges (a[040-042]) and separate names survive.
+        if re.search(r"\[[^\]]*,", text):
+            raise ValueError("Use ranges such as a[040-042] or separate names, not commas inside brackets.")
+        return text
+
+    @field_validator("slurm_jobname_prefix", mode="before")
+    @classmethod
+    def valid_prefix(cls, value: object) -> str:
+        return _slurm_text(value, _SLURM_JOBNAME_PREFIX, "Job-name prefix")
+
+    @field_validator("slurm_array_jobs", mode="before")
+    @classmethod
+    def valid_array_jobs(cls, value: object) -> str:
+        names = [part.strip() for part in str(value or "").split(",") if part.strip()]
+        if names == ["all"]:
+            return "all"
+        for name in names:
+            if not _RULE_NAME.fullmatch(name):
+                raise ValueError(f"slurm_array_jobs takes 'all' or comma-separated rule names; got {name!r}.")
+        return ",".join(names)
 
     @field_validator("slurm_extra", mode="before")
     @classmethod
     def valid_slurm_extra(cls, value: object) -> object:
+        return _slurm_extra_text(value)
+
+    @field_validator("slurm_partition_config", "tmpdir", "container_image", mode="before")
+    @classmethod
+    def valid_path_text(cls, value: object) -> str:
         text = str(value or "").strip()
-        if not text:
-            return ""
-        for token in text.split():
-            if not _SLURM_EXTRA_TOKEN.fullmatch(token):
-                raise ValueError(f"slurm_extra accepts only --option or --option=value tokens; got {token!r}.")
-            option = token.split("=", 1)[0]
-            if option in _SLURM_RESERVED_OPTIONS:
-                raise ValueError(f"slurm_extra may not set {option}: the executor sets it from each rule's "
-                                 "declared resources or from the dedicated settings.")
-        return " ".join(text.split())
+        if any(ch in text for ch in "\n\r\"'`$"):
+            raise ValueError("Paths here may not contain quotes, '$', '`' or line breaks.")
+        return text
+
+    @field_validator("container_binds", mode="before")
+    @classmethod
+    def valid_binds(cls, value: object) -> list[str]:
+        items = value.split(",") if isinstance(value, str) else list(value or [])
+        paths = [str(item).strip() for item in items if str(item).strip()]
+        for path in paths:
+            if any(ch in path for ch in "\n\r\"'`$,:") or not path.startswith("/"):
+                raise ValueError(f"container_binds takes absolute directories without quotes, '$', ',' or ':'; got {path!r}.")
+        return paths
+
+    @field_validator("rule_resources", mode="before")
+    @classmethod
+    def valid_rule_names(cls, value: object) -> object:
+        if isinstance(value, dict):
+            for name in value:
+                if not _RULE_NAME.fullmatch(str(name)):
+                    raise ValueError(f"rule_resources keys are rule names; got {name!r}.")
+        return value
 
 
 class RuleThreads(BaseModel):
@@ -656,6 +832,20 @@ class RuleMemoryGb(BaseModel):
     multiqc: int = 2
 
 
+class RuleRuntimeMin(BaseModel):
+    # One field per rule_runtime_min() key: the walltime a cluster job asks for. Every other
+    # rule uses execution.default_runtime_min. A local run ignores walltimes.
+    star_index: int = Field(default=720, ge=1)
+    hisat2_index: int = Field(default=720, ge=1)
+    salmon_index: int = Field(default=480, ge=1)
+    star_align: int = Field(default=360, ge=1)
+    hisat2_align: int = Field(default=360, ge=1)
+    salmon_quant: int = Field(default=240, ge=1)
+    sortmerna: int = Field(default=360, ge=1)
+    featurecounts: int = Field(default=240, ge=1)
+    deseq2: int = Field(default=240, ge=1)
+
+
 class AppConfig(BaseModel):
     project: ProjectConfig
     input: InputConfig = Field(default_factory=InputConfig)
@@ -678,6 +868,7 @@ class AppConfig(BaseModel):
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     rule_threads: RuleThreads = Field(default_factory=RuleThreads)
     rule_memory_gb: RuleMemoryGb = Field(default_factory=RuleMemoryGb)
+    rule_runtime_min: RuleRuntimeMin = Field(default_factory=RuleRuntimeMin)
 
 
 def default_config(project_name: str, project_root: Path) -> AppConfig:

@@ -59,6 +59,7 @@ if not USE_SALMON:
                 rule_threads("hisat2_align", 8)
             resources:
                 mem_mb=rule_mem_mb("hisat2_align", 8),
+                runtime=rule_runtime_min("hisat2_align", 360),
             params:
                 sort_mem=_hisat2_sort_mem_mb,
                 # The build prefix, not the containing directory: a prebuilt HISAT2 index
@@ -88,6 +89,7 @@ if not USE_SALMON:
                 rule_threads("hisat2_align", 8)
             resources:
                 mem_mb=rule_mem_mb("hisat2_align", 8),
+                runtime=rule_runtime_min("hisat2_align", 360),
             params:
                 sort_mem=_hisat2_sort_mem_mb,
                 # The build prefix, not the containing directory: a prebuilt HISAT2 index
@@ -120,6 +122,7 @@ if not USE_SALMON:
                 rule_threads("star_align", 8)
             resources:
                 mem_mb=rule_mem_mb("star_align", 24),
+                runtime=rule_runtime_min("star_align", 360),
             params:
                 multimap=_STAR_MULTIMAP,
                 mismatch_nover=_STAR_MISMATCH_NOVER,
@@ -152,7 +155,9 @@ if not USE_SALMON:
         benchmark:
             "benchmarks/samtools_index_{sample}.tsv"
         shell:
-            "samtools index {input.bam} && samtools flagstat {input.bam} > {output.flagstat}"
+            ("samtools index -c -o {output.bai:q} {input.bam:q} && samtools flagstat {input.bam:q} > {output.flagstat:q}"
+             if BAM_INDEX_CSI else
+             "samtools index {input.bam} && samtools flagstat {input.bam} > {output.flagstat}")
 
     # config: featurecounts.strandedness, if the user sets it, is a manual override read
     # only by make_run_summary.py/report provenance today -- it is not wired into any
@@ -181,6 +186,10 @@ if not USE_SALMON:
                 attribute=config.get("featurecounts", {}).get("attribute_type", "gene_id"),
             threads:
                 rule_threads("infer_strandedness", 4)
+            # featureCounts over every BAM, one at a time: its memory follows the annotation, as
+            # in the featurecounts rule, not the summed BAM size a cluster fallback would request.
+            resources:
+                mem_mb=rule_mem_mb("featurecounts", 8),
             log:
                 "logs/infer_strandedness.log",
             shell:

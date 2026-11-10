@@ -1,0 +1,56 @@
+Bootstrap: docker
+From: debian:bookworm-slim
+
+# BulkSeq Studio command line and its analysis environment in one Apptainer/Singularity image,
+# for clusters that forbid conda installs on their filesystems (TRUBA /arf) or where one file is
+# easier to move than an environment. Build it from the repository root of the release you cite:
+#
+#   apptainer build bulkseq.sif packaging/apptainer/bulkseq.def
+#
+# Build it on a machine where you have root (or --fakeroot), not on a cluster login node, then
+# copy the .sif to the cluster. The environment is installed by scripts/setup_wsl_bioenv.sh from
+# the same pinned lock as a normal install, and the build fails if that script's load checks
+# (tools, Python imports, R/Bioconductor stack) fail.
+#
+#   apptainer run bulkseq.sif --help              # the bulkseq command
+#   apptainer run bulkseq.sif run -C PROJECT      # a local run inside the image
+#   bulkseq config set -C PROJECT execution.container_image /path/to/bulkseq.sif
+#   bulkseq slurm-script -C PROJECT               # its job script then runs inside the image
+
+%files
+    app /opt/bulkseq/app
+    workflow /opt/bulkseq/workflow
+    scripts/setup_wsl_bioenv.sh /opt/bulkseq/scripts/setup_wsl_bioenv.sh
+    pyproject.toml /opt/bulkseq/pyproject.toml
+    LICENSE /opt/bulkseq/LICENSE
+
+%post
+    set -eu
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends ca-certificates curl bzip2 procps
+    rm -rf /var/lib/apt/lists/*
+    export HOME=/root MAMBA_ROOT_PREFIX=/opt/micromamba BULKSEQ_SETUP_LOG_DIR=/opt/bulkseq/setup-logs
+    bash /opt/bulkseq/scripts/setup_wsl_bioenv.sh bulkseq full
+    /root/.local/bin/micromamba clean --all --yes
+    find /opt/bulkseq -name __pycache__ -type d -prune -exec rm -rf {} +
+    chmod -R a+rX /opt/bulkseq /opt/micromamba
+
+%environment
+    export MAMBA_ROOT_PREFIX=/opt/micromamba
+    export PATH=/opt/micromamba/envs/bulkseq/bin:$PATH
+    export PYTHONPATH=/opt/bulkseq
+    export LC_ALL=C.UTF-8
+
+%runscript
+    exec python -m app.cli "$@"
+
+%test
+    python -m app.cli version
+    for tool in snakemake STAR salmon hisat2 samtools featureCounts Rscript; do
+        command -v "$tool" > /dev/null || { echo "missing $tool"; exit 1; }
+    done
+
+%labels
+    org.opencontainers.image.title BulkSeq Studio
+    org.opencontainers.image.source https://github.com/tunabirgun/bulkseq-studio

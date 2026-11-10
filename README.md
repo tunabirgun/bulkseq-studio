@@ -21,14 +21,16 @@ The [tutorial](https://tunabirgun.github.io/bulkseq-studio/tutorial.html) explai
 
 ## Cluster runs
 
-The `bulkseq` command runs the same workflow as the interface, locally or on a Slurm cluster. On the cluster's Linux login node, install the analysis environment (`bash scripts/setup_wsl_bioenv.sh bulkseq full`) and the command (`pip install -e .` from a source checkout), set the site settings in the project's configuration before the first run, and submit:
+The `bulkseq` command runs the same workflow as the interface, locally or on a Slurm cluster, in one of two ways. `bulkseq run --exec-profile slurm` submits each step as its own job from the login node; `bulkseq slurm-script --submit` runs the whole workflow in one allocation, which suits centres that bill whole nodes or refuse small jobs, such as İTÜ UHeM and TRUBA. The Slurm options a study needs (partition, account, QOS, node features, walltimes, per-step placement, job arrays, requeueing) are project settings under `execution`, set with `bulkseq config set` or in the interface under Compute resources; the copied workflow is never edited.
 
 ```bash
-bulkseq config set -C PATH execution.slurm_partition short
-bulkseq run -C PATH --exec-profile slurm
+bash scripts/setup_wsl_bioenv.sh bulkseq full
+bulkseq config set -C PATH execution.slurm_partition defq
+bulkseq config set -C PATH execution.slurm_account myproject
+bulkseq slurm-script -C PATH --submit          # or: bulkseq run -C PATH --exec-profile slurm
 ```
 
-Each step becomes its own Slurm job; steps that need the internet run on the login node. Do not edit the project's copy of `workflow/profiles/site/slurm/config.yaml`, which would stop the project from running. Slurm submission was verified on a single-node test cluster, not on a production cluster, and Kubernetes is unverified. See [Run on a Slurm cluster](https://tunabirgun.github.io/bulkseq-studio/cluster.html).
+Sites that forbid conda installs can use the Apptainer image built from `packaging/apptainer/bulkseq.def`. Both modes were verified on a single-node test cluster, not on a production cluster; the image is built and self-tested in CI only. See [Run on a Slurm cluster](https://tunabirgun.github.io/bulkseq-studio/cluster.html) for every setting, site recipes and how to follow and control a run.
 
 ## Analysis boundaries
 
@@ -40,7 +42,7 @@ Missing or failed results are unavailable, not zero findings. Preserve the proje
 
 ## Updates
 
-**Release status:** This documentation describes version 0.36.0, which adds Slurm submission from the command line without changing 0.35.x statistical methods or scientific output; bundled biological datasets were not rerun for this release. Review [version notices](https://tunabirgun.github.io/bulkseq-studio/faq.html#version-notices), [scientific changes](CHANGELOG.md) and the [upgrade guide](https://tunabirgun.github.io/bulkseq-studio/upgrade.html) before reusing older results. Pre-0.35.0 alternative-engine/enrichment outputs and pre-0.34.0 pooled-effect adjusted values may need review and recomputation. Upgrading does not revise historical results.
+**Release status:** This documentation describes version 0.37.0, which makes cluster runs practical (single-allocation mode, the Slurm options a study needs as settings, per-step walltimes, large-genome fixes) without changing 0.36.0 statistical methods or scientific output; bundled biological datasets were not rerun for this release. Review [version notices](https://tunabirgun.github.io/bulkseq-studio/faq.html#version-notices), [scientific changes](CHANGELOG.md) and the [upgrade guide](https://tunabirgun.github.io/bulkseq-studio/upgrade.html) before reusing older results. Pre-0.35.0 alternative-engine/enrichment outputs and pre-0.34.0 pooled-effect adjusted values may need review and recomputation. Upgrading does not revise historical results.
 
 Close the app before installing an update, retain the original project, and rerun input validation. Source installation requires Python 3.11+ and PySide6 6.11.2+; see [CONTRIBUTING.md](CONTRIBUTING.md) for development.
 

@@ -153,6 +153,7 @@ from app.core.paths import (
     wsl_unc_distro,
     wsl_vhdx_basepath,
 )
+from app.ui.cluster_panel import ClusterSettingsPanel
 from app.ui.card_fit import CenteredCardFit
 from app.ui.image_viewer import SVG_AVAILABLE, ImageViewer
 from app.ui.metadata_editor import MetadataTable
@@ -704,6 +705,9 @@ class MainWindow(QMainWindow):
         # Keep the project-session identity used by import callbacks.
         for name in type(config).model_fields:
             setattr(self.config, name, getattr(config, name))
+        # Save Resources rewrites per-step threads and memory; the cluster panel's table must
+        # show those values, or its own save would write the stale ones back.
+        self.cluster_panel.load(self.config)
 
     def _sample_edit_state(self) -> str:
         return drop_blank_library_name(self.metadata_table.to_dataframe()).to_csv(index=False, sep="\t")
@@ -3629,8 +3633,77 @@ class MainWindow(QMainWindow):
         save_row.addStretch(1)
         layout.addLayout(save_row)
 
+        # Cluster (Slurm) settings: used only by `bulkseq run --exec-profile slurm` and
+        # `bulkseq slurm-script` on a cluster login node; a local run ignores them.
+        cluster_toggle = QToolButton()
+        cluster_toggle.setText("Cluster (Slurm) settings")
+        cluster_toggle.setCheckable(True)
+        cluster_toggle.setChecked(False)
+        cluster_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        cluster_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        cluster_toggle.setAccessibleName("Show cluster (Slurm) settings")
+        layout.addWidget(cluster_toggle)
+        cluster_box = QWidget()
+        cluster_layout = QVBoxLayout(cluster_box)
+        cluster_layout.setContentsMargins(0, 0, 0, 0)
+        cluster_note = QLabel(
+            "For running this project on a Slurm cluster from its Linux login node "
+            "(bulkseq run --exec-profile slurm, or one allocation with bulkseq slurm-script). "
+            "A run on this computer ignores these settings. See the handbook page "
+            "“Run on a Slurm cluster” for site recipes (TRUBA, İTÜ UHeM).")
+        cluster_note.setWordWrap(True)
+        cluster_layout.addWidget(cluster_note)
+        self.cluster_panel = ClusterSettingsPanel(self._info_label)
+        cluster_layout.addWidget(self.cluster_panel)
+        cluster_row = QHBoxLayout()
+        cluster_save = QPushButton("Save Cluster Settings")
+        cluster_save.setToolTip("Validate and save the cluster settings and per-step resources to the project config.")
+        cluster_save.clicked.connect(self._save_cluster_settings)
+        cluster_copy = QPushButton("Copy Cluster Commands")
+        cluster_copy.setToolTip("Copy the login-node commands that run this project on Slurm.")
+        cluster_copy.clicked.connect(self._copy_cluster_commands)
+        cluster_row.addWidget(cluster_save)
+        cluster_row.addWidget(cluster_copy)
+        cluster_row.addStretch(1)
+        cluster_layout.addLayout(cluster_row)
+        cluster_box.setVisible(False)
+        cluster_toggle.toggled.connect(cluster_box.setVisible)
+        cluster_toggle.toggled.connect(
+            lambda expanded: cluster_toggle.setArrowType(
+                Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow))
+        self.cluster_toggle = cluster_toggle
+        self.cluster_box = cluster_box
+        layout.addWidget(cluster_box)
+
         layout.addStretch(1)
         self.tabs.addTab(self._scrollable(page), "Resources")
+
+    def _save_cluster_settings(self) -> None:
+        if not self._require_project() or self.config is None:
+            return
+        try:
+            config = self.cluster_panel.apply_to(self.config)
+        except ValueError as exc:  # pydantic's ValidationError is a ValueError
+            QMessageBox.warning(self, APP_NAME, f"The cluster settings were not saved:\n\n{exc}")
+            return
+        self._save_edited_config(config)
+
+    def _copy_cluster_commands(self) -> None:
+        if not self._require_project() or self.project_root is None:
+            return
+        # A Windows path means nothing on the cluster: name the folder the project is copied to.
+        root = (self.project_root.as_posix() if not self.project_root.drive
+                else "/path/on/cluster/" + self.project_root.name)
+        text = (
+            "# On the cluster's Linux login node, with the BulkSeq environment installed:\n"
+            f"bulkseq check -C {root}\n"
+            f"bulkseq run -C {root} --exec-profile slurm --mode dry-run\n"
+            "# One job per step:\n"
+            f"bulkseq run -C {root} --exec-profile slurm\n"
+            "# Or the whole workflow in one allocation (whole-node sites such as UHeM, TRUBA):\n"
+            f"bulkseq slurm-script -C {root} --submit\n")
+        QApplication.clipboard().setText(text)
+        self.statusBar().showMessage("Cluster commands copied to the clipboard.", 5000)
 
     def _edit_wsl_limits(self) -> None:
         from app.core.wslconfig import (
@@ -7059,6 +7132,7 @@ class MainWindow(QMainWindow):
         # tab does not silently overwrite on-disk values with widget defaults.
         if self.config is None:
             return
+        self.cluster_panel.load(self.config)
         wf = self.config.workflow
         self.aligner.setCurrentText(wf.aligner)
         # Constrain the quantifier to the aligner, then restore the saved choice when it is
