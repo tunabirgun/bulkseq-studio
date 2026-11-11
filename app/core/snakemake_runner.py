@@ -482,9 +482,9 @@ def _slurm_launch_problems(config: AppConfig, mode: str, env: dict[str, str], pa
                       "which does not exist (the path is relative to the project folder).")
     if not execution.slurm_account:
         warnings.append(
-            "execution.slurm_account is empty. Most centres (TRUBA and UHeM among them) require -A; "
-            "set it with `bulkseq config set execution.slurm_account <account>` (UHeM: `projelerim`; "
-            "elsewhere `sacctmgr show assoc user=$USER format=account`). Without one the executor tries "
+            "execution.slurm_account is empty. Most centres require -A; set it with "
+            "`bulkseq config set execution.slurm_account <account>` (list yours with "
+            "`sacctmgr show assoc user=$USER format=account` or your centre's own command). Without one the executor tries "
             "to guess an account with sacct and submits without -A when that fails.")
     if not execution.slurm_partition:
         warnings.append(

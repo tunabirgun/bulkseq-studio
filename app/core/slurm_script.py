@@ -1,8 +1,8 @@
 """Single-allocation Slurm mode: the whole workflow in one batch job on one node.
 
 Per-job submission (``bulkseq run --exec-profile slurm``) suits clusters that bill the cores a
-job asks for. Centres that allocate and bill whole nodes (UHeM Altay bills at least 64
-CPU-hours per job) or refuse small jobs (TRUBA partitions set a minimum core count) charge
+job asks for. Centres that allocate and bill whole nodes (some with a minimum charge per
+job) or refuse small jobs (partitions with a minimum core count) charge
 every one-thread step as a full node. There the workflow runs with the local executor inside
 one allocation instead, sized from the allocation itself.
 """

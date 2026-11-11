@@ -40,7 +40,7 @@ $('#search-input').addEventListener('input', event => {
     li.append(link, summary); list.append(li);
   }
 });
-const termAliases = {'Count matrix':['count matrices','count-matrix','counts matrix'],'Adjusted p-value':['adjusted p-values','adjusted p value','adjusted p'],'log2 fold change':['log2FC'],'Covariate':['covariates'],'Gene identifier':['gene identifiers'],'Biological replicate':['biological replicates'],'Concordance':['concordant'],'Pooled effect':['pooled effects','pooled-effect']};
+const termAliases = {'Count matrix':['count matrices','count-matrix','counts matrix'],'Adjusted p-value':['adjusted p-values','adjusted p value','adjusted p'],'log2 fold change':['log2FC'],'Covariate':['covariates'],'Gene identifier':['gene identifiers'],'Biological replicate':['biological replicates'],'Concordance':['concordant'],'Pooled effect':['pooled effects','pooled-effect'],'Login node':['login nodes'],'Compute node':['compute nodes'],'Partition':['partitions'],'Job script':['job scripts']};
 const termNames = new Map();
 Object.keys(window.manualGlossary || {}).forEach(key=>[key,...(termAliases[key] || [])].forEach(name=>termNames.set(name.toLowerCase(),key)));
 const termPattern = new RegExp('\\b('+[...termNames.keys()].sort((a,b)=>b.length-a.length).map(name=>name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|')+')\\b','gi');

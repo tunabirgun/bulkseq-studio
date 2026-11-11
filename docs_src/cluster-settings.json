@@ -11,7 +11,7 @@
    {
     "key": "slurm_account",
     "label": "Account",
-    "help": "Account (project) charged for the jobs, passed as -A. TRUBA and UHeM require it; UHeM lists yours with `projelerim`, other sites with `sacctmgr show assoc user=$USER format=account`.",
+    "help": "Account (project) charged for the jobs, passed as -A. Most centres require it; `sacctmgr show assoc user=$USER format=account`, or the centre's own command, lists yours.",
     "default": ""
    },
    {
@@ -29,7 +29,7 @@
    {
     "key": "slurm_constraint",
     "label": "Node features",
-    "help": "Feature expression passed as --constraint, e.g. a node type such as orfoz on TRUBA's debug queue.",
+    "help": "Feature expression passed as --constraint, e.g. a node type on a partition that mixes several.",
     "default": ""
    },
    {
@@ -70,7 +70,7 @@
    {
     "key": "min_cpus_per_job",
     "label": "Minimum CPUs per job",
-    "help": "Smallest CPU request of any job (0 = each step's own thread count). Set it to the partition's minimum where one exists, e.g. TRUBA orfoz 56, hamsi 28, barbun 20.",
+    "help": "Smallest CPU request of any job (0 = each step's own thread count). Set it to the partition's minimum where the centre sets one.",
     "default": 0
    },
    {

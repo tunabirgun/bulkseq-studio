@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" width="960" height="420" font-family="Inter, Segoe UI, Arial, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">How a BulkSeq Studio cluster run flows</title>
+  <desc id="d">Your computer copies the project to the cluster login node, the login node submits Slurm jobs that run on compute nodes, and the results are copied back to your computer.</desc>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2f6f9f"/>
+    </marker>
+  </defs>
+  <rect width="960" height="420" fill="#ffffff"/>
+
+  <g fill="#f5f6f7" stroke="#9aa1a8" stroke-width="1.5">
+    <rect x="30" y="30" width="210" height="270" rx="10"/>
+    <rect x="375" y="30" width="210" height="270" rx="10"/>
+    <rect x="720" y="30" width="210" height="270" rx="10"/>
+  </g>
+  <g fill="#2f6f9f">
+    <rect x="40" y="30" width="190" height="4"/>
+    <rect x="385" y="30" width="190" height="4"/>
+    <rect x="730" y="30" width="190" height="4"/>
+  </g>
+
+  <g font-size="17" font-weight="700" fill="#1f2933">
+    <text x="48" y="68">Your computer</text>
+    <text x="393" y="68">Cluster login node</text>
+    <text x="738" y="68">Compute node(s)</text>
+  </g>
+
+  <g font-size="13" fill="#52606d">
+    <text x="48" y="92">BulkSeq Studio desktop app</text>
+    <text x="393" y="92">Runs bulkseq commands</text>
+    <text x="738" y="92">Run as Slurm jobs</text>
+  </g>
+
+  <g font-size="14" fill="#1f2933">
+    <text x="48" y="130">
+      <tspan x="48" dy="0">Prepare the project</tspan>
+      <tspan x="48" dy="26">Set cluster settings</tspan>
+      <tspan x="48" dy="26">Read the results</tspan>
+    </text>
+    <text x="393" y="130">
+      <tspan x="393" dy="0">bulkseq check</tspan>
+      <tspan x="393" dy="26">bulkseq slurm-script</tspan>
+      <tspan x="393" dy="19">--submit</tspan>
+      <tspan x="393" dy="26">Downloads and online</tspan>
+      <tspan x="393" dy="19">steps (enrichment,</tspan>
+      <tspan x="393" dy="19">STRING)</tspan>
+      <tspan x="393" dy="26">The finishing run</tspan>
+    </text>
+    <text x="738" y="130">
+      <tspan x="738" dy="0">One job runs:</tspan>
+      <tspan x="738" dy="26">Trimming</tspan>
+      <tspan x="738" dy="26">Alignment</tspan>
+      <tspan x="738" dy="26">Counting</tspan>
+      <tspan x="738" dy="26">DESeq2</tspan>
+      <tspan x="738" dy="26">Figures</tspan>
+    </text>
+  </g>
+
+  <g stroke="#2f6f9f" stroke-width="2.5" fill="none" marker-end="url(#ah)">
+    <line x1="240" y1="195" x2="375" y2="195"/>
+    <line x1="585" y1="195" x2="720" y2="195"/>
+    <polyline points="480,300 480,365 135,365 135,300"/>
+  </g>
+
+  <g font-size="13" fill="#1f2933" text-anchor="middle">
+    <text x="307.5" y="132">
+      <tspan x="307.5">copy project</tspan>
+      <tspan x="307.5" dy="17">(scp / rsync)</tspan>
+    </text>
+    <text x="652.5" y="132">
+      <tspan x="652.5">sbatch</tspan>
+      <tspan x="652.5" dy="17">one job, or one</tspan>
+      <tspan x="652.5" dy="17">job per step</tspan>
+    </text>
+  </g>
+  <text x="307.5" y="390" font-size="13" fill="#1f2933" text-anchor="middle">copy results back</text>
+</svg>

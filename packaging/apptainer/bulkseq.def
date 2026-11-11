@@ -2,7 +2,7 @@ Bootstrap: docker
 From: debian:bookworm-slim
 
 # BulkSeq Studio command line and its analysis environment in one Apptainer/Singularity image,
-# for clusters that forbid conda installs on their filesystems (TRUBA /arf) or where one file is
+# for clusters that forbid conda installs on their filesystems or where one file is
 # easier to move than an environment. Build it from the repository root of the release you cite:
 #
 #   apptainer build bulkseq.sif packaging/apptainer/bulkseq.def
