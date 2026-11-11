@@ -14,15 +14,15 @@ EXECUTION_GROUPS: list[tuple[str, list[tuple[str, str, str]]]] = [
          "Slurm partition (queue) for every job, or a comma-separated list Slurm may choose from. "
          "Empty uses the cluster's default. List them with `sinfo -s`."),
         ("slurm_account", "Account",
-         "Account (project) charged for the jobs, passed as -A. TRUBA and UHeM require it; UHeM lists "
-         "yours with `projelerim`, other sites with `sacctmgr show assoc user=$USER format=account`."),
+         "Account (project) charged for the jobs, passed as -A. Most centres require it; "
+         "`sacctmgr show assoc user=$USER format=account`, or the centre's own command, lists yours."),
         ("slurm_no_account", "Submit without an account",
          "Passes --slurm-no-account for clusters that have no accounts. The 2.8.0 executor plugin defines the "
          "flag but does not yet act on it: with no account it still tries to guess one and submits without -A "
          "when that fails."),
         ("slurm_qos", "Quality of service", "QOS name passed as --qos, where the site requires one."),
         ("slurm_constraint", "Node features",
-         "Feature expression passed as --constraint, e.g. a node type such as orfoz on TRUBA's debug queue."),
+         "Feature expression passed as --constraint, e.g. a node type on a partition that mixes several."),
         ("slurm_clusters", "Cluster", "For federated sites: the cluster name passed as --clusters."),
         ("slurm_reservation", "Reservation", "An advance reservation the jobs should run in."),
         ("slurm_exclude_nodes", "Exclude nodes", "Nodes never to use, e.g. a017,a[040-042]."),
@@ -35,7 +35,7 @@ EXECUTION_GROUPS: list[tuple[str, list[tuple[str, str, str]]]] = [
          "Maximum number of jobs submitted at the same time. Keep it below the site's per-user limit."),
         ("min_cpus_per_job", "Minimum CPUs per job",
          "Smallest CPU request of any job (0 = each step's own thread count). Set it to the partition's "
-         "minimum where one exists, e.g. TRUBA orfoz 56, hamsi 28, barbun 20."),
+         "minimum where the centre sets one."),
         ("default_runtime_min", "Default walltime (min)",
          "Walltime of a step with no walltime of its own (see the per-step table)."),
         ("default_mem_mb", "Default memory floor (MB)",

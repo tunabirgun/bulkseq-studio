@@ -86,8 +86,8 @@ jobs:
 
   # The pinned lock is what setup installs; a host whose glibc is older than any pinned
   # package needs gets the floating spec instead, which is not the validated environment.
-  # Cluster compute nodes commonly run RHEL/Rocky 8 (glibc 2.28: UHeM Altay) or 9 (2.34:
-  # TRUBA ARF), so the lock must solve there. 0.36.0 pinned sysroot_linux-64 2.39, which
+  # Cluster compute nodes commonly run RHEL/Rocky 8 (glibc 2.28) or 9 (2.34), so the lock
+  # must solve there. 0.36.0 pinned sysroot_linux-64 2.39, which
   # needs glibc >= 2.39 and failed this check.
   lock-glibc-floor:
     name: lock solves on glibc 2.28 (dry run)
@@ -111,7 +111,7 @@ jobs:
           "$RUNNER_TEMP/micromamba" create --dry-run --yes --platform linux-64 --name probe \
             --file workflow/envs/bulkseq.lock.yaml
 
-  # The image TRUBA-style sites need (no conda on the shared filesystem): built from the
+  # The image that sites without conda on the shared filesystem need: built from the
   # definition with the real installer inside, then its %test section runs the CLI and finds
   # every tool. Proves the image builds; running it under a cluster's Apptainer is not covered.
   apptainer-image:

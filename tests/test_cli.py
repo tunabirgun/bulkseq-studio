@@ -695,7 +695,7 @@ def _documented_invocations() -> dict[str, list[str]]:
 
     repo = _Path(__file__).resolve().parents[1]
     found: dict[str, list[str]] = {}
-    for rel in ("docs/cli.html", "docs/cluster.html", "README.md", "workflow/profiles/site/slurm/config.yaml",
+    for rel in ("docs/cli.html", "docs/cluster.html", "docs/cluster-reference.html", "README.md", "workflow/profiles/site/slurm/config.yaml",
                 "workflow/profiles/site/kubernetes/config.yaml"):
         path = repo / rel
         if not path.is_file():

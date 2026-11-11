@@ -69,18 +69,18 @@ def test_local_runs_get_none_of_the_cluster_options(project) -> None:
 
 
 def test_every_slurm_placement_setting_becomes_a_quoted_default_resource(project) -> None:
-    config = _config(project, slurm_partition="defq", slurm_account="proj", slurm_qos="normal",
-                     slurm_constraint="orfoz|hamsi", slurm_clusters="altay", tmpdir="/ari/users/u/tmp",
+    config = _config(project, slurm_partition="compute", slurm_account="proj", slurm_qos="normal",
+                     slurm_constraint="nodeA|nodeB", slurm_clusters="clusterA", tmpdir="/scratch/u/tmp",
                      min_cpus_per_job=56)
     resources = cluster_default_resources(config, "slurm")
-    assert "qos='normal'" in resources and "constraint='orfoz|hamsi'" in resources
+    assert "qos='normal'" in resources and "constraint='nodeA|nodeB'" in resources
     # The fallback walltime scales with the attempt (retries=1 by default); memory only under a cap.
     assert resources[0] == "runtime=240*attempt" and resources[1] == "mem_mb=max(2*input.size_mb, 4000)"
     capped = cluster_default_resources(_config(project, max_runtime_min=600, max_mem_mb=250000), "slurm")
     assert capped[0] == "runtime=min(240*attempt, 600)"
     assert capped[1] == "mem_mb=min(max(2*input.size_mb, 4000)*attempt, 250000)"
     assert cluster_default_resources(_config(project, retries=0), "slurm")[0] == "runtime=240"
-    assert "clusters='altay'" in resources and "tmpdir='/ari/users/u/tmp'" in resources
+    assert "clusters='clusterA'" in resources and "tmpdir='/scratch/u/tmp'" in resources
     assert "cpus_per_task=max(threads, 56)" in resources
     for item in resources:
         ast.parse(item.split("=", 1)[1], mode="eval")
@@ -209,9 +209,9 @@ def test_cli_rejects_a_stage_with_a_cluster_profile(project) -> None:
 # ------------------------------------------------------------------ allocation script
 
 def test_allocation_script_asks_for_one_whole_node_by_default(project) -> None:
-    config = _config(project, slurm_partition="defq", slurm_account="proj", slurm_extra="--mail-type=FAIL")
+    config = _config(project, slurm_partition="compute", slurm_account="proj", slurm_extra="--mail-type=FAIL")
     directives = allocation_directives(config, "bulkseq-x")
-    for expected in ("--nodes=1", "--exclusive", "--mem=0", "--partition=defq", "--account=proj",
+    for expected in ("--nodes=1", "--exclusive", "--mem=0", "--partition=compute", "--account=proj",
                      "--time=1-00:00:00", "--mail-type=FAIL"):
         assert expected in directives
     config = _config(project, allocation_cpus=56, allocation_mem_gb=200, allocation_time_min=4320,
@@ -294,7 +294,8 @@ def test_config_set_validates_per_rule_values(project, capsys) -> None:
 
 
 def test_no_placeholder_survives_in_the_release_text() -> None:
-    for path in (REPO / "CHANGELOG.md", REPO / "README.md", REPO / "docs" / "cluster.html"):
+    for path in (REPO / "CHANGELOG.md", REPO / "README.md", REPO / "docs" / "cluster.html",
+                 REPO / "docs" / "cluster-reference.html"):
         assert not re.search(r"__[A-Z_]{3,}__", path.read_text(encoding="utf-8")), path
 
 
@@ -306,7 +307,7 @@ def test_scheduling_only_saves_keep_the_config_mtime(project) -> None:
     config = manager.load_config(project)
     config.rule_memory_gb.star_align = 64
     config.rule_runtime_min.star_index = 2000
-    config.execution.slurm_partition = "defq"
+    config.execution.slurm_partition = "compute"
     manager.save_config(project, config)
     assert manager.load_config(project).rule_memory_gb.star_align == 64
     assert abs(path.stat().st_mtime - old) < 1
@@ -328,7 +329,7 @@ def test_a_setting_added_by_an_update_is_not_an_analysis_change(project) -> None
     old = time.time() - 3600
     os.utime(path, (old, old))
     config = manager.load_config(project)
-    config.execution.slurm_partition = "defq"
+    config.execution.slurm_partition = "compute"
     manager.save_config(project, config)
     assert "bam_index" in path.read_text(encoding="utf-8")
     assert abs(path.stat().st_mtime - old) < 1
@@ -341,7 +342,8 @@ def test_every_execution_setting_is_described_once() -> None:
 
 def test_every_execution_setting_is_documented_on_the_cluster_page() -> None:
     import json
-    page = (REPO / "docs" / "cluster.html").read_text(encoding="utf-8")
+    # Settings are listed on the reference page; the guide links to them.
+    page = (REPO / "docs" / "cluster-reference.html").read_text(encoding="utf-8")
     for name in (*ExecutionConfig.model_fields, *RuleRuntimeMin.model_fields):
         assert f"<code>{name}</code>" in page or f"execution.{name}." in page, name
     # The page is built from the same descriptions the interface shows.
@@ -368,7 +370,7 @@ def test_slurm_time_limits_parse() -> None:
 
 
 def test_requests_beyond_the_partition_are_warned_by_rule(project, monkeypatch) -> None:
-    config = _config(project, slurm_partition="defq", slurm_account="p")
+    config = _config(project, slurm_partition="compute", slurm_account="p")
     config.rule_memory_gb.star_index = 300
     config.rule_runtime_min.star_index = 20000
     monkeypatch.setattr(snakemake_runner, "slurm_partition_limits",

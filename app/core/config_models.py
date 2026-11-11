@@ -679,7 +679,7 @@ class ExecutionConfig(BaseModel):
     # Maximum number of jobs queued with the scheduler at once.
     jobs: int = Field(default=16, ge=1, le=10000)
     # Smallest --cpus-per-task any job asks for (0 = each rule's own thread count). For
-    # partitions that refuse smaller jobs, e.g. TRUBA orfoz (56) or hamsi (28). The tools
+    # partitions that refuse smaller jobs (some centres set 28 or 56 cores per job). The tools
     # still use their configured threads; only the reservation grows.
     min_cpus_per_job: int = Field(default=0, ge=0, le=4096)
     # Cores the submitting host may use for the steps that run there (downloads, enrichment).
@@ -715,7 +715,7 @@ class ExecutionConfig(BaseModel):
     # steps that need it for a short finishing run on the login node.
     compute_nodes_have_internet: bool = False
     # Run the allocation job inside an Apptainer/Singularity image (.sif) built from
-    # packaging/apptainer/bulkseq.def, for sites that forbid conda installs (TRUBA /arf).
+    # packaging/apptainer/bulkseq.def, for sites that forbid conda installs on their filesystems.
     container_image: str = ""
     container_runtime: Literal["apptainer", "singularity"] = "apptainer"
     # Further directories to make visible inside the container, besides the project folder, the

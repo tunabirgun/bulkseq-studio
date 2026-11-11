@@ -3650,7 +3650,7 @@ class MainWindow(QMainWindow):
             "For running this project on a Slurm cluster from its Linux login node "
             "(bulkseq run --exec-profile slurm, or one allocation with bulkseq slurm-script). "
             "A run on this computer ignores these settings. See the handbook page "
-            "“Run on a Slurm cluster” for site recipes (TRUBA, İTÜ UHeM).")
+            "“Run on a Slurm cluster” for a step-by-step first run.")
         cluster_note.setWordWrap(True)
         cluster_layout.addWidget(cluster_note)
         self.cluster_panel = ClusterSettingsPanel(self._info_label)
@@ -3700,7 +3700,7 @@ class MainWindow(QMainWindow):
             f"bulkseq run -C {root} --exec-profile slurm --mode dry-run\n"
             "# One job per step:\n"
             f"bulkseq run -C {root} --exec-profile slurm\n"
-            "# Or the whole workflow in one allocation (whole-node sites such as UHeM, TRUBA):\n"
+            "# Or the whole workflow in one allocation (centres that bill whole nodes):\n"
             f"bulkseq slurm-script -C {root} --submit\n")
         QApplication.clipboard().setText(text)
         self.statusBar().showMessage("Cluster commands copied to the clipboard.", 5000)

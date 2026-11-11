@@ -1,175 +1,148 @@
-import { readFileSync } from 'node:fs';
+export function clusterPage({ step, grid, check, caution, note, warning, added, imageFigure }) {
+  const ref = anchor => `cluster-reference.html#${anchor}`;
+  const DIR = '~/projects/my_project';
 
-// Every `execution` setting with its label, help text and default, exported from
-// app/core/cluster_settings.py (tests/test_cluster_hardening.py keeps the two identical).
-const groups = JSON.parse(readFileSync(new URL('./cluster-settings.json', import.meta.url), 'utf8'));
+  const body = `<p>This page shows how to run a BulkSeq study on a Slurm cluster, a shared computer system that runs jobs from a queue. It is written for researchers who have used the desktop app but never a cluster. It explains the few terms you need, walks through a complete first run, and lists the centre policies that change how you set it up. The workflow, parameters and outputs are those of a run on your own computer; only the machine that runs each step changes. Every setting, command and limit is listed on <a href="cluster-reference.html">Cluster settings and commands</a>.</p>`
+  + added('0.37.0', 'Single-allocation mode, every Slurm option as a project setting, an Apptainer image and launch checks against partition limits.')
 
-const shown = value => value === '' ? '<em>empty</em>' : `<code>${typeof value === 'object' ? JSON.stringify(value) : value}</code>`;
-const md = text => text.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-export function clusterPage({ step, grid, check, caution, note, warning, added }) {
-  const settings = groups.map(group => `<h3 id="settings-${group.title.toLowerCase().replace(/[^a-z]+/g, '-').replace(/-$/, '')}">${group.title}</h3>`
-    + grid(['Setting (<code>execution.…</code>)', 'Default', 'What it does'],
-      group.settings.map(s => [`<code>${s.key}</code><br>${s.label}`, shown(s.default), md(s.help)]))
-      .replace('<table>', '<table class="setting-table">')).join('');
-
-  const body = `<p>Use a Slurm cluster when a study is too large for one machine. BulkSeq offers two ways to run there, and both use the same workflow, parameters and outputs as a local run; only where each step executes changes. Everything is driven from the cluster’s Linux login node with the <code>bulkseq</code> command; the desktop interface prepares the project and its settings.</p>`
-  + added('0.37.0', 'Single-allocation mode, every Slurm executor option as a project setting, per-step walltimes and placement, split download and compute stages, an Apptainer image definition, launch checks against the partition’s limits, and site recipes for TRUBA and İTÜ UHeM.')
-  + step('modes', '1. Choose how to use the scheduler', 'Per-step jobs suit clusters that bill the cores a job asks for. Where a centre allocates or bills whole nodes, or refuses small jobs, run the whole workflow in one allocation instead.',
-    warning('On a centre that bills whole nodes, per-step jobs charge every one-thread step as a full node. UHeM’s Altay documentation states that a one-core job occupies the 128-core node and is billed accordingly, with a minimum charge of 64 CPU-hours. A study of a few dozen steps per sample can then cost many times the work it does.'),
-    check('Ask your centre how jobs are charged (requested cores, used cores or whole nodes) and whether partitions set a minimum core count.'))
-  + grid(['', 'Per-step jobs', 'One allocation'], [
-    ['Command', '<code>bulkseq run --exec-profile slurm</code>', '<code>bulkseq slurm-script --submit</code>'],
-    ['How it runs', 'Snakemake stays on the login node and submits each step as its own job with <code>sbatch</code>.', 'One batch job takes one node and runs the workflow there with the local executor, sized from the allocation.'],
-    ['Suits', 'Per-core accounting; studies larger than one node; many samples in parallel across nodes.', 'Whole-node billing (UHeM Altay), partitions with a core minimum (TRUBA), a login node that may not host a multi-day process.'],
-    ['Internet', 'Online steps run on the login node.', 'Downloads run on the login node first; online analysis steps run there afterwards unless compute nodes have internet.'],
-    ['Limit', 'The login node must keep Snakemake running for the whole study.', 'The study must fit one node’s memory and the partition’s walltime; a longer run is continued by submitting again.'],
+  + `<h2 id="concepts">What a cluster is</h2><p>A cluster is many computers (nodes) that share storage. You do not run heavy work yourself: you describe a job, and a scheduler called Slurm runs it on a free node when its turn comes.</p>`
+  + grid(['Term', 'Meaning'], [
+    ['Login node', 'The computer you connect to and type commands on. It is shared with other users, so it is for light work only: copying, downloading, starting jobs.'],
+    ['Compute node', 'A computer that runs jobs. You do not log in to it; Slurm starts your job there.'],
+    ['Slurm', 'The queue software. It decides which job runs where and when.'],
+    ['Job and <code>sbatch</code>', 'A job is one request for CPUs, memory and time. <code>sbatch</code> is the command that hands a job script to the queue.'],
+    ['Partition', 'A queue. Each partition has its own type of node and its own time limit.'],
+    ['Walltime', 'The longest time a job may run. Slurm stops the job when it is reached.'],
+    ['Account', 'The project charged for the CPU time your jobs use. Most centres require one.'],
+    ['Terminal and SSH', 'A terminal is a window where you type commands. SSH connects that window to the login node, so the commands run there.'],
   ])
-  + step('requirements', '2. Check what the cluster must provide', 'Confirm each item with your site before installing anything.',
-    check('Ask the support desk whether a process may run on a login node for the length of a study, and where a project of this size should live.'))
-  + grid(['Requirement', 'Why BulkSeq needs it', 'How to check'], [
-    ['A Linux login node with <code>sbatch</code>, <code>squeue</code> and, ideally, <code>sacct</code>', 'Jobs are submitted and followed from there. A Windows or macOS workstation cannot submit.', '<code>command -v sbatch squeue sacct</code>'],
-    ['glibc 2.28 or newer on login and compute nodes', 'The pinned environment needs it (RHEL/Rocky 8 or newer). Older hosts get an unpinned environment, which is not the validated one.', '<code>ldd --version | head -1</code>'],
-    ['A filesystem shared by login and compute nodes, at the same path', 'Every job reads the project folder and the environment by their login-node paths.', 'Ask the site; scratch and project filesystems usually qualify.'],
-    ['Space for the environment and the project', 'The environment needs about 15 GB while installing and about 7.6 GB afterwards. A project holds the reads, the genome index and the alignments (section 6).', '<code>df -h</code>; UHeM: <code>projelerim</code>'],
-    ['Outbound internet on the login node, or inputs staged in advance', 'Downloads, GEO retrieval, enrichment, STRING and the MSigDB Hallmark set need it.', '<code>curl -sI https://ftp.ebi.ac.uk</code>'],
-    ['A partition whose nodes fit the largest step', 'STAR indexing and alignment ask for 24 GB each by default; large genomes need far more (section 6).', '<code>sinfo -o "%P %m %c %l"</code>'],
-    ['A way to keep a session alive', 'Per-step mode needs Snakemake running on the login node.', '<code>tmux</code> or <code>screen</code>, where the site allows them'],
+  + imageFigure('cluster-overview.svg', 'How a cluster run is organised',
+    'A flow diagram in three boxes from left to right. Your computer, running the desktop app, prepares the project, sets the cluster settings and reads the results. An arrow labelled copy project leads to the cluster login node, which runs the bulkseq commands, the downloads, the online steps such as enrichment and STRING, and the finishing run. An arrow labelled sbatch leads to the compute nodes, which run trimming, alignment, counting, DESeq2 and figures. A return arrow labelled copy results back leads from the login node to your computer.',
+    'A cluster run. You prepare the project on your computer and copy it to the login node, which submits the job. The compute node does the heavy steps. You copy the results back.')
+
+  + `<h2 id="modes">Which way to run</h2><p>BulkSeq can use the scheduler in two ways. <strong>One allocation</strong> reserves one node and runs the whole study inside that single job. <strong>One job per step</strong> submits every workflow step as its own job. Answer two questions.</p><ol><li>Does your centre bill or allocate whole nodes, or refuse small jobs? Then use one allocation.</li><li>Is the study larger than one node’s memory or time limit, or does your centre bill per core? Then use one job per step.</li></ol>`
+  + grid(['', 'One allocation', 'One job per step'], [
+    ['Command', '<code>bulkseq slurm-script --submit</code>', '<code>bulkseq run --exec-profile slurm</code>'],
+    ['Where Snakemake runs', 'Inside the job, on the compute node.', 'On the login node, for the whole study.'],
+    ['Limit', 'The study must fit one node and one walltime. A longer run continues when you submit it again.', 'Your session on the login node must stay open.'],
   ])
-  + step('install', '3. Install on the login node', 'Clone the release you intend to cite and install the analysis environment with the setup script, which serves native Linux as well as WSL2. Point <code>MAMBA_ROOT_PREFIX</code> at storage with room for it when the home directory is small; the setup writes the same value into your shell start-up file, and the workflow reads it in every job. Then install the command into a virtual environment built on the environment’s own Python, which avoids the desktop interface’s packages.',
-    check('The setup output’s <em>Python imports</em> line ends with <code>snakemake-executor-plugin-slurm=2.8.0</code>, and <code>bulkseq version</code> prints this release.'),
-    note('Use the source checkout on a cluster, not the AppImage (it needs FUSE and a newer glibc) and not the desktop interface.'))
-  + `<pre><code>git clone --branch v0.37.0 https://github.com/tunabirgun/bulkseq-studio.git
+  + warning('On a centre that bills whole nodes, one job per step charges every one-thread step as a full node, often with a minimum charge per job. A study of many small steps can then cost many times the work it does.')
+  + `<p>This page follows the one-allocation route in detail. The other route is in <a href="#per-step-run">Run one job per step instead</a>.</p>`
+
+  + `<h2 id="requirements">Before you start</h2><p>You need an account on the cluster, with the login details your centre sends when you register (often a VPN plus SSH). The cluster itself must offer the items below. If you are unsure, ask the support desk; you can also check them yourself after you first log in (Step 3), where each command prints a path or a version when the item is present.</p>`
+  + grid(['The cluster must offer', 'Check on the login node'], [
+    ['A Linux login node with the Slurm commands <code>sbatch</code> and <code>squeue</code>', '<code>command -v sbatch squeue sacct</code>'],
+    ['A recent Linux system library (glibc 2.28 or later) on login and compute nodes', '<code>ldd --version | head -1</code>'],
+    ['Storage that login and compute nodes share at the same path, for the project and the software', 'Ask the support desk; project and scratch storage usually qualify.'],
+    ['About 15 GB of free space while the software installs (about 7.6 GB afterwards), plus space for the project', '<code>df -h ~</code>, or your centre’s quota command'],
+    ['Internet on the login node, or the input files copied in beforehand', '<code>curl -sI https://ftp.ebi.ac.uk</code>'],
+    ['A way to keep a session running after you disconnect', '<code>command -v tmux</code> (Step 3 shows how to use it)'],
+  ])
+  + check('A Windows or macOS computer cannot submit jobs itself. You prepare the project there, but the run is started from the cluster’s login node.')
+
+  + `<h2 id="first-run">Your first cluster run, step by step</h2><p>The steps below use one allocation. Replace the words in capitals with your own values: <code>USER</code> is your user name on the cluster, <code>LOGIN_NODE</code> the login node’s address, <code>PARTITION</code> a CPU partition and <code>ACCOUNT</code> the project charged for the jobs. Your registration details give the first two; Step 3 shows how to look up the other two. The project folder on the cluster is <code>${DIR}</code>; use the storage your centre recommends for projects instead if it differs.</p>`
+  + step('prepare', 'Step 1. Prepare the project on your computer', 'In the desktop app, create the project, add the samples and the comparison, and run the pre-run checks. Preparing it here lets you see the design in the interface before anything runs. A study whose reads are downloaded from ENA or SRA accessions copies easily. If the reads are FASTQ files on your computer, edit the paths in <code>config/samples.tsv</code> now so they point where you will copy the files on the cluster, for example <code>' + DIR + '/fastq/S1_R1.fastq.gz</code>.',
+    check('The Pre-run checks page reports no failure.'),
+    note('You can also create a project on the cluster with <code>bulkseq project create</code>, or a bundled example study with <code>bulkseq-benchmark create --benchmark ID --workdir DIR</code>.'))
+  + step('settings', 'Step 2. Set the cluster settings', 'In the app, open Analysis setup, then Compute resources, and expand <em>Cluster (Slurm) settings</em> at the bottom. Under <em>Where jobs go</em>, set Partition and Account. Under <em>Single-allocation mode</em>, leave CPUs and Memory at 0, which means the whole node, and set Walltime (min) to the partition’s time limit, for example <code>10080</code> for 7 days. Under <em>Job sizes and limits</em>, set Walltime cap (min) to the same limit. Click <strong>Save Cluster Settings</strong>. If you do not know the partition or account yet, leave them empty and set them in Step 5.',
+    check('No error message appears. The settings are stored in the project’s <code>config/config.yaml</code>.'),
+    caution('Do not click <strong>Save Resources</strong> on the same page afterwards: it resets each step’s threads and memory to the limits of this computer. If you need it, click it first, then save the cluster settings.'))
+  + step('connect', 'Step 3. Connect and install once', 'Start the VPN client your centre provides, if it uses one. Then open a terminal: on Windows, open PowerShell from the Start menu; on macOS or Linux, open Terminal. <code>ssh</code> and <code>scp</code> are built in. Type the <code>ssh</code> line below, answer <code>yes</code> the first time, and type your password (nothing is shown as you type). The prompt then shows the cluster’s name: every command you type now runs on the login node. Start <code>tmux</code> so a dropped connection does not stop the installation (after a drop, log in again and type <code>tmux attach -t bulkseq</code>), then install BulkSeq. The <code>echo</code> line makes the <code>bulkseq</code> command available at every later login. This is needed only once; later projects reuse it.',
+    check('The installation ends with a <em>Python imports</em> line that includes <code>snakemake-executor-plugin-slurm=2.8.0</code>, and <code>bulkseq version</code> prints <code>BulkSeq Studio 0.37.0</code>.'),
+    note('Type the lines one at a time; text after <code>#</code> is a comment. The setup script is the general Linux installer despite <code>wsl</code> in its name, and it downloads several GB. Set <code>MAMBA_ROOT_PREFIX</code>, the folder that holds the analysis software, only if your home folder has less than about 15 GB free. Use this source installation on a cluster, not the AppImage, which needs FUSE and a newer system library.'))
+  + `<pre><code>ssh USER@LOGIN_NODE
+tmux new -s bulkseq
+git clone --branch v0.37.0 https://github.com/tunabirgun/bulkseq-studio.git
 cd bulkseq-studio
-export MAMBA_ROOT_PREFIX=/path/with/space/micromamba   # optional; default ~/micromamba
+export MAMBA_ROOT_PREFIX=/path/with/room/micromamba   # optional, see the note
 bash scripts/setup_wsl_bioenv.sh bulkseq full
 "\${MAMBA_ROOT_PREFIX:-$HOME/micromamba}/envs/bulkseq/bin/python" -m venv --system-site-packages ~/bulkseq-cli
 ~/bulkseq-cli/bin/pip install --no-deps -e .
-export PATH="$HOME/bulkseq-cli/bin:$PATH"
-bulkseq version</code></pre>`
-  + `<h3 id="container">Sites that forbid conda: the Apptainer image</h3><p>Where a centre forbids conda environments on its filesystems (TRUBA does on <code>/arf</code>), build one image on a machine where you have root and copy it over. The image holds the same pinned environment, installed by the same setup script, and the command line. Every <code>bulkseq</code> command then runs through the image: <code>apptainer run bulkseq.sif &lt;command&gt;</code>. The job script binds the project folder, the temporary directory and the folders of the reference and FASTQ files the project names into the container; add others with <code>execution.container_binds</code>. Apptainer binds only your home directory, <code>/tmp</code> and the current folder by default, so a login-node command that reads files elsewhere needs <code>--bind</code> or <code>APPTAINER_BINDPATH</code>.</p><pre><code>apptainer build bulkseq.sif packaging/apptainer/bulkseq.def     # on your own Linux machine
-alias bulkseq="apptainer run --bind /arf/scratch /path/to/bulkseq.sif"
-bulkseq config set -C PATH execution.container_image /path/to/bulkseq.sif
-bulkseq slurm-script -C PATH                   # writes the job script
-bulkseq run -C PATH --stage prefetch --cores 2  # downloads, on the login node
-sbatch PATH/config/slurm_allocation.sbatch
-bulkseq run -C PATH --cores 2                   # after the job: online steps, figures, reports</code></pre>`
-  + note('Declare the software or the image in your project application where the centre requires it (TRUBA and UHeM both do).')
-  + step('project', '4. Create or copy the project', 'Create the project on the cluster with <code>bulkseq project create</code> and <code>bulkseq config set</code>, or with <code>bulkseq-benchmark create</code> for a bundled dataset, or prepare it in the desktop interface and copy the folder. Paths in a copied project must exist on the cluster: edit the FASTQ paths in the sample sheet (<code>config/samples.tsv</code>) and re-point any custom reference with <code>bulkseq config set</code> before the first run. A structured value is given as YAML or JSON.',
-    check('<code>bulkseq check -C PATH</code> exits 0 and <code>bulkseq run -C PATH --mode dry-run</code> lists the steps you expect.'))
-  + `<pre><code>bulkseq project create --name wheat_drought --workdir /path/to/projects
-bulkseq config set -C PATH reference.genome_fasta /path/to/genome.fa
-bulkseq config set -C PATH deseq2.contrasts '[{"name": "drought_vs_control", "factor": "condition", "numerator": "drought", "denominator": "control"}]'
-bulkseq-benchmark list                # bundled datasets
-bulkseq-benchmark create --benchmark ID --workdir /path/to/projects</code></pre>`
-  + step('settings', '5. Every cluster setting', 'All site settings live in the project’s <code>config/config.yaml</code>, under <code>execution</code>, never in the copied workflow: an edit under <code>workflow/</code> changes the recorded workflow digest and the project then refuses to run. Set them with <code>bulkseq config set -C PATH execution.&lt;setting&gt; &lt;value&gt;</code>, or in the desktop interface under Compute resources → Cluster (Slurm) settings. Put <code>--</code> before a value that starts with <code>--</code>.',
-    note('A change that only affects scheduling (anything under <code>execution</code>, <code>resources</code>, <code>rule_threads</code>, <code>rule_memory_gb</code> or <code>rule_runtime_min</code>) keeps the configuration file’s timestamp, so Snakemake does not plan finished steps again, and a changed thread count, memory or walltime reruns nothing. The one exception is <code>rule_memory_gb.star_index</code> at 35 GB or more, which changes the STAR command (section 6) and rebuilds the index and every alignment once.'))
-  + `<pre><code>bulkseq config set -C PATH execution.slurm_partition defq
-bulkseq config set -C PATH execution.slurm_account myproject
-bulkseq config set -C PATH execution.slurm_extra -- --mail-type=FAIL
-bulkseq config show -C PATH --section execution</code></pre>`
-  + settings
-  + step('per-step', '6. Per-step threads, memory, walltime and placement', 'Each heavy step declares its own threads, memory and walltime; every executor reads them. Change one with <code>bulkseq config set -C PATH rule_memory_gb.star_index 160</code>, <code>rule_threads.star_align 16</code> or <code>rule_runtime_min.star_index 1440</code>. A step without a walltime gets <code>execution.default_runtime_min</code>; one without memory gets the larger of <code>execution.default_mem_mb</code> and twice its input size. To send one step to another partition, QOS or node type, set <code>execution.rule_resources.&lt;step&gt;.&lt;field&gt;</code> with field <code>slurm_partition</code>, <code>slurm_account</code>, <code>qos</code>, <code>constraint</code>, <code>clusters</code> or <code>slurm_extra</code>.',
-    caution('Save Resources in the desktop interface resets per-step threads and memory to the computer it runs on. Set the cluster values afterwards, in the Cluster (Slurm) settings table or with <code>bulkseq config set</code>.'),
-    check('A retried job asks for the attempt number times its walltime, and times its memory when <code>execution.max_mem_mb</code> is set. Set <code>max_runtime_min</code> and <code>max_mem_mb</code> to the partition’s limits so a retry stays schedulable.'))
-  + grid(['Step', 'Default walltime (<code>rule_runtime_min</code>)', 'Default memory (<code>rule_memory_gb</code>)'], [
-    ['<code>star_index</code>', '720 min', '24 GB'], ['<code>hisat2_index</code>', '720 min', '16 GB'], ['<code>salmon_index</code>', '480 min', '16 GB'],
-    ['<code>star_align</code>', '360 min', '24 GB'], ['<code>hisat2_align</code>', '360 min', '8 GB'], ['<code>salmon_quant</code>', '240 min', '8 GB'],
-    ['<code>sortmerna</code>', '360 min', '12 GB'], ['<code>featurecounts</code>', '240 min', '8 GB'], ['<code>deseq2</code>', '240 min', '12 GB'],
-  ]).replace('<table>', '<table class="key-table">')
-  + `<h3 id="large-genomes">Large genomes</h3><p>Maize (about 2.2 Gb) and bread wheat (about 14.5 Gb) need far more than the defaults. On the bundled reference catalogue, STAR’s index build for maize peaked at 57.9 GB on the reference PC; wheat could not be indexed in 64 GB. The STAR manual asks for at least 32 GB for the 3.1 Gb human genome, roughly 10 bytes per base, which suggests on the order of 150 GB for wheat; treat that as an estimate to confirm on a first run, not a measurement. BulkSeq passes STAR a genome-generation limit of 90% of <code>rule_memory_gb.star_index</code> whenever that is above STAR’s 31 GB default, that is from 35 GB, so raising the memory is enough. Because the flag changes the STAR command, a project that already holds an index built with 35 GB or more rebuilds it once after this release. Aligning to a wheat STAR index also holds the whole index in memory, one alignment at a time per node; Salmon and HISAT2 need much less. Bread wheat and barley chromosomes exceed the 2<sup>29</sup>−1 bp (about 537 Mb) a BAI index can address, so their BAMs are indexed as CSI automatically; another genome with such a sequence needs <code>reference.bam_index csi</code>, and the reference check stops the run with that instruction before alignment.</p>`
-  + grid(['Genome', 'Suggested setting', 'Basis'], [
-    ['Maize, STAR', '<code>rule_memory_gb.star_index 72</code>, <code>star_align 40</code>', 'Index peak measured at 57.9 GB on the reference PC under STAR’s default limit; 72 GB gives STAR a 64.8 GB limit with headroom. Alignment is estimated from the index size'],
-    ['Wheat, STAR', '<code>rule_memory_gb.star_index 200</code>, <code>star_align 180</code>, walltimes of a day or more', 'Estimated from the STAR manual’s human figure; not measured'],
-    ['Wheat, Salmon', 'Defaults, with more walltime for <code>salmon_index</code>', 'The route the benchmark plan uses for wheat on one PC'],
-  ])
-  + caution('Plan disk for the index too. A STAR index occupies several times the genome size on disk, with more while it is built; for wheat that is on the order of a hundred GB or more (an estimate). Check the quota first.')
-  + step('per-step-run', '7. Run with one job per step', 'Start the run inside <code>tmux</code> or <code>screen</code> so it survives a disconnect. Before submitting, BulkSeq checks the scheduler commands, the executor plugin and the account, and compares every step’s threads, memory and walltime with the largest node and the time limit of its partition (from <code>sinfo</code>), naming each step that cannot fit. Steps that need the internet run on the login node with at most <code>execution.local_cores</code> cores; all other steps go to compute nodes.',
-    check('Run a dry run first and read its warnings: <code>bulkseq run -C PATH --exec-profile slurm --mode dry-run</code>.'))
+echo 'export PATH="$HOME/bulkseq-cli/bin:$PATH"' &gt;&gt; ~/.bashrc
+source ~/.bashrc
+bulkseq version
+sinfo -s                                    # partitions: choose PARTITION
+sacctmgr show assoc user=$USER format=account   # accounts: choose ACCOUNT</code></pre>`
+  + step('copy', 'Step 4. Copy the project to the cluster', 'Open a second terminal on your computer, not on the login node, and go to the folder that holds the project, for example <code>cd C:\\Users\\you\\BulkSeq</code>. Copy the project folder to the cluster, and the FASTQ files too if Step 1 pointed the sample sheet at them.',
+    check('On the login node, <code>ls ' + DIR + '/config</code> lists <code>config.yaml</code> and <code>samples.tsv</code>.'),
+    caution('Paths in the project that still point at your computer do not exist on the cluster. If you need to fix one there, <code>nano ' + DIR + '/config/samples.tsv</code> opens the sample sheet in a simple editor (Ctrl-O saves, Ctrl-X exits).'))
+  + `<pre><code>ssh USER@LOGIN_NODE mkdir -p projects                   # once: create the folder
+scp -r my_project USER@LOGIN_NODE:projects/             # copy the project
+rsync -av my_project/ USER@LOGIN_NODE:projects/my_project/   # macOS, Linux or WSL: repeatable copy</code></pre>`
+  + step('submit', 'Step 5. Check and submit', 'On the login node, inside <code>tmux</code>, check the project and submit it. <code>bulkseq slurm-script --submit</code> writes the job script <code>config/slurm_allocation.sbatch</code>, downloads the inputs on the login node, submits the script as one job that takes a whole node, and prints the job number. The downloads can take hours; if the connection drops, log in again and type <code>tmux attach -t bulkseq</code>. Once the job number is printed, you can log out: the job keeps running. The <code>config set</code> lines are needed only for values you did not save in Step 2.',
+    check('<code>bulkseq check</code> reports no failure, and the submit command prints <code>Submitted job 123456. Follow it with: …</code>.'),
+    caution('Nothing compares the one-allocation job with the partition before it is submitted. Check with <code>sinfo -o "%P %m %c %l"</code> (partition, memory per node in MB, CPUs per node, time limit) that the node and the walltime you chose fit.'))
+  + `<pre><code>bulkseq config set -C ${DIR} execution.slurm_partition PARTITION
+bulkseq config set -C ${DIR} execution.slurm_account ACCOUNT
+bulkseq config set -C ${DIR} execution.allocation_time_min 10080
+bulkseq config set -C ${DIR} execution.max_runtime_min 10080
+bulkseq check -C ${DIR}
+bulkseq slurm-script -C ${DIR} --submit</code></pre>`
+  + step('follow', 'Step 6. Follow the job', 'List your jobs, then watch the job’s log. Replace <code>JOBID</code> with the number Step 5 printed; the submit message also prints this exact command. Press Ctrl-C to stop watching; the job keeps running, and you can log out and check again later.',
+    check('<code>squeue --me</code> shows your job as <code>PD</code> (pending, waiting for a node) and then <code>R</code> (running). The log grows as steps finish. When the job no longer appears in the list, it has ended.'))
+  + `<pre><code>squeue --me
+tail -f ${DIR}/logs/slurm/allocation-JOBID.log</code></pre>`
+  + step('finish', 'Step 7. Finish on the login node', 'When the job has ended, run the workflow once more on the login node. It runs only what is still missing. Compute nodes are assumed to have no internet, so the online steps (enrichment, annotation transfer, STRING, MSigDB) and the figures, check summary and reports that depend on them run here.',
+    check('The command ends without an error and <code>results/reports</code> holds the report.'),
+    note('If your centre stops programs that use much CPU or memory on the login node, run only the online steps there with <code>bulkseq run -C ' + DIR + ' --stage online --cores 2</code>, then submit the rest as a job with <code>sbatch ' + DIR + '/config/slurm_allocation.sbatch all</code>.'))
+  + `<pre><code>bulkseq run -C ${DIR} --cores 2</code></pre>`
+  + step('results', 'Step 8. Copy the results back and open them', 'In the terminal on your computer, copy back <code>results/</code>, <code>checks/</code>, <code>config/</code> and <code>logs/</code>. The rest of the project (downloaded reads, alignments, the genome index) is large and can be regenerated. Open the project in the desktop app.',
+    check('The Figures and tables page and the Reports page show the results of the run.'))
+  + `<pre><code>scp -r USER@LOGIN_NODE:projects/my_project/results my_project/   # repeat for checks, config and logs</code></pre>`
+
+  + `<h2 id="gui">Cluster settings in the desktop app</h2><p>On the <em>Compute resources</em> page, under Analysis setup, a collapsed section called <em>Cluster (Slurm) settings</em> holds the settings for cluster runs. It stores them in the project’s <code>config/config.yaml</code>; it does not connect to a cluster or submit anything. A run on your own computer ignores these settings, except the per-step threads and memory in the table, which every run uses.</p>`
+  + imageFigure('cluster-panel.png', 'Cluster (Slurm) settings panel',
+    'Two groups of the Cluster (Slurm) settings section. Where jobs go shows Partition set to compute and Account set to myproject, with empty fields for quality of service, node features, cluster, reservation, excluded nodes and other sbatch options. Single-allocation mode shows CPUs 0, Memory 0 and Walltime 10080 minutes, with empty container fields.',
+    'The two groups a first run needs: <em>Where jobs go</em> (partition and account) and <em>Single-allocation mode</em> (0 CPUs and 0 GB mean the whole node; walltime in minutes). The other three groups and the per-step table sit between and below them.')
+  + `<p>The settings are in five groups. <em>Where jobs go</em> holds the partition, account and other placement options. <em>Job sizes and limits</em> holds default memory, walltime limits and retries. <em>Executor behaviour</em> holds fine-grained Slurm options. <em>Internet access</em> says whether compute nodes can reach the internet. <em>Single-allocation mode</em> holds the size of the one job and the container image. The table below them sets threads, memory and walltime for each step; a blank placement cell uses the run-wide value. Every setting is described in the <a href="${ref('settings')}">settings reference</a>.</p>`
+  + `<ul><li><strong>Save Cluster Settings</strong> checks the values and writes them to the project.</li><li><strong>Copy Cluster Commands</strong> copies the login-node commands that check and run this project to the clipboard.</li></ul>`
+
+  + `<h2 id="per-step-run">Run one job per step instead</h2><p>Use this on a centre that bills per core, or for a study too large for one node. Snakemake stays on the login node and submits every step as its own job, so start it inside <code>tmux</code>; if the session closes, the run stops and cancels its jobs. Before submitting, BulkSeq compares each step’s threads, memory and walltime with the partition and names any step that cannot fit. Below, <code>${DIR}</code> is the project folder as in the steps above.</p>`
   + `<pre><code>tmux new -s bulkseq
-bulkseq check -C PATH
-bulkseq run -C PATH --exec-profile slurm --mode dry-run
-bulkseq run -C PATH --exec-profile slurm
-bulkseq print-command -C PATH --exec-profile slurm    # the exact Snakemake command, without running it</code></pre>`
-  + step('allocation', '8. Run in one allocation', '<code>bulkseq slurm-script</code> writes <code>config/slurm_allocation.sbatch</code> from the project’s settings: one node, the whole node unless <code>allocation_cpus</code> and <code>allocation_mem_gb</code> say otherwise, <code>allocation_time_min</code> of walltime, and the partition, account, QOS, node features and extra options above. With <code>--submit</code> it first runs the download stage on the login node, then submits the script. Inside the job the workflow sizes itself from the allocation and runs in resume mode. When compute nodes have no internet it leaves out the online analysis steps (enrichment, annotation transfer, STRING, MSigDB) and everything that depends on them: their figures, the check summary and the reports.',
-    check('When the job has ended, finish on the login node with <code>bulkseq run -C PATH --cores 2</code>, which runs only what is still missing: the online steps, then the figures, check summary and reports. Where the login node may not run the R steps, run <code>bulkseq run -C PATH --stage online --cores 2</code> there and submit the script once more as <code>sbatch config/slurm_allocation.sbatch all</code> for the rest.'),
-    caution('A study longer than the partition’s walltime stops when the job does. Submit the script again: the job unlocks the project and resumes from the steps already finished.'))
-  + `<pre><code>bulkseq config set -C PATH execution.slurm_partition defq
-bulkseq config set -C PATH execution.slurm_account myproject
-bulkseq config set -C PATH execution.allocation_time_min 10080
-bulkseq slurm-script -C PATH --submit
-squeue --me
-tail -f PATH/logs/slurm/allocation-JOBID.log
-bulkseq run -C PATH --cores 2          # afterwards, on the login node</code></pre>`
-  + `<p>The stages can also be run by hand. <code>--stage prefetch</code> runs only the downloads; <code>--stage compute</code> runs everything except the online analysis steps and what depends on them; <code>--stage online</code> runs only those online steps; without <code>--stage</code> a run does whatever is still missing. <code>--cores</code> and <code>--memory-gb</code> size a local run for one launch without changing the project.</p><pre><code>bulkseq run -C PATH --stage prefetch --cores 2
-bulkseq run -C PATH --stage compute --cores 128 --memory-gb 240
-bulkseq run -C PATH --stage online --cores 2
-bulkseq run -C PATH --cores 2</code></pre>`
-  + step('interact', '9. Follow, inspect and control a run', 'Every job BulkSeq submits is an ordinary Slurm job, so the site’s own commands work on it. Per-step jobs are named by the run’s identifier and carry the step name in their comment; the one-allocation job is named <code>bulkseq-&lt;project&gt;</code>.',
-    note('BulkSeq keeps every scheduler log. A cluster, split-stage or in-allocation run also mirrors its own output into <code>logs/bulkseq_run_&lt;time&gt;_&lt;profile&gt;_&lt;stage&gt;.log</code>, so the record survives a closed terminal.'))
-  + grid(['To', 'Use'], [
-    ['List your jobs and their states', '<code>squeue --me</code>; UHeM: <code>isler</code>'],
-    ['See why a job is pending', '<code>squeue --me -o "%i %j %T %r"</code> (reasons such as <code>Resources</code>, <code>AssocGrpCPUMinutesLimit</code>)'],
-    ['Inspect a job’s request and node', '<code>scontrol show job JOBID</code>'],
-    ['Accounting after a job ends (state, time, peak memory)', '<code>sacct -j JOBID -o JobID,JobName%30,State,Elapsed,MaxRSS,ReqMem,AllocCPUS</code>'],
-    ['Live memory of a running job', '<code>sstat -j JOBID.batch -o MaxRSS,AveCPU</code>'],
-    ['Efficiency of finished jobs', '<code>seff JOBID</code> where installed, or <code>execution.slurm_efficiency_report true</code> for <code>logs/slurm/efficiency_report_&lt;run id&gt;.csv</code>'],
-    ['Read what a job printed', '<code>logs/slurm/rule_&lt;step&gt;/[&lt;sample&gt;/]&lt;jobid&gt;.log</code>; one allocation: <code>logs/slurm/allocation-&lt;jobid&gt;.log</code>'],
-    ['Read a tool’s own log', '<code>logs/&lt;step&gt;.log</code>, as in a local run'],
-    ['Hold or release a queued job', '<code>scontrol hold JOBID</code> / <code>scontrol release JOBID</code>'],
-    ['Cancel jobs', 'Ctrl-C in the running <code>bulkseq run</code> (it cancels every job it submitted), or <code>scancel JOBID</code> / <code>scancel --me</code>'],
-    ['Debug one step interactively', '<code>srun -p PARTITION -A ACCOUNT -c 4 --mem 8G --pty bash</code>, then run the command from <code>bulkseq print-command</code> with <code>--until STEP</code>'],
-    ['See partitions and their limits', '<code>sinfo -s</code>, <code>sinfo -o "%P %m %c %l"</code>; UHeM: <code>spart</code>'],
-    ['See your accounts and quotas', '<code>sacctmgr show assoc user=$USER</code>; UHeM: <code>projelerim</code>'],
+bulkseq check -C ${DIR}
+bulkseq run -C ${DIR} --exec-profile slurm --mode dry-run     # read its warnings
+bulkseq run -C ${DIR} --exec-profile slurm
+bulkseq run -C ${DIR} --exec-profile slurm --mode resume      # after an interruption
+bulkseq print-command -C ${DIR} --exec-profile slurm         # the exact Snakemake command, not run</code></pre>`
+  + check('The dry run lists the steps you expect and no warning about partition limits. Detach from <code>tmux</code> with Ctrl-b then d, and return with <code>tmux attach -t bulkseq</code>.')
+  + `<p>Per-step sizing, following and cancelling jobs, and resuming are described in the <a href="${ref('per-step')}">per-step reference</a>, the <a href="${ref('commands')}">command table</a> and <a href="${ref('resume')}">Disconnects, stopping and resuming</a>.</p>`
+
+  + `<h2 id="help">If something goes wrong</h2>`
+  + grid(['What you see', 'What to do'], [
+    ['<code>bulkseq: command not found</code> after logging in again', 'Run <code>source ~/.bashrc</code>, or repeat the <code>echo … &gt;&gt; ~/.bashrc</code> line from Step 3.'],
+    ['The job stays <code>PD</code> (pending)', 'Run <code>squeue --me -o "%i %j %T %r"</code> and read the reason. <code>Resources</code> or <code>Priority</code> means wait. A request larger than any node needs smaller values: <code>execution.allocation_cpus</code>, <code>allocation_mem_gb</code> or <code>allocation_time_min</code> for one allocation, or another partition.'],
+    ['The job ends <code>TIMEOUT</code>', 'The study needed more than the walltime. Submit again with <code>bulkseq slurm-script -C ' + DIR + ' --submit</code>; it resumes from the finished steps. Raise <code>execution.allocation_time_min</code> if the partition allows it.'],
+    ['The job ends <code>OUT_OF_MEMORY</code>', 'A step needed more memory than it requested. Raise that step’s memory, for example <code>bulkseq config set -C ' + DIR + ' rule_memory_gb.star_align 48</code> (the step name is in the log), then submit again.'],
+    ['<code>Invalid account or account/partition combination</code>', 'Set <code>execution.slurm_account</code> to an open project; <code>sacctmgr show assoc user=$USER format=account</code> lists yours.'],
+    ['Your connection dropped during a download or a per-step run', 'Log in again and type <code>tmux attach -t bulkseq</code>. Without <code>tmux</code>, a per-step run stops and cancels its jobs: start <code>tmux</code>, then run with <code>--mode resume</code>. A submitted allocation job is not affected.'],
+    ['A download or enrichment step cannot connect', 'That step needs the internet. Run it from the login node, or copy the inputs in beforehand.'],
   ])
-  + step('resume', '10. Disconnects, stopping and resuming', 'Closing the terminal, a dropped SSH session or <code>kill</code> stops a per-step run the same way Ctrl-C does: Snakemake cancels the jobs it submitted, so none is left running unattended. To survive a disconnect, run inside <code>tmux</code> or <code>screen</code>, or use one allocation. Resume with <code>--mode resume</code>, which unlocks the project and repeats incomplete steps. A failed job is submitted again <code>execution.retries</code> times with more walltime; a genuine tool error fails again and stops that branch while independent steps continue.',
-    check('Before resuming, BulkSeq warns when you still have jobs in the queue. Cancel any that belong to the stopped run with <code>scancel</code>, or two jobs would write the same files.'),
-    note('Updating BulkSeq part-way through a study re-synchronises the project’s workflow on its next run. Pin one release for a whole benchmark and record it.'))
-  + `<pre><code>bulkseq run -C PATH --exec-profile slurm --mode resume</code></pre><p>The exit status is that of a local run: 0 on success, 2 for a usage error, 3 when the project, its configuration or this host cannot be used, 5 when the workflow fails and 130 when interrupted. <a href="codes.html#cli">Exit codes and statuses</a> lists each with what to do next.</p>`
-  + `<h2 id="sites">11. Site recipes</h2><p>These recipes follow each centre’s public user documentation as it read in November 2026. Partition names, limits and policies change; confirm them with the commands shown and with the support desk.</p>`
-  + `<h3 id="uhem">İTÜ UHeM (Altay)</h3><p>Altay’s CPU nodes (<code>defq</code>, 7 days; <code>bigjobq</code>, 3 days) have 128 cores and 256 GB each and are allocated and billed as whole nodes; the GPU partitions’ nodes have 512 GB or 1 TB but bill their GPUs too. An account (<code>-A</code>, a project from <code>projelerim</code>) is required. The login node may download (the wiki uses it for <code>wget</code> and <code>rclone</code>) but kills programs that use much CPU or memory. Compute-node internet is not documented, so BulkSeq assumes none. Use one allocation per study.</p><pre><code>bulkseq config set -C PATH execution.slurm_partition defq
-bulkseq config set -C PATH execution.slurm_account PROJECT          # from projelerim
-bulkseq config set -C PATH execution.allocation_time_min 10080       # defq: 7 days
-bulkseq config set -C PATH execution.max_runtime_min 10080
-bulkseq slurm-script -C PATH --submit
-bulkseq run -C PATH --cores 2                                        # after the job, on altay</code></pre>`
-  + check('Ask UHeM whether compute nodes reach the internet (then set <code>execution.compute_nodes_have_internet true</code>), how large <code>/tmp</code> is on <code>defq</code> nodes, and how long a light process may run on the login node.')
-  + `<h3 id="truba">TRUBA (ARF)</h3><p>ARF partitions set a minimum core count per job (orfoz 56, hamsi 28, barbun 20; the 4-hour debug partition accepts 1) and tie memory to cores (for example at most about 2.3 GB per core on orfoz). The longest walltime is 3 days. Conda and pip installs on <code>/arf</code> are forbidden, so there is no <code>bulkseq</code> on the host: every command below runs through the Apptainer image (section 3). Scratch (<code>/arf/scratch/$USER</code>) is cleaned after at most 30 days; copy <code>results/</code>, <code>checks/</code>, <code>config/</code> and <code>logs/</code> to your home directory when a run ends. Heavy or long processes on the login nodes are not allowed.</p><pre><code>alias bulkseq="apptainer run --bind /arf/scratch /arf/home/$USER/bulkseq.sif"
-bulkseq config set -C PATH execution.slurm_partition orfoz
-bulkseq config set -C PATH execution.slurm_account ACCOUNT
-bulkseq config set -C PATH execution.container_image /arf/home/$USER/bulkseq.sif
-bulkseq config set -C PATH execution.allocation_cpus 112
-bulkseq config set -C PATH execution.allocation_mem_gb 250
-bulkseq config set -C PATH execution.allocation_time_min 4320
-bulkseq slurm-script -C PATH
-bulkseq run -C PATH --stage prefetch --cores 2       # downloads, on the login node
-sbatch PATH/config/slurm_allocation.sbatch
-bulkseq run -C PATH --cores 2                        # after the job: online steps, figures, reports</code></pre><p>For per-step jobs on TRUBA instead, set <code>execution.min_cpus_per_job</code> to the partition’s minimum (56 on orfoz); every job then reserves at least that many cores, which are charged whether a step uses them or not.</p>`
-  + check('Ask TRUBA whether a micromamba environment counts as a forbidden conda install, whether compute nodes reach the internet, and whether core-hours are charged on requested or used cores.')
-  + `<h2 id="troubleshooting">12. Troubleshooting</h2>`
-  + grid(['What you see', 'Cause', 'What to do'], [
-    ['<code>\'sbatch\' is not on PATH</code>, exit 3', 'The command runs on a workstation, or Slurm’s commands are not loaded.', 'Run it on the login node; load the site’s Slurm module if it has one.'],
-    ['<code>executor plugin … cannot be imported</code>, exit 3', 'The environment predates 0.36.0 or is incomplete.', 'Rerun <code>bash scripts/setup_wsl_bioenv.sh bulkseq full</code> from this release’s checkout.'],
-    ['The setup says it installs from the floating spec, not the lock', 'The host’s glibc is older than 2.28, or it is not linux-64.', 'Use the Apptainer image, whose environment is the pinned one.'],
-    ['<code>Invalid account or account/partition combination</code>', 'The account is missing, wrong or closed.', 'Set <code>execution.slurm_account</code> (UHeM: a project marked open in <code>projelerim</code>).'],
-    ['A launch warning names a step that asks for more than the partition’s nodes', 'That step’s memory, CPUs or walltime exceed the partition.', 'Lower it, or place the step elsewhere with <code>execution.rule_resources.&lt;step&gt;.slurm_partition</code>.'],
-    ['Jobs stay <code>PENDING</code> with reason <code>Resources</code> or a memory limit', 'A job asks for more than any free node offers.', 'Lower <code>rule_memory_gb</code> or <code>rule_threads</code> for that step, or choose another partition.'],
-    ['Jobs pend with <code>AssocGrpCPUMinutesLimit</code> or <code>AssocGrpCpuLimit</code>', 'The project’s core-hour quota or concurrent-core limit is reached.', 'Wait, lower <code>execution.jobs</code>, or ask the centre for more.'],
-    ['A partition refuses jobs below a core count', 'The partition has a minimum per job (TRUBA).', 'Set <code>execution.min_cpus_per_job</code>, or use one allocation.'],
-    ['A job ends <code>TIMEOUT</code>', 'The step needed longer than its walltime.', 'Raise <code>rule_runtime_min.&lt;step&gt;</code> or <code>execution.default_runtime_min</code>, then resume.'],
-    ['A job ends <code>OUT_OF_MEMORY</code>', 'The step needed more than it requested.', 'Raise <code>rule_memory_gb.&lt;step&gt;</code>, or <code>execution.default_mem_mb</code> for a step without one, then resume.'],
-    ['<code>limitGenomeGenerateRAM … is too small</code> from STAR', 'The index build needs more memory than the step reserves.', 'Raise <code>rule_memory_gb.star_index</code>; the STAR limit follows it.'],
-    ['<code>samtools index</code> fails with a region too large for BAI', 'A chromosome exceeds 512 Mb and the genome was not recognised as long.', 'Set <code>reference.bam_index csi</code>.'],
-    ['A download or enrichment step cannot connect', 'The host running it has no outbound access.', 'Keep <code>network_rules_on_submit_host</code> true and run from a login node with internet, or stage inputs in advance.'],
-    ['Output files are reported missing after a job succeeded', 'The shared filesystem showed them late.', 'Raise <code>execution.latency_wait_s</code>.'],
-    ['<code>slurm_extra may not set --qos</code>', 'The executor or a dedicated setting manages that option.', 'Use <code>execution.slurm_qos</code> (likewise <code>slurm_constraint</code>, <code>slurm_clusters</code>).'],
-    ['The project refuses to run after an edit under <code>workflow/</code>', 'The recorded workflow digest no longer matches.', 'Restore the copied workflow and put the setting in <code>execution</code> instead.'],
+  + `<p>More problems and their fixes are in the <a href="${ref('troubleshooting')}">troubleshooting reference</a>. Large genomes such as maize and wheat need far more memory than the defaults; see <a href="${ref('large-genomes')}">Large genomes</a>.</p>`
+
+  + `<h2 id="policies">Centre policies to check</h2><p>Clusters differ in how they charge for and limit jobs. Read your centre’s user guide for these points before the first run; each one maps to a setting.</p>`
+  + grid(['If your centre…', 'Then'], [
+    ['allocates or bills whole nodes, or charges a minimum per job', 'Use one allocation, so the study is charged as one job.'],
+    ['sets a minimum number of cores per job on a partition', 'Use one allocation, or for one job per step set <code>execution.min_cpus_per_job</code> to that minimum. Every job then reserves at least that many cores, charged whether a step uses them or not.'],
+    ['ties memory to cores (a maximum memory per core)', 'Request enough CPUs for the memory you need: <code>execution.allocation_cpus</code> with <code>allocation_mem_gb</code>, or per-step threads with memory.'],
+    ['limits walltime per partition', 'Set <code>execution.allocation_time_min</code> and <code>execution.max_runtime_min</code> to that limit. A study that needs longer continues when you submit the job script again.'],
+    ['forbids conda or pip installs on its filesystems', 'Use the Apptainer image described below.'],
+    ['cleans scratch storage after a number of days', 'Copy <code>results/</code>, <code>checks/</code>, <code>config/</code> and <code>logs/</code> to permanent storage when a run ends.'],
+    ['limits CPU or memory use on login nodes', 'Keep <code>execution.local_cores</code> low and use the online-only finishing route from Step 7.'],
+    ['gives compute nodes internet access', 'Set <code>execution.compute_nodes_have_internet true</code>; the job then runs the online steps itself and no finishing run is needed.'],
+    ['requires software to be declared in your project application', 'Declare the BulkSeq environment or the Apptainer image there.'],
   ])
-  + `<h2 id="kubernetes">13. Kubernetes</h2><p>The <code>kubernetes</code> profile is a starting point, not a supported route. Its executor plugin is not part of the environment, and every pod would need a container image carrying the full tool stack. <code>bulkseq run --exec-profile kubernetes</code> exits 3 while the plugin is missing; it cannot detect a missing image. Read <code>workflow/profiles/site/kubernetes/config.yaml</code> before attempting it.</p>`
-  + `<h2 id="verified">14. What has been verified</h2><p>Both modes were run on a single-node Slurm 23.11 test cluster with job accounting, under WSL2 (Ubuntu 24.04), on a synthetic 3-versus-3 paired-end project. Per-step mode submitted 53 jobs, all of which completed; <code>sacct</code> shows the configured partition, account, QOS, job-name prefix and the two-CPU minimum on every job, and the step placed through <code>rule_resources</code> carried its extra option. Single-allocation mode ran the whole offline part of the same project in one job and a login-node run finished the remainder; a script submitted from another directory logged into the project, a job stopped part-way resumed when submitted again, and the online stage followed by a job submitted with <code>all</code> finished a project. The count matrix and the DESeq2 table of the local, per-step and single-allocation runs are byte-identical. A hangup signal to a per-step run cancelled its 14 queued jobs. A project finished under 0.36.0, upgraded, saved by the interface and given new scheduling settings had nothing to rerun. The revised lock installed in that environment, changing only the two header packages, and solves in a dry run for glibc 2.28, 2.34 and 2.39. CSI indexing under the <code>.bai</code> name was checked with samtools 1.22.1 and pysam on a 600 Mb synthetic sequence. In 0.36.0 the same test cluster ran synthetic FASTQ and count-matrix projects in 54 and 16 jobs with results identical to local runs. No production cluster, including İTÜ UHeM and TRUBA, has been used: their behaviour here is taken from their public documentation. The Apptainer image is built and self-tested by the Environment CI workflow only, never run under a cluster’s Apptainer. Kubernetes execution has not been tested.</p>`
-  + check('Before a full study, run a small project under your site’s policy and confirm in <code>sacct</code> and <code>logs/slurm/</code> that its jobs reached the scheduler and completed.');
+  + `<h3 id="container">Sites that forbid conda: the Apptainer image</h3><p>Apptainer (formerly Singularity) is a container tool common on clusters. An image is one file that holds a complete software environment. Where a centre forbids conda environments on its filesystems, build the image on a Linux machine where you have administrator rights and copy it to the cluster. It holds the same pinned environment, installed by the same setup script, and the <code>bulkseq</code> command. Every <code>bulkseq</code> command then runs through the image, here through an alias. In the block below, <code>slurm-script</code> writes the job script, the <code>prefetch</code> stage downloads the inputs on the login node, <code>sbatch</code> submits the job, and the last line finishes the run after it. The image has no Slurm commands, so submit the job script with <code>sbatch</code> on the login node instead of <code>--submit</code>. The job script binds the project folder, the temporary folder and the folders of the reference and FASTQ files into the container; add others with <code>execution.container_binds</code>. On the login node, Apptainer sees only your home folder, <code>/tmp</code> and the current folder unless you add <code>--bind</code>.</p><pre><code>apptainer build bulkseq.sif packaging/apptainer/bulkseq.def   # on your Linux machine
+scp bulkseq.sif USER@LOGIN_NODE:                               # to the cluster
+alias bulkseq="apptainer run --bind /path/to/your/scratch $HOME/bulkseq.sif"
+bulkseq config set -C ${DIR} execution.container_image $HOME/bulkseq.sif
+bulkseq slurm-script -C ${DIR}
+bulkseq run -C ${DIR} --stage prefetch --cores 2
+sbatch ${DIR}/config/slurm_allocation.sbatch
+bulkseq run -C ${DIR} --cores 2                                # after the job</code></pre>`
+
+  + `<h2 id="tested">What has been tested</h2><p>Both modes were run on a single-node Slurm test cluster under WSL2 with synthetic projects, and their count matrices and differential-expression tables were byte-identical to a run on the same computer without Slurm. No production cluster has been used. Before a full study, run a small project under your centre’s policy. The details are in <a href="${ref('verified')}">What has been verified</a>.</p>`;
 
   return {slug: 'cluster', title: 'Run on a Slurm cluster', group: 'Run and automate',
-    summary: 'Run the workflow on Slurm, one job per step or in one allocation, with every site setting kept in the project.',
+    summary: 'A step-by-step guide to running a BulkSeq study on a Slurm cluster, for people who have not used one before.',
     body};
 }

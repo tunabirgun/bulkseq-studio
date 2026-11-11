@@ -36,7 +36,7 @@ def test_panel_round_trips_and_validates(panel, tmp_path) -> None:
     root = manager.create_project("panel", tmp_path)
     config = manager.load_config(root)
     panel.load(config)
-    panel.widgets["slurm_partition"].setText("defq")
+    panel.widgets["slurm_partition"].setText("compute")
     panel.widgets["slurm_requeue"].setCurrentText("requeue")
     panel.widgets["min_cpus_per_job"].setValue(56)
     panel.widgets["compute_nodes_have_internet"].setChecked(True)
@@ -45,7 +45,7 @@ def test_panel_round_trips_and_validates(panel, tmp_path) -> None:
     panel.steps.item(row, STEP_COLUMNS.index("Walltime (min)")).setText("1440")
     panel.steps.item(row, STEP_COLUMNS.index("Partition")).setText("bigmem")
     updated = panel.apply_to(config)
-    assert updated.execution.slurm_partition == "defq" and updated.execution.slurm_requeue == "requeue"
+    assert updated.execution.slurm_partition == "compute" and updated.execution.slurm_requeue == "requeue"
     assert updated.execution.min_cpus_per_job == 56 and updated.execution.compute_nodes_have_internet
     assert updated.rule_memory_gb.star_index == 200 and updated.rule_runtime_min.star_index == 1440
     assert updated.execution.rule_resources["star_index"].slurm_partition == "bigmem"

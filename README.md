@@ -21,16 +21,16 @@ The [tutorial](https://tunabirgun.github.io/bulkseq-studio/tutorial.html) explai
 
 ## Cluster runs
 
-The `bulkseq` command runs the same workflow as the interface, locally or on a Slurm cluster, in one of two ways. `bulkseq run --exec-profile slurm` submits each step as its own job from the login node; `bulkseq slurm-script --submit` runs the whole workflow in one allocation, which suits centres that bill whole nodes or refuse small jobs, such as İTÜ UHeM and TRUBA. The Slurm options a study needs (partition, account, QOS, node features, walltimes, per-step placement, job arrays, requeueing) are project settings under `execution`, set with `bulkseq config set` or in the interface under Compute resources; the copied workflow is never edited.
+The `bulkseq` command runs the same workflow as the interface, locally or on a Slurm cluster, in one of two ways. `bulkseq run --exec-profile slurm` submits each step as its own job from the login node; `bulkseq slurm-script --submit` runs the whole workflow in one allocation, which suits centres that bill whole nodes or refuse small jobs. The Slurm options a study needs (partition, account, QOS, node features, walltimes, per-step placement, job arrays, requeueing) are project settings under `execution`, set with `bulkseq config set` or in the interface under Compute resources; the copied workflow is never edited.
 
 ```bash
 bash scripts/setup_wsl_bioenv.sh bulkseq full
-bulkseq config set -C PATH execution.slurm_partition defq
-bulkseq config set -C PATH execution.slurm_account myproject
+bulkseq config set -C PATH execution.slurm_partition PARTITION
+bulkseq config set -C PATH execution.slurm_account ACCOUNT
 bulkseq slurm-script -C PATH --submit          # or: bulkseq run -C PATH --exec-profile slurm
 ```
 
-Sites that forbid conda installs can use the Apptainer image built from `packaging/apptainer/bulkseq.def`. Both modes were verified on a single-node test cluster, not on a production cluster; the image is built and self-tested in CI only. See [Run on a Slurm cluster](https://tunabirgun.github.io/bulkseq-studio/cluster.html) for every setting, site recipes and how to follow and control a run.
+Sites that forbid conda installs can use the Apptainer image built from `packaging/apptainer/bulkseq.def`. Both modes were verified on a single-node test cluster, not on a production cluster; the image is built and self-tested in CI only. New to clusters? [Run on a Slurm cluster](https://tunabirgun.github.io/bulkseq-studio/cluster.html) walks through a first run step by step; [Cluster settings and commands](https://tunabirgun.github.io/bulkseq-studio/cluster-reference.html) lists every setting and the Slurm commands that follow and control a run.
 
 ## Analysis boundaries
 
